@@ -8,6 +8,8 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Support\NullMessageSerializer;
+use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 
@@ -24,7 +26,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus);
+        $bus = new CommandBus($syncBus, null, new NullRetryPolicy(), new NullMessageSerializer());
 
         self::assertSame($envelope, $bus->dispatch($command));
     }
@@ -43,7 +45,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, $asyncBus);
+        $bus = new CommandBus($syncBus, $asyncBus, new NullRetryPolicy(), new NullMessageSerializer());
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
     }
@@ -54,7 +56,7 @@ final class CommandBusTest extends TestCase
 
         $syncBus = $this->createMock(MessageBusInterface::class);
 
-        $bus = new CommandBus($syncBus);
+        $bus = new CommandBus($syncBus, null, new NullRetryPolicy(), new NullMessageSerializer());
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Asynchronous command bus is not configured.');

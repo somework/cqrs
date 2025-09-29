@@ -8,6 +8,8 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Support\NullMessageSerializer;
+use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 
@@ -24,7 +26,7 @@ final class EventBusTest extends TestCase
             ->with($event, [])
             ->willReturn($envelope);
 
-        $bus = new EventBus($syncBus);
+        $bus = new EventBus($syncBus, null, new NullRetryPolicy(), new NullMessageSerializer());
 
         self::assertSame($envelope, $bus->dispatch($event));
     }
@@ -43,7 +45,7 @@ final class EventBusTest extends TestCase
             ->with($event, [])
             ->willReturn($envelope);
 
-        $bus = new EventBus($syncBus, $asyncBus);
+        $bus = new EventBus($syncBus, $asyncBus, new NullRetryPolicy(), new NullMessageSerializer());
 
         self::assertSame($envelope, $bus->dispatch($event, DispatchMode::ASYNC));
     }
@@ -54,7 +56,7 @@ final class EventBusTest extends TestCase
 
         $syncBus = $this->createMock(MessageBusInterface::class);
 
-        $bus = new EventBus($syncBus);
+        $bus = new EventBus($syncBus, null, new NullRetryPolicy(), new NullMessageSerializer());
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Asynchronous event bus is not configured.');
