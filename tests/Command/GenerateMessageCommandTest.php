@@ -10,6 +10,8 @@ use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\HttpKernel\KernelInterface;
 
+use function dirname;
+
 final class GenerateMessageCommandTest extends TestCase
 {
     private string $projectDir;
@@ -17,7 +19,7 @@ final class GenerateMessageCommandTest extends TestCase
     protected function setUp(): void
     {
         $this->projectDir = sys_get_temp_dir().'/cqrs_bundle_'.uniqid();
-        mkdir($this->projectDir.'/src', 0777, true);
+        mkdir($this->projectDir.'/src', 0o777, true);
     }
 
     protected function tearDown(): void
@@ -57,7 +59,7 @@ final class GenerateMessageCommandTest extends TestCase
         $kernel = $this->createKernelStub();
         $messagePath = $this->projectDir.'/src/App/Application/Command/ShipOrder.php';
         $handlerPath = $this->projectDir.'/src/App/Application/Command/ShipOrderHandler.php';
-        mkdir(dirname($messagePath), 0777, true);
+        mkdir(dirname($messagePath), 0o777, true);
         file_put_contents($messagePath, 'existing');
         file_put_contents($handlerPath, 'existing');
 
@@ -117,4 +119,3 @@ final class GenerateMessageCommandTest extends TestCase
         rmdir($directory);
     }
 }
-

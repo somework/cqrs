@@ -12,4 +12,3 @@ final class DummyStamp implements StampInterface
     {
     }
 }
-

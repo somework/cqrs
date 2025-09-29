@@ -5,12 +5,12 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Command;
 
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Command\ListHandlersCommand;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\DependencyInjection\ServiceLocator;
 
 final class ListHandlersCommandTest extends TestCase
 {
@@ -111,7 +111,7 @@ final class ListHandlersCommandTest extends TestCase
 
     /**
      * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
-     * @param array<string, string> $labels
+     * @param array<string, string>                                                                                                              $labels
      */
     private function createRegistry(array $metadata, array $labels): HandlerRegistry
     {
@@ -124,24 +124,12 @@ final class ListHandlersCommandTest extends TestCase
             $strategies['default'] = $this->labelStrategy('default');
         }
 
-        $container = new class($strategies) implements ContainerInterface {
-            /** @param array<string, MessageNamingStrategy> $strategies */
-            public function __construct(private readonly array $strategies)
-            {
-            }
+        $factories = [];
+        foreach ($strategies as $name => $strategy) {
+            $factories[$name] = static fn (): MessageNamingStrategy => $strategy;
+        }
 
-            public function get(string $id): MessageNamingStrategy
-            {
-                return $this->strategies[$id];
-            }
-
-            public function has(string $id): bool
-            {
-                return array_key_exists($id, $this->strategies);
-            }
-        };
-
-        return new HandlerRegistry($metadata, $container);
+        return new HandlerRegistry($metadata, new ServiceLocator($factories));
     }
 
     private function labelStrategy(string $label): MessageNamingStrategy
@@ -158,4 +146,3 @@ final class ListHandlersCommandTest extends TestCase
         };
     }
 }
-

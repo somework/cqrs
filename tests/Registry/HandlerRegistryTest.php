@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Registry;
 
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+
+use function sprintf;
 
 final class HandlerRegistryTest extends TestCase
 {
@@ -70,24 +72,14 @@ final class HandlerRegistryTest extends TestCase
 
     private function createRegistry(array $metadata, array $strategies): HandlerRegistry
     {
-        $container = new class($strategies) implements ContainerInterface {
-            /** @param array<string, MessageNamingStrategy> $strategies */
-            public function __construct(private readonly array $strategies)
-            {
-            }
+        $factories = [];
+        foreach ($strategies as $name => $strategy) {
+            $factories[$name] = static fn (): MessageNamingStrategy => $strategy;
+        }
 
-            public function get(string $id): MessageNamingStrategy
-            {
-                return $this->strategies[$id];
-            }
+        $locator = new ServiceLocator($factories);
 
-            public function has(string $id): bool
-            {
-                return array_key_exists($id, $this->strategies);
-            }
-        };
-
-        return new HandlerRegistry($metadata, $container);
+        return new HandlerRegistry($metadata, $locator);
     }
 
     private function strategy(string $format): MessageNamingStrategy
@@ -104,4 +96,3 @@ final class HandlerRegistryTest extends TestCase
         };
     }
 }
-

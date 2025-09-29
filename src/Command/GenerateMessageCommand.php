@@ -23,6 +23,10 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\HttpKernel\KernelInterface;
 
+use function dirname;
+use function sprintf;
+use function strlen;
+
 #[AsCommand(
     name: 'somework:cqrs:generate',
     description: 'Generate a CQRS message and handler skeleton.',
@@ -122,9 +126,9 @@ final class GenerateMessageCommand extends SymfonyCommand
 
     private function dumpFile(string $path, string $contents, bool $force): void
     {
-        $dir = \dirname($path);
+        $dir = dirname($path);
         if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
+            mkdir($dir, 0o775, true);
         }
 
         if (!$force && file_exists($path)) {

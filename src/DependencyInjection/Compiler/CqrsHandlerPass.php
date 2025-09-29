@@ -14,6 +14,8 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
+use function is_string;
+
 final class CqrsHandlerPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
