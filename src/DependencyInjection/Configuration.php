@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
+use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
+use SomeWork\CqrsBundle\Support\NullMessageSerializer;
+use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
@@ -72,6 +75,76 @@ final class Configuration implements ConfigurationInterface
 
         $busesChildren->end();
         $buses->end();
+
+        $naming = $children->arrayNode('naming');
+        $naming
+            ->addDefaultsIfNotSet()
+            ->info('Message naming strategies used by diagnostics and tooling.');
+
+        /** @var ArrayNodeDefinition $namingChildren */
+        $namingChildren = $naming->children();
+        $namingChildren
+            ->scalarNode('default')
+            ->defaultValue(ClassNameMessageNamingStrategy::class)
+            ->info('Service id implementing MessageNamingStrategy for all message types.');
+        $namingChildren
+            ->scalarNode('command')
+            ->defaultNull()
+            ->info('Overrides the default naming strategy for commands.');
+        $namingChildren
+            ->scalarNode('query')
+            ->defaultNull()
+            ->info('Overrides the default naming strategy for queries.');
+        $namingChildren
+            ->scalarNode('event')
+            ->defaultNull()
+            ->info('Overrides the default naming strategy for events.');
+        $namingChildren->end();
+        $naming->end();
+
+        $retry = $children->arrayNode('retry_policies');
+        $retry
+            ->addDefaultsIfNotSet()
+            ->info('Retry policy services applied when dispatching messages.');
+
+        /** @var ArrayNodeDefinition $retryChildren */
+        $retryChildren = $retry->children();
+        $retryChildren
+            ->scalarNode('command')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info('RetryPolicy service id applied to commands.');
+        $retryChildren
+            ->scalarNode('event')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info('RetryPolicy service id applied to events.');
+        $retryChildren
+            ->scalarNode('query')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info('RetryPolicy service id applied to queries.');
+        $retryChildren->end();
+        $retry->end();
+
+        $serialization = $children->arrayNode('serialization');
+        $serialization
+            ->addDefaultsIfNotSet()
+            ->info('MessageSerializer services that provide SerializerStamp instances.');
+
+        /** @var ArrayNodeDefinition $serializationChildren */
+        $serializationChildren = $serialization->children();
+        $serializationChildren
+            ->scalarNode('command')
+            ->defaultValue(NullMessageSerializer::class)
+            ->info('MessageSerializer service id applied to commands.');
+        $serializationChildren
+            ->scalarNode('event')
+            ->defaultValue(NullMessageSerializer::class)
+            ->info('MessageSerializer service id applied to events.');
+        $serializationChildren
+            ->scalarNode('query')
+            ->defaultValue(NullMessageSerializer::class)
+            ->info('MessageSerializer service id applied to queries.');
+        $serializationChildren->end();
+        $serialization->end();
 
         return $treeBuilder;
     }
