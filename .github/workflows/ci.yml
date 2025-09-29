@@ -7,8 +7,12 @@ permissions:
 
 on:
   push:
-    branches: [ main ]
-  pull_request: ~
+    branches:
+      - main
+  pull_request:
+    branches:
+      - '**'
+  workflow_dispatch:
 
 jobs:
   tests:
@@ -70,9 +74,27 @@ jobs:
           pattern: test-results-php-*
           merge-multiple: true
 
+      - name: Determine reporting mode
+        id: reporting
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.head.repo.full_name }}" != "${{ github.repository }}" ]]; then
+            echo "check_run=false" >>"$GITHUB_OUTPUT"
+            echo "comment_mode=off" >>"$GITHUB_OUTPUT"
+            echo "should_run=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "check_run=true" >>"$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              echo "comment_mode=always" >>"$GITHUB_OUTPUT"
+            else
+              echo "comment_mode=off" >>"$GITHUB_OUTPUT"
+            fi
+            echo "should_run=true" >>"$GITHUB_OUTPUT"
+          fi
+
       - name: Publish unit test results
+        if: steps.reporting.outputs.should_run == 'true'
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          files: "artifacts/**/*.xml"
-          check_run: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository ? 'false' : 'true' }}
-          comment_mode: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository ? 'always' : 'off' }}
+          files: artifacts/**/*.xml
+          check_run: ${{ steps.reporting.outputs.check_run }}
+          comment_mode: ${{ steps.reporting.outputs.comment_mode }}
