@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\Cqrs\Tests;
 
 use PHPUnit\Framework\TestCase;
-use SomeWork\Cqrs\SomeWorkCqrsBundle;
 use SomeWork\Cqrs\DependencyInjection\CqrsExtension;
+use SomeWork\Cqrs\SomeWorkCqrsBundle;
 
 final class CqrsBundleTest extends TestCase
 {
