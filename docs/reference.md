@@ -46,3 +46,32 @@ somework_cqrs:
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.
+
+## Handler registry service
+
+The bundle stores compiled handler metadata in the
+`SomeWork\CqrsBundle\Registry\HandlerRegistry` service. You can rely on it to
+power diagnostics, smoke tests, or documentation pages. The registry exposes:
+
+* `all()` – returns every handler as a list of `HandlerDescriptor` value
+  objects.
+* `byType('command'|'query'|'event')` – limits the descriptors to one message
+  type.
+* `getDisplayName(HandlerDescriptor)` – resolves a human-friendly name using the
+  configured naming strategies.
+
+## Console reference
+
+Two console commands ship with the bundle:
+
+* `somework:cqrs:list` – Prints the handler catalogue in a table. Accepts the
+  `--type=<command|query|event>` option multiple times. The command is safe to
+  run in production and reflects the container compiled for the current
+  environment.
+* `somework:cqrs:generate <type> <class>` – Scaffolds a message and handler pair
+  for the chosen type. Optional flags:
+  * `--handler=` to customise the handler class name.
+  * `--dir=` to override the base directory (defaults to `<project>/src`).
+  * `--force` to overwrite existing files instead of aborting.
+
+Both commands are registered automatically when the bundle is enabled.

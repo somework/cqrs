@@ -54,6 +54,34 @@ Inject `SomeWork\CqrsBundle\Bus\CommandBus` and call
   directory. Use `--dir=` to override the base directory and `--force` to
   overwrite existing files.
 
+### Handler registry and diagnostics
+
+The bundle exposes a `SomeWork\CqrsBundle\Registry\HandlerRegistry` service that
+holds the metadata discovered at compile time. You can inject it to build custom
+dashboards, health checks, or documentation. The bundled `somework:cqrs:list`
+command uses the registry to produce a concise overview of your catalogue:
+
+```
+$ bin/console somework:cqrs:list
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+| Type    | Message                                    | Handler                                       | Service Id                                   | Bus                      |
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+| Command | App\Application\Command\ShipOrder          | App\Application\Command\ShipOrderHandler      | app.command.ship_order_handler               | messenger.bus.commands   |
+| Query   | App\ReadModel\Query\FindOrder              | App\ReadModel\Query\FindOrderHandler          | app.read_model.find_order_handler            | default                  |
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+```
+
+### Message scaffolding options
+
+The generator accepts a handful of options so you can tailor the output to your
+project layout:
+
+* `--handler=App\\Application\\Command\\ShipOrderHandler` – override the
+  handler class name instead of using the `<Message>Handler` default.
+* `--dir=app/src` – change the base directory used to materialise the class
+  files. The argument is relative to the project root returned by the kernel.
+* `--force` – replace existing files instead of halting with an error.
+
 ## Configuration
 
 All options live under the `somework_cqrs` key. They allow you to point each
