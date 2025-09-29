@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Handler\AbstractEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
+use function assert;
+
 #[AsEventHandler(event: TaskCreatedEvent::class, bus: 'messenger.bus.events_async')]
 final class AsyncProjectionHandler extends AbstractEventHandler
 {
@@ -22,7 +24,7 @@ final class AsyncProjectionHandler extends AbstractEventHandler
      */
     protected function on(Event $event): void
     {
-        \assert($event instanceof TaskCreatedEvent);
+        assert($event instanceof TaskCreatedEvent);
 
         $this->recorder->recordAsyncEvent($event->taskId);
     }

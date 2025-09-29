@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
+use function assert;
+
 #[AsCommandHandler(command: CreateTaskCommand::class)]
 final class CreateTaskHandler extends AbstractCommandHandler
 {
@@ -22,7 +24,7 @@ final class CreateTaskHandler extends AbstractCommandHandler
      */
     protected function handle(Command $command): mixed
     {
-        \assert($command instanceof CreateTaskCommand);
+        assert($command instanceof CreateTaskCommand);
 
         $this->recorder->recordTask($command->id, $command->name);
 

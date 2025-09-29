@@ -12,7 +12,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 final class MessageMetadataStamp implements StampInterface
 {
     /**
-     * @param non-empty-string $correlationId
+     * @param non-empty-string     $correlationId
      * @param array<string, mixed> $extras
      */
     public function __construct(
