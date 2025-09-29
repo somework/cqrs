@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Service;
 
+use function in_array;
+
 /**
  * In-memory storage used by functional Messenger tests.
  */

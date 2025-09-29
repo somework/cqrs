@@ -14,7 +14,7 @@ use SomeWork\CqrsBundle\Contract\Event;
 final class AsEventHandler
 {
     /**
-     * @param class-string<Event> $event
+     * @param class-string<Event>   $event
      * @param non-empty-string|null $bus
      */
     public function __construct(

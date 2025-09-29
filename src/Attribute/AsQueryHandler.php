@@ -14,7 +14,7 @@ use SomeWork\CqrsBundle\Contract\Query;
 final class AsQueryHandler
 {
     /**
-     * @param class-string<Query> $query
+     * @param class-string<Query>   $query
      * @param non-empty-string|null $bus
      */
     public function __construct(
