@@ -77,6 +77,35 @@ Two commands ship with the bundle once it is registered in your kernel:
   directory. Pass `--dir=app/src` and `--force` to customise the target or
   overwrite existing files.
 
+Example output from `somework:cqrs:list`:
+
+```
+$ bin/console somework:cqrs:list --type=command --type=query
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+| Type    | Message                                    | Handler                                       | Service Id                                   | Bus                      |
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+| Command | App\Application\Command\ShipOrder          | App\Application\Command\ShipOrderHandler      | app.command.ship_order_handler               | messenger.bus.commands   |
+| Query   | App\ReadModel\Query\FindOrder              | App\ReadModel\Query\FindOrderHandler          | app.read_model.find_order_handler            | default                  |
++---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
+```
+
+The command respects naming strategies registered for each message type so the
+display names stay meaningful even when your classes follow domain-specific
+conventions.
+
+For the generator you can pass the following options to tailor the output:
+
+* `--handler` – override the handler class name. The command still generates the
+  attribute and interface wiring for you.
+* `--dir` – write the files to a custom base directory. Useful when your source
+  tree lives outside the default `src/` folder.
+* `--force` – overwrite existing files instead of aborting. Handy when you want
+  to regenerate boilerplate after renaming namespaces.
+
+Inject `SomeWork\CqrsBundle\Registry\HandlerRegistry` if you need direct access
+to the metadata powering the CLI. It offers `all()`, `byType()`, and
+`getDisplayName()` helpers that you can reuse in dashboards or smoke tests.
+
 These commands respect the naming strategy configured for the bundle when
 presenting handler information.
 
