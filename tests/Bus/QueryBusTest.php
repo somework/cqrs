@@ -97,4 +97,3 @@ final class QueryBusTest extends TestCase
         self::assertSame('result', $queryBus->ask($query, $userStamp));
     }
 }
-

@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Registry;
 
-use Psr\Container\ContainerInterface;
+use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+
+use function assert;
+use function is_callable;
 
 /**
  * Provides read access to the CQRS handler map that is compiled at container build time.
@@ -19,7 +23,7 @@ final class HandlerRegistry
         #[Autowire(param: 'somework_cqrs.handler_metadata')]
         private readonly array $metadata,
         #[Autowire(service: 'somework_cqrs.naming_locator')]
-        private readonly ContainerInterface $namingStrategies,
+        private readonly ServiceLocator $namingStrategies,
     ) {
     }
 
@@ -65,9 +69,17 @@ final class HandlerRegistry
 
     public function getDisplayName(HandlerDescriptor $descriptor): string
     {
-        $strategy = $this->namingStrategies->has($descriptor->type)
-            ? $this->namingStrategies->get($descriptor->type)
-            : $this->namingStrategies->get('default');
+        $key = $this->namingStrategies->has($descriptor->type)
+            ? $descriptor->type
+            : 'default';
+
+        $strategy = $this->namingStrategies->get($key);
+
+        if (is_callable($strategy)) {
+            $strategy = $strategy();
+        }
+
+        assert($strategy instanceof MessageNamingStrategy);
 
         return $strategy->getName($descriptor->messageClass);
     }
