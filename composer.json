@@ -21,12 +21,12 @@
     },
     "autoload": {
         "psr-4": {
-            "SomeWork\\Cqrs\\": "src/"
+            "SomeWork\\CqrsBundle\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "SomeWork\\Cqrs\\Tests\\": "tests/"
+            "SomeWork\\CqrsBundle\\Tests\\": "tests/"
         }
     },
     "scripts": {

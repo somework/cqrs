@@ -11,6 +11,6 @@ return static function (ContainerConfigurator $configurator): void {
         ->autoconfigure();
 
     $services
-        ->load('SomeWork\\Cqrs\\', '../src/*')
+        ->load('SomeWork\\CqrsBundle\\', '../src/*')
         ->exclude('../src/DependencyInjection');
 };
