@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\Cqrs;
+namespace SomeWork\CqrsBundle;
 
-use SomeWork\Cqrs\DependencyInjection\CqrsExtension;
+use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use Symfony\Component\DependencyInjection\Extension\ExtensionInterface;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 

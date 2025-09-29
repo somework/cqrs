@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\Cqrs\DependencyInjection;
+namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\ContainerBuilder;

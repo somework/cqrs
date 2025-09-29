@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\Cqrs\Tests;
+namespace SomeWork\CqrsBundle\Tests;
 
 use PHPUnit\Framework\TestCase;
-use SomeWork\Cqrs\DependencyInjection\CqrsExtension;
-use SomeWork\Cqrs\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
+use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 
 final class CqrsBundleTest extends TestCase
 {
