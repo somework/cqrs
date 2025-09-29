@@ -38,7 +38,8 @@ jobs:
         run: mkdir -p build/logs
 
       - name: PHP-CS-Fixer
-        run: vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --using-cache=no --dry-run --diff
+        run: >-
+          vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --using-cache=no --dry-run --diff
 
       - name: PHPStan
         run: |
@@ -73,5 +74,5 @@ jobs:
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           files: "artifacts/**/*.xml"
-          check_run: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          comment_mode: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'always' || 'off' }}
+          check_run: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository ? 'false' : 'true' }}
+          comment_mode: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository ? 'always' : 'off' }}
