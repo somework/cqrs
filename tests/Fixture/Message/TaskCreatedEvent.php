@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Contract\Event;
 /**
  * Domain event emitted whenever a task has been created.
  */
-final class TaskCreatedEvent implements Event
+final class TaskCreatedEvent implements Event, RetryAwareMessage
 {
     public function __construct(public readonly string $taskId)
     {
