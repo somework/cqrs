@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 /**
  * Immutable command representing a request to create a task aggregate.
  */
-final class CreateTaskCommand implements Command
+final class CreateTaskCommand implements Command, RetryAwareMessage
 {
     public function __construct(
         public readonly string $id,
