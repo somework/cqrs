@@ -12,12 +12,12 @@ use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
-use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
-use Symfony\Component\DependencyInjection\ServiceLocator;
 
 final class EventBusTest extends TestCase
 {

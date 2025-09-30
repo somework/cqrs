@@ -8,6 +8,8 @@ use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+use function sprintf;
+
 /**
  * Resolves the RetryPolicy to apply for a given message class.
  */
