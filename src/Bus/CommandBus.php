@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Bus;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -16,12 +17,15 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  */
 final class CommandBus
 {
+    private readonly RetryPolicyResolver $retryPolicies;
+
     public function __construct(
         private readonly MessageBusInterface $syncBus,
         private readonly ?MessageBusInterface $asyncBus = null,
-        private readonly RetryPolicy $retryPolicy = new \SomeWork\CqrsBundle\Support\NullRetryPolicy(),
+        ?RetryPolicyResolver $retryPolicies = null,
         private readonly MessageSerializer $serializer = new \SomeWork\CqrsBundle\Support\NullMessageSerializer(),
     ) {
+        $this->retryPolicies = $retryPolicies ?? RetryPolicyResolver::withoutOverrides();
     }
 
     /**
@@ -29,7 +33,8 @@ final class CommandBus
      */
     public function dispatch(Command $command, DispatchMode $mode = DispatchMode::SYNC, StampInterface ...$stamps): Envelope
     {
-        $stamps = [...$stamps, ...$this->retryPolicy->getStamps($command, $mode)];
+        $retryPolicy = $this->resolveRetryPolicy($command);
+        $stamps = [...$stamps, ...$retryPolicy->getStamps($command, $mode)];
 
         $serializerStamp = $this->serializer->getStamp($command, $mode);
         if (null !== $serializerStamp) {
@@ -50,5 +55,10 @@ final class CommandBus
         }
 
         return $this->syncBus;
+    }
+
+    private function resolveRetryPolicy(Command $command): RetryPolicy
+    {
+        return $this->retryPolicies->resolveFor($command);
     }
 }

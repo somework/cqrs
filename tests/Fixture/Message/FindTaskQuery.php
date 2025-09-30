@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Contract\Query;
 /**
  * Query retrieving the name of a task by id.
  */
-final class FindTaskQuery implements Query
+final class FindTaskQuery implements Query, RetryAwareMessage
 {
     public function __construct(public readonly string $taskId)
     {

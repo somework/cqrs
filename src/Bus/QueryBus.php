@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Bus;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -16,11 +17,14 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  */
 final class QueryBus
 {
+    private readonly RetryPolicyResolver $retryPolicies;
+
     public function __construct(
         private readonly MessageBusInterface $bus,
-        private readonly RetryPolicy $retryPolicy = new \SomeWork\CqrsBundle\Support\NullRetryPolicy(),
+        ?RetryPolicyResolver $retryPolicies = null,
         private readonly MessageSerializer $serializer = new \SomeWork\CqrsBundle\Support\NullMessageSerializer(),
     ) {
+        $this->retryPolicies = $retryPolicies ?? RetryPolicyResolver::withoutOverrides();
     }
 
     /**
@@ -28,7 +32,8 @@ final class QueryBus
      */
     public function ask(Query $query, StampInterface ...$stamps): mixed
     {
-        $stamps = [...$stamps, ...$this->retryPolicy->getStamps($query, DispatchMode::SYNC)];
+        $retryPolicy = $this->resolveRetryPolicy($query);
+        $stamps = [...$stamps, ...$retryPolicy->getStamps($query, DispatchMode::SYNC)];
 
         $serializerStamp = $this->serializer->getStamp($query, DispatchMode::SYNC);
         if (null !== $serializerStamp) {
@@ -44,5 +49,10 @@ final class QueryBus
         }
 
         return $handled->getResult();
+    }
+
+    private function resolveRetryPolicy(Query $query): RetryPolicy
+    {
+        return $this->retryPolicies->resolveFor($query);
     }
 }

@@ -8,9 +8,12 @@ use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
+use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
+
+use function sprintf;
 
 final class Configuration implements ConfigurationInterface
 {
@@ -105,22 +108,13 @@ final class Configuration implements ConfigurationInterface
         $retry = $children->arrayNode('retry_policies');
         $retry
             ->addDefaultsIfNotSet()
-            ->info('Retry policy services applied when dispatching messages.');
+            ->info('Retry policy services applied when dispatching messages. Supports per-message overrides.');
 
         /** @var ArrayNodeDefinition $retryChildren */
         $retryChildren = $retry->children();
-        $retryChildren
-            ->scalarNode('command')
-            ->defaultValue(NullRetryPolicy::class)
-            ->info('RetryPolicy service id applied to commands.');
-        $retryChildren
-            ->scalarNode('event')
-            ->defaultValue(NullRetryPolicy::class)
-            ->info('RetryPolicy service id applied to events.');
-        $retryChildren
-            ->scalarNode('query')
-            ->defaultValue(NullRetryPolicy::class)
-            ->info('RetryPolicy service id applied to queries.');
+        $this->configureRetryPolicySection($retryChildren, 'command');
+        $this->configureRetryPolicySection($retryChildren, 'event');
+        $this->configureRetryPolicySection($retryChildren, 'query');
         $retryChildren->end();
         $retry->end();
 
@@ -147,5 +141,29 @@ final class Configuration implements ConfigurationInterface
         $serialization->end();
 
         return $treeBuilder;
+    }
+
+    private function configureRetryPolicySection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('RetryPolicy services applied to %s messages.', $type));
+
+        $children = $node->children();
+        $children
+            ->scalarNode('default')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info(sprintf('Fallback RetryPolicy service id applied to %s messages.', $type));
+
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->scalarPrototype()
+            ->end()
+            ->info('Message-specific RetryPolicy service ids. Keys must match the message FQCN.');
+
+        $children->end();
+        $node->end();
     }
 }

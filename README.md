@@ -100,10 +100,19 @@ somework_cqrs:
     naming:
         default: SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy
     retry_policies:
-        command: SomeWork\CqrsBundle\Support\NullRetryPolicy
+        command:
+            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            map:
+                App\Application\Command\ShipOrder: app.command.retry_policy
+                App\Domain\Contract\RequiresImmediateRetry: app.command.retry_policy_for_interface
     serialization:
         command: SomeWork\CqrsBundle\Support\NullMessageSerializer
 ```
+
+Use the `map` section inside each `retry_policies` entry to override the
+default policy for specific messages while keeping a shared fallback for the
+rest of the type. Keys may reference concrete messages, parent classes, or
+interfaces so you can coordinate retry behaviour across a group of messages.
 
 See [`docs/reference.md`](docs/reference.md) for a complete description of every
 option and [`docs/usage.md`](docs/usage.md) for more examples.
