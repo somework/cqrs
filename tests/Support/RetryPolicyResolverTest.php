@@ -9,8 +9,8 @@ use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
-use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 final class RetryPolicyResolverTest extends TestCase
