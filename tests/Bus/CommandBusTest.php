@@ -7,8 +7,9 @@ namespace SomeWork\CqrsBundle\Tests\Bus;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Contract\MessageSerializer;
+use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
@@ -32,7 +33,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), new NullMessageSerializer());
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
 
         self::assertSame($envelope, $bus->dispatch($command));
     }
@@ -51,7 +52,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), new NullMessageSerializer());
+        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
     }
@@ -62,7 +63,7 @@ final class CommandBusTest extends TestCase
 
         $syncBus = $this->createMock(MessageBusInterface::class);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), new NullMessageSerializer());
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Asynchronous command bus is not configured.');
@@ -104,8 +105,11 @@ final class CommandBusTest extends TestCase
             ->willReturn(new Envelope($command));
 
         $resolver = new RetryPolicyResolver($policy, new ServiceLocator([]));
+        $serializers = $this->createSerializerResolver(new NullMessageSerializer(), null, [
+            CreateTaskCommand::class => $serializer,
+        ]);
 
-        $bus = new CommandBus($syncBus, null, $resolver, $serializer);
+        $bus = new CommandBus($syncBus, null, $resolver, $serializers);
 
         $bus->dispatch($command);
     }
@@ -154,7 +158,11 @@ final class CommandBusTest extends TestCase
             ])
         );
 
-        $bus = new CommandBus($syncBus, $asyncBus, $resolver, $serializer);
+        $serializers = $this->createSerializerResolver(new NullMessageSerializer(), null, [
+            CreateTaskCommand::class => $serializer,
+        ]);
+
+        $bus = new CommandBus($syncBus, $asyncBus, $resolver, $serializers);
 
         $bus->dispatch($command, DispatchMode::ASYNC);
     }
@@ -193,8 +201,155 @@ final class CommandBusTest extends TestCase
             ])
         );
 
-        $bus = new CommandBus($syncBus, null, $resolver, new NullMessageSerializer());
+        $bus = new CommandBus($syncBus, null, $resolver, MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()));
 
         $bus->dispatch($command);
+    }
+
+    public function test_dispatch_prefers_message_specific_serializer_over_defaults(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $messageSerializer = $this->createMock(MessageSerializer::class);
+        $messageSerializer->expects(self::once())
+            ->method('getStamp')
+            ->with($command, DispatchMode::SYNC)
+            ->willReturn(null);
+
+        $typeSerializer = $this->createMock(MessageSerializer::class);
+        $typeSerializer->expects(self::never())->method('getStamp');
+
+        $globalSerializer = $this->createMock(MessageSerializer::class);
+        $globalSerializer->expects(self::never())->method('getStamp');
+
+        $serializers = $this->createSerializerResolver(
+            $globalSerializer,
+            $typeSerializer,
+            [CreateTaskCommand::class => $messageSerializer],
+        );
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+
+        $bus->dispatch($command);
+    }
+
+    public function test_dispatch_uses_type_default_serializer_when_no_message_override(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $typeSerializer = $this->createMock(MessageSerializer::class);
+        $typeSerializer->expects(self::once())
+            ->method('getStamp')
+            ->with($command, DispatchMode::SYNC)
+            ->willReturn(null);
+
+        $globalSerializer = $this->createMock(MessageSerializer::class);
+        $globalSerializer->expects(self::never())->method('getStamp');
+
+        $serializers = $this->createSerializerResolver($globalSerializer, $typeSerializer);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+
+        $bus->dispatch($command);
+    }
+
+    public function test_dispatch_falls_back_to_global_default_serializer(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $globalSerializer = $this->createMock(MessageSerializer::class);
+        $globalSerializer->expects(self::once())
+            ->method('getStamp')
+            ->with($command, DispatchMode::SYNC)
+            ->willReturn(null);
+
+        $serializers = $this->createSerializerResolver($globalSerializer, $globalSerializer);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+
+        $bus->dispatch($command);
+    }
+
+    public function test_dispatch_skips_null_serializer_stamp(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $retryStamp = new DummyStamp('retry');
+
+        $policy = $this->createMock(RetryPolicy::class);
+        $policy->expects(self::once())
+            ->method('getStamps')
+            ->with($command, DispatchMode::SYNC)
+            ->willReturn([$retryStamp]);
+
+        $serializer = $this->createMock(MessageSerializer::class);
+        $serializer->expects(self::once())
+            ->method('getStamp')
+            ->with($command, DispatchMode::SYNC)
+            ->willReturn(null);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $command,
+                self::callback(function (array $stamps) use ($retryStamp): bool {
+                    self::assertSame([$retryStamp], $stamps);
+
+                    return true;
+                })
+            )
+            ->willReturn(new Envelope($command));
+
+        $retryResolver = new RetryPolicyResolver($policy, new ServiceLocator([]));
+        $serializers = $this->createSerializerResolver(new NullMessageSerializer(), null, [
+            CreateTaskCommand::class => $serializer,
+        ]);
+
+        $bus = new CommandBus($syncBus, null, $retryResolver, $serializers);
+
+        $bus->dispatch($command);
+    }
+
+    /**
+     * @param array<class-string, MessageSerializer> $map
+     */
+    private function createSerializerResolver(
+        MessageSerializer $global,
+        ?MessageSerializer $type = null,
+        array $map = []
+    ): MessageSerializerResolver {
+        $type ??= $global;
+
+        $services = [
+            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $global,
+            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $type,
+        ];
+
+        foreach ($map as $class => $serializer) {
+            $services[$class] = static fn (): MessageSerializer => $serializer;
+        }
+
+        return new MessageSerializerResolver(new ServiceLocator($services));
     }
 }

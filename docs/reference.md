@@ -33,9 +33,18 @@ somework_cqrs:
             map:
                 App\Domain\Event\OrderShipped: app.event.retry_policy
     serialization:
-        command: SomeWork\CqrsBundle\Support\NullMessageSerializer
-        query: app.query_serializer
-        event: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        command:
+            default: null
+            map:
+                App\Application\Command\ShipOrder: app.command.serializer
+        query:
+            default: app.query_serializer
+            map: {}
+        event:
+            default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+            map:
+                App\Domain\Event\OrderShipped: app.event.serializer
 ```
 
 * **default_bus** – fallback Messenger bus id. Used whenever a type-specific bus
@@ -53,8 +62,10 @@ somework_cqrs:
   The buses merge the returned stamps into each dispatch call so you can tailor
   retry behaviour per message or shared contracts.
 * **serialization** – services implementing
-  `SomeWork\CqrsBundle\Contract\MessageSerializer`. When the service returns a
-  `SerializerStamp` it is appended to the dispatch call.
+  `SomeWork\CqrsBundle\Contract\MessageSerializer`. Each section mirrors the
+  retry policy structure with a global `default`, per-type `default`, and a
+  message-specific `map`. The buses resolve serializers in that order and append
+  the returned `SerializerStamp` to the dispatch call when provided.
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.
