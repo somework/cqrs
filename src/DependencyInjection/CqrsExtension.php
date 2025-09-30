@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\ChildDefinition;
@@ -23,6 +24,8 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
+
+use function sprintf;
 
 final class CqrsExtension extends Extension
 {
@@ -75,14 +78,14 @@ final class CqrsExtension extends Extension
                 $commandBusDefinition->setArgument('$asyncBus', null);
             }
 
-            $commandBusDefinition->setArgument('$retryPolicy', new Reference('somework_cqrs.retry.command'));
+            $commandBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
             $commandBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.command'));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
             $queryBusDefinition = $container->getDefinition(QueryBus::class);
             $queryBusDefinition->setArgument('$bus', new Reference($buses['query'] ?? $defaultBusId));
-            $queryBusDefinition->setArgument('$retryPolicy', new Reference('somework_cqrs.retry.query'));
+            $queryBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.query_resolver'));
             $queryBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.query'));
         }
 
@@ -97,7 +100,7 @@ final class CqrsExtension extends Extension
                 $eventBusDefinition->setArgument('$asyncBus', null);
             }
 
-            $eventBusDefinition->setArgument('$retryPolicy', new Reference('somework_cqrs.retry.event'));
+            $eventBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
             $eventBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.event'));
         }
     }
@@ -193,13 +196,29 @@ final class CqrsExtension extends Extension
     }
 
     /**
-     * @param array{command: string, query: string, event: string} $config
+     * @param array<string, array{default: string, map: array<string, string>}> $config
      */
     private function registerRetryPolicies(ContainerBuilder $container, array $config): void
     {
-        $this->registerServiceAlias($container, 'somework_cqrs.retry.command', $config['command']);
-        $this->registerServiceAlias($container, 'somework_cqrs.retry.query', $config['query']);
-        $this->registerServiceAlias($container, 'somework_cqrs.retry.event', $config['event']);
+        foreach (['command', 'query', 'event'] as $type) {
+            $this->registerServiceAlias($container, sprintf('somework_cqrs.retry.%s', $type), $config[$type]['default']);
+
+            $serviceMap = [];
+            foreach ($config[$type]['map'] as $messageClass => $serviceId) {
+                $resolvedId = $this->ensureServiceExists($container, $serviceId);
+                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+            }
+
+            $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
+            $container->setAlias(sprintf('somework_cqrs.retry.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+
+            $resolverDefinition = new Definition(RetryPolicyResolver::class);
+            $resolverDefinition->setArgument('$defaultPolicy', new Reference(sprintf('somework_cqrs.retry.%s', $type)));
+            $resolverDefinition->setArgument('$policies', $locatorReference);
+            $resolverDefinition->setPublic(false);
+
+            $container->setDefinition(sprintf('somework_cqrs.retry.%s_resolver', $type), $resolverDefinition);
+        }
     }
 
     /**

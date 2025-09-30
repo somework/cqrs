@@ -20,9 +20,18 @@ somework_cqrs:
         query: null                                     # falls back to default
         event: null
     retry_policies:
-        command: SomeWork\CqrsBundle\Support\NullRetryPolicy
-        query: app.query_retry_policy
-        event: SomeWork\CqrsBundle\Support\NullRetryPolicy
+        command:
+            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            map:
+                App\Application\Command\ShipOrder: app.command.retry_policy
+                App\Domain\Contract\RequiresImmediateRetry: app.command.retry_policy_for_interface
+        query:
+            default: app.query_retry_policy
+            map: {}
+        event:
+            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            map:
+                App\Domain\Event\OrderShipped: app.event.retry_policy
     serialization:
         command: SomeWork\CqrsBundle\Support\NullMessageSerializer
         query: app.query_serializer
@@ -37,9 +46,12 @@ somework_cqrs:
   `SomeWork\CqrsBundle\Contract\MessageNamingStrategy`. They control the human
   readable message names exposed in CLI tooling and diagnostics.
 * **retry_policies** – services implementing
-  `SomeWork\CqrsBundle\Contract\RetryPolicy`. The buses merge the returned
-  stamps into each dispatch call so you can apply custom retry strategies per
-  message type.
+  `SomeWork\CqrsBundle\Contract\RetryPolicy`. Each section defines a `default`
+  service applied to the entire message type and an optional `map` of
+  message-specific overrides. Keys inside `map` may reference a concrete
+  message class, a parent class, or an interface implemented by the message.
+  The buses merge the returned stamps into each dispatch call so you can tailor
+  retry behaviour per message or shared contracts.
 * **serialization** – services implementing
   `SomeWork\CqrsBundle\Contract\MessageSerializer`. When the service returns a
   `SerializerStamp` it is appended to the dispatch call.
