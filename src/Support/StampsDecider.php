@@ -7,8 +7,6 @@ namespace SomeWork\CqrsBundle\Support;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
-use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
