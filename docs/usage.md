@@ -114,3 +114,10 @@ presenting handler information.
 The bundle does not replace Messenger configuration. Configure your buses and
 transports as usual and wire the CQRS buses to the appropriate Messenger buses.
 See the reference documentation for the list of configurable options.
+
+Handlers that implement `SomeWork\CqrsBundle\Contract\EnvelopeAware` (or use the
+bundled `EnvelopeAwareTrait`) automatically receive the current Messenger
+`Envelope` before execution. The bundle decorates the handlers locator for each
+configured CQRS bus so that `setEnvelope()` is invoked for both synchronous and
+asynchronous handlers, allowing you to access stamps and metadata via
+`$this->getEnvelope()`.

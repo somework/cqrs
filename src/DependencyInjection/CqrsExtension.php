@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -67,6 +68,7 @@ final class CqrsExtension extends Extension
         $this->registerDispatchModeDecider($container, $config['dispatch_modes']);
         $this->registerDispatchAfterCurrentBusDecider($container, $config['async']['dispatch_after_current_bus']);
         $this->registerStampsDecider($container);
+        $this->registerEnvelopeAwareHandlersLocators($container, $config['buses'], $defaultBusId);
         $this->configureBusServices($container, $config['buses'], $defaultBusId);
     }
 
@@ -121,6 +123,32 @@ final class CqrsExtension extends Extension
 
             $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $eventBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
+        }
+    }
+
+    /**
+     * @param array{command?: string|null, command_async?: string|null, query?: string|null, event?: string|null, event_async?: string|null} $buses
+     */
+    private function registerEnvelopeAwareHandlersLocators(ContainerBuilder $container, array $buses, string $defaultBusId): void
+    {
+        $busIds = array_filter([
+            $buses['command'] ?? $defaultBusId,
+            $buses['command_async'] ?? null,
+            $buses['query'] ?? $defaultBusId,
+            $buses['event'] ?? $defaultBusId,
+            $buses['event_async'] ?? null,
+        ]);
+
+        $busIds = array_values(array_unique($busIds));
+
+        foreach ($busIds as $busId) {
+            $locatorId = sprintf('%s.messenger.handlers_locator', $busId);
+
+            $decoratorId = sprintf('somework_cqrs.envelope_aware_handlers_locator.%s', md5($locatorId));
+
+            $container->register($decoratorId, EnvelopeAwareHandlersLocator::class)
+                ->setDecoratedService($locatorId)
+                ->setArgument('$decorated', new Reference($decoratorId.'.inner'));
         }
     }
 
