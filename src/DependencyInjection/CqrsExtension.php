@@ -382,6 +382,7 @@ final class CqrsExtension extends Extension
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
+        $container->setAlias(DispatchModeDecider::class, 'somework_cqrs.dispatch_mode_decider')->setPublic(false);
     }
 
     /**
@@ -483,6 +484,7 @@ final class CqrsExtension extends Extension
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.dispatch_after_current_bus_decider', $definition);
+        $container->setAlias(DispatchAfterCurrentBusDecider::class, 'somework_cqrs.dispatch_after_current_bus_decider')->setPublic(false);
     }
 
     private function registerStampsDecider(ContainerBuilder $container): void

@@ -4,8 +4,15 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
+use ReflectionClass;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\Table;
@@ -13,9 +20,14 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
+use function class_exists;
+use function get_debug_type;
 use function in_array;
+use function is_object;
 use function is_string;
+use function sprintf;
 
 #[AsCommand(
     name: 'somework:cqrs:list',
@@ -23,14 +35,60 @@ use function is_string;
 )]
 final class ListHandlersCommand extends Command
 {
-    public function __construct(private readonly HandlerRegistry $registry)
-    {
+    /**
+     * @var array<string, RetryPolicyResolver>
+     */
+    private readonly array $retryResolvers;
+
+    /**
+     * @var array<string, MessageSerializerResolver>
+     */
+    private readonly array $serializerResolvers;
+
+    /**
+     * @var array<string, MessageMetadataProviderResolver>
+     */
+    private readonly array $metadataResolvers;
+
+    public function __construct(
+        private readonly HandlerRegistry $registry,
+        private readonly DispatchModeDecider $dispatchModeDecider,
+        private readonly DispatchAfterCurrentBusDecider $dispatchAfterCurrentBusDecider,
+        #[Autowire(service: 'somework_cqrs.retry.command_resolver')] RetryPolicyResolver $commandRetryResolver,
+        #[Autowire(service: 'somework_cqrs.retry.query_resolver')] RetryPolicyResolver $queryRetryResolver,
+        #[Autowire(service: 'somework_cqrs.retry.event_resolver')] RetryPolicyResolver $eventRetryResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.command_resolver')] MessageSerializerResolver $commandSerializerResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.query_resolver')] MessageSerializerResolver $querySerializerResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.event_resolver')] MessageSerializerResolver $eventSerializerResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.command_resolver')] MessageMetadataProviderResolver $commandMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.query_resolver')] MessageMetadataProviderResolver $queryMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.event_resolver')] MessageMetadataProviderResolver $eventMetadataResolver,
+    ) {
         parent::__construct();
+
+        $this->retryResolvers = [
+            'command' => $commandRetryResolver,
+            'query' => $queryRetryResolver,
+            'event' => $eventRetryResolver,
+        ];
+
+        $this->serializerResolvers = [
+            'command' => $commandSerializerResolver,
+            'query' => $querySerializerResolver,
+            'event' => $eventSerializerResolver,
+        ];
+
+        $this->metadataResolvers = [
+            'command' => $commandMetadataResolver,
+            'query' => $queryMetadataResolver,
+            'event' => $eventMetadataResolver,
+        ];
     }
 
     protected function configure(): void
     {
         $this
+            ->addOption('details', mode: InputOption::VALUE_NONE, description: 'Display resolved configuration details for each handler.')
             ->addOption('type', mode: InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, description: 'Filter by message type (command, query, event).');
     }
 
@@ -41,12 +99,13 @@ final class ListHandlersCommand extends Command
         /** @var array<int, string>|string|null $requestedTypes */
         $requestedTypes = $input->getOption('type');
         $types = $this->normaliseTypes($requestedTypes);
+        $showDetails = (bool) $input->getOption('details');
 
         $rows = [];
         foreach ($types as $type) {
             $descriptors = $this->registry->byType($type);
             foreach ($descriptors as $descriptor) {
-                $rows[] = $this->formatDescriptor($descriptor);
+                $rows[] = $this->formatDescriptor($descriptor, $showDetails);
             }
         }
 
@@ -61,8 +120,14 @@ final class ListHandlersCommand extends Command
             static fn (array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]
         );
 
+        $headers = ['Type', 'Message', 'Handler', 'Service Id', 'Bus'];
+
+        if ($showDetails) {
+            $headers = [...$headers, 'Dispatch Mode', 'Async Defers', 'Retry Policy', 'Serializer', 'Metadata Provider'];
+        }
+
         $table = new Table($output);
-        $table->setHeaders(['Type', 'Message', 'Handler', 'Service Id', 'Bus']);
+        $table->setHeaders($headers);
         $table->setRows($rows);
         $table->render();
 
@@ -97,17 +162,125 @@ final class ListHandlersCommand extends Command
         return array_values(array_unique($types));
     }
 
-    /**
-     * @return array{0: string, 1: string, 2: string, 3: string, 4: string}
-     */
-    private function formatDescriptor(HandlerDescriptor $descriptor): array
+    private function formatDescriptor(HandlerDescriptor $descriptor, bool $showDetails): array
     {
-        return [
+        $row = [
             ucfirst($descriptor->type),
             $this->registry->getDisplayName($descriptor),
             $descriptor->handlerClass,
             $descriptor->serviceId,
             $descriptor->bus ?? 'default',
         ];
+
+        if (!$showDetails) {
+            return $row;
+        }
+
+        $details = $this->describeDescriptor($descriptor);
+
+        return [...$row, ...$details];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function describeDescriptor(HandlerDescriptor $descriptor): array
+    {
+        $message = $this->instantiateMessage($descriptor->messageClass);
+
+        $dispatchMode = $this->describeDispatchMode($message);
+        $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
+
+        $retryResolver = $this->retryResolvers[$descriptor->type] ?? null;
+        $retry = $this->describeResolvedService(
+            $retryResolver,
+            $message,
+            static fn (RetryPolicyResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
+        );
+
+        $serializerResolver = $this->serializerResolvers[$descriptor->type] ?? null;
+        $serializer = $this->describeResolvedService(
+            $serializerResolver,
+            $message,
+            static fn (MessageSerializerResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
+        );
+
+        $metadataResolver = $this->metadataResolvers[$descriptor->type] ?? null;
+        $metadata = $this->describeResolvedService(
+            $metadataResolver,
+            $message,
+            static fn (MessageMetadataProviderResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
+        );
+
+        return [$dispatchMode, $asyncDefers, $retry, $serializer, $metadata];
+    }
+
+    private function describeDispatchMode(?object $message): string
+    {
+        if (null === $message) {
+            return 'n/a';
+        }
+
+        return $this->dispatchModeDecider->resolve($message, DispatchMode::DEFAULT)->value;
+    }
+
+    private function describeAsyncDeferral(string $type, ?object $message): string
+    {
+        if (null === $message) {
+            return 'n/a';
+        }
+
+        if (!in_array($type, ['command', 'event'], true)) {
+            return 'n/a';
+        }
+
+        return $this->dispatchAfterCurrentBusDecider->shouldDefer($message) ? 'yes' : 'no';
+    }
+
+    /**
+     * @template T
+     * @param T|null $resolver
+     * @param callable(T, object): object $callback
+     */
+    private function describeResolvedService(mixed $resolver, ?object $message, callable $callback): string
+    {
+        if (null === $resolver || null === $message) {
+            return 'n/a';
+        }
+
+        try {
+            $service = $callback($resolver, $message);
+        } catch (\Throwable $exception) {
+            return sprintf('error: %s', $exception->getMessage());
+        }
+
+        if (!is_object($service)) {
+            return get_debug_type($service);
+        }
+
+        return $service::class;
+    }
+
+    private function instantiateMessage(string $messageClass): ?object
+    {
+        if (!class_exists($messageClass)) {
+            return null;
+        }
+
+        try {
+            $reflection = new ReflectionClass($messageClass);
+        } catch (\ReflectionException) {
+            return null;
+        }
+
+        if ($reflection->isInterface() || $reflection->isAbstract()) {
+            return null;
+        }
+
+        try {
+            return $reflection->newInstanceWithoutConstructor();
+        } catch (\Throwable) {
+            return null;
+        }
     }
 }
