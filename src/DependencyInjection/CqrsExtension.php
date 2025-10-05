@@ -16,6 +16,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\EventHandler;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
@@ -109,8 +110,7 @@ final class CqrsExtension extends Extension
         if ($container->hasDefinition(QueryBus::class)) {
             $queryBusDefinition = $container->getDefinition(QueryBus::class);
             $queryBusDefinition->setArgument('$bus', new Reference($buses['query'] ?? $defaultBusId));
-            $queryBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.query_resolver'));
-            $queryBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.query_resolver'));
+            $queryBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
         }
 
         if ($container->hasDefinition(EventBus::class)) {
@@ -419,6 +419,30 @@ final class CqrsExtension extends Extension
         $commandSerializerDefinition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.stamp_decider.command_serializer', $commandSerializerDefinition);
+
+        $queryRetryDefinition = new Definition(RetryPolicyStampDecider::class);
+        $queryRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.query_resolver'));
+        $queryRetryDefinition->setArgument('$messageType', Query::class);
+        $queryRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
+        $queryRetryDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.query_retry', $queryRetryDefinition);
+
+        $querySerializerDefinition = new Definition(MessageSerializerStampDecider::class);
+        $querySerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.query_resolver'));
+        $querySerializerDefinition->setArgument('$messageType', Query::class);
+        $querySerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
+        $querySerializerDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.query_serializer', $querySerializerDefinition);
+
+        $queryMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
+        $queryMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.query_resolver'));
+        $queryMetadataDefinition->setArgument('$messageType', Query::class);
+        $queryMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
+        $queryMetadataDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.query_metadata', $queryMetadataDefinition);
 
         $commandMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
         $commandMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.command_resolver'));
