@@ -51,6 +51,22 @@ final class EventBus
         return $this->selectBus($resolvedMode)->dispatch($event, $stamps);
     }
 
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchSync(Event $event, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($event, DispatchMode::SYNC, ...$stamps);
+    }
+
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchAsync(Event $event, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($event, DispatchMode::ASYNC, ...$stamps);
+    }
+
     private function selectBus(DispatchMode $mode): MessageBusInterface
     {
         if (DispatchMode::ASYNC === $mode) {

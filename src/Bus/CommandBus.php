@@ -51,6 +51,22 @@ final class CommandBus
         return $this->selectBus($resolvedMode)->dispatch($command, $stamps);
     }
 
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchSync(Command $command, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($command, DispatchMode::SYNC, ...$stamps);
+    }
+
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($command, DispatchMode::ASYNC, ...$stamps);
+    }
+
     private function selectBus(DispatchMode $mode): MessageBusInterface
     {
         if (DispatchMode::ASYNC === $mode) {
