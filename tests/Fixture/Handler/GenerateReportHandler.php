@@ -27,6 +27,7 @@ final class GenerateReportHandler extends AbstractCommandHandler
         assert($command instanceof GenerateReportCommand);
 
         $this->recorder->recordReport($command->reportId);
+        $this->recorder->recordEnvelopeMessage(self::class, $this->getEnvelope());
 
         return null;
     }

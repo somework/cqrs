@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Service;
 
+use Symfony\Component\Messenger\Envelope;
+
 use function in_array;
 
 /**
@@ -23,12 +25,16 @@ final class TaskRecorder
     /** @var list<string> */
     private array $asyncEvents = [];
 
+    /** @var array<string, list<class-string<object>>> */
+    private array $handledMessages = [];
+
     public function reset(): void
     {
         $this->tasks = [];
         $this->asyncReports = [];
         $this->events = [];
         $this->asyncEvents = [];
+        $this->handledMessages = [];
     }
 
     public function recordTask(string $id, string $name): void
@@ -75,5 +81,18 @@ final class TaskRecorder
     public function asyncEvents(): array
     {
         return $this->asyncEvents;
+    }
+
+    public function recordEnvelopeMessage(string $handlerClass, Envelope $envelope): void
+    {
+        $this->handledMessages[$handlerClass][] = $envelope->getMessage()::class;
+    }
+
+    /**
+     * @return list<class-string<object>>
+     */
+    public function handledMessages(string $handlerClass): array
+    {
+        return $this->handledMessages[$handlerClass] ?? [];
     }
 }
