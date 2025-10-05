@@ -45,6 +45,19 @@ somework_cqrs:
             default: SomeWork\CqrsBundle\Support\NullMessageSerializer
             map:
                 App\Domain\Event\OrderShipped: app.event.serializer
+    metadata:
+        default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
+        command:
+            default: null
+            map:
+                App\Application\Command\ShipOrder: app.command.metadata_provider
+        query:
+            default: null
+            map: {}
+        event:
+            default: null
+            map:
+                App\Domain\Event\OrderShipped: app.event.metadata_provider
     dispatch_modes:
         command:
             default: sync
@@ -84,6 +97,13 @@ somework_cqrs:
   retry policy structure with a global `default`, per-type `default`, and a
   message-specific `map`. The buses resolve serializers in that order and append
   the returned `SerializerStamp` to the dispatch call when provided.
+* **metadata** – services implementing
+  `SomeWork\CqrsBundle\Contract\MessageMetadataProvider`. The configuration
+  mirrors the serializer structure with a global `default`, per-type `default`,
+  and per-message `map`. Providers return `MessageMetadataStamp` instances that
+  the bundle appends to dispatched messages. The default provider generates
+  random correlation identifiers, but you can replace it with deterministic
+  implementations for specific messages when required.
 * **dispatch_modes** – controls whether commands and events are dispatched
   synchronously or asynchronously when callers omit the `DispatchMode` argument.
   Each section defines a `default` mode (`sync` or `async`) plus a `map` of

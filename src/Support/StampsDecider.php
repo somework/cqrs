@@ -7,6 +7,8 @@ namespace SomeWork\CqrsBundle\Support;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -29,17 +31,19 @@ final class StampsDecider implements StampDecider
     public static function withDefaultCommandDecorators(
         RetryPolicyResolver $retryPolicies,
         MessageSerializerResolver $serializers,
+        MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
     ): self {
-        return self::withDefaultsFor(Command::class, $retryPolicies, $serializers, $dispatchAfter);
+        return self::withDefaultsFor(Command::class, $retryPolicies, $serializers, $metadata, $dispatchAfter);
     }
 
     public static function withDefaultEventDecorators(
         RetryPolicyResolver $retryPolicies,
         MessageSerializerResolver $serializers,
+        MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
     ): self {
-        return self::withDefaultsFor(Event::class, $retryPolicies, $serializers, $dispatchAfter);
+        return self::withDefaultsFor(Event::class, $retryPolicies, $serializers, $metadata, $dispatchAfter);
     }
 
     public static function withoutDecorators(): self
@@ -65,11 +69,13 @@ final class StampsDecider implements StampDecider
         string $messageType,
         RetryPolicyResolver $retryPolicies,
         MessageSerializerResolver $serializers,
+        MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
     ): self {
         $deciders = [
             new RetryPolicyStampDecider($retryPolicies, $messageType),
             new MessageSerializerStampDecider($serializers, $messageType),
+            new MessageMetadataStampDecider($metadata, $messageType),
         ];
 
         $deciders[] = new DispatchAfterCurrentBusStampDecider($dispatchAfter ?? DispatchAfterCurrentBusDecider::defaults());

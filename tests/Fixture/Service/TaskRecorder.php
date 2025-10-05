@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Service;
 
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use Symfony\Component\Messenger\Envelope;
 
 use function in_array;
@@ -28,6 +29,9 @@ final class TaskRecorder
     /** @var array<string, list<class-string<object>>> */
     private array $handledMessages = [];
 
+    /** @var array<string, list<MessageMetadataStamp>> */
+    private array $metadataStamps = [];
+
     public function reset(): void
     {
         $this->tasks = [];
@@ -35,6 +39,7 @@ final class TaskRecorder
         $this->events = [];
         $this->asyncEvents = [];
         $this->handledMessages = [];
+        $this->metadataStamps = [];
     }
 
     public function recordTask(string $id, string $name): void
@@ -86,6 +91,11 @@ final class TaskRecorder
     public function recordEnvelopeMessage(string $handlerClass, Envelope $envelope): void
     {
         $this->handledMessages[$handlerClass][] = $envelope->getMessage()::class;
+
+        $metadataStamp = $envelope->last(MessageMetadataStamp::class);
+        if ($metadataStamp instanceof MessageMetadataStamp) {
+            $this->metadataStamps[$handlerClass][] = $metadataStamp;
+        }
     }
 
     /**
@@ -94,5 +104,13 @@ final class TaskRecorder
     public function handledMessages(string $handlerClass): array
     {
         return $this->handledMessages[$handlerClass] ?? [];
+    }
+
+    /**
+     * @return list<MessageMetadataStamp>
+     */
+    public function metadataStamps(string $handlerClass): array
+    {
+        return $this->metadataStamps[$handlerClass] ?? [];
     }
 }
