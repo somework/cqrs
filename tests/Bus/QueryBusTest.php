@@ -7,11 +7,16 @@ namespace SomeWork\CqrsBundle\Tests\Bus;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\QueryBus;
+use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
@@ -36,7 +41,10 @@ final class QueryBusTest extends TestCase
             ->with($query, [])
             ->willReturn($envelope);
 
-        $queryBus = new QueryBus($bus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+        );
 
         self::assertSame('value', $queryBus->ask($query));
     }
@@ -52,7 +60,10 @@ final class QueryBusTest extends TestCase
             ->with($query, [])
             ->willReturn($envelope);
 
-        $queryBus = new QueryBus($bus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+        );
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Query was not handled by any handler.');
@@ -60,12 +71,13 @@ final class QueryBusTest extends TestCase
         $queryBus->ask($query);
     }
 
-    public function test_ask_merges_supplied_stamps_with_retry_and_serializer(): void
+    public function test_ask_merges_supplied_stamps_with_default_pipeline(): void
     {
         $query = new FindTaskQuery('123');
         $userStamp = new DummyStamp('user');
         $retryStamp = new DummyStamp('retry');
         $serializerStamp = new SerializerStamp(['format' => 'json']);
+        $metadataStamp = new MessageMetadataStamp('correlation-id');
 
         $defaultPolicy = $this->createMock(RetryPolicy::class);
         $defaultPolicy->expects(self::never())->method('getStamps');
@@ -82,6 +94,19 @@ final class QueryBusTest extends TestCase
             ->with($query, DispatchMode::SYNC)
             ->willReturn($serializerStamp);
 
+        $defaultMetadata = new class implements MessageMetadataProvider {
+            public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
+            {
+                return null;
+            }
+        };
+
+        $metadataProvider = $this->createMock(MessageMetadataProvider::class);
+        $metadataProvider->expects(self::once())
+            ->method('getStamp')
+            ->with($query, DispatchMode::SYNC)
+            ->willReturn($metadataStamp);
+
         $handled = new HandledStamp('result', 'handler');
         $envelope = (new Envelope($query))->with($handled);
 
@@ -90,8 +115,8 @@ final class QueryBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $query,
-                self::callback(function (array $stamps) use ($userStamp, $retryStamp, $serializerStamp): bool {
-                    self::assertSame([$userStamp, $retryStamp, $serializerStamp], $stamps);
+                self::callback(function (array $stamps) use ($userStamp, $retryStamp, $serializerStamp, $metadataStamp): bool {
+                    self::assertSame([$userStamp, $retryStamp, $serializerStamp, $metadataStamp], $stamps);
 
                     return true;
                 })
@@ -109,7 +134,13 @@ final class QueryBusTest extends TestCase
             FindTaskQuery::class => $serializer,
         ]);
 
-        $queryBus = new QueryBus($bus, $resolver, $serializers);
+        $metadata = $this->createMetadataResolver($defaultMetadata, null, [
+            FindTaskQuery::class => $metadataProvider,
+        ]);
+
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $resolver, $serializers, $metadata);
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query, $userStamp));
     }
@@ -144,7 +175,12 @@ final class QueryBusTest extends TestCase
             ])
         );
 
-        $queryBus = new QueryBus($bus, $resolver, MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()));
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+
+        $serializers = MessageSerializerResolver::withoutOverrides(new NullMessageSerializer());
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $resolver, $serializers, $metadata);
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query));
     }
@@ -171,6 +207,8 @@ final class QueryBusTest extends TestCase
             [FindTaskQuery::class => $messageSerializer],
         );
 
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+
         $handled = new HandledStamp('result', 'handler');
         $envelope = (new Envelope($query))->with($handled);
 
@@ -180,7 +218,10 @@ final class QueryBusTest extends TestCase
             ->with($query, [])
             ->willReturn($envelope);
 
-        $queryBus = new QueryBus($bus, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $retryResolver = RetryPolicyResolver::withoutOverrides();
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $retryResolver, $serializers, $metadata);
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query));
     }
@@ -200,6 +241,8 @@ final class QueryBusTest extends TestCase
 
         $serializers = $this->createSerializerResolver($globalSerializer, $typeSerializer);
 
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+
         $handled = new HandledStamp('result', 'handler');
         $envelope = (new Envelope($query))->with($handled);
 
@@ -209,7 +252,10 @@ final class QueryBusTest extends TestCase
             ->with($query, [])
             ->willReturn($envelope);
 
-        $queryBus = new QueryBus($bus, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $retryResolver = RetryPolicyResolver::withoutOverrides();
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $retryResolver, $serializers, $metadata);
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query));
     }
@@ -226,6 +272,8 @@ final class QueryBusTest extends TestCase
 
         $serializers = $this->createSerializerResolver($globalSerializer, $globalSerializer);
 
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+
         $handled = new HandledStamp('result', 'handler');
         $envelope = (new Envelope($query))->with($handled);
 
@@ -235,7 +283,10 @@ final class QueryBusTest extends TestCase
             ->with($query, [])
             ->willReturn($envelope);
 
-        $queryBus = new QueryBus($bus, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $retryResolver = RetryPolicyResolver::withoutOverrides();
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $retryResolver, $serializers, $metadata);
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query));
     }
@@ -257,6 +308,8 @@ final class QueryBusTest extends TestCase
             ->with($query, DispatchMode::SYNC)
             ->willReturn(null);
 
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+
         $handled = new HandledStamp('result', 'handler');
         $envelope = (new Envelope($query))->with($handled);
 
@@ -277,10 +330,53 @@ final class QueryBusTest extends TestCase
         $serializers = $this->createSerializerResolver(new NullMessageSerializer(), null, [
             FindTaskQuery::class => $serializer,
         ]);
+        $stampsDecider = StampsDecider::withDefaultsFor(Query::class, $retryResolver, $serializers, $metadata);
 
-        $queryBus = new QueryBus($bus, $retryResolver, $serializers);
+        $queryBus = new QueryBus($bus, $stampsDecider);
 
         self::assertSame('result', $queryBus->ask($query));
+    }
+
+    public function test_ask_uses_custom_stamps_decider_when_provided(): void
+    {
+        $query = new FindTaskQuery('123');
+        $customStamp = new DummyStamp('custom');
+
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $query,
+                self::callback(static function (array $stamps) use ($customStamp): bool {
+                    self::assertSame([$customStamp], $stamps);
+
+                    return true;
+                })
+            )
+            ->willReturn($envelope);
+
+        $decider = new class($customStamp) implements \SomeWork\CqrsBundle\Support\StampDecider {
+            public function __construct(private readonly DummyStamp $stamp)
+            {
+            }
+
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                $stamps[] = $this->stamp;
+
+                return $stamps;
+            }
+        };
+
+        $queryBus = new QueryBus(
+            $bus,
+            new StampsDecider([$decider]),
+        );
+
+        self::assertSame('value', $queryBus->ask($query));
     }
 
     /**
@@ -303,5 +399,37 @@ final class QueryBusTest extends TestCase
         }
 
         return new MessageSerializerResolver(new ServiceLocator($services));
+    }
+
+    private function createNullMetadataProvider(): MessageMetadataProvider
+    {
+        return new class implements MessageMetadataProvider {
+            public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
+            {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * @param array<class-string, MessageMetadataProvider> $map
+     */
+    private function createMetadataResolver(
+        MessageMetadataProvider $global,
+        ?MessageMetadataProvider $type = null,
+        array $map = []
+    ): MessageMetadataProviderResolver {
+        $type ??= $global;
+
+        $services = [
+            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $global,
+            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $type,
+        ];
+
+        foreach ($map as $class => $provider) {
+            $services[$class] = static fn (): MessageMetadataProvider => $provider;
+        }
+
+        return new MessageMetadataProviderResolver(new ServiceLocator($services));
     }
 }

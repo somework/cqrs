@@ -63,7 +63,7 @@ final class StampsDecider implements StampDecider
         return array_values($stamps);
     }
 
-    private static function withDefaultsFor(
+    public static function withDefaultsFor(
         string $messageType,
         RetryPolicyResolver $retryPolicies,
         MessageSerializerResolver $serializers,

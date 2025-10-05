@@ -125,7 +125,9 @@ somework_cqrs:
   Additional stamp logic can be plugged in by implementing
   `SomeWork\CqrsBundle\Support\StampDecider`, tagging it as
   `somework_cqrs.dispatch_stamp_decider`, and letting the bundle run it when
-  commands or events are dispatched.
+  commands, queries, or events are dispatched. Queries now honour the same
+  retry, serializer, metadata, and custom stamp hooks as the other CQRS
+  facades.
 
 ### Message type matching
 
