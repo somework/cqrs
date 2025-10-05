@@ -106,13 +106,30 @@ somework_cqrs:
                 App\Application\Command\ShipOrder: app.command.retry_policy
                 App\Domain\Contract\RequiresImmediateRetry: app.command.retry_policy_for_interface
     serialization:
-        command: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        command:
+            default: null
+            map:
+                App\Application\Command\ShipOrder: app.command.serializer
+        query:
+            default: app.query_serializer
+            map: {}
+        event:
+            default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+            map:
+                App\Domain\Event\OrderShipped: app.event.serializer
 ```
 
 Use the `map` section inside each `retry_policies` entry to override the
 default policy for specific messages while keeping a shared fallback for the
 rest of the type. Keys may reference concrete messages, parent classes, or
 interfaces so you can coordinate retry behaviour across a group of messages.
+
+`serialization` follows the same shape. Configure a `default` service applied to
+every message type, override each type via its `default` entry, and list
+message-specific serializer services inside `map`. The buses check for
+message-specific serializers first, then fall back to the type default and
+finally to the global default.
 
 See [`docs/reference.md`](docs/reference.md) for a complete description of every
 option and [`docs/usage.md`](docs/usage.md) for more examples.
