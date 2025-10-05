@@ -54,6 +54,23 @@ final class ConsoleCommandKernelTest extends KernelTestCase
         self::assertStringNotContainsString('TaskCreatedEvent', $display);
     }
 
+    public function test_list_command_reports_handler_configuration_details(): void
+    {
+        $tester = $this->executeCommand('somework:cqrs:list', ['--details' => true]);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode());
+
+        $display = $tester->getDisplay(true);
+
+        self::assertStringContainsString('Dispatch Mode', $display);
+        self::assertStringContainsString('Async Defers', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullRetryPolicy', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullMessageSerializer', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\RandomCorrelationMetadataProvider', $display);
+        self::assertMatchesRegularExpression('/CreateTaskCommand[^\n]+sync[^\n]+yes/', $display);
+        self::assertMatchesRegularExpression('/FindTaskQuery[^\n]+sync[^\n]+n\/a/', $display);
+    }
+
     private function executeCommand(string $name, array $input = []): CommandTester
     {
         $kernel = self::$kernel;
