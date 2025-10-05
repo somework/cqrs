@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Bus;
 
+use ReflectionClass;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 
@@ -29,6 +30,9 @@ final class DispatchModeDecider
         return new self(DispatchMode::SYNC, DispatchMode::SYNC);
     }
 
+    /** @var array<class-string, int> */
+    private array $interfaceDepthCache = [];
+
     public function resolve(object $message, DispatchMode $requested): DispatchMode
     {
         if (DispatchMode::DEFAULT !== $requested) {
@@ -36,13 +40,95 @@ final class DispatchModeDecider
         }
 
         if ($message instanceof Command) {
-            return $this->commandMap[$message::class] ?? $this->commandDefault;
+            return $this->resolveFor($message, $this->commandMap, $this->commandDefault);
         }
 
         if ($message instanceof Event) {
-            return $this->eventMap[$message::class] ?? $this->eventDefault;
+            return $this->resolveFor($message, $this->eventMap, $this->eventDefault);
         }
 
         return DispatchMode::SYNC;
+    }
+
+    /**
+     * @param array<class-string, DispatchMode> $map
+     */
+    private function resolveFor(object $message, array $map, DispatchMode $default): DispatchMode
+    {
+        foreach ($this->getClassHierarchy($message) as $class) {
+            if (isset($map[$class])) {
+                return $map[$class];
+            }
+        }
+
+        foreach ($this->getInterfaceHierarchy($message) as $interface) {
+            if (isset($map[$interface])) {
+                return $map[$interface];
+            }
+        }
+
+        return $default;
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private function getClassHierarchy(object $message): array
+    {
+        $classes = [$message::class];
+        $parents = class_parents($message);
+
+        if (false !== $parents) {
+            $classes = [...$classes, ...array_values($parents)];
+        }
+
+        return $classes;
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private function getInterfaceHierarchy(object $message): array
+    {
+        $interfaces = class_implements($message);
+
+        if (false === $interfaces || [] === $interfaces) {
+            return [];
+        }
+
+        $interfaces = array_values($interfaces);
+        usort(
+            $interfaces,
+            fn (string $a, string $b): int => $this->getInterfaceDepth($b) <=> $this->getInterfaceDepth($a)
+        );
+
+        return $interfaces;
+    }
+
+    private function getInterfaceDepth(string $interface): int
+    {
+        if (isset($this->interfaceDepthCache[$interface])) {
+            return $this->interfaceDepthCache[$interface];
+        }
+
+        if (!interface_exists($interface)) {
+            return $this->interfaceDepthCache[$interface] = 0;
+        }
+
+        $reflection = new ReflectionClass($interface);
+        $parents = $reflection->getInterfaceNames();
+
+        if ([] === $parents) {
+            return $this->interfaceDepthCache[$interface] = 0;
+        }
+
+        $depth = 1;
+        foreach ($parents as $parent) {
+            $depth = max($depth, 1 + $this->getInterfaceDepth($parent));
+        }
+
+        $this->interfaceDepthCache[$interface] = $depth;
+
+        return $depth;
     }
 }

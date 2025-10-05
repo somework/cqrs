@@ -78,9 +78,13 @@ somework_cqrs:
 * **dispatch_modes** – controls whether commands and events are dispatched
   synchronously or asynchronously when callers omit the `DispatchMode` argument.
   Each section defines a `default` mode (`sync` or `async`) plus a `map` of
-  message-specific overrides. When a message resolves to `async` the bundle
-  routes it through the configured asynchronous Messenger bus automatically. If
-  a caller explicitly passes a `DispatchMode`, that choice always wins.
+  message-specific overrides. Keys inside `map` may reference a concrete message
+  class, a parent class, or an interface implemented by the message. The decider
+  walks the class hierarchy and implemented interfaces from most to least
+  specific, so explicit class overrides beat interface ones. When a message
+  resolves to `async` the bundle routes it through the configured asynchronous
+  Messenger bus automatically. If a caller explicitly passes a `DispatchMode`,
+  that choice always wins.
   The `CommandBus` and `EventBus` also expose `dispatchSync()` and
   `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
   mode for convenience.
