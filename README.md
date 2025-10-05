@@ -13,6 +13,35 @@ tooling that keeps your catalogue maintainable.
   and metadata providers.
 * Plays nicely with multiple Messenger buses (sync and async).
 
+## Installation
+
+### Requirements
+
+* PHP 8.2 or newer.
+* Symfony FrameworkBundle 6.4 or 7.x.
+* Symfony Messenger 6.4 or 7.x.
+
+Install the bundle via Composer:
+
+```bash
+composer require somework/cqrs-bundle
+```
+
+Then enable it in `config/bundles.php`:
+
+```php
+return [
+    // ...
+    SomeWork\CqrsBundle\SomeWorkCqrsBundle::class => ['all' => true],
+];
+```
+
+Run the bundled console tooling to verify the bundle is registered:
+
+```bash
+bin/console somework:cqrs:list
+```
+
 ## Quick start
 
 ```php
