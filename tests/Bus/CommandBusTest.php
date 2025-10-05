@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Bus;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -55,6 +56,81 @@ final class CommandBusTest extends TestCase
         $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
+    }
+
+    public function test_dispatch_uses_decider_default_when_mode_not_explicit(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::SYNC),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($command));
+    }
+
+    public function test_dispatch_uses_decider_map_override(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [CreateTaskCommand::class => DispatchMode::ASYNC]),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($command));
+    }
+
+    public function test_explicit_mode_bypasses_decider(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::never())->method('dispatch');
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::ASYNC),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($command, DispatchMode::SYNC));
     }
 
     public function test_async_dispatch_without_bus_throws_exception(): void

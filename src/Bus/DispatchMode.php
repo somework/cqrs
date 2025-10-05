@@ -9,6 +9,7 @@ namespace SomeWork\CqrsBundle\Bus;
  */
 enum DispatchMode: string
 {
+    case DEFAULT = 'default';
     case SYNC = 'sync';
     case ASYNC = 'async';
 }
