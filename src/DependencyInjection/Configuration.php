@@ -126,17 +126,13 @@ final class Configuration implements ConfigurationInterface
         /** @var ArrayNodeDefinition $serializationChildren */
         $serializationChildren = $serialization->children();
         $serializationChildren
-            ->scalarNode('command')
+            ->scalarNode('default')
             ->defaultValue(NullMessageSerializer::class)
-            ->info('MessageSerializer service id applied to commands.');
-        $serializationChildren
-            ->scalarNode('event')
-            ->defaultValue(NullMessageSerializer::class)
-            ->info('MessageSerializer service id applied to events.');
-        $serializationChildren
-            ->scalarNode('query')
-            ->defaultValue(NullMessageSerializer::class)
-            ->info('MessageSerializer service id applied to queries.');
+            ->info('Fallback MessageSerializer service id applied to all messages.');
+
+        $this->configureSerializerSection($serializationChildren, 'command');
+        $this->configureSerializerSection($serializationChildren, 'event');
+        $this->configureSerializerSection($serializationChildren, 'query');
         $serializationChildren->end();
         $serialization->end();
 
@@ -162,6 +158,31 @@ final class Configuration implements ConfigurationInterface
             ->scalarPrototype()
             ->end()
             ->info('Message-specific RetryPolicy service ids. Keys must match the message FQCN.');
+
+        $children->end();
+        $node->end();
+    }
+
+    private function configureSerializerSection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('MessageSerializer services applied to %s messages.', $type));
+
+        $children = $node->children();
+        $children
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info(sprintf('Fallback MessageSerializer service id applied to %s messages. Falls back to serialization.default when null.', $type));
+
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->scalarPrototype()
+            ->end()
+            ->info('Message-specific MessageSerializer service ids. Keys must match the message FQCN.');
 
         $children->end();
         $node->end();

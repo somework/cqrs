@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
@@ -79,14 +80,14 @@ final class CqrsExtension extends Extension
             }
 
             $commandBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
-            $commandBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.command'));
+            $commandBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.command_resolver'));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
             $queryBusDefinition = $container->getDefinition(QueryBus::class);
             $queryBusDefinition->setArgument('$bus', new Reference($buses['query'] ?? $defaultBusId));
             $queryBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.query_resolver'));
-            $queryBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.query'));
+            $queryBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.query_resolver'));
         }
 
         if ($container->hasDefinition(EventBus::class)) {
@@ -101,7 +102,7 @@ final class CqrsExtension extends Extension
             }
 
             $eventBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
-            $eventBusDefinition->setArgument('$serializer', new Reference('somework_cqrs.serializer.event'));
+            $eventBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.event_resolver'));
         }
     }
 
@@ -222,13 +223,46 @@ final class CqrsExtension extends Extension
     }
 
     /**
-     * @param array{command: string, query: string, event: string} $config
+     * @param array{
+     *     default: string,
+     *     command: array{default: string|null, map: array<string, string>},
+     *     query: array{default: string|null, map: array<string, string>},
+     *     event: array{default: string|null, map: array<string, string>},
+     * } $config
      */
     private function registerSerializers(ContainerBuilder $container, array $config): void
     {
-        $this->registerServiceAlias($container, 'somework_cqrs.serializer.command', $config['command']);
-        $this->registerServiceAlias($container, 'somework_cqrs.serializer.query', $config['query']);
-        $this->registerServiceAlias($container, 'somework_cqrs.serializer.event', $config['event']);
+        $defaultId = $this->ensureServiceExists($container, $config['default']);
+        $container->setAlias('somework_cqrs.serializer.default', $defaultId)->setPublic(false);
+
+        foreach (['command', 'query', 'event'] as $type) {
+            $typeDefaultId = $config[$type]['default'];
+            if (null === $typeDefaultId) {
+                $resolvedTypeDefaultId = $defaultId;
+            } else {
+                $resolvedTypeDefaultId = $this->ensureServiceExists($container, $typeDefaultId);
+            }
+
+            $serviceMap = [
+                MessageSerializerResolver::GLOBAL_DEFAULT_KEY => new ServiceClosureArgument(new Reference($defaultId)),
+                MessageSerializerResolver::TYPE_DEFAULT_KEY => new ServiceClosureArgument(new Reference($resolvedTypeDefaultId)),
+            ];
+
+            foreach ($config[$type]['map'] as $messageClass => $serviceId) {
+                $resolvedId = $this->ensureServiceExists($container, $serviceId);
+                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+            }
+
+            $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
+            $container->setAlias(sprintf('somework_cqrs.serializer.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+
+            $resolverDefinition = new Definition(MessageSerializerResolver::class);
+            $resolverDefinition->setArgument('$serializers', $locatorReference);
+            $resolverDefinition->setPublic(false);
+
+            $container->setDefinition(sprintf('somework_cqrs.serializer.%s_resolver', $type), $resolverDefinition);
+            $container->setAlias(sprintf('somework_cqrs.serializer.%s', $type), $resolvedTypeDefaultId)->setPublic(false);
+        }
     }
 
     private function registerServiceAlias(ContainerBuilder $container, string $aliasId, string $serviceId): void
