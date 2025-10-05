@@ -39,6 +39,25 @@ final class CommandBusTest extends TestCase
         self::assertSame($envelope, $bus->dispatch($command));
     }
 
+    public function test_dispatch_sync_helper_uses_sync_bus(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::never())->method('dispatch');
+
+        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        self::assertSame($envelope, $bus->dispatchSync($command));
+    }
+
     public function test_dispatch_to_async_bus_when_configured(): void
     {
         $command = new CreateTaskCommand('123', 'Test');
@@ -56,6 +75,25 @@ final class CommandBusTest extends TestCase
         $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
+    }
+
+    public function test_dispatch_async_helper_to_async_bus_when_configured(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        self::assertSame($envelope, $bus->dispatchAsync($command));
     }
 
     public function test_dispatch_uses_decider_default_when_mode_not_explicit(): void
@@ -145,6 +183,20 @@ final class CommandBusTest extends TestCase
         $this->expectExceptionMessage('Asynchronous command bus is not configured.');
 
         $bus->dispatch($command, DispatchMode::ASYNC);
+    }
+
+    public function test_dispatch_async_helper_without_bus_throws_exception(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+
+        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('Asynchronous command bus is not configured.');
+
+        $bus->dispatchAsync($command);
     }
 
     public function test_dispatch_appends_retry_and_serializer_stamps(): void

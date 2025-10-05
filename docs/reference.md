@@ -81,6 +81,9 @@ somework_cqrs:
   message-specific overrides. When a message resolves to `async` the bundle
   routes it through the configured asynchronous Messenger bus automatically. If
   a caller explicitly passes a `DispatchMode`, that choice always wins.
+  The `CommandBus` and `EventBus` also expose `dispatchSync()` and
+  `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
+  mode for convenience.
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.
