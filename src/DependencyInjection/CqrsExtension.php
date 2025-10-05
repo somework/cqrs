@@ -29,6 +29,7 @@ use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
@@ -57,6 +58,8 @@ final class CqrsExtension extends Extension
         $defaultBusId = $config['default_bus'] ?? 'messenger.default_bus';
         $container->setParameter('somework_cqrs.default_bus', $defaultBusId);
         $container->setParameter('somework_cqrs.handler_metadata', []);
+
+        $this->guardAsyncBusConfiguration($config);
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
@@ -379,6 +382,86 @@ final class CqrsExtension extends Extension
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
+    }
+
+    /**
+     * @param array{
+     *     buses: array{
+     *         command?: string|null,
+     *         command_async?: string|null,
+     *         query?: string|null,
+     *         event?: string|null,
+     *         event_async?: string|null,
+     *     },
+     *     dispatch_modes: array{
+     *         command: array{default: string, map: array<string, string>},
+     *         event: array{default: string, map: array<string, string>},
+     *     },
+     * } $config
+     */
+    private function guardAsyncBusConfiguration(array $config): void
+    {
+        $commandAsyncBus = $config['buses']['command_async'] ?? null;
+        $eventAsyncBus = $config['buses']['event_async'] ?? null;
+
+        $commandAsyncSources = $this->collectAsyncSources($config['dispatch_modes']['command']);
+        if (null === $commandAsyncBus && ($commandAsyncSources['default'] || [] !== $commandAsyncSources['messages'])) {
+            $this->throwMissingAsyncBusException('command', $commandAsyncSources, 'command_async');
+        }
+
+        $eventAsyncSources = $this->collectAsyncSources($config['dispatch_modes']['event']);
+        if (null === $eventAsyncBus && ($eventAsyncSources['default'] || [] !== $eventAsyncSources['messages'])) {
+            $this->throwMissingAsyncBusException('event', $eventAsyncSources, 'event_async');
+        }
+    }
+
+    /**
+     * @param array{default: string, map: array<string, string>} $dispatchConfig
+     *
+     * @return array{default: bool, messages: list<string>}
+     */
+    private function collectAsyncSources(array $dispatchConfig): array
+    {
+        $messages = [];
+
+        foreach ($dispatchConfig['map'] as $messageClass => $mode) {
+            if (DispatchMode::ASYNC->value === $mode) {
+                $messages[] = $messageClass;
+            }
+        }
+
+        return [
+            'default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
+            'messages' => $messages,
+        ];
+    }
+
+    /**
+     * @param array{default: bool, messages: list<string>} $sources
+     */
+    private function throwMissingAsyncBusException(string $type, array $sources, string $busKey): void
+    {
+        $typeLabel = 'command' === $type ? 'commands' : 'events';
+
+        $parts = [];
+        if ($sources['default']) {
+            $parts[] = 'the default dispatch mode is "async"';
+        }
+        if ([] !== $sources['messages']) {
+            $parts[] = sprintf('async map entries: %s', implode(', ', $sources['messages']));
+        }
+
+        $details = implode(' and ', $parts);
+
+        $message = sprintf(
+            'Asynchronous dispatch is configured for %s (%s), but "somework_cqrs.buses.%s" is null. Define the Messenger bus id used for async %s before the container is compiled.',
+            $typeLabel,
+            $details,
+            $busKey,
+            $typeLabel,
+        );
+
+        throw new InvalidConfigurationException($message);
     }
 
     /**
