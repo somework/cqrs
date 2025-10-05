@@ -148,7 +148,8 @@ final class CqrsExtension extends Extension
         $busIds = array_values(array_unique($busIds));
 
         foreach ($busIds as $busId) {
-            $locatorId = sprintf('%s.messenger.handlers_locator', $busId);
+            $resolvedBusId = $this->resolveBusServiceId($container, $busId);
+            $locatorId = sprintf('%s.messenger.handlers_locator', $resolvedBusId);
 
             $decoratorId = sprintf('somework_cqrs.envelope_aware_handlers_locator.%s', md5($locatorId));
 
@@ -156,6 +157,15 @@ final class CqrsExtension extends Extension
                 ->setDecoratedService($locatorId)
                 ->setArgument('$decorated', new Reference($decoratorId.'.inner'));
         }
+    }
+
+    private function resolveBusServiceId(ContainerBuilder $container, string $busId): string
+    {
+        while ($container->hasAlias($busId)) {
+            $busId = (string) $container->getAlias($busId);
+        }
+
+        return $busId;
     }
 
     /**
