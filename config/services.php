@@ -15,7 +15,15 @@ return static function (ContainerConfigurator $configurator): void {
 
     $services
         ->load('SomeWork\\CqrsBundle\\', '../src/*')
-        ->exclude('../src/DependencyInjection');
+        ->exclude([
+            '../src/DependencyInjection',
+            '../src/Support/DispatchAfterCurrentBusDecider.php',
+            '../src/Support/DispatchAfterCurrentBusStampDecider.php',
+            '../src/Support/MessageSerializerStampDecider.php',
+            '../src/Support/StampsDecider.php',
+            '../src/Support/StampDecider.php',
+            '../src/Support/RetryPolicyStampDecider.php',
+        ]);
 
     $services->set(CommandBus::class)->public();
     $services->set(EventBus::class)->public();

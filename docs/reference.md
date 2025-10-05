@@ -54,6 +54,15 @@ somework_cqrs:
             default: sync
             map:
                 App\Domain\Event\OrderShipped: async
+    async:
+        dispatch_after_current_bus:
+            command:
+                default: true
+                map:
+                    App\Application\Command\ShipOrder: false
+            event:
+                default: true
+                map: {}
 ```
 
 * **default_bus** – fallback Messenger bus id. Used whenever a type-specific bus
@@ -79,15 +88,45 @@ somework_cqrs:
   synchronously or asynchronously when callers omit the `DispatchMode` argument.
   Each section defines a `default` mode (`sync` or `async`) plus a `map` of
   message-specific overrides. Keys inside `map` may reference a concrete message
-  class, a parent class, or an interface implemented by the message. The decider
-  walks the class hierarchy and implemented interfaces from most to least
-  specific, so explicit class overrides beat interface ones. When a message
+  class, a parent class, or an interface implemented by the message. When a message
   resolves to `async` the bundle routes it through the configured asynchronous
   Messenger bus automatically. If a caller explicitly passes a `DispatchMode`,
   that choice always wins.
   The `CommandBus` and `EventBus` also expose `dispatchSync()` and
   `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
   mode for convenience.
+* **async.dispatch_after_current_bus** – toggles whether the bundle appends
+  Messenger's `DispatchAfterCurrentBusStamp` when a command or event resolves to
+  the asynchronous bus. Leave the `default` values set to `true` to preserve the
+  existing behaviour and enqueue follow-up messages after the current message
+  finishes processing. Use the `map` to disable the stamp for specific messages
+  that should be sent immediately, even while the current bus is still handling
+  handlers.
+  Additional stamp logic can be plugged in by implementing
+  `SomeWork\CqrsBundle\Support\StampDecider`, tagging it as
+  `somework_cqrs.dispatch_stamp_decider`, and letting the bundle run it when
+  commands or events are dispatched.
+
+### Message type matching
+
+Resolvers that accept message-specific overrides (`retry_policies.map`,
+`serialization.*.map`, `dispatch_modes.map`,
+`async.dispatch_after_current_bus.*.map`, and custom stamp deciders that rely on
+`MessageTypeLocator`) all evaluate the configured keys using the same strategy:
+
+1. **Exact class matches** take priority. When the map contains the concrete
+   message class name the corresponding service is returned immediately.
+2. **Parent classes** are checked from the direct parent up to the root of the
+   hierarchy. The first configured class in that chain wins.
+3. **Interfaces** (and their parents) are considered last. Interfaces
+   implemented directly by the message are evaluated first, followed by their
+   parents. The order is stable so the most specific interface match is chosen.
+
+This behaviour lets you provide sensible fallbacks without listing every message
+explicitly. For example, you can assign a serializer to a shared interface while
+overriding a handful of concrete implementations. When no override is found the
+resolvers fall back to their type-specific `default` and finally to the global
+`default` service where applicable.
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.
