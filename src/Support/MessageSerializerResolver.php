@@ -32,10 +32,14 @@ final class MessageSerializerResolver
 
     public function resolveFor(object $message): MessageSerializer
     {
-        $messageClass = $message::class;
+        $match = MessageTypeLocator::match(
+            $this->serializers,
+            $message,
+            [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY],
+        );
 
-        if ($this->serializers->has($messageClass)) {
-            return $this->assertSerializer($messageClass, $this->serializers->get($messageClass));
+        if (null !== $match) {
+            return $this->assertSerializer($match->type, $match->service);
         }
 
         if ($this->serializers->has(self::TYPE_DEFAULT_KEY)) {

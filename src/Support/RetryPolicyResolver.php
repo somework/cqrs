@@ -28,51 +28,13 @@ final class RetryPolicyResolver
 
     public function resolveFor(object $message): RetryPolicy
     {
-        $messageClass = $message::class;
+        $match = MessageTypeLocator::match($this->policies, $message);
 
-        foreach ($this->classHierarchy($messageClass) as $type) {
-            if ($this->policies->has($type)) {
-                return $this->assertPolicy($type, $this->policies->get($type));
-            }
-        }
-
-        foreach ($this->interfaces($messageClass) as $interface) {
-            if ($this->policies->has($interface)) {
-                return $this->assertPolicy($interface, $this->policies->get($interface));
-            }
+        if (null !== $match) {
+            return $this->assertPolicy($match->type, $match->service);
         }
 
         return $this->defaultPolicy;
-    }
-
-    /**
-     * @return iterable<class-string>
-     */
-    private function classHierarchy(string $class): iterable
-    {
-        for ($type = $class; false !== $type; $type = get_parent_class($type)) {
-            yield $type;
-        }
-    }
-
-    /**
-     * @return iterable<class-string>
-     */
-    private function interfaces(string $class): iterable
-    {
-        $seen = [];
-
-        foreach ($this->classHierarchy($class) as $type) {
-            foreach (class_implements($type, false) as $interface) {
-                if (isset($seen[$interface])) {
-                    continue;
-                }
-
-                $seen[$interface] = true;
-
-                yield $interface;
-            }
-        }
     }
 
     private function assertPolicy(string $type, mixed $service): RetryPolicy
