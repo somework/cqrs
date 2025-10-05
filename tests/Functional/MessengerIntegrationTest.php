@@ -8,6 +8,8 @@ use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\GenerateReportHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
@@ -72,5 +74,23 @@ final class MessengerIntegrationTest extends KernelTestCase
         $result = $queryBus->ask(new FindTaskQuery('task-2'));
 
         self::assertSame('Review PR', $result);
+    }
+
+    public function test_envelope_is_injected_into_sync_and_async_handlers(): void
+    {
+        $commandBus = static::getContainer()->get(CommandBus::class);
+        $recorder = static::getContainer()->get(TaskRecorder::class);
+
+        $commandBus->dispatch(new CreateTaskCommand('task-envelope-sync', 'Sync envelope check'));
+        $commandBus->dispatch(new GenerateReportCommand('report-envelope-async'), DispatchMode::ASYNC);
+
+        self::assertSame(
+            [CreateTaskCommand::class],
+            $recorder->handledMessages(CreateTaskHandler::class)
+        );
+        self::assertSame(
+            [GenerateReportCommand::class],
+            $recorder->handledMessages(GenerateReportHandler::class)
+        );
     }
 }

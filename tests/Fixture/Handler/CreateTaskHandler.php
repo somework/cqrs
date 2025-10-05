@@ -27,6 +27,7 @@ final class CreateTaskHandler extends AbstractCommandHandler
         assert($command instanceof CreateTaskCommand);
 
         $this->recorder->recordTask($command->id, $command->name);
+        $this->recorder->recordEnvelopeMessage(self::class, $this->getEnvelope());
 
         return null;
     }
