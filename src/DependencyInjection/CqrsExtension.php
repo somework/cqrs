@@ -20,6 +20,8 @@ use SomeWork\CqrsBundle\Contract\QueryHandler;
 use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
@@ -65,6 +67,7 @@ final class CqrsExtension extends Extension
         $this->registerNamingStrategies($container, $config['naming']);
         $this->registerRetryPolicies($container, $config['retry_policies']);
         $this->registerSerializers($container, $config['serialization']);
+        $this->registerMetadataProviders($container, $config['metadata']);
         $this->registerDispatchModeDecider($container, $config['dispatch_modes']);
         $this->registerDispatchAfterCurrentBusDecider($container, $config['async']['dispatch_after_current_bus']);
         $this->registerStampsDecider($container);
@@ -313,6 +316,49 @@ final class CqrsExtension extends Extension
 
     /**
      * @param array{
+     *     default: string,
+     *     command: array{default: string|null, map: array<string, string>},
+     *     query: array{default: string|null, map: array<string, string>},
+     *     event: array{default: string|null, map: array<string, string>},
+     * } $config
+     */
+    private function registerMetadataProviders(ContainerBuilder $container, array $config): void
+    {
+        $defaultId = $this->ensureServiceExists($container, $config['default']);
+        $container->setAlias('somework_cqrs.metadata.default', $defaultId)->setPublic(false);
+
+        foreach (['command', 'query', 'event'] as $type) {
+            $typeDefaultId = $config[$type]['default'];
+            if (null === $typeDefaultId) {
+                $resolvedTypeDefaultId = $defaultId;
+            } else {
+                $resolvedTypeDefaultId = $this->ensureServiceExists($container, $typeDefaultId);
+            }
+
+            $serviceMap = [
+                MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => new ServiceClosureArgument(new Reference($defaultId)),
+                MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => new ServiceClosureArgument(new Reference($resolvedTypeDefaultId)),
+            ];
+
+            foreach ($config[$type]['map'] as $messageClass => $serviceId) {
+                $resolvedId = $this->ensureServiceExists($container, $serviceId);
+                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+            }
+
+            $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
+            $container->setAlias(sprintf('somework_cqrs.metadata.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+
+            $resolverDefinition = new Definition(MessageMetadataProviderResolver::class);
+            $resolverDefinition->setArgument('$providers', $locatorReference);
+            $resolverDefinition->setPublic(false);
+
+            $container->setDefinition(sprintf('somework_cqrs.metadata.%s_resolver', $type), $resolverDefinition);
+            $container->setAlias(sprintf('somework_cqrs.metadata.%s', $type), $resolvedTypeDefaultId)->setPublic(false);
+        }
+    }
+
+    /**
+     * @param array{
      *     command: array{default: string, map: array<string, string>},
      *     event: array{default: string, map: array<string, string>},
      * } $config
@@ -374,6 +420,14 @@ final class CqrsExtension extends Extension
 
         $container->setDefinition('somework_cqrs.stamp_decider.command_serializer', $commandSerializerDefinition);
 
+        $commandMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
+        $commandMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.command_resolver'));
+        $commandMetadataDefinition->setArgument('$messageType', Command::class);
+        $commandMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
+        $commandMetadataDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.command_metadata', $commandMetadataDefinition);
+
         $eventRetryDefinition = new Definition(RetryPolicyStampDecider::class);
         $eventRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
         $eventRetryDefinition->setArgument('$messageType', Event::class);
@@ -389,6 +443,14 @@ final class CqrsExtension extends Extension
         $eventSerializerDefinition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.stamp_decider.event_serializer', $eventSerializerDefinition);
+
+        $eventMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
+        $eventMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.event_resolver'));
+        $eventMetadataDefinition->setArgument('$messageType', Event::class);
+        $eventMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
+        $eventMetadataDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.event_metadata', $eventMetadataDefinition);
 
         $dispatchAfterDefinition = new Definition(DispatchAfterCurrentBusStampDecider::class);
         $dispatchAfterDefinition->setArgument('$decider', new Reference('somework_cqrs.dispatch_after_current_bus_decider'));

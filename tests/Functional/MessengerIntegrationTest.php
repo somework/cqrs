@@ -92,5 +92,14 @@ final class MessengerIntegrationTest extends KernelTestCase
             [GenerateReportCommand::class],
             $recorder->handledMessages(GenerateReportHandler::class)
         );
+
+        $syncMetadata = $recorder->metadataStamps(CreateTaskHandler::class);
+        self::assertCount(1, $syncMetadata);
+        self::assertNotSame('', $syncMetadata[0]->getCorrelationId());
+
+        $asyncMetadata = $recorder->metadataStamps(GenerateReportHandler::class);
+        self::assertCount(1, $asyncMetadata);
+        self::assertNotSame('', $asyncMetadata[0]->getCorrelationId());
+        self::assertNotSame($syncMetadata[0]->getCorrelationId(), $asyncMetadata[0]->getCorrelationId());
     }
 }
