@@ -5,6 +5,10 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
 use ReflectionClass;
+use ReflectionIntersectionType;
+use ReflectionNamedType;
+use ReflectionType;
+use ReflectionUnionType;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
@@ -120,13 +124,14 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         $type = $parameters[0]->getType();
-        if (null === $type || $type->isBuiltin()) {
+        if (null === $type) {
             return null;
         }
 
-        $name = $type->getName();
-        if (class_exists($name) || interface_exists($name)) {
-            return $name;
+        foreach ($this->extractTypeNames($type) as $name) {
+            if (class_exists($name) || interface_exists($name)) {
+                return $name;
+            }
         }
 
         return null;
@@ -147,5 +152,29 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         return null;
+    }
+
+    /**
+     * @return list<class-string>
+     */
+    private function extractTypeNames(ReflectionType $type): array
+    {
+        if ($type instanceof ReflectionNamedType) {
+            return $type->isBuiltin() ? [] : [$type->getName()];
+        }
+
+        if ($type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType) {
+            $names = [];
+
+            foreach ($type->getTypes() as $innerType) {
+                if ($innerType instanceof ReflectionNamedType && !$innerType->isBuiltin()) {
+                    $names[] = $innerType->getName();
+                }
+            }
+
+            return $names;
+        }
+
+        return [];
     }
 }
