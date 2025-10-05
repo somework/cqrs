@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
@@ -38,6 +39,25 @@ final class EventBusTest extends TestCase
         self::assertSame($envelope, $bus->dispatch($event));
     }
 
+    public function test_dispatch_sync_helper_uses_sync_bus(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::never())->method('dispatch');
+
+        $bus = new EventBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        self::assertSame($envelope, $bus->dispatchSync($event));
+    }
+
     public function test_dispatch_to_async_bus_when_configured(): void
     {
         $event = new TaskCreatedEvent('123');
@@ -57,6 +77,100 @@ final class EventBusTest extends TestCase
         self::assertSame($envelope, $bus->dispatch($event, DispatchMode::ASYNC));
     }
 
+    public function test_dispatch_async_helper_to_async_bus_when_configured(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $bus = new EventBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        self::assertSame($envelope, $bus->dispatchAsync($event));
+    }
+
+    public function test_dispatch_uses_decider_default_when_mode_not_explicit(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $bus = new EventBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::ASYNC),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($event));
+    }
+
+    public function test_dispatch_uses_decider_map_override(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $bus = new EventBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [], [TaskCreatedEvent::class => DispatchMode::ASYNC]),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($event));
+    }
+
+    public function test_explicit_mode_bypasses_decider(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::never())->method('dispatch');
+
+        $bus = new EventBus(
+            $syncBus,
+            $asyncBus,
+            RetryPolicyResolver::withoutOverrides(),
+            MessageSerializerResolver::withoutOverrides(),
+            new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::ASYNC),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($event, DispatchMode::SYNC));
+    }
+
     public function test_async_dispatch_without_bus_throws_exception(): void
     {
         $event = new TaskCreatedEvent('123');
@@ -69,6 +183,20 @@ final class EventBusTest extends TestCase
         $this->expectExceptionMessage('Asynchronous event bus is not configured.');
 
         $bus->dispatch($event, DispatchMode::ASYNC);
+    }
+
+    public function test_dispatch_async_helper_without_bus_throws_exception(): void
+    {
+        $event = new TaskCreatedEvent('123');
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+
+        $bus = new EventBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('Asynchronous event bus is not configured.');
+
+        $bus->dispatchAsync($event);
     }
 
     public function test_dispatch_applies_retry_policy_and_serializer(): void
