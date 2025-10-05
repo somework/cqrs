@@ -19,6 +19,7 @@ return static function (ContainerConfigurator $configurator): void {
             '../src/DependencyInjection',
             '../src/Support/DispatchAfterCurrentBusDecider.php',
             '../src/Support/DispatchAfterCurrentBusStampDecider.php',
+            '../src/Support/MessageMetadataStampDecider.php',
             '../src/Support/MessageSerializerStampDecider.php',
             '../src/Support/StampsDecider.php',
             '../src/Support/StampDecider.php',
