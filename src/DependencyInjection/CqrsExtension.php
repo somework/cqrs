@@ -8,6 +8,8 @@ use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
 use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
@@ -49,6 +51,7 @@ final class CqrsExtension extends Extension
         $this->registerNamingStrategies($container, $config['naming']);
         $this->registerRetryPolicies($container, $config['retry_policies']);
         $this->registerSerializers($container, $config['serialization']);
+        $this->registerDispatchModeDecider($container, $config['dispatch_modes']);
         $this->configureBusServices($container, $config['buses'], $defaultBusId);
     }
 
@@ -81,6 +84,7 @@ final class CqrsExtension extends Extension
 
             $commandBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
             $commandBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.command_resolver'));
+            $commandBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
@@ -103,6 +107,7 @@ final class CqrsExtension extends Extension
 
             $eventBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
             $eventBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.event_resolver'));
+            $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
         }
     }
 
@@ -263,6 +268,30 @@ final class CqrsExtension extends Extension
             $container->setDefinition(sprintf('somework_cqrs.serializer.%s_resolver', $type), $resolverDefinition);
             $container->setAlias(sprintf('somework_cqrs.serializer.%s', $type), $resolvedTypeDefaultId)->setPublic(false);
         }
+    }
+
+    /**
+     * @param array{
+     *     command: array{default: string, map: array<string, string>},
+     *     event: array{default: string, map: array<string, string>},
+     * } $config
+     */
+    private function registerDispatchModeDecider(ContainerBuilder $container, array $config): void
+    {
+        $definition = new Definition(DispatchModeDecider::class);
+        $definition->setArgument('$commandDefault', DispatchMode::from($config['command']['default']));
+        $definition->setArgument('$eventDefault', DispatchMode::from($config['event']['default']));
+        $definition->setArgument(
+            '$commandMap',
+            array_map(static fn (string $mode): DispatchMode => DispatchMode::from($mode), $config['command']['map'])
+        );
+        $definition->setArgument(
+            '$eventMap',
+            array_map(static fn (string $mode): DispatchMode => DispatchMode::from($mode), $config['event']['map'])
+        );
+        $definition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
     }
 
     private function registerServiceAlias(ContainerBuilder $container, string $aliasId, string $serviceId): void

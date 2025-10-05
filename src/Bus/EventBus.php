@@ -19,32 +19,53 @@ final class EventBus
 {
     private readonly RetryPolicyResolver $retryPolicies;
     private readonly MessageSerializerResolver $serializers;
+    private readonly DispatchModeDecider $dispatchModeDecider;
 
     public function __construct(
         private readonly MessageBusInterface $syncBus,
         private readonly ?MessageBusInterface $asyncBus = null,
         ?RetryPolicyResolver $retryPolicies = null,
         ?MessageSerializerResolver $serializers = null,
+        ?DispatchModeDecider $dispatchModeDecider = null,
     ) {
         $this->retryPolicies = $retryPolicies ?? RetryPolicyResolver::withoutOverrides();
         $this->serializers = $serializers ?? MessageSerializerResolver::withoutOverrides();
+        $this->dispatchModeDecider = $dispatchModeDecider ?? DispatchModeDecider::syncDefaults();
     }
 
     /**
      * @param list<StampInterface> $stamps
      */
-    public function dispatch(Event $event, DispatchMode $mode = DispatchMode::SYNC, StampInterface ...$stamps): Envelope
+    public function dispatch(Event $event, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
+        $resolvedMode = $this->dispatchModeDecider->resolve($event, $mode);
+
         $retryPolicy = $this->resolveRetryPolicy($event);
-        $stamps = [...$stamps, ...$retryPolicy->getStamps($event, $mode)];
+        $stamps = [...$stamps, ...$retryPolicy->getStamps($event, $resolvedMode)];
 
         $serializer = $this->serializers->resolveFor($event);
-        $serializerStamp = $serializer->getStamp($event, $mode);
+        $serializerStamp = $serializer->getStamp($event, $resolvedMode);
         if (null !== $serializerStamp) {
             $stamps[] = $serializerStamp;
         }
 
-        return $this->selectBus($mode)->dispatch($event, $stamps);
+        return $this->selectBus($resolvedMode)->dispatch($event, $stamps);
+    }
+
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchSync(Event $event, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($event, DispatchMode::SYNC, ...$stamps);
+    }
+
+    /**
+     * @param list<StampInterface> $stamps
+     */
+    public function dispatchAsync(Event $event, StampInterface ...$stamps): Envelope
+    {
+        return $this->dispatch($event, DispatchMode::ASYNC, ...$stamps);
     }
 
     private function selectBus(DispatchMode $mode): MessageBusInterface
