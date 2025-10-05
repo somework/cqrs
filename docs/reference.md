@@ -188,9 +188,10 @@ power diagnostics, smoke tests, or documentation pages. The registry exposes:
 Two console commands ship with the bundle:
 
 * `somework:cqrs:list` – Prints the handler catalogue in a table. Accepts the
-  `--type=<command|query|event>` option multiple times. The command is safe to
-  run in production and reflects the container compiled for the current
-  environment.
+  `--type=<command|query|event>` option multiple times. Add `--details` to the
+  command to include the resolved dispatch configuration for every handler. The
+  command is safe to run in production and reflects the container compiled for
+  the current environment.
 * `somework:cqrs:generate <type> <class>` – Scaffolds a message and handler pair
   for the chosen type. Optional flags:
   * `--handler=` to customise the handler class name.
@@ -198,3 +199,31 @@ Two console commands ship with the bundle:
   * `--force` to overwrite existing files instead of aborting.
 
 Both commands are registered automatically when the bundle is enabled.
+
+### Inspecting handler configuration
+
+Run the following command to inspect the effective configuration that the
+bundle applies to each message:
+
+```bash
+$ php bin/console somework:cqrs:list --details
+```
+
+The detailed view adds these columns to every row:
+
+* **Dispatch Mode** – The default `DispatchMode` resolved for the message when
+  callers do not pass an explicit mode.
+* **Async Defers** – Whether the bundle applies Messenger's
+  `DispatchAfterCurrentBusStamp` when the message is sent to an asynchronous
+  bus. The column is reported as `n/a` for message types without async support.
+* **Retry Policy** – The `RetryPolicy` service chosen after evaluating the
+  global, per-type, and per-message overrides.
+* **Serializer** – The `MessageSerializer` service that will contribute a
+  `SerializerStamp` when the message is dispatched.
+* **Metadata Provider** – The `MessageMetadataProvider` service that supplies
+  a `MessageMetadataStamp` for the message, typically containing correlation
+  identifiers.
+
+Use this output to verify how custom overrides are applied across your
+application or to debug unexpected dispatch behaviour in production
+environments.

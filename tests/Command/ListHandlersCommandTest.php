@@ -5,9 +5,18 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Command;
 
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Command\ListHandlersCommand;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\NullMessageSerializer;
+use SomeWork\CqrsBundle\Support\NullRetryPolicy;
+use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -37,7 +46,7 @@ final class ListHandlersCommandTest extends TestCase
             'command' => 'Ship order',
         ]);
 
-        $tester = new CommandTester(new ListHandlersCommand($registry));
+        $tester = new CommandTester($this->createCommand($registry));
 
         $exitCode = $tester->execute([]);
 
@@ -80,7 +89,7 @@ final class ListHandlersCommandTest extends TestCase
             'query' => 'Find order',
         ]);
 
-        $tester = new CommandTester(new ListHandlersCommand($registry));
+        $tester = new CommandTester($this->createCommand($registry));
 
         $exitCode = $tester->execute(['--type' => ['command']]);
 
@@ -101,7 +110,7 @@ final class ListHandlersCommandTest extends TestCase
             'default' => 'Default',
         ]);
 
-        $tester = new CommandTester(new ListHandlersCommand($registry));
+        $tester = new CommandTester($this->createCommand($registry));
 
         $exitCode = $tester->execute(['--type' => ['unknown']]);
 
@@ -144,5 +153,30 @@ final class ListHandlersCommandTest extends TestCase
                 return $this->label;
             }
         };
+    }
+
+    private function createCommand(HandlerRegistry $registry): ListHandlersCommand
+    {
+        $dispatchModeDecider = new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC);
+        $dispatchAfter = DispatchAfterCurrentBusDecider::defaults();
+
+        $retryResolver = RetryPolicyResolver::withoutOverrides(new NullRetryPolicy());
+        $serializerResolver = MessageSerializerResolver::withoutOverrides(new NullMessageSerializer());
+        $metadataResolver = MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider());
+
+        return new ListHandlersCommand(
+            $registry,
+            $dispatchModeDecider,
+            $dispatchAfter,
+            RetryPolicyResolver::withoutOverrides(new NullRetryPolicy()),
+            RetryPolicyResolver::withoutOverrides(new NullRetryPolicy()),
+            $retryResolver,
+            MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()),
+            MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()),
+            $serializerResolver,
+            MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider()),
+            MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider()),
+            $metadataResolver,
+        );
     }
 }
