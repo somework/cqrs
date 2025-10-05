@@ -7,9 +7,9 @@ namespace SomeWork\CqrsBundle\Tests\Bus;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\QueryBus;
-use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
@@ -94,7 +94,7 @@ final class QueryBusTest extends TestCase
             ->with($query, DispatchMode::SYNC)
             ->willReturn($serializerStamp);
 
-        $defaultMetadata = new class() implements MessageMetadataProvider {
+        $defaultMetadata = new class implements MessageMetadataProvider {
             public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
             {
                 return null;
@@ -403,7 +403,7 @@ final class QueryBusTest extends TestCase
 
     private function createNullMetadataProvider(): MessageMetadataProvider
     {
-        return new class() implements MessageMetadataProvider {
+        return new class implements MessageMetadataProvider {
             public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
             {
                 return null;
