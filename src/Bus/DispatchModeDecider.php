@@ -15,7 +15,7 @@ final class DispatchModeDecider
 {
     /**
      * @param array<class-string<Command>, DispatchMode> $commandMap
-     * @param array<class-string<Event>, DispatchMode> $eventMap
+     * @param array<class-string<Event>, DispatchMode>   $eventMap
      */
     public function __construct(
         private readonly DispatchMode $commandDefault,
