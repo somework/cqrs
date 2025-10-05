@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Bus;
 
-use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\MessageBusInterface;
