@@ -8,17 +8,24 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
+use SomeWork\CqrsBundle\Contract\Command as CommandContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
+use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 
 final class CommandBusTest extends TestCase
@@ -34,7 +41,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
         self::assertSame($envelope, $bus->dispatch($command));
     }
@@ -53,7 +60,7 @@ final class CommandBusTest extends TestCase
         $asyncBus = $this->createMock(MessageBusInterface::class);
         $asyncBus->expects(self::never())->method('dispatch');
 
-        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider());
 
         self::assertSame($envelope, $bus->dispatchSync($command));
     }
@@ -69,10 +76,18 @@ final class CommandBusTest extends TestCase
         $asyncBus = $this->createMock(MessageBusInterface::class);
         $asyncBus->expects(self::once())
             ->method('dispatch')
-            ->with($command, [])
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }))
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider());
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
     }
@@ -88,10 +103,18 @@ final class CommandBusTest extends TestCase
         $asyncBus = $this->createMock(MessageBusInterface::class);
         $asyncBus->expects(self::once())
             ->method('dispatch')
-            ->with($command, [])
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }))
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, $asyncBus, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider());
 
         self::assertSame($envelope, $bus->dispatchAsync($command));
     }
@@ -107,15 +130,22 @@ final class CommandBusTest extends TestCase
         $asyncBus = $this->createMock(MessageBusInterface::class);
         $asyncBus->expects(self::once())
             ->method('dispatch')
-            ->with($command, [])
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }))
             ->willReturn($envelope);
 
         $bus = new CommandBus(
             $syncBus,
             $asyncBus,
-            RetryPolicyResolver::withoutOverrides(),
-            MessageSerializerResolver::withoutOverrides(),
-            new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::SYNC),
+            dispatchModeDecider: new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::SYNC),
+            stampsDecider: $this->createCommandStampsDecider(),
         );
 
         self::assertSame($envelope, $bus->dispatch($command));
@@ -132,18 +162,96 @@ final class CommandBusTest extends TestCase
         $asyncBus = $this->createMock(MessageBusInterface::class);
         $asyncBus->expects(self::once())
             ->method('dispatch')
-            ->with($command, [])
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }))
             ->willReturn($envelope);
 
         $bus = new CommandBus(
             $syncBus,
             $asyncBus,
-            RetryPolicyResolver::withoutOverrides(),
-            MessageSerializerResolver::withoutOverrides(),
-            new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [CreateTaskCommand::class => DispatchMode::ASYNC]),
+            dispatchModeDecider: new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [CreateTaskCommand::class => DispatchMode::ASYNC]),
+            stampsDecider: $this->createCommandStampsDecider(),
         );
 
         self::assertSame($envelope, $bus->dispatch($command));
+    }
+
+    public function test_async_dispatch_appends_dispatch_after_current_bus_stamp_by_default(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return true;
+                    }
+                }
+
+                return false;
+            }))
+            ->willReturn($envelope);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createCommandStampsDecider(),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
+    }
+
+    public function test_async_dispatch_respects_message_override(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, self::callback(static function (array $stamps): bool {
+                foreach ($stamps as $stamp) {
+                    if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }))
+            ->willReturn($envelope);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createCommandStampsDecider(
+                dispatchAfter: new DispatchAfterCurrentBusDecider(
+                    true,
+                    new ServiceLocator([
+                        CreateTaskCommand::class => static fn (): bool => false,
+                    ]),
+                    true,
+                    new ServiceLocator([]),
+                )
+            ),
+        );
+
+        self::assertSame($envelope, $bus->dispatch($command, DispatchMode::ASYNC));
     }
 
     public function test_explicit_mode_bypasses_decider(): void
@@ -163,9 +271,8 @@ final class CommandBusTest extends TestCase
         $bus = new CommandBus(
             $syncBus,
             $asyncBus,
-            RetryPolicyResolver::withoutOverrides(),
-            MessageSerializerResolver::withoutOverrides(),
-            new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::ASYNC),
+            dispatchModeDecider: new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::ASYNC),
+            stampsDecider: $this->createCommandStampsDecider(),
         );
 
         self::assertSame($envelope, $bus->dispatch($command, DispatchMode::SYNC));
@@ -177,7 +284,7 @@ final class CommandBusTest extends TestCase
 
         $syncBus = $this->createMock(MessageBusInterface::class);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Asynchronous command bus is not configured.');
@@ -191,7 +298,7 @@ final class CommandBusTest extends TestCase
 
         $syncBus = $this->createMock(MessageBusInterface::class);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), MessageSerializerResolver::withoutOverrides());
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
         $this->expectException(\LogicException::class);
         $this->expectExceptionMessage('Asynchronous command bus is not configured.');
@@ -237,7 +344,7 @@ final class CommandBusTest extends TestCase
             CreateTaskCommand::class => $serializer,
         ]);
 
-        $bus = new CommandBus($syncBus, null, $resolver, $serializers);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider($resolver, $serializers));
 
         $bus->dispatch($command);
     }
@@ -272,7 +379,10 @@ final class CommandBusTest extends TestCase
             ->with(
                 $command,
                 self::callback(function (array $stamps) use ($retryStamp, $serializerStamp): bool {
-                    self::assertSame([$retryStamp, $serializerStamp], $stamps);
+                    self::assertCount(3, $stamps);
+                    self::assertSame($retryStamp, $stamps[0]);
+                    self::assertSame($serializerStamp, $stamps[1]);
+                    self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $stamps[2]);
 
                     return true;
                 })
@@ -290,7 +400,7 @@ final class CommandBusTest extends TestCase
             CreateTaskCommand::class => $serializer,
         ]);
 
-        $bus = new CommandBus($syncBus, $asyncBus, $resolver, $serializers);
+        $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider($resolver, $serializers));
 
         $bus->dispatch($command, DispatchMode::ASYNC);
     }
@@ -329,7 +439,13 @@ final class CommandBusTest extends TestCase
             ])
         );
 
-        $bus = new CommandBus($syncBus, null, $resolver, MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()));
+        $bus = new CommandBus(
+            $syncBus,
+            stampsDecider: $this->createCommandStampsDecider(
+                $resolver,
+                MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()),
+            ),
+        );
 
         $bus->dispatch($command);
     }
@@ -363,7 +479,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider(null, $serializers));
 
         $bus->dispatch($command);
     }
@@ -390,7 +506,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider(null, $serializers));
 
         $bus->dispatch($command);
     }
@@ -414,7 +530,7 @@ final class CommandBusTest extends TestCase
             ->with($command, [])
             ->willReturn($envelope);
 
-        $bus = new CommandBus($syncBus, null, RetryPolicyResolver::withoutOverrides(), $serializers);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider(null, $serializers));
 
         $bus->dispatch($command);
     }
@@ -454,9 +570,25 @@ final class CommandBusTest extends TestCase
             CreateTaskCommand::class => $serializer,
         ]);
 
-        $bus = new CommandBus($syncBus, null, $retryResolver, $serializers);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider($retryResolver, $serializers));
 
         $bus->dispatch($command);
+    }
+
+    private function createCommandStampsDecider(
+        ?RetryPolicyResolver $retryPolicies = null,
+        ?MessageSerializerResolver $serializers = null,
+        ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+    ): StampsDecider {
+        $retryPolicies ??= RetryPolicyResolver::withoutOverrides();
+        $serializers ??= MessageSerializerResolver::withoutOverrides();
+        $dispatchAfter ??= DispatchAfterCurrentBusDecider::defaults();
+
+        return new StampsDecider([
+            new RetryPolicyStampDecider($retryPolicies, CommandContract::class),
+            new MessageSerializerStampDecider($serializers, CommandContract::class),
+            new DispatchAfterCurrentBusStampDecider($dispatchAfter),
+        ]);
     }
 
     /**

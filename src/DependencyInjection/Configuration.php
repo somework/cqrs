@@ -149,6 +149,29 @@ final class Configuration implements ConfigurationInterface
         $dispatchChildren->end();
         $dispatchModes->end();
 
+        $async = $children->arrayNode('async');
+        $async
+            ->addDefaultsIfNotSet()
+            ->info('Asynchronous delivery configuration.');
+
+        /** @var ArrayNodeDefinition $asyncChildren */
+        $asyncChildren = $async->children();
+
+        $dispatchAfterCurrentBus = $asyncChildren->arrayNode('dispatch_after_current_bus');
+        $dispatchAfterCurrentBus
+            ->addDefaultsIfNotSet()
+            ->info('Controls when DispatchAfterCurrentBusStamp is added to async dispatches.');
+
+        /** @var ArrayNodeDefinition $dispatchAfterChildren */
+        $dispatchAfterChildren = $dispatchAfterCurrentBus->children();
+        $this->configureDispatchAfterCurrentBusSection($dispatchAfterChildren, 'command');
+        $this->configureDispatchAfterCurrentBusSection($dispatchAfterChildren, 'event');
+        $dispatchAfterChildren->end();
+        $dispatchAfterCurrentBus->end();
+
+        $asyncChildren->end();
+        $async->end();
+
         return $treeBuilder;
     }
 
@@ -227,6 +250,32 @@ final class Configuration implements ConfigurationInterface
                 ->end()
             ->end()
             ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));
+
+        $children->end();
+        $node->end();
+    }
+
+    private function configureDispatchAfterCurrentBusSection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('DispatchAfterCurrentBusStamp behaviour for %s messages.', $type));
+
+        $children = $node->children();
+
+        $children
+            ->booleanNode('default')
+            ->defaultTrue()
+            ->info(sprintf('Whether DispatchAfterCurrentBusStamp should be added to async %s messages when no override exists.', $type));
+
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->booleanPrototype()
+            ->end()
+            ->info(sprintf('Message-specific overrides for DispatchAfterCurrentBusStamp on async %s messages.', $type));
 
         $children->end();
         $node->end();
