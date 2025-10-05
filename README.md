@@ -9,8 +9,8 @@ tooling that keeps your catalogue maintainable.
 * PHP attributes (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`)
   and marker interfaces that auto-tag handlers for Messenger.
 * Console tooling to list registered handlers and scaffold new messages.
-* Configuration hooks for naming strategies, retry policies, and serializer
-  stamps.
+* Configuration hooks for naming strategies, retry policies, serializer stamps,
+  and metadata providers.
 * Plays nicely with multiple Messenger buses (sync and async).
 
 ## Quick start
@@ -118,6 +118,19 @@ somework_cqrs:
             default: SomeWork\CqrsBundle\Support\NullMessageSerializer
             map:
                 App\Domain\Event\OrderShipped: app.event.serializer
+    metadata:
+        default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
+        command:
+            default: null
+            map:
+                App\Application\Command\ShipOrder: app.command.metadata_provider
+        query:
+            default: null
+            map: {}
+        event:
+            default: null
+            map:
+                App\Domain\Event\OrderShipped: app.event.metadata_provider
     dispatch_modes:
         command:
             default: sync
@@ -148,6 +161,11 @@ every message type, override each type via its `default` entry, and list
 message-specific serializer services inside `map`. The buses check for
 message-specific serializers first, then fall back to the type default and
 finally to the global default.
+
+`metadata` controls which `MessageMetadataStamp` gets appended to dispatched
+messages. The bundle defaults to generating random correlation identifiers via
+`RandomCorrelationMetadataProvider`. Override the per-type `default` or
+configure `map` entries when you need deterministic IDs for specific messages.
 
 `dispatch_modes` lets you pick whether commands and events run on their
 synchronous or asynchronous Messenger buses when callers omit the `DispatchMode`

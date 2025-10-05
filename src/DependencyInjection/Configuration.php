@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
+use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
@@ -137,6 +138,24 @@ final class Configuration implements ConfigurationInterface
         $serializationChildren->end();
         $serialization->end();
 
+        $metadata = $children->arrayNode('metadata');
+        $metadata
+            ->addDefaultsIfNotSet()
+            ->info('MessageMetadataProvider services that supply MessageMetadataStamp instances.');
+
+        /** @var ArrayNodeDefinition $metadataChildren */
+        $metadataChildren = $metadata->children();
+        $metadataChildren
+            ->scalarNode('default')
+            ->defaultValue(RandomCorrelationMetadataProvider::class)
+            ->info('Fallback MessageMetadataProvider service id applied to all messages.');
+
+        $this->configureMetadataSection($metadataChildren, 'command');
+        $this->configureMetadataSection($metadataChildren, 'event');
+        $this->configureMetadataSection($metadataChildren, 'query');
+        $metadataChildren->end();
+        $metadata->end();
+
         $dispatchModes = $children->arrayNode('dispatch_modes');
         $dispatchModes
             ->addDefaultsIfNotSet()
@@ -219,6 +238,31 @@ final class Configuration implements ConfigurationInterface
             ->scalarPrototype()
             ->end()
             ->info('Message-specific MessageSerializer service ids. Keys must match the message FQCN.');
+
+        $children->end();
+        $node->end();
+    }
+
+    private function configureMetadataSection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('MessageMetadataProvider services applied to %s messages.', $type));
+
+        $children = $node->children();
+        $children
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info(sprintf('Fallback MessageMetadataProvider service id applied to %s messages. Falls back to metadata.default when null.', $type));
+
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->scalarPrototype()
+            ->end()
+            ->info('Message-specific MessageMetadataProvider service ids. Keys must match the message FQCN.');
 
         $children->end();
         $node->end();
