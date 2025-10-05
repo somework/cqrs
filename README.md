@@ -118,6 +118,24 @@ somework_cqrs:
             default: SomeWork\CqrsBundle\Support\NullMessageSerializer
             map:
                 App\Domain\Event\OrderShipped: app.event.serializer
+    dispatch_modes:
+        command:
+            default: sync
+            map:
+                App\Application\Command\ShipOrder: async
+        event:
+            default: sync
+            map:
+                App\Domain\Event\OrderShipped: async
+    async:
+        dispatch_after_current_bus:
+            command:
+                default: true
+                map:
+                    App\Application\Command\ShipOrder: false
+            event:
+                default: true
+                map: {}
 ```
 
 Use the `map` section inside each `retry_policies` entry to override the
@@ -130,6 +148,34 @@ every message type, override each type via its `default` entry, and list
 message-specific serializer services inside `map`. The buses check for
 message-specific serializers first, then fall back to the type default and
 finally to the global default.
+
+`dispatch_modes` lets you pick whether commands and events run on their
+synchronous or asynchronous Messenger buses when callers omit the `DispatchMode`
+argument. Use `async.dispatch_after_current_bus` to control Messenger's
+`DispatchAfterCurrentBusStamp`. Keep the defaults enabled so async messages wait
+for the current bus to finish before being dispatched, or flip individual
+messages to `false` when they should be sent immediately.
+
+Need additional stamps? Implement `SomeWork\CqrsBundle\Support\StampDecider`, tag
+the service with `somework_cqrs.dispatch_stamp_decider`, and the bundle will run
+it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
+
+### How message overrides are resolved
+
+Whenever a configuration section exposes a `map` of message-specific services
+(`retry_policies`, `serialization`, `dispatch_modes`, or
+`async.dispatch_after_current_bus`), the bundle resolves the entry using a shared
+matching strategy. The lookup happens in three steps:
+
+1. Check for an **exact class match**.
+2. Walk up the **parent class hierarchy**, returning the first configured
+   ancestor.
+3. Evaluate **interfaces** implemented by the message, followed by any parent
+   interfaces, and pick the first configured entry.
+
+This ordering keeps overrides predictable – concrete classes always win, then
+inheritance, then shared contracts. If nothing matches the resolver falls back
+to the type-specific `default` and, when available, the global default service.
 
 See [`docs/reference.md`](docs/reference.md) for a complete description of every
 option and [`docs/usage.md`](docs/usage.md) for more examples.
