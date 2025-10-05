@@ -39,12 +39,12 @@ final class DispatchAfterCurrentBusDecider
 
     private function resolve(object $message, bool $default, ContainerInterface $toggles): bool
     {
-        $class = $message::class;
+        $match = MessageTypeLocator::match($toggles, $message);
 
-        if (!$toggles->has($class)) {
+        if (null === $match) {
             return $default;
         }
 
-        return (bool) $toggles->get($class);
+        return (bool) $match->service;
     }
 }

@@ -18,7 +18,7 @@ final class StampsDeciderTest extends TestCase
         $message = new CreateTaskCommand('1', 'Test');
         $initialStamps = [new DummyStamp('base')];
 
-        $first = new class() implements StampDecider {
+        $first = new class implements StampDecider {
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
                 $stamps[] = new DummyStamp('first');
@@ -27,7 +27,7 @@ final class StampsDeciderTest extends TestCase
             }
         };
 
-        $second = new class() implements StampDecider {
+        $second = new class implements StampDecider {
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
                 $stamps[] = new DummyStamp('second');
