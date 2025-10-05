@@ -171,25 +171,21 @@ final class ListHandlersCommandTest extends TestCase
         self::assertStringContainsString('Serializer', $output);
         self::assertStringContainsString('Metadata Provider', $output);
 
-        self::assertStringContainsString(TestAsyncCommandHandler::class, $output);
-        self::assertStringContainsString(TestQueryHandler::class, $output);
-        self::assertStringContainsString(TestEventHandler::class, $output);
+        $retryClass = preg_quote(NullRetryPolicy::class, '/');
+        $serializerClass = preg_quote(NullMessageSerializer::class, '/');
+        $metadataClass = preg_quote(RandomCorrelationMetadataProvider::class, '/');
 
-        $retryClass = NullRetryPolicy::class;
-        $serializerClass = NullMessageSerializer::class;
-        $metadataClass = RandomCorrelationMetadataProvider::class;
+        $commandRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        self::assertMatchesRegularExpression($commandRowPattern, $output);
 
-        self::assertStringContainsString($retryClass, $output);
-        self::assertStringContainsString($serializerClass, $output);
-        self::assertStringContainsString($metadataClass, $output);
+        $eventRowPattern = '/\|\s*Event\s*\|\s*Event label\s*\|\s*'.preg_quote(TestEventHandler::class, '/').'\s*\|\s*app\\.event\\.handler\s*\|\s*messenger\\.bus\\.events\s*\|\s*async\s*\|\s*no\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        self::assertMatchesRegularExpression($eventRowPattern, $output);
 
-        self::assertMatchesRegularExpression('/\|\s*Command\s*\|\s*Command label\s*\|[^\n]+\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|/', $output);
+        $queryRowPattern = '/\|\s*Query\s*\|\s*Query label\s*\|\s*'.preg_quote(TestQueryHandler::class, '/').'\s*\|\s*app\\.query\\.handler\s*\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        self::assertMatchesRegularExpression($queryRowPattern, $output);
 
-        self::assertMatchesRegularExpression('/\|\s*Event\s*\|\s*Event label\s*\|[^\n]+\|\s*messenger\\.bus\\.events\s*\|\s*async\s*\|\s*no\s*\|/', $output);
-
-        self::assertMatchesRegularExpression('/\|\s*Query\s*\|\s*Query label\s*\|[^\n]+\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*' . preg_quote($retryClass, '/') . '\s*\|\s*' . preg_quote($serializerClass, '/') . '\s*\|\s*' . preg_quote($metadataClass, '/') . '\s*\|/', $output);
-
-        self::assertMatchesRegularExpression('/app\\.command\\.broken_handler[^\n]+\|\s+n\/a\s+\|\s+n\/a\s+\|\s+n\/a\s+\|\s+n\/a\s+\|\s+n\/a/', $output);
+        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
+        self::assertMatchesRegularExpression($brokenRowPattern, $output);
     }
 
     /**
@@ -233,8 +229,7 @@ final class ListHandlersCommandTest extends TestCase
         HandlerRegistry $registry,
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
-    ): ListHandlersCommand
-    {
+    ): ListHandlersCommand {
         $dispatchModeDecider ??= new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC);
         $dispatchAfter ??= DispatchAfterCurrentBusDecider::defaults();
 
