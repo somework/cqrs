@@ -115,6 +115,11 @@ somework_cqrs:
   The `CommandBus` and `EventBus` also expose `dispatchSync()` and
   `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
   mode for convenience.
+  When any command or event resolves to `async` you must configure the matching
+  Messenger bus via `buses.command_async` or `buses.event_async`. The bundle
+  validates this at container-compilation time and throws an
+  `InvalidConfigurationException` when an async default or override exists
+  without the corresponding async bus id.
 * **async.dispatch_after_current_bus** – toggles whether the bundle appends
   Messenger's `DispatchAfterCurrentBusStamp` when a command or event resolves to
   the asynchronous bus. Leave the `default` values set to `true` to preserve the
@@ -159,6 +164,11 @@ message marked `async` – either via the `dispatch_modes` defaults or a
 per-message override – is delivered to the transport consumed by your workers.
 This keeps the CQRS facades consistent with the Messenger routing you already
 use for explicit async dispatch calls.
+Additionally, define the Messenger bus ids that back asynchronous dispatch
+(for example `messenger.bus.commands_async` or `messenger.bus.events_async`).
+The extension fails fast during container compilation if `dispatch_modes`
+resolve to `async` while the relevant async bus id remains `null`, ensuring you
+register the transport before deploying.
 
 ## Handler registry service
 
