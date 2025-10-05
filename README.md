@@ -111,6 +111,10 @@ project layout:
   files. The argument is relative to the project root returned by the kernel.
 * `--force` – replace existing files instead of halting with an error.
 
+## Resources
+
+* [Changelog](CHANGELOG.md)
+
 ## Configuration
 
 All options live under the `somework_cqrs` key. They allow you to point each
