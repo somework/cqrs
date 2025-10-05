@@ -54,6 +54,15 @@ somework_cqrs:
             default: sync
             map:
                 App\Domain\Event\OrderShipped: async
+    async:
+        dispatch_after_current_bus:
+            command:
+                default: true
+                map:
+                    App\Application\Command\ShipOrder: false
+            event:
+                default: true
+                map: {}
 ```
 
 * **default_bus** – fallback Messenger bus id. Used whenever a type-specific bus
@@ -88,6 +97,17 @@ somework_cqrs:
   The `CommandBus` and `EventBus` also expose `dispatchSync()` and
   `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
   mode for convenience.
+* **async.dispatch_after_current_bus** – toggles whether the bundle appends
+  Messenger's `DispatchAfterCurrentBusStamp` when a command or event resolves to
+  the asynchronous bus. Leave the `default` values set to `true` to preserve the
+  existing behaviour and enqueue follow-up messages after the current message
+  finishes processing. Use the `map` to disable the stamp for specific messages
+  that should be sent immediately, even while the current bus is still handling
+  handlers.
+  Additional stamp logic can be plugged in by implementing
+  `SomeWork\CqrsBundle\Support\StampDecider`, tagging it as
+  `somework_cqrs.dispatch_stamp_decider`, and letting the bundle run it when
+  commands or events are dispatched.
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.

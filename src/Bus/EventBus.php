@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Bus;
 
 use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Contract\RetryPolicy;
-use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -17,20 +15,20 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  */
 final class EventBus
 {
-    private readonly RetryPolicyResolver $retryPolicies;
-    private readonly MessageSerializerResolver $serializers;
     private readonly DispatchModeDecider $dispatchModeDecider;
+    private readonly StampsDecider $stampsDecider;
 
     public function __construct(
         private readonly MessageBusInterface $syncBus,
         private readonly ?MessageBusInterface $asyncBus = null,
-        ?RetryPolicyResolver $retryPolicies = null,
-        ?MessageSerializerResolver $serializers = null,
         ?DispatchModeDecider $dispatchModeDecider = null,
+        ?StampsDecider $stampsDecider = null,
     ) {
-        $this->retryPolicies = $retryPolicies ?? RetryPolicyResolver::withoutOverrides();
-        $this->serializers = $serializers ?? MessageSerializerResolver::withoutOverrides();
-        $this->dispatchModeDecider = $dispatchModeDecider ?? DispatchModeDecider::syncDefaults();
+        $dispatchModeDecider ??= DispatchModeDecider::syncDefaults();
+        $stampsDecider ??= StampsDecider::withDefaultAsyncDeferral();
+
+        $this->dispatchModeDecider = $dispatchModeDecider;
+        $this->stampsDecider = $stampsDecider;
     }
 
     /**
@@ -39,15 +37,7 @@ final class EventBus
     public function dispatch(Event $event, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
         $resolvedMode = $this->dispatchModeDecider->resolve($event, $mode);
-
-        $retryPolicy = $this->resolveRetryPolicy($event);
-        $stamps = [...$stamps, ...$retryPolicy->getStamps($event, $resolvedMode)];
-
-        $serializer = $this->serializers->resolveFor($event);
-        $serializerStamp = $serializer->getStamp($event, $resolvedMode);
-        if (null !== $serializerStamp) {
-            $stamps[] = $serializerStamp;
-        }
+        $stamps = $this->stampsDecider->decide($event, $resolvedMode, $stamps);
 
         return $this->selectBus($resolvedMode)->dispatch($event, $stamps);
     }
@@ -79,10 +69,5 @@ final class EventBus
         }
 
         return $this->syncBus;
-    }
-
-    private function resolveRetryPolicy(Event $event): RetryPolicy
-    {
-        return $this->retryPolicies->resolveFor($event);
     }
 }

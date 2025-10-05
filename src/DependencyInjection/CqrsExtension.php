@@ -15,10 +15,19 @@ use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
+use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
+use Symfony\Component\DependencyInjection\Argument\TaggedIteratorArgument;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -28,6 +37,7 @@ use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function md5;
 use function sprintf;
 
 final class CqrsExtension extends Extension
@@ -47,11 +57,16 @@ final class CqrsExtension extends Extension
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
 
+        $container->registerForAutoconfiguration(StampDecider::class)
+            ->addTag('somework_cqrs.dispatch_stamp_decider');
+
         $this->registerHandlerAutoconfiguration($container, $config['buses'], $defaultBusId);
         $this->registerNamingStrategies($container, $config['naming']);
         $this->registerRetryPolicies($container, $config['retry_policies']);
         $this->registerSerializers($container, $config['serialization']);
         $this->registerDispatchModeDecider($container, $config['dispatch_modes']);
+        $this->registerDispatchAfterCurrentBusDecider($container, $config['async']['dispatch_after_current_bus']);
+        $this->registerStampsDecider($container);
         $this->configureBusServices($container, $config['buses'], $defaultBusId);
     }
 
@@ -82,9 +97,8 @@ final class CqrsExtension extends Extension
                 $commandBusDefinition->setArgument('$asyncBus', null);
             }
 
-            $commandBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
-            $commandBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.command_resolver'));
             $commandBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
+            $commandBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
@@ -105,9 +119,8 @@ final class CqrsExtension extends Extension
                 $eventBusDefinition->setArgument('$asyncBus', null);
             }
 
-            $eventBusDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
-            $eventBusDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.event_resolver'));
             $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
+            $eventBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
         }
     }
 
@@ -292,6 +305,105 @@ final class CqrsExtension extends Extension
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
+    }
+
+    /**
+     * @param array{
+     *     command: array{default: bool, map: array<string, bool>},
+     *     event: array{default: bool, map: array<string, bool>},
+     * } $config
+     */
+    private function registerDispatchAfterCurrentBusDecider(ContainerBuilder $container, array $config): void
+    {
+        $commandLocator = $this->registerBooleanLocator($container, 'command', $config['command']['map']);
+        $eventLocator = $this->registerBooleanLocator($container, 'event', $config['event']['map']);
+
+        $definition = new Definition(DispatchAfterCurrentBusDecider::class);
+        $definition->setArgument('$commandDefault', $config['command']['default']);
+        $definition->setArgument('$commandToggles', $commandLocator);
+        $definition->setArgument('$eventDefault', $config['event']['default']);
+        $definition->setArgument('$eventToggles', $eventLocator);
+        $definition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.dispatch_after_current_bus_decider', $definition);
+    }
+
+    private function registerStampsDecider(ContainerBuilder $container): void
+    {
+        $commandRetryDefinition = new Definition(RetryPolicyStampDecider::class);
+        $commandRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
+        $commandRetryDefinition->setArgument('$messageType', Command::class);
+        $commandRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
+        $commandRetryDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.command_retry', $commandRetryDefinition);
+
+        $commandSerializerDefinition = new Definition(MessageSerializerStampDecider::class);
+        $commandSerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.command_resolver'));
+        $commandSerializerDefinition->setArgument('$messageType', Command::class);
+        $commandSerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
+        $commandSerializerDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.command_serializer', $commandSerializerDefinition);
+
+        $eventRetryDefinition = new Definition(RetryPolicyStampDecider::class);
+        $eventRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
+        $eventRetryDefinition->setArgument('$messageType', Event::class);
+        $eventRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
+        $eventRetryDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.event_retry', $eventRetryDefinition);
+
+        $eventSerializerDefinition = new Definition(MessageSerializerStampDecider::class);
+        $eventSerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.event_resolver'));
+        $eventSerializerDefinition->setArgument('$messageType', Event::class);
+        $eventSerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
+        $eventSerializerDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.event_serializer', $eventSerializerDefinition);
+
+        $dispatchAfterDefinition = new Definition(DispatchAfterCurrentBusStampDecider::class);
+        $dispatchAfterDefinition->setArgument('$decider', new Reference('somework_cqrs.dispatch_after_current_bus_decider'));
+        $dispatchAfterDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 0]);
+        $dispatchAfterDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.dispatch_after_current_bus_stamp_decider', $dispatchAfterDefinition);
+
+        $definition = new Definition(StampsDecider::class);
+        $definition->setArgument('$deciders', new TaggedIteratorArgument('somework_cqrs.dispatch_stamp_decider'));
+        $definition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamps_decider', $definition);
+    }
+
+    /**
+     * @param array<string, bool> $map
+     */
+    private function registerBooleanLocator(ContainerBuilder $container, string $type, array $map): Reference
+    {
+        $serviceMap = [];
+
+        foreach ($map as $messageClass => $enabled) {
+            $serviceId = sprintf('somework_cqrs.async.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
+
+            $definition = new Definition();
+            $definition->setFactory([self::class, 'createBooleanToggle']);
+            $definition->setArguments([$enabled]);
+            $definition->setPublic(false);
+
+            $container->setDefinition($serviceId, $definition);
+            $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+        }
+
+        $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
+        $container->setAlias(sprintf('somework_cqrs.async.dispatch_after_current_bus.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+
+        return $locatorReference;
+    }
+
+    public static function createBooleanToggle(bool $value): bool
+    {
+        return $value;
     }
 
     private function registerServiceAlias(ContainerBuilder $container, string $aliasId, string $serviceId): void
