@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
+use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
@@ -136,6 +137,18 @@ final class Configuration implements ConfigurationInterface
         $serializationChildren->end();
         $serialization->end();
 
+        $dispatchModes = $children->arrayNode('dispatch_modes');
+        $dispatchModes
+            ->addDefaultsIfNotSet()
+            ->info('Default dispatch modes applied when no explicit mode is provided.');
+
+        /** @var ArrayNodeDefinition $dispatchChildren */
+        $dispatchChildren = $dispatchModes->children();
+        $this->configureDispatchModeSection($dispatchChildren, 'command');
+        $this->configureDispatchModeSection($dispatchChildren, 'event');
+        $dispatchChildren->end();
+        $dispatchModes->end();
+
         return $treeBuilder;
     }
 
@@ -183,6 +196,37 @@ final class Configuration implements ConfigurationInterface
             ->scalarPrototype()
             ->end()
             ->info('Message-specific MessageSerializer service ids. Keys must match the message FQCN.');
+
+        $children->end();
+        $node->end();
+    }
+
+    private function configureDispatchModeSection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('Dispatch modes applied to %s messages when no explicit mode is requested.', $type));
+
+        $children = $node->children();
+
+        $children
+            ->enumNode('default')
+            ->values([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
+            ->defaultValue(DispatchMode::SYNC->value)
+            ->info(sprintf('Fallback dispatch mode used for %s messages.', $type));
+
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->scalarPrototype()
+                ->validate()
+                    ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
+                    ->thenInvalid('Invalid dispatch mode "%s". Expected "sync" or "async".')
+                ->end()
+            ->end()
+            ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));
 
         $children->end();
         $node->end();

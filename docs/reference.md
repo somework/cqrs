@@ -45,6 +45,15 @@ somework_cqrs:
             default: SomeWork\CqrsBundle\Support\NullMessageSerializer
             map:
                 App\Domain\Event\OrderShipped: app.event.serializer
+    dispatch_modes:
+        command:
+            default: sync
+            map:
+                App\Application\Command\ShipOrder: async
+        event:
+            default: sync
+            map:
+                App\Domain\Event\OrderShipped: async
 ```
 
 * **default_bus** – fallback Messenger bus id. Used whenever a type-specific bus
@@ -66,9 +75,22 @@ somework_cqrs:
   retry policy structure with a global `default`, per-type `default`, and a
   message-specific `map`. The buses resolve serializers in that order and append
   the returned `SerializerStamp` to the dispatch call when provided.
+* **dispatch_modes** – controls whether commands and events are dispatched
+  synchronously or asynchronously when callers omit the `DispatchMode` argument.
+  Each section defines a `default` mode (`sync` or `async`) plus a `map` of
+  message-specific overrides. When a message resolves to `async` the bundle
+  routes it through the configured asynchronous Messenger bus automatically. If
+  a caller explicitly passes a `DispatchMode`, that choice always wins.
 
 All options are optional. When you omit a setting the bundle falls back to a
 safe default implementation that leaves Messenger behaviour unchanged.
+
+When you enable asynchronous defaults you must ensure Messenger workers listen
+for the resulting messages. Configure routing in `messenger.yaml` so that any
+message marked `async` – either via the `dispatch_modes` defaults or a
+per-message override – is delivered to the transport consumed by your workers.
+This keeps the CQRS facades consistent with the Messenger routing you already
+use for explicit async dispatch calls.
 
 ## Handler registry service
 
