@@ -10,6 +10,8 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlerDescriptor;
 use Symfony\Component\Messenger\Handler\HandlersLocatorInterface;
 
+use function assert;
+
 /**
  * Decorates Messenger's handlers locator to inject envelopes into CQRS handlers.
  */
@@ -37,7 +39,7 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
         }
 
         $wrapper = function (...$arguments) use ($handler, $envelope) {
-            \assert($this instanceof EnvelopeAware);
+            assert($this instanceof EnvelopeAware);
             $this->setEnvelope($envelope);
 
             return $handler(...$arguments);
