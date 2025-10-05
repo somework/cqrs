@@ -77,6 +77,33 @@ Two commands ship with the bundle once it is registered in your kernel:
   directory. Pass `--dir=app/src` and `--force` to customise the target or
   overwrite existing files.
 
+Pass `--details` to `somework:cqrs:list` to inspect the resolved dispatch
+configuration for each handler:
+
+```
+$ bin/console somework:cqrs:list --details
++---------+---------------+-------------------------------------------+--------------------------+---------------------------+---------------+-------------+-------------------------------+------------------------------------------+-----------------------------------------------+
+| Type    | Message       | Handler                                   | Service Id               | Bus                       | Dispatch Mode | Async Defers | Retry Policy                  | Serializer                               | Metadata Provider                           |
++---------+---------------+-------------------------------------------+--------------------------+---------------------------+---------------+-------------+-------------------------------+------------------------------------------+-----------------------------------------------+
+| Command | Ship order    | App\Application\Command\ShipOrderHandler  | app.command.ship_handler | messenger.bus.commands    | async         | yes         | App\Infra\Retry\ShipOrders    | App\Infra\Serializer\ShipOrderSerializer | App\Support\Metadata\CorrelationMetadata    |
+| Query   | Find order    | App\ReadModel\Query\FindOrderHandler      | app.read_model.finder    | default                   | sync          | n/a         | SomeWork\CqrsBundle\Support\NullRetryPolicy | SomeWork\CqrsBundle\Support\NullMessageSerializer | SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider |
+| Event   | Order shipped | App\Domain\Event\OrderShippedListener    | app.event.shipped        | messenger.bus.events_async | async         | no          | SomeWork\CqrsBundle\Support\NullRetryPolicy | SomeWork\CqrsBundle\Support\NullMessageSerializer | SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider |
++---------+---------------+-------------------------------------------+--------------------------+---------------------------+---------------+-------------+-------------------------------+------------------------------------------+-----------------------------------------------+
+```
+
+Each extra column corresponds to the configuration the bundle resolved for that
+handler:
+
+* **Dispatch Mode** – Whether the handler will receive the message on the
+  synchronous or asynchronous bus when callers omit an explicit
+  `DispatchMode`.
+* **Async Defers** – Shows whether `DispatchAfterCurrentBusStamp` is appended
+  when the message is sent to an async transport. `n/a` appears for queries,
+  which are always synchronous.
+* **Retry Policy**, **Serializer**, and **Metadata Provider** – The services the
+  container selected for the message, allowing you to verify overrides at a
+  glance.
+
 Example output from `somework:cqrs:list`:
 
 ```
@@ -109,6 +136,9 @@ to the metadata powering the CLI. It offers `all()`, `byType()`, and
 These commands respect the naming strategy configured for the bundle when
 presenting handler information.
 
+See the [configuration reference](reference.md) for the exhaustive list of
+options you can tune.
+
 ## Messenger integration
 
 The bundle does not replace Messenger configuration. Configure your buses and
@@ -121,3 +151,117 @@ bundled `EnvelopeAwareTrait`) automatically receive the current Messenger
 configured CQRS bus so that `setEnvelope()` is invoked for both synchronous and
 asynchronous handlers, allowing you to access stamps and metadata via
 `$this->getEnvelope()`.
+
+## Choosing synchronous or asynchronous dispatch
+
+Every bus accepts an optional `DispatchMode` argument. When it is omitted the
+bundle falls back to the defaults defined in `somework_cqrs.dispatch_modes`. The
+following configuration keeps most commands synchronous while routing
+`ShipOrder` asynchronously:
+
+```yaml
+# config/packages/somework_cqrs.yaml
+somework_cqrs:
+    dispatch_modes:
+        command:
+            default: sync
+            map:
+                App\Application\Command\ShipOrder: async
+```
+
+At runtime you can still make an explicit choice:
+
+```php
+use SomeWork\CqrsBundle\Contract\DispatchMode;
+
+$commandBus->dispatch($command);                 // Uses the resolved default
+$commandBus->dispatch($command, DispatchMode::ASYNC);
+$commandBus->dispatchAsync($command);            // Shortcut for DispatchMode::ASYNC
+$commandBus->dispatchSync($command);             // Shortcut for DispatchMode::SYNC
+```
+
+Queries support `dispatchSync()` for symmetry, while events mirror the command
+API. Refer to the [configuration reference](reference.md#configuration-reference)
+for the complete list of options that influence dispatch resolution.
+
+### Toggling DispatchAfterCurrentBusStamp
+
+Asynchronous commands and events automatically receive Messenger's
+`DispatchAfterCurrentBusStamp` so they are queued after the current handler
+finishes. You can turn this off globally or per message:
+
+```yaml
+somework_cqrs:
+    async:
+        dispatch_after_current_bus:
+            command:
+                default: true
+                map:
+                    App\Application\Command\ShipOrder: false
+            event:
+                default: true
+```
+
+With the override above `ShipOrder` commands are sent to the async bus
+immediately, even if they are dispatched from inside another handler.
+
+## Metadata providers and correlation IDs
+
+Each dispatch can attach a `MessageMetadataStamp` carrying a correlation ID and
+arbitrary key/value extras. The default
+`RandomCorrelationMetadataProvider` generates a random identifier, which you can
+read inside a handler:
+
+```php
+use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+
+final class ShipOrderHandler implements EnvelopeAware
+{
+    use EnvelopeAwareTrait;
+
+    public function __invoke(ShipOrder $command): void
+    {
+        $envelope = $this->getEnvelope();
+        $metadataStamp = $envelope?->last(MessageMetadataStamp::class);
+
+        if ($metadataStamp) {
+            $correlationId = $metadataStamp->getCorrelationId();
+            // Pass $correlationId to your logger or tracing system…
+        }
+    }
+}
+```
+
+To override the metadata provider for a specific message implement
+`MessageMetadataProvider` and register it in the configuration:
+
+```php
+use SomeWork\CqrsBundle\Contract\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+
+final class TenantCorrelationMetadataProvider implements MessageMetadataProvider
+{
+    public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
+    {
+        return new MessageMetadataStamp(
+            $message->tenantId,
+            ['tenant' => $message->tenantId, 'mode' => $mode->value],
+        );
+    }
+}
+```
+
+```yaml
+somework_cqrs:
+    metadata:
+        command:
+            map:
+                App\Application\Command\ShipOrder: App\Support\TenantCorrelationMetadataProvider
+```
+
+Handlers now receive deterministic correlation IDs whenever `ShipOrder` is
+dispatched. More metadata knobs – including per-type defaults and global
+fallbacks – are covered in the [configuration reference](reference.md#configuration-reference).
