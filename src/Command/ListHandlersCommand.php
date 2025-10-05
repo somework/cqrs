@@ -54,15 +54,24 @@ final class ListHandlersCommand extends Command
         private readonly HandlerRegistry $registry,
         private readonly DispatchModeDecider $dispatchModeDecider,
         private readonly DispatchAfterCurrentBusDecider $dispatchAfterCurrentBusDecider,
-        #[Autowire(service: 'somework_cqrs.retry.command_resolver')] RetryPolicyResolver $commandRetryResolver,
-        #[Autowire(service: 'somework_cqrs.retry.query_resolver')] RetryPolicyResolver $queryRetryResolver,
-        #[Autowire(service: 'somework_cqrs.retry.event_resolver')] RetryPolicyResolver $eventRetryResolver,
-        #[Autowire(service: 'somework_cqrs.serializer.command_resolver')] MessageSerializerResolver $commandSerializerResolver,
-        #[Autowire(service: 'somework_cqrs.serializer.query_resolver')] MessageSerializerResolver $querySerializerResolver,
-        #[Autowire(service: 'somework_cqrs.serializer.event_resolver')] MessageSerializerResolver $eventSerializerResolver,
-        #[Autowire(service: 'somework_cqrs.metadata.command_resolver')] MessageMetadataProviderResolver $commandMetadataResolver,
-        #[Autowire(service: 'somework_cqrs.metadata.query_resolver')] MessageMetadataProviderResolver $queryMetadataResolver,
-        #[Autowire(service: 'somework_cqrs.metadata.event_resolver')] MessageMetadataProviderResolver $eventMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.retry.command_resolver')]
+        RetryPolicyResolver $commandRetryResolver,
+        #[Autowire(service: 'somework_cqrs.retry.query_resolver')]
+        RetryPolicyResolver $queryRetryResolver,
+        #[Autowire(service: 'somework_cqrs.retry.event_resolver')]
+        RetryPolicyResolver $eventRetryResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.command_resolver')]
+        MessageSerializerResolver $commandSerializerResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.query_resolver')]
+        MessageSerializerResolver $querySerializerResolver,
+        #[Autowire(service: 'somework_cqrs.serializer.event_resolver')]
+        MessageSerializerResolver $eventSerializerResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.command_resolver')]
+        MessageMetadataProviderResolver $commandMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.query_resolver')]
+        MessageMetadataProviderResolver $queryMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.metadata.event_resolver')]
+        MessageMetadataProviderResolver $eventMetadataResolver,
     ) {
         parent::__construct();
 
@@ -239,7 +248,8 @@ final class ListHandlersCommand extends Command
 
     /**
      * @template T
-     * @param T|null $resolver
+     *
+     * @param T|null                      $resolver
      * @param callable(T, object): object $callback
      */
     private function describeResolvedService(mixed $resolver, ?object $message, callable $callback): string
