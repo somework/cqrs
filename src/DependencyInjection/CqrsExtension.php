@@ -417,6 +417,7 @@ final class CqrsExtension extends Extension
 
     /**
      * @param array{default: string, map: array<string, string>} $dispatchConfig
+     *
      * @return array{default: bool, messages: list<string>}
      */
     private function collectAsyncSources(array $dispatchConfig): array
@@ -452,14 +453,15 @@ final class CqrsExtension extends Extension
 
         $details = implode(' and ', $parts);
 
-        throw new InvalidConfigurationException(sprintf(
-            'Asynchronous dispatch is configured for %s (%s), but "somework_cqrs.buses.%s" is null. '
-            .'Define the Messenger bus id used for async %s before the container is compiled.',
+        $message = sprintf(
+            'Asynchronous dispatch is configured for %s (%s), but "somework_cqrs.buses.%s" is null. Define the Messenger bus id used for async %s before the container is compiled.',
             $typeLabel,
             $details,
             $busKey,
-            $typeLabel
-        ));
+            $typeLabel,
+        );
+
+        throw new InvalidConfigurationException($message);
     }
 
     /**
