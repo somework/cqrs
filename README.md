@@ -160,6 +160,23 @@ Need additional stamps? Implement `SomeWork\CqrsBundle\Support\StampDecider`, ta
 the service with `somework_cqrs.dispatch_stamp_decider`, and the bundle will run
 it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
 
+### How message overrides are resolved
+
+Whenever a configuration section exposes a `map` of message-specific services
+(`retry_policies`, `serialization`, `dispatch_modes`, or
+`async.dispatch_after_current_bus`), the bundle resolves the entry using a shared
+matching strategy. The lookup happens in three steps:
+
+1. Check for an **exact class match**.
+2. Walk up the **parent class hierarchy**, returning the first configured
+   ancestor.
+3. Evaluate **interfaces** implemented by the message, followed by any parent
+   interfaces, and pick the first configured entry.
+
+This ordering keeps overrides predictable – concrete classes always win, then
+inheritance, then shared contracts. If nothing matches the resolver falls back
+to the type-specific `default` and, when available, the global default service.
+
 See [`docs/reference.md`](docs/reference.md) for a complete description of every
 option and [`docs/usage.md`](docs/usage.md) for more examples.
 
