@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
+
 /**
  * Dispatches commands through configured Messenger buses.
  */
