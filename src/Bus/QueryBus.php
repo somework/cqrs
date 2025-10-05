@@ -5,9 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Bus;
 
 use SomeWork\CqrsBundle\Contract\Query;
-use SomeWork\CqrsBundle\Contract\RetryPolicy;
-use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -17,16 +15,10 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  */
 final class QueryBus
 {
-    private readonly RetryPolicyResolver $retryPolicies;
-    private readonly MessageSerializerResolver $serializers;
-
     public function __construct(
         private readonly MessageBusInterface $bus,
-        ?RetryPolicyResolver $retryPolicies = null,
-        ?MessageSerializerResolver $serializers = null,
+        private readonly StampsDecider $stampsDecider,
     ) {
-        $this->retryPolicies = $retryPolicies ?? RetryPolicyResolver::withoutOverrides();
-        $this->serializers = $serializers ?? MessageSerializerResolver::withoutOverrides();
     }
 
     /**
@@ -34,14 +26,7 @@ final class QueryBus
      */
     public function ask(Query $query, StampInterface ...$stamps): mixed
     {
-        $retryPolicy = $this->resolveRetryPolicy($query);
-        $stamps = [...$stamps, ...$retryPolicy->getStamps($query, DispatchMode::SYNC)];
-
-        $serializer = $this->serializers->resolveFor($query);
-        $serializerStamp = $serializer->getStamp($query, DispatchMode::SYNC);
-        if (null !== $serializerStamp) {
-            $stamps[] = $serializerStamp;
-        }
+        $stamps = $this->stampsDecider->decide($query, DispatchMode::SYNC, $stamps);
 
         $envelope = $this->bus->dispatch($query, $stamps);
 
@@ -52,10 +37,5 @@ final class QueryBus
         }
 
         return $handled->getResult();
-    }
-
-    private function resolveRetryPolicy(Query $query): RetryPolicy
-    {
-        return $this->retryPolicies->resolveFor($query);
     }
 }
