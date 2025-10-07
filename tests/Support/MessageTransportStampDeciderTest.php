@@ -14,6 +14,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+use function sprintf;
+
 final class MessageTransportStampDeciderTest extends TestCase
 {
     public function test_appends_transport_names_for_sync_command(): void
