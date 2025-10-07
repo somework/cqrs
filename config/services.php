@@ -21,6 +21,8 @@ return static function (ContainerConfigurator $configurator): void {
             '../src/Support/DispatchAfterCurrentBusStampDecider.php',
             '../src/Support/MessageMetadataStampDecider.php',
             '../src/Support/MessageSerializerStampDecider.php',
+            '../src/Support/MessageTransportResolver.php',
+            '../src/Support/MessageTransportStampDecider.php',
             '../src/Support/StampsDecider.php',
             '../src/Support/StampDecider.php',
             '../src/Support/RetryPolicyStampDecider.php',
