@@ -67,7 +67,7 @@ final class InvoicePaidProjector implements EventHandler
 
 ## Console tooling
 
-Two commands ship with the bundle once it is registered in your kernel:
+Three commands ship with the bundle once it is registered in your kernel:
 
 * `somework:cqrs:list` renders a table of discovered messages and their
   handlers. Use `--type=command` (or `query` / `event`) to focus the output.
@@ -76,6 +76,9 @@ Two commands ship with the bundle once it is registered in your kernel:
   to produce `ShipOrder` and `ShipOrderHandler` inside your project `src/`
   directory. Pass `--dir=app/src` and `--force` to customise the target or
   overwrite existing files.
+* `somework:cqrs:debug-transports` prints the default Messenger transports for
+  each CQRS bus alongside every explicit override so you can audit routing
+  across your application.
 
 Pass `--details` to `somework:cqrs:list` to inspect the resolved dispatch
 configuration for each handler:
@@ -135,6 +138,12 @@ to the metadata powering the CLI. It offers `all()`, `byType()`, and
 
 These commands respect the naming strategy configured for the bundle when
 presenting handler information.
+
+For transport routing specifically, rely on `bin/console
+somework:cqrs:debug-transports` as the canonical source of truth. The command
+reflects the compiled container configuration, so you can confirm which
+Messenger transports will receive your CQRS messages before rolling out
+infrastructure changes.
 
 See the [configuration reference](reference.md) for the exhaustive list of
 options you can tune.

@@ -32,6 +32,7 @@ use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
@@ -429,6 +430,14 @@ final class CqrsExtension extends Extension
         $configuredTransportNames = array_values(array_unique($configuredTransportNames));
 
         $container->setParameter('somework_cqrs.transport_names', $configuredTransportNames);
+        $container->setParameter('somework_cqrs.transport_mapping', $config);
+
+        $providerDefinition = new Definition(TransportMappingProvider::class);
+        $providerDefinition->setArgument('$mapping', $config);
+        $providerDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.transport_mapping_provider', $providerDefinition);
+        $container->setAlias(TransportMappingProvider::class, 'somework_cqrs.transport_mapping_provider')->setPublic(false);
     }
 
     /**
