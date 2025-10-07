@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Support;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -31,8 +32,18 @@ final class StampsDecider implements StampDecider
         MessageSerializerResolver $serializers,
         MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $transports = null,
+        ?MessageTransportResolver $asyncTransports = null,
     ): self {
-        return self::withDefaultsFor(Command::class, $retryPolicies, $serializers, $metadata, $dispatchAfter);
+        return self::withDefaultsFor(
+            Command::class,
+            $retryPolicies,
+            $serializers,
+            $metadata,
+            $dispatchAfter,
+            $transports,
+            $asyncTransports,
+        );
     }
 
     public static function withDefaultEventDecorators(
@@ -40,8 +51,18 @@ final class StampsDecider implements StampDecider
         MessageSerializerResolver $serializers,
         MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $transports = null,
+        ?MessageTransportResolver $asyncTransports = null,
     ): self {
-        return self::withDefaultsFor(Event::class, $retryPolicies, $serializers, $metadata, $dispatchAfter);
+        return self::withDefaultsFor(
+            Event::class,
+            $retryPolicies,
+            $serializers,
+            $metadata,
+            $dispatchAfter,
+            $transports,
+            $asyncTransports,
+        );
     }
 
     public static function withoutDecorators(): self
@@ -69,9 +90,18 @@ final class StampsDecider implements StampDecider
         MessageSerializerResolver $serializers,
         MessageMetadataProviderResolver $metadata,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $transports = null,
+        ?MessageTransportResolver $asyncTransports = null,
     ): self {
         $deciders = [
             new RetryPolicyStampDecider($retryPolicies, $messageType),
+            new MessageTransportStampDecider(
+                Command::class === $messageType ? $transports : null,
+                Command::class === $messageType ? $asyncTransports : null,
+                Query::class === $messageType ? $transports : null,
+                Event::class === $messageType ? $transports : null,
+                Event::class === $messageType ? $asyncTransports : null,
+            ),
             new MessageSerializerStampDecider($serializers, $messageType),
             new MessageMetadataStampDecider($metadata, $messageType),
         ];

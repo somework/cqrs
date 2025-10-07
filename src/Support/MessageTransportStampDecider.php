@@ -22,11 +22,11 @@ final class MessageTransportStampDecider implements StampDecider
     private const SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS = 'Symfony\\Component\\Messenger\\Stamp\\SendMessageToTransportsStamp';
 
     public function __construct(
-        private readonly MessageTransportResolver $commandTransports,
-        private readonly MessageTransportResolver $commandAsyncTransports,
-        private readonly MessageTransportResolver $queryTransports,
-        private readonly MessageTransportResolver $eventTransports,
-        private readonly MessageTransportResolver $eventAsyncTransports,
+        private readonly ?MessageTransportResolver $commandTransports,
+        private readonly ?MessageTransportResolver $commandAsyncTransports,
+        private readonly ?MessageTransportResolver $queryTransports,
+        private readonly ?MessageTransportResolver $eventTransports,
+        private readonly ?MessageTransportResolver $eventAsyncTransports,
     ) {
     }
 
