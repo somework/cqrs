@@ -17,8 +17,8 @@ return (new Config())
         '@PSR12' => true,
         '@Symfony' => true,
         '@Symfony:risky' => true,
-        '@PHP82Migration' => true,
-        '@PHP82Migration:risky' => true,
+        '@PHP8x2Migration' => true,
+        '@PHP8x2Migration:risky' => true,
         'declare_strict_types' => true,
         'native_function_invocation' => [
             'include' => ['@compiler_optimized'],
