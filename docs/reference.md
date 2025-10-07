@@ -215,7 +215,7 @@ power diagnostics, smoke tests, or documentation pages. The registry exposes:
 
 ## Console reference
 
-Two console commands ship with the bundle:
+Three console commands ship with the bundle:
 
 * `somework:cqrs:list` – Prints the handler catalogue in a table. Accepts the
   `--type=<command|query|event>` option multiple times. Add `--details` to the
@@ -227,8 +227,12 @@ Two console commands ship with the bundle:
   * `--handler=` to customise the handler class name.
   * `--dir=` to override the base directory (defaults to `<project>/src`).
   * `--force` to overwrite existing files instead of aborting.
+* `somework:cqrs:debug-transports` – Audits the Messenger transports that CQRS
+  messages map to, showing both defaults per bus and explicit per-message
+  overrides. Run this command whenever you need to verify routing before
+  shipping configuration changes.
 
-Both commands are registered automatically when the bundle is enabled.
+All commands are registered automatically when the bundle is enabled.
 
 ### Inspecting handler configuration
 
@@ -257,3 +261,11 @@ The detailed view adds these columns to every row:
 Use this output to verify how custom overrides are applied across your
 application or to debug unexpected dispatch behaviour in production
 environments.
+
+### Auditing transport routing
+
+Run `php bin/console somework:cqrs:debug-transports` to review which Messenger
+transports each CQRS bus will target by default and to list every per-message
+override. This command surfaces the raw transport mapping compiled into the
+container, making it the canonical way to audit routing before deploying
+changes.
