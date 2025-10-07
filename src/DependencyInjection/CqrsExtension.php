@@ -440,7 +440,7 @@ final class CqrsExtension extends Extension
     }
 
     /**
-     * @param array{default: string, map: array<string, string>} $dispatchConfig
+     * @param array{default: string, map: array<string, string>}             $dispatchConfig
      * @param array{default: list<string>, map: array<string, list<string>>} $transportConfig
      *
      * @return array{
