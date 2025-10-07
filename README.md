@@ -173,6 +173,28 @@ somework_cqrs:
             default: sync
             map:
                 App\Domain\Event\OrderShipped: async
+    transports:
+        command:
+            default: []
+            map:
+                App\Application\Command\ShipOrder: ['sync_commands']
+        command_async:
+            default: ['async_commands']
+            map:
+                App\Application\Command\ShipOrder: ['high_priority_async_commands']
+        query:
+            default: []
+            map: {}
+        event:
+            default: []
+            map:
+                App\Domain\Event\OrderShipped: ['sync_events']
+        event_async:
+            default: ['async_events']
+            map:
+                App\Domain\Event\OrderShipped:
+                    - 'async_events'
+                    - 'audit_log'
     async:
         dispatch_after_current_bus:
             command:
@@ -210,6 +232,15 @@ messages to `false` when they should be sent immediately.
 Need additional stamps? Implement `SomeWork\CqrsBundle\Support\StampDecider`, tag
 the service with `somework_cqrs.dispatch_stamp_decider`, and the bundle will run
 it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
+
+`transports` configures the Messenger transport names the bundle will attach
+via `TransportNamesStamp`. Defaults are evaluated per bus, so you can send every
+asynchronous command through `async_commands` while routing specific messages to
+`high_priority_async_commands` or mirroring events into an `audit_log` queue.
+Messenger still evaluates your `framework.messenger.routing` rules after the
+stamp is applied. Existing routes continue to work, and if callers attach their
+own `TransportNamesStamp`/`SendMessageToTransportsStamp` the bundle leaves those
+choices intact for advanced delivery strategies.
 
 ### How message overrides are resolved
 
