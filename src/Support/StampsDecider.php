@@ -84,6 +84,9 @@ final class StampsDecider implements StampDecider
         return array_values($stamps);
     }
 
+    /**
+     * @param array<string, string> $transportStampTypes
+     */
     public static function withDefaultsFor(
         string $messageType,
         RetryPolicyResolver $retryPolicies,
@@ -92,15 +95,22 @@ final class StampsDecider implements StampDecider
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
         ?MessageTransportResolver $transports = null,
         ?MessageTransportResolver $asyncTransports = null,
+        ?MessageTransportStampFactory $transportStampFactory = null,
+        array $transportStampTypes = [],
     ): self {
+        $transportStampFactory ??= new MessageTransportStampFactory();
+        $stampTypes = array_replace(MessageTransportStampDecider::DEFAULT_STAMP_TYPES, $transportStampTypes);
+
         $deciders = [
             new RetryPolicyStampDecider($retryPolicies, $messageType),
             new MessageTransportStampDecider(
+                $transportStampFactory,
                 Command::class === $messageType ? $transports : null,
                 Command::class === $messageType ? $asyncTransports : null,
                 Query::class === $messageType ? $transports : null,
                 Event::class === $messageType ? $transports : null,
                 Event::class === $messageType ? $asyncTransports : null,
+                $stampTypes,
             ),
             new MessageSerializerStampDecider($serializers, $messageType),
             new MessageMetadataStampDecider($metadata, $messageType),
