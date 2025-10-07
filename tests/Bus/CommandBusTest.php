@@ -15,6 +15,8 @@ use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
@@ -27,6 +29,7 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
+use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 final class CommandBusTest extends TestCase
 {
@@ -379,10 +382,12 @@ final class CommandBusTest extends TestCase
             ->with(
                 $command,
                 self::callback(function (array $stamps) use ($retryStamp, $serializerStamp): bool {
-                    self::assertCount(3, $stamps);
+                    self::assertCount(4, $stamps);
                     self::assertSame($retryStamp, $stamps[0]);
-                    self::assertSame($serializerStamp, $stamps[1]);
-                    self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $stamps[2]);
+                    self::assertInstanceOf(TransportNamesStamp::class, $stamps[1]);
+                    self::assertSame(['async'], $stamps[1]->getTransportNames());
+                    self::assertSame($serializerStamp, $stamps[2]);
+                    self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $stamps[3]);
 
                     return true;
                 })
@@ -400,9 +405,67 @@ final class CommandBusTest extends TestCase
             CreateTaskCommand::class => $serializer,
         ]);
 
-        $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider($resolver, $serializers));
+        $transports = $this->createTransportResolver([], [
+            CreateTaskCommand::class => ['sync'],
+        ]);
+        $asyncTransports = $this->createTransportResolver([], [
+            CreateTaskCommand::class => ['async'],
+        ]);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createCommandStampsDecider(
+                $resolver,
+                $serializers,
+                transports: $transports,
+                asyncTransports: $asyncTransports,
+            ),
+        );
 
         $bus->dispatch($command, DispatchMode::ASYNC);
+    }
+
+    public function test_async_dispatch_preserves_explicit_transport_stamp(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $transportStamp = new TransportNamesStamp(['explicit']);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $command,
+                self::callback(function (array $stamps) use ($transportStamp): bool {
+                    $transportStamps = array_values(array_filter(
+                        $stamps,
+                        static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
+                    ));
+
+                    self::assertSame([$transportStamp], $transportStamps);
+
+                    return true;
+                })
+            )
+            ->willReturn(new Envelope($command));
+
+        $asyncTransports = $this->createTransportResolver([], [
+            CreateTaskCommand::class => ['async'],
+        ]);
+
+        $bus = new CommandBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createCommandStampsDecider(
+                transports: null,
+                asyncTransports: $asyncTransports,
+            ),
+        );
+
+        $bus->dispatch($command, DispatchMode::ASYNC, $transportStamp);
     }
 
     public function test_dispatch_uses_retry_policy_bound_to_interface(): void
@@ -579,6 +642,8 @@ final class CommandBusTest extends TestCase
         ?RetryPolicyResolver $retryPolicies = null,
         ?MessageSerializerResolver $serializers = null,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $transports = null,
+        ?MessageTransportResolver $asyncTransports = null,
     ): StampsDecider {
         $retryPolicies ??= RetryPolicyResolver::withoutOverrides();
         $serializers ??= MessageSerializerResolver::withoutOverrides();
@@ -586,6 +651,13 @@ final class CommandBusTest extends TestCase
 
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, CommandContract::class),
+            new MessageTransportStampDecider(
+                $transports,
+                $asyncTransports,
+                null,
+                null,
+                null,
+            ),
             new MessageSerializerStampDecider($serializers, CommandContract::class),
             new DispatchAfterCurrentBusStampDecider($dispatchAfter),
         ]);
@@ -611,5 +683,24 @@ final class CommandBusTest extends TestCase
         }
 
         return new MessageSerializerResolver(new ServiceLocator($services));
+    }
+
+    /**
+     * @param list<string>                      $default
+     * @param array<class-string, list<string>> $map
+     */
+    private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
+    {
+        $services = [];
+
+        if ([] !== $default) {
+            $services[MessageTransportResolver::DEFAULT_KEY] = static fn (): array => $default;
+        }
+
+        foreach ($map as $class => $transports) {
+            $services[$class] = static fn (): array => $transports;
+        }
+
+        return new MessageTransportResolver(new ServiceLocator($services));
     }
 }

@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Closure;
 use Psr\Container\ContainerInterface;
+use ReflectionFunction;
 
 use function get_debug_type;
 use function is_array;
 use function is_string;
+use function iterator_to_array;
 use function sprintf;
 
 /**
@@ -48,6 +51,15 @@ final class MessageTransportResolver
     {
         if (is_string($value)) {
             $value = [$value];
+        } elseif ($value instanceof Closure) {
+            $reflection = new ReflectionFunction($value);
+            $value = $reflection->getNumberOfParameters() > 0
+                ? $value($this->transports)
+                : $value();
+
+            return $this->normaliseTransports($key, $value);
+        } elseif ($value instanceof \Traversable) {
+            $value = iterator_to_array($value, false);
         } elseif (!is_array($value)) {
             throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got %s.', $key, get_debug_type($value)));
         }
