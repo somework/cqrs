@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
+use ArrayObject;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
@@ -25,6 +26,8 @@ use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampDecider;
@@ -72,9 +75,10 @@ final class CqrsExtension extends Extension
         $this->registerRetryPolicies($container, $config['retry_policies']);
         $this->registerSerializers($container, $config['serialization']);
         $this->registerMetadataProviders($container, $config['metadata']);
+        $this->registerTransports($container, $config['transports']);
         $this->registerDispatchModeDecider($container, $config['dispatch_modes']);
         $this->registerDispatchAfterCurrentBusDecider($container, $config['async']['dispatch_after_current_bus']);
-        $this->registerStampsDecider($container);
+        $this->registerStampsDecider($container, $config['buses']);
         $this->registerEnvelopeAwareHandlersLocators($container, $config['buses'], $defaultBusId);
         $this->configureBusServices($container, $config['buses'], $defaultBusId);
     }
@@ -371,6 +375,49 @@ final class CqrsExtension extends Extension
     }
 
     /**
+     * @param array<string, array{default: list<string>, map: array<string, list<string>>}> $config
+     */
+    private function registerTransports(ContainerBuilder $container, array $config): void
+    {
+        foreach (['command', 'command_async', 'query', 'event', 'event_async'] as $type) {
+            $serviceMap = [];
+
+            if ([] !== $config[$type]['default']) {
+                $defaultServiceId = sprintf('somework_cqrs.transports.%s.default', $type);
+
+                $defaultDefinition = new Definition(ArrayObject::class);
+                $defaultDefinition->setArguments([$config[$type]['default']]);
+                $defaultDefinition->setPublic(false);
+
+                $container->setDefinition($defaultServiceId, $defaultDefinition);
+
+                $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
+            }
+
+            foreach ($config[$type]['map'] as $messageClass => $transports) {
+                $serviceId = sprintf('somework_cqrs.transports.%s.%s', $type, md5($messageClass));
+
+                $definition = new Definition(ArrayObject::class);
+                $definition->setArguments([$transports]);
+                $definition->setPublic(false);
+
+                $container->setDefinition($serviceId, $definition);
+
+                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+            }
+
+            $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
+            $container->setAlias(sprintf('somework_cqrs.transports.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+
+            $resolverDefinition = new Definition(MessageTransportResolver::class);
+            $resolverDefinition->setArgument('$transports', $locatorReference);
+            $resolverDefinition->setPublic(false);
+
+            $container->setDefinition(sprintf('somework_cqrs.transports.%s_resolver', $type), $resolverDefinition);
+        }
+    }
+
+    /**
      * @param array{
      *     command: array{default: string, map: array<string, string>},
      *     event: array{default: string, map: array<string, string>},
@@ -553,7 +600,16 @@ final class CqrsExtension extends Extension
         $container->setAlias(DispatchAfterCurrentBusDecider::class, 'somework_cqrs.dispatch_after_current_bus_decider')->setPublic(false);
     }
 
-    private function registerStampsDecider(ContainerBuilder $container): void
+    /**
+     * @param array{
+     *     command?: string|null,
+     *     command_async?: string|null,
+     *     query?: string|null,
+     *     event?: string|null,
+     *     event_async?: string|null,
+     * } $buses
+     */
+    private function registerStampsDecider(ContainerBuilder $container, array $buses): void
     {
         $commandRetryDefinition = new Definition(RetryPolicyStampDecider::class);
         $commandRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
@@ -626,6 +682,27 @@ final class CqrsExtension extends Extension
         $eventMetadataDefinition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.stamp_decider.event_metadata', $eventMetadataDefinition);
+
+        $transportDefinition = new Definition(MessageTransportStampDecider::class);
+        $transportDefinition->setArgument('$commandTransports', new Reference('somework_cqrs.transports.command_resolver'));
+        $transportDefinition->setArgument(
+            '$commandAsyncTransports',
+            isset($buses['command_async']) && null !== $buses['command_async']
+                ? new Reference('somework_cqrs.transports.command_async_resolver')
+                : null,
+        );
+        $transportDefinition->setArgument('$queryTransports', new Reference('somework_cqrs.transports.query_resolver'));
+        $transportDefinition->setArgument('$eventTransports', new Reference('somework_cqrs.transports.event_resolver'));
+        $transportDefinition->setArgument(
+            '$eventAsyncTransports',
+            isset($buses['event_async']) && null !== $buses['event_async']
+                ? new Reference('somework_cqrs.transports.event_async_resolver')
+                : null,
+        );
+        $transportDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 175]);
+        $transportDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.stamp_decider.message_transport', $transportDefinition);
 
         $dispatchAfterDefinition = new Definition(DispatchAfterCurrentBusStampDecider::class);
         $dispatchAfterDefinition->setArgument('$decider', new Reference('somework_cqrs.dispatch_after_current_bus_decider'));

@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\StampsDecider;
@@ -25,6 +26,7 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
+use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 final class QueryBusTest extends TestCase
 {
@@ -226,6 +228,92 @@ final class QueryBusTest extends TestCase
         self::assertSame('result', $queryBus->ask($query));
     }
 
+    public function test_ask_appends_transport_names_stamp(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('result', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $query,
+                self::callback(static function (array $stamps): bool {
+                    self::assertCount(1, $stamps);
+                    self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
+                    self::assertSame(['queries'], $stamps[0]->getTransportNames());
+
+                    return true;
+                })
+            )
+            ->willReturn($envelope);
+
+        $retryResolver = RetryPolicyResolver::withoutOverrides();
+        $serializers = MessageSerializerResolver::withoutOverrides(new NullMessageSerializer());
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+        $transports = $this->createTransportResolver([], [
+            FindTaskQuery::class => ['queries'],
+        ]);
+
+        $stampsDecider = StampsDecider::withDefaultsFor(
+            Query::class,
+            $retryResolver,
+            $serializers,
+            $metadata,
+            transports: $transports,
+        );
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
+
+        self::assertSame('result', $queryBus->ask($query));
+    }
+
+    public function test_ask_preserves_explicit_transport_stamp(): void
+    {
+        $query = new FindTaskQuery('123');
+        $transportStamp = new TransportNamesStamp(['explicit-query']);
+        $handled = new HandledStamp('result', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $query,
+                self::callback(function (array $stamps) use ($transportStamp): bool {
+                    $transportStamps = array_values(array_filter(
+                        $stamps,
+                        static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
+                    ));
+
+                    self::assertSame([$transportStamp], $transportStamps);
+
+                    return true;
+                })
+            )
+            ->willReturn($envelope);
+
+        $retryResolver = RetryPolicyResolver::withoutOverrides();
+        $serializers = MessageSerializerResolver::withoutOverrides(new NullMessageSerializer());
+        $metadata = $this->createMetadataResolver($this->createNullMetadataProvider());
+        $transports = $this->createTransportResolver([], [
+            FindTaskQuery::class => ['queries'],
+        ]);
+
+        $stampsDecider = StampsDecider::withDefaultsFor(
+            Query::class,
+            $retryResolver,
+            $serializers,
+            $metadata,
+            transports: $transports,
+        );
+
+        $queryBus = new QueryBus($bus, $stampsDecider);
+
+        self::assertSame('result', $queryBus->ask($query, $transportStamp));
+    }
+
     public function test_ask_uses_type_default_serializer_when_no_override(): void
     {
         $query = new FindTaskQuery('123');
@@ -399,6 +487,25 @@ final class QueryBusTest extends TestCase
         }
 
         return new MessageSerializerResolver(new ServiceLocator($services));
+    }
+
+    /**
+     * @param list<string>                      $default
+     * @param array<class-string, list<string>> $map
+     */
+    private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
+    {
+        $services = [];
+
+        if ([] !== $default) {
+            $services[MessageTransportResolver::DEFAULT_KEY] = static fn (): array => $default;
+        }
+
+        foreach ($map as $class => $transports) {
+            $services[$class] = static fn (): array => $transports;
+        }
+
+        return new MessageTransportResolver(new ServiceLocator($services));
     }
 
     private function createNullMetadataProvider(): MessageMetadataProvider
