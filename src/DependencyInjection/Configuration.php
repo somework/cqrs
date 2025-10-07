@@ -16,6 +16,8 @@ use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 
 use function sprintf;
+use function str_ends_with;
+use function substr;
 
 final class Configuration implements ConfigurationInterface
 {
@@ -167,6 +169,21 @@ final class Configuration implements ConfigurationInterface
         $this->configureDispatchModeSection($dispatchChildren, 'event');
         $dispatchChildren->end();
         $dispatchModes->end();
+
+        $transports = $children->arrayNode('transports');
+        $transports
+            ->addDefaultsIfNotSet()
+            ->info('Messenger transports applied when dispatching messages.');
+
+        /** @var ArrayNodeDefinition $transportChildren */
+        $transportChildren = $transports->children();
+        $this->configureTransportSection($transportChildren, 'command');
+        $this->configureTransportSection($transportChildren, 'command_async');
+        $this->configureTransportSection($transportChildren, 'query');
+        $this->configureTransportSection($transportChildren, 'event');
+        $this->configureTransportSection($transportChildren, 'event_async');
+        $transportChildren->end();
+        $transports->end();
 
         $async = $children->arrayNode('async');
         $async
@@ -320,6 +337,50 @@ final class Configuration implements ConfigurationInterface
             ->booleanPrototype()
             ->end()
             ->info(sprintf('Message-specific overrides for DispatchAfterCurrentBusStamp on async %s messages.', $type));
+
+        $children->end();
+        $node->end();
+    }
+
+    private function configureTransportSection(NodeBuilder $parent, string $type): void
+    {
+        $isAsync = str_ends_with($type, '_async');
+        $baseType = $isAsync ? substr($type, 0, -6) : $type;
+        $label = $isAsync ? sprintf('asynchronous %s', $baseType) : sprintf('%s', $baseType);
+
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('Messenger transports applied to %s messages.', $label));
+
+        $children = $node->children();
+
+        $default = $children->arrayNode('default');
+        $default
+            ->beforeNormalization()
+                ->ifString()
+                ->then(static fn (string $value): array => [$value])
+            ->end()
+            ->defaultValue([])
+            ->scalarPrototype()
+            ->end()
+            ->info(sprintf('Default Messenger transport names for %s messages.', $label));
+        $default->end();
+
+        $map = $children->arrayNode('map');
+        $map
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->arrayPrototype()
+                ->beforeNormalization()
+                    ->ifString()
+                    ->then(static fn (string $value): array => [$value])
+                ->end()
+                ->scalarPrototype()
+                ->end()
+            ->end()
+            ->info(sprintf('Message-specific Messenger transport names for %s messages.', $label));
+        $map->end();
 
         $children->end();
         $node->end();

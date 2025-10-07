@@ -408,6 +408,13 @@ final class CqrsExtension extends Extension
      *         command: array{default: string, map: array<string, string>},
      *         event: array{default: string, map: array<string, string>},
      *     },
+     *     transports: array{
+     *         command: array{default: list<string>, map: array<string, list<string>>},
+     *         command_async: array{default: list<string>, map: array<string, list<string>>},
+     *         query: array{default: list<string>, map: array<string, list<string>>},
+     *         event: array{default: list<string>, map: array<string, list<string>>},
+     *         event_async: array{default: list<string>, map: array<string, list<string>>},
+     *     },
      * } $config
      */
     private function guardAsyncBusConfiguration(array $config): void
@@ -415,51 +422,100 @@ final class CqrsExtension extends Extension
         $commandAsyncBus = $config['buses']['command_async'] ?? null;
         $eventAsyncBus = $config['buses']['event_async'] ?? null;
 
-        $commandAsyncSources = $this->collectAsyncSources($config['dispatch_modes']['command']);
-        if (null === $commandAsyncBus && ($commandAsyncSources['default'] || [] !== $commandAsyncSources['messages'])) {
+        $commandAsyncSources = $this->collectAsyncSources(
+            $config['dispatch_modes']['command'],
+            $config['transports']['command_async']
+        );
+        if (null === $commandAsyncBus && $this->hasAsyncConfiguration($commandAsyncSources)) {
             $this->throwMissingAsyncBusException('command', $commandAsyncSources, 'command_async');
         }
 
-        $eventAsyncSources = $this->collectAsyncSources($config['dispatch_modes']['event']);
-        if (null === $eventAsyncBus && ($eventAsyncSources['default'] || [] !== $eventAsyncSources['messages'])) {
+        $eventAsyncSources = $this->collectAsyncSources(
+            $config['dispatch_modes']['event'],
+            $config['transports']['event_async']
+        );
+        if (null === $eventAsyncBus && $this->hasAsyncConfiguration($eventAsyncSources)) {
             $this->throwMissingAsyncBusException('event', $eventAsyncSources, 'event_async');
         }
     }
 
     /**
-     * @param array{default: string, map: array<string, string>} $dispatchConfig
+     * @param array{default: string, map: array<string, string>}             $dispatchConfig
+     * @param array{default: list<string>, map: array<string, list<string>>} $transportConfig
      *
-     * @return array{default: bool, messages: list<string>}
+     * @return array{
+     *     dispatch_default: bool,
+     *     dispatch_messages: list<string>,
+     *     transport_default: list<string>,
+     *     transport_messages: array<string, list<string>>,
+     * }
      */
-    private function collectAsyncSources(array $dispatchConfig): array
+    private function collectAsyncSources(array $dispatchConfig, array $transportConfig): array
     {
-        $messages = [];
+        $dispatchMessages = [];
 
         foreach ($dispatchConfig['map'] as $messageClass => $mode) {
             if (DispatchMode::ASYNC->value === $mode) {
-                $messages[] = $messageClass;
+                $dispatchMessages[] = $messageClass;
             }
         }
 
         return [
-            'default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
-            'messages' => $messages,
+            'dispatch_default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
+            'dispatch_messages' => $dispatchMessages,
+            'transport_default' => $transportConfig['default'],
+            'transport_messages' => array_filter(
+                $transportConfig['map'],
+                static fn (array $transports): bool => [] !== $transports
+            ),
         ];
     }
 
     /**
-     * @param array{default: bool, messages: list<string>} $sources
+     * @param array{
+     *     dispatch_default: bool,
+     *     dispatch_messages: list<string>,
+     *     transport_default: list<string>,
+     *     transport_messages: array<string, list<string>>,
+     * } $sources
+     */
+    private function hasAsyncConfiguration(array $sources): bool
+    {
+        return $sources['dispatch_default']
+            || [] !== $sources['dispatch_messages']
+            || [] !== $sources['transport_default']
+            || [] !== $sources['transport_messages'];
+    }
+
+    /**
+     * @param array{
+     *     dispatch_default: bool,
+     *     dispatch_messages: list<string>,
+     *     transport_default: list<string>,
+     *     transport_messages: array<string, list<string>>,
+     * } $sources
      */
     private function throwMissingAsyncBusException(string $type, array $sources, string $busKey): void
     {
         $typeLabel = 'command' === $type ? 'commands' : 'events';
 
         $parts = [];
-        if ($sources['default']) {
+        if ($sources['dispatch_default']) {
             $parts[] = 'the default dispatch mode is "async"';
         }
-        if ([] !== $sources['messages']) {
-            $parts[] = sprintf('async map entries: %s', implode(', ', $sources['messages']));
+        if ([] !== $sources['dispatch_messages']) {
+            $parts[] = sprintf('async dispatch mode map entries: %s', implode(', ', $sources['dispatch_messages']));
+        }
+        if ([] !== $sources['transport_default']) {
+            $parts[] = sprintf('async transport defaults: %s', implode(', ', $sources['transport_default']));
+        }
+        if ([] !== $sources['transport_messages']) {
+            $entries = [];
+            foreach ($sources['transport_messages'] as $messageClass => $transports) {
+                $entries[] = sprintf('%s => [%s]', $messageClass, implode(', ', $transports));
+            }
+
+            $parts[] = sprintf('async transport map entries: %s', implode(', ', $entries));
         }
 
         $details = implode(' and ', $parts);
