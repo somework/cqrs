@@ -355,6 +355,12 @@ final class Configuration implements ConfigurationInterface
 
         $children = $node->children();
 
+        $children
+            ->enumNode('stamp')
+            ->values(['transport_names', 'send_message'])
+            ->defaultValue('transport_names')
+            ->info(sprintf('Messenger stamp type to apply for %s messages.', $label));
+
         $default = $children->arrayNode('default');
         $default
             ->beforeNormalization()

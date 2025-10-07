@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
@@ -652,6 +653,7 @@ final class CommandBusTest extends TestCase
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, CommandContract::class),
             new MessageTransportStampDecider(
+                new MessageTransportStampFactory(),
                 $transports,
                 $asyncTransports,
                 null,
