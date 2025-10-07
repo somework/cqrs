@@ -19,15 +19,36 @@ use function is_a;
 final class MessageTransportStampDecider implements StampDecider
 {
     private const SENDERS_LOCATOR_STAMP_CLASS = 'Symfony\\Component\\Messenger\\Stamp\\SendersLocatorStamp';
-    private const SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS = 'Symfony\\Component\\Messenger\\Stamp\\SendMessageToTransportsStamp';
 
+    /**
+     * @var array<string, string>
+     */
+    public const DEFAULT_STAMP_TYPES = [
+        'command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
+        'command_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
+        'query' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
+        'event' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
+        'event_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
+    ];
+
+    /**
+     * @var array<string, string>
+     */
+    private array $stampTypes;
+
+    /**
+     * @param array<string, string> $stampTypes
+     */
     public function __construct(
+        private readonly MessageTransportStampFactory $stampFactory,
         private readonly ?MessageTransportResolver $commandTransports,
         private readonly ?MessageTransportResolver $commandAsyncTransports,
         private readonly ?MessageTransportResolver $queryTransports,
         private readonly ?MessageTransportResolver $eventTransports,
         private readonly ?MessageTransportResolver $eventAsyncTransports,
+        array $stampTypes = self::DEFAULT_STAMP_TYPES,
     ) {
+        $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
     }
 
     /**
@@ -40,12 +61,17 @@ final class MessageTransportStampDecider implements StampDecider
         foreach ($stamps as $stamp) {
             if ($stamp instanceof TransportNamesStamp
                 || is_a($stamp, self::SENDERS_LOCATOR_STAMP_CLASS, false)
-                || is_a($stamp, self::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false)) {
+                || is_a($stamp, MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false)) {
                 return $stamps;
             }
         }
 
-        $resolver = $this->resolverFor($message, $mode);
+        $typeKey = $this->typeKeyFor($message, $mode);
+        if (null === $typeKey) {
+            return $stamps;
+        }
+
+        $resolver = $this->resolverFor($typeKey);
 
         if (null === $resolver) {
             return $stamps;
@@ -57,23 +83,37 @@ final class MessageTransportStampDecider implements StampDecider
             return $stamps;
         }
 
-        $stamps[] = new TransportNamesStamp($transports);
+        $stampType = $this->stampTypes[$typeKey] ?? MessageTransportStampFactory::TYPE_TRANSPORT_NAMES;
+
+        $stamps[] = $this->stampFactory->create($stampType, $transports);
 
         return $stamps;
     }
 
-    private function resolverFor(object $message, DispatchMode $mode): ?MessageTransportResolver
+    private function resolverFor(string $type): ?MessageTransportResolver
+    {
+        return match ($type) {
+            'command' => $this->commandTransports,
+            'command_async' => $this->commandAsyncTransports,
+            'query' => $this->queryTransports,
+            'event' => $this->eventTransports,
+            'event_async' => $this->eventAsyncTransports,
+            default => null,
+        };
+    }
+
+    private function typeKeyFor(object $message, DispatchMode $mode): ?string
     {
         if ($message instanceof Command) {
-            return DispatchMode::ASYNC === $mode ? $this->commandAsyncTransports : $this->commandTransports;
+            return DispatchMode::ASYNC === $mode ? 'command_async' : 'command';
         }
 
         if ($message instanceof Query) {
-            return $this->queryTransports;
+            return 'query';
         }
 
         if ($message instanceof Event) {
-            return DispatchMode::ASYNC === $mode ? $this->eventAsyncTransports : $this->eventTransports;
+            return DispatchMode::ASYNC === $mode ? 'event_async' : 'event';
         }
 
         return null;

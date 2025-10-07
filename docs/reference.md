@@ -69,21 +69,26 @@ somework_cqrs:
                 App\Domain\Event\OrderShipped: async
     transports:
         command:
+            stamp: transport_names
             default: []
             map:
                 App\Application\Command\ShipOrder: ['sync_commands']
         command_async:
+            stamp: transport_names
             default: ['async_commands']
             map:
                 App\Application\Command\ShipOrder: ['high_priority_async_commands']
         query:
+            stamp: transport_names
             default: []
             map: {}
         event:
+            stamp: transport_names
             default: []
             map:
                 App\Domain\Event\OrderShipped: ['sync_events']
         event_async:
+            stamp: transport_names
             default: ['async_events']
             map:
                 App\Domain\Event\OrderShipped:
@@ -143,13 +148,17 @@ somework_cqrs:
   `InvalidConfigurationException` when an async default or override exists
   without the corresponding async bus id.
 * **transports** – lists Messenger transport names that the bundle adds through
-  `TransportNamesStamp` when dispatching messages. Defaults and overrides are
-  evaluated per bus, so you can send all async commands through
-  `async_commands`, mirror specific events into `audit_log`, or leave sync buses
-  unconfigured. Messenger still applies your `framework.messenger.routing`
-  definitions after the stamp is attached, and existing routes remain intact
-  when callers provide their own `TransportNamesStamp` or
-  `SendMessageToTransportsStamp` for advanced delivery logic.
+  `TransportNamesStamp` when dispatching messages. Each bus accepts an optional
+  `stamp` option that switches to Messenger's `SendMessageToTransportsStamp`
+  (available starting in Symfony Messenger 6.3). Selecting `send_message` on an
+  older release triggers a descriptive exception so you can upgrade the
+  dependency. Defaults and overrides are evaluated per bus, so you can send all
+  async commands through `async_commands`, mirror specific events into
+  `audit_log`, or leave sync buses unconfigured. Messenger still applies your
+  `framework.messenger.routing` definitions after the stamp is attached, and
+  existing routes remain intact when callers provide their own
+  `TransportNamesStamp` or `SendMessageToTransportsStamp` for advanced delivery
+  logic.
 * **async.dispatch_after_current_bus** – toggles whether the bundle appends
   Messenger's `DispatchAfterCurrentBusStamp` when a command or event resolves to
   the asynchronous bus. Leave the `default` values set to `true` to preserve the

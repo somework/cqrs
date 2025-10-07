@@ -175,21 +175,26 @@ somework_cqrs:
                 App\Domain\Event\OrderShipped: async
     transports:
         command:
+            stamp: transport_names
             default: []
             map:
                 App\Application\Command\ShipOrder: ['sync_commands']
         command_async:
+            stamp: transport_names
             default: ['async_commands']
             map:
                 App\Application\Command\ShipOrder: ['high_priority_async_commands']
         query:
+            stamp: transport_names
             default: []
             map: {}
         event:
+            stamp: transport_names
             default: []
             map:
                 App\Domain\Event\OrderShipped: ['sync_events']
         event_async:
+            stamp: transport_names
             default: ['async_events']
             map:
                 App\Domain\Event\OrderShipped:
@@ -234,8 +239,11 @@ the service with `somework_cqrs.dispatch_stamp_decider`, and the bundle will run
 it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
 
 `transports` configures the Messenger transport names the bundle will attach
-via `TransportNamesStamp`. Defaults are evaluated per bus, so you can send every
-asynchronous command through `async_commands` while routing specific messages to
+via `TransportNamesStamp` by default. Each bus accepts an optional `stamp`
+setting to swap the behaviour to Messenger's `SendMessageToTransportsStamp`
+when running on Symfony 6.3+ (older releases trigger a descriptive exception).
+Defaults are evaluated per bus, so you can send every asynchronous command
+through `async_commands` while routing specific messages to
 `high_priority_async_commands` or mirroring events into an `audit_log` queue.
 Messenger still evaluates your `framework.messenger.routing` rules after the
 stamp is applied. Existing routes continue to work, and if callers attach their
