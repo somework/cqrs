@@ -28,6 +28,7 @@ use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampDecider;
@@ -376,32 +377,41 @@ final class CqrsExtension extends Extension
     }
 
     /**
-     * @param array<string, array{default: list<string>, map: array<string, list<string>>}> $config
+     * @param array<string, array{default: list<string>, map: array<string, list<string>>, stamp: string}> $config
      */
     private function registerTransports(ContainerBuilder $container, array $config): void
     {
         $configuredTransportNames = [];
+        $stampTypes = [];
+        $mapping = [];
 
         foreach (['command', 'command_async', 'query', 'event', 'event_async'] as $type) {
             $serviceMap = [];
+            $typeConfig = $config[$type];
 
-            if ([] !== $config[$type]['default']) {
+            $stampTypes[$type] = $typeConfig['stamp'];
+            $mapping[$type] = [
+                'default' => $typeConfig['default'],
+                'map' => $typeConfig['map'],
+            ];
+
+            if ([] !== $typeConfig['default']) {
                 $defaultServiceId = sprintf('somework_cqrs.transports.%s.default', $type);
 
                 $defaultDefinition = new Definition(ArrayObject::class);
-                $defaultDefinition->setArguments([$config[$type]['default']]);
+                $defaultDefinition->setArguments([$typeConfig['default']]);
                 $defaultDefinition->setPublic(false);
 
                 $container->setDefinition($defaultServiceId, $defaultDefinition);
 
                 $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
 
-                foreach ($config[$type]['default'] as $transportName) {
+                foreach ($typeConfig['default'] as $transportName) {
                     $configuredTransportNames[] = (string) $transportName;
                 }
             }
 
-            foreach ($config[$type]['map'] as $messageClass => $transports) {
+            foreach ($typeConfig['map'] as $messageClass => $transports) {
                 $serviceId = sprintf('somework_cqrs.transports.%s.%s', $type, md5($messageClass));
 
                 $definition = new Definition(ArrayObject::class);
@@ -430,10 +440,11 @@ final class CqrsExtension extends Extension
         $configuredTransportNames = array_values(array_unique($configuredTransportNames));
 
         $container->setParameter('somework_cqrs.transport_names', $configuredTransportNames);
-        $container->setParameter('somework_cqrs.transport_mapping', $config);
+        $container->setParameter('somework_cqrs.transport_mapping', $mapping);
+        $container->setParameter('somework_cqrs.transport_stamp_types', $stampTypes);
 
         $providerDefinition = new Definition(TransportMappingProvider::class);
-        $providerDefinition->setArgument('$mapping', $config);
+        $providerDefinition->setArgument('$mapping', $mapping);
         $providerDefinition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.transport_mapping_provider', $providerDefinition);
@@ -706,7 +717,15 @@ final class CqrsExtension extends Extension
 
         $container->setDefinition('somework_cqrs.stamp_decider.event_metadata', $eventMetadataDefinition);
 
+        $stampFactoryDefinition = new Definition(MessageTransportStampFactory::class);
+        $stampFactoryDefinition->setPublic(false);
+
+        $container->setDefinition('somework_cqrs.transport_stamp_factory', $stampFactoryDefinition);
+        $container->setAlias(MessageTransportStampFactory::class, 'somework_cqrs.transport_stamp_factory')->setPublic(false);
+
         $transportDefinition = new Definition(MessageTransportStampDecider::class);
+        $transportDefinition->setArgument('$stampFactory', new Reference('somework_cqrs.transport_stamp_factory'));
+        $transportDefinition->setArgument('$stampTypes', '%somework_cqrs.transport_stamp_types%');
         $transportDefinition->setArgument('$commandTransports', new Reference('somework_cqrs.transports.command_resolver'));
         $transportDefinition->setArgument(
             '$commandAsyncTransports',

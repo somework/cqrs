@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 use function sprintf;
@@ -23,19 +26,17 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new CreateTaskCommand('123', 'Test');
 
         $commandResolver = $this->resolverForMessage(CreateTaskCommand::class, ['sync']);
-        $decider = new MessageTransportStampDecider(
-            $commandResolver,
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $commandResolver,
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, []);
 
-        self::assertCount(1, $stamps);
-        self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
-        self::assertSame(['sync'], $stamps[0]->getTransportNames());
+        $this->assertStampTransports(['sync'], $stamps);
     }
 
     public function test_appends_transport_names_for_async_command(): void
@@ -44,19 +45,17 @@ final class MessageTransportStampDeciderTest extends TestCase
 
         $commandResolver = $this->resolverThatShouldNotBeCalled();
         $commandAsyncResolver = $this->resolverForMessage(CreateTaskCommand::class, ['async']);
-        $decider = new MessageTransportStampDecider(
-            $commandResolver,
-            $commandAsyncResolver,
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $commandResolver,
+            commandAsync: $commandAsyncResolver,
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::ASYNC, []);
 
-        self::assertCount(1, $stamps);
-        self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
-        self::assertSame(['async'], $stamps[0]->getTransportNames());
+        $this->assertStampTransports(['async'], $stamps);
     }
 
     public function test_appends_transport_names_for_query(): void
@@ -64,19 +63,17 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new FindTaskQuery('123');
 
         $queryResolver = $this->resolverForMessage(FindTaskQuery::class, ['queries']);
-        $decider = new MessageTransportStampDecider(
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $queryResolver,
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $this->resolverThatShouldNotBeCalled(),
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $queryResolver,
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, []);
 
-        self::assertCount(1, $stamps);
-        self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
-        self::assertSame(['queries'], $stamps[0]->getTransportNames());
+        $this->assertStampTransports(['queries'], $stamps);
     }
 
     public function test_appends_transport_names_for_events(): void
@@ -84,19 +81,17 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new TaskCreatedEvent('123');
 
         $eventResolver = $this->resolverForMessage(TaskCreatedEvent::class, ['events']);
-        $decider = new MessageTransportStampDecider(
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $eventResolver,
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $this->resolverThatShouldNotBeCalled(),
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $eventResolver,
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, []);
 
-        self::assertCount(1, $stamps);
-        self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
-        self::assertSame(['events'], $stamps[0]->getTransportNames());
+        $this->assertStampTransports(['events'], $stamps);
     }
 
     public function test_appends_transport_names_for_async_events(): void
@@ -104,19 +99,39 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new TaskCreatedEvent('123');
 
         $eventAsyncResolver = $this->resolverForMessage(TaskCreatedEvent::class, ['async_events']);
-        $decider = new MessageTransportStampDecider(
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $eventAsyncResolver,
+        $decider = $this->createDecider(
+            command: $this->resolverThatShouldNotBeCalled(),
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $eventAsyncResolver,
         );
 
         $stamps = $decider->decide($message, DispatchMode::ASYNC, []);
 
-        self::assertCount(1, $stamps);
-        self::assertInstanceOf(TransportNamesStamp::class, $stamps[0]);
-        self::assertSame(['async_events'], $stamps[0]->getTransportNames());
+        $this->assertStampTransports(['async_events'], $stamps);
+    }
+
+    #[RunInSeparateProcess]
+    public function test_appends_send_message_stamp_when_configured(): void
+    {
+        require_once __DIR__.'/../Fixture/Messenger/SendMessageToTransportsStampStub.php';
+
+        $message = new CreateTaskCommand('123', 'Test');
+
+        $commandResolver = $this->resolverForMessage(CreateTaskCommand::class, ['sync']);
+        $decider = $this->createDecider(
+            command: $commandResolver,
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
+            stampTypes: ['command' => MessageTransportStampFactory::TYPE_SEND_MESSAGE],
+        );
+
+        $stamps = $decider->decide($message, DispatchMode::SYNC, []);
+
+        $this->assertStampTransports(['sync'], $stamps, MessageTransportStampFactory::TYPE_SEND_MESSAGE);
     }
 
     public function test_ignores_when_resolver_returns_null(): void
@@ -124,12 +139,12 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new CreateTaskCommand('123', 'Test');
 
         $commandResolver = new MessageTransportResolver(new ServiceLocator([]));
-        $decider = new MessageTransportStampDecider(
-            $commandResolver,
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $commandResolver,
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, []);
@@ -142,12 +157,12 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new CreateTaskCommand('123', 'Test');
 
         $commandResolver = $this->resolverForMessage(CreateTaskCommand::class, []);
-        $decider = new MessageTransportStampDecider(
-            $commandResolver,
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $commandResolver,
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, []);
@@ -160,12 +175,12 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new CreateTaskCommand('123', 'Test');
         $existing = new TransportNamesStamp(['existing']);
 
-        $decider = new MessageTransportStampDecider(
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $this->resolverThatShouldNotBeCalled(),
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, [$existing]);
@@ -183,12 +198,12 @@ final class MessageTransportStampDeciderTest extends TestCase
         $message = new CreateTaskCommand('123', 'Test');
         $existing = new $class([], []);
 
-        $decider = new MessageTransportStampDecider(
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
-            $this->resolverThatShouldNotBeCalled(),
+        $decider = $this->createDecider(
+            command: $this->resolverThatShouldNotBeCalled(),
+            commandAsync: $this->resolverThatShouldNotBeCalled(),
+            query: $this->resolverThatShouldNotBeCalled(),
+            event: $this->resolverThatShouldNotBeCalled(),
+            eventAsync: $this->resolverThatShouldNotBeCalled(),
         );
 
         $stamps = $decider->decide($message, DispatchMode::SYNC, [$existing]);
@@ -217,6 +232,61 @@ final class MessageTransportStampDeciderTest extends TestCase
         $stamps = $decider->decide($message, DispatchMode::SYNC, [$existing]);
 
         self::assertSame([$existing], $stamps);
+    }
+
+    /**
+     * @param array<string, string> $stampTypes
+     */
+    private function createDecider(
+        ?MessageTransportResolver $command = null,
+        ?MessageTransportResolver $commandAsync = null,
+        ?MessageTransportResolver $query = null,
+        ?MessageTransportResolver $event = null,
+        ?MessageTransportResolver $eventAsync = null,
+        ?MessageTransportStampFactory $factory = null,
+        array $stampTypes = [],
+    ): MessageTransportStampDecider {
+        return new MessageTransportStampDecider(
+            $factory ?? new MessageTransportStampFactory(),
+            $command,
+            $commandAsync,
+            $query,
+            $event,
+            $eventAsync,
+            $stampTypes,
+        );
+    }
+
+    /**
+     * @param list<string>         $expected
+     * @param list<StampInterface> $stamps
+     */
+    private function assertStampTransports(array $expected, array $stamps, string $type = MessageTransportStampFactory::TYPE_TRANSPORT_NAMES): void
+    {
+        self::assertCount(1, $stamps);
+        $stamp = $stamps[0];
+
+        if (MessageTransportStampFactory::TYPE_SEND_MESSAGE === $type) {
+            $class = MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS;
+            self::assertInstanceOf($class, $stamp);
+        } else {
+            self::assertInstanceOf(TransportNamesStamp::class, $stamp);
+        }
+
+        $getter = null;
+
+        if (method_exists($stamp, 'getTransportNames')) {
+            $getter = 'getTransportNames';
+        } elseif (method_exists($stamp, 'getTransports')) {
+            $getter = 'getTransports';
+        }
+
+        self::assertNotNull($getter, 'Transport stamp does not expose transport names.');
+
+        /** @var callable(): array $callable */
+        $callable = [$stamp, $getter];
+
+        self::assertSame($expected, $callable());
     }
 
     /**
