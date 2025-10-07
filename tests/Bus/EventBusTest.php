@@ -15,6 +15,8 @@ use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
@@ -27,6 +29,7 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
+use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 final class EventBusTest extends TestCase
 {
@@ -292,6 +295,48 @@ final class EventBusTest extends TestCase
         $bus->dispatch($event, DispatchMode::ASYNC);
     }
 
+    public function test_async_dispatch_preserves_explicit_transport_stamp(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $transportStamp = new TransportNamesStamp(['explicit-event']);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::never())->method('dispatch');
+
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->expects(self::once())
+            ->method('dispatch')
+            ->with(
+                $event,
+                self::callback(function (array $stamps) use ($transportStamp): bool {
+                    $transportStamps = array_values(array_filter(
+                        $stamps,
+                        static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
+                    ));
+
+                    self::assertSame([$transportStamp], $transportStamps);
+
+                    return true;
+                })
+            )
+            ->willReturn(new Envelope($event));
+
+        $asyncTransports = $this->createTransportResolver([], [
+            TaskCreatedEvent::class => ['async-events'],
+        ]);
+
+        $bus = new EventBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createEventStampsDecider(
+                transports: null,
+                asyncTransports: $asyncTransports,
+            ),
+        );
+
+        $bus->dispatch($event, DispatchMode::ASYNC, $transportStamp);
+    }
+
     public function test_dispatch_async_helper_without_bus_throws_exception(): void
     {
         $event = new TaskCreatedEvent('123');
@@ -370,9 +415,11 @@ final class EventBusTest extends TestCase
         $asyncBus->expects(self::once())
             ->method('dispatch')
             ->with($event, self::callback(static function (array $stamps) use ($retryStamp): bool {
-                self::assertCount(2, $stamps);
+                self::assertCount(3, $stamps);
                 self::assertSame($retryStamp, $stamps[0]);
-                self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $stamps[1]);
+                self::assertInstanceOf(TransportNamesStamp::class, $stamps[1]);
+                self::assertSame(['async-events'], $stamps[1]->getTransportNames());
+                self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $stamps[2]);
 
                 return true;
             }))
@@ -387,7 +434,23 @@ final class EventBusTest extends TestCase
 
         $serializers = MessageSerializerResolver::withoutOverrides($serializer);
 
-        $bus = new EventBus($syncBus, $asyncBus, stampsDecider: $this->createEventStampsDecider($resolver, $serializers));
+        $transports = $this->createTransportResolver([], [
+            TaskCreatedEvent::class => ['sync-events'],
+        ]);
+        $asyncTransports = $this->createTransportResolver([], [
+            TaskCreatedEvent::class => ['async-events'],
+        ]);
+
+        $bus = new EventBus(
+            $syncBus,
+            $asyncBus,
+            stampsDecider: $this->createEventStampsDecider(
+                $resolver,
+                $serializers,
+                transports: $transports,
+                asyncTransports: $asyncTransports,
+            ),
+        );
 
         $bus->dispatch($event, DispatchMode::ASYNC);
     }
@@ -556,6 +619,8 @@ final class EventBusTest extends TestCase
         ?RetryPolicyResolver $retryPolicies = null,
         ?MessageSerializerResolver $serializers = null,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $transports = null,
+        ?MessageTransportResolver $asyncTransports = null,
     ): StampsDecider {
         $retryPolicies ??= RetryPolicyResolver::withoutOverrides();
         $serializers ??= MessageSerializerResolver::withoutOverrides();
@@ -563,6 +628,13 @@ final class EventBusTest extends TestCase
 
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, EventContract::class),
+            new MessageTransportStampDecider(
+                null,
+                null,
+                null,
+                $transports,
+                $asyncTransports,
+            ),
             new MessageSerializerStampDecider($serializers, EventContract::class),
             new DispatchAfterCurrentBusStampDecider($dispatchAfter),
         ]);
@@ -588,5 +660,24 @@ final class EventBusTest extends TestCase
         }
 
         return new MessageSerializerResolver(new ServiceLocator($services));
+    }
+
+    /**
+     * @param list<string>                      $default
+     * @param array<class-string, list<string>> $map
+     */
+    private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
+    {
+        $services = [];
+
+        if ([] !== $default) {
+            $services[MessageTransportResolver::DEFAULT_KEY] = static fn (): array => $default;
+        }
+
+        foreach ($map as $class => $transports) {
+            $services[$class] = static fn (): array => $transports;
+        }
+
+        return new MessageTransportResolver(new ServiceLocator($services));
     }
 }
