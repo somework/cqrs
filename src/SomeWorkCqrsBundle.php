@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle;
 
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Extension\ExtensionInterface;
@@ -17,6 +18,7 @@ final class SomeWorkCqrsBundle extends Bundle
         parent::build($container);
 
         $container->addCompilerPass(new CqrsHandlerPass());
+        $container->addCompilerPass(new ValidateTransportNamesPass());
     }
 
     public function getContainerExtension(): ?ExtensionInterface

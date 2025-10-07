@@ -379,6 +379,8 @@ final class CqrsExtension extends Extension
      */
     private function registerTransports(ContainerBuilder $container, array $config): void
     {
+        $configuredTransportNames = [];
+
         foreach (['command', 'command_async', 'query', 'event', 'event_async'] as $type) {
             $serviceMap = [];
 
@@ -392,6 +394,10 @@ final class CqrsExtension extends Extension
                 $container->setDefinition($defaultServiceId, $defaultDefinition);
 
                 $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
+
+                foreach ($config[$type]['default'] as $transportName) {
+                    $configuredTransportNames[] = (string) $transportName;
+                }
             }
 
             foreach ($config[$type]['map'] as $messageClass => $transports) {
@@ -404,6 +410,10 @@ final class CqrsExtension extends Extension
                 $container->setDefinition($serviceId, $definition);
 
                 $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+
+                foreach ($transports as $transportName) {
+                    $configuredTransportNames[] = (string) $transportName;
+                }
             }
 
             $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
@@ -415,6 +425,10 @@ final class CqrsExtension extends Extension
 
             $container->setDefinition(sprintf('somework_cqrs.transports.%s_resolver', $type), $resolverDefinition);
         }
+
+        $configuredTransportNames = array_values(array_unique($configuredTransportNames));
+
+        $container->setParameter('somework_cqrs.transport_names', $configuredTransportNames);
     }
 
     /**
