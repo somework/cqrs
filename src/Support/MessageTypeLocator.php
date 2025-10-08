@@ -8,22 +8,45 @@ use Psr\Container\ContainerInterface;
 
 use function class_implements;
 use function get_parent_class;
+use function array_unique;
+use function array_values;
+use function implode;
 use function iterator_to_array;
+use function sort;
+use function spl_object_id;
 
 final class MessageTypeLocator
 {
+    /**
+     * @var array<int, array<class-string, array<string, class-string>>>
+     */
+    private static array $matchCache = [];
+
     /**
      * @param list<string> $ignoredKeys
      */
     public static function match(ContainerInterface $services, object $message, array $ignoredKeys = []): ?MessageTypeMatch
     {
+        $messageClass = $message::class;
+        $locatorId = spl_object_id($services);
+
+        $signatureKeys = array_values(array_unique($ignoredKeys));
+        $sortedSignature = $signatureKeys;
+        sort($sortedSignature);
+        $ignoredSignature = implode("\0", $sortedSignature);
+
+        if (isset(self::$matchCache[$locatorId][$messageClass][$ignoredSignature])) {
+            $type = self::$matchCache[$locatorId][$messageClass][$ignoredSignature];
+
+            return new MessageTypeMatch($type, $services->get($type));
+        }
+
         $ignored = [];
 
-        foreach ($ignoredKeys as $key) {
+        foreach ($signatureKeys as $key) {
             $ignored[$key] = true;
         }
 
-        $messageClass = $message::class;
         $classHierarchy = iterator_to_array(self::classHierarchy($messageClass), false);
 
         foreach ($classHierarchy as $type) {
@@ -32,6 +55,8 @@ final class MessageTypeLocator
             }
 
             if ($services->has($type)) {
+                self::$matchCache[$locatorId][$messageClass][$ignoredSignature] = $type;
+
                 return new MessageTypeMatch($type, $services->get($type));
             }
         }
@@ -46,6 +71,8 @@ final class MessageTypeLocator
                     }
 
                     if ($services->has($candidate)) {
+                        self::$matchCache[$locatorId][$messageClass][$ignoredSignature] = $candidate;
+
                         return new MessageTypeMatch($candidate, $services->get($candidate));
                     }
                 }
