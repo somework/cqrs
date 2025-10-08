@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use ReflectionFunction;
 
+use function array_key_exists;
 use function get_debug_type;
 use function is_array;
 use function is_string;
@@ -20,6 +21,11 @@ use function sprintf;
 final class MessageTransportResolver
 {
     public const DEFAULT_KEY = '__somework_cqrs_transport_default';
+
+    /**
+     * @var array<string, list<string>>
+     */
+    private array $cache = [];
 
     public function __construct(
         private readonly ContainerInterface $transports,
@@ -47,8 +53,12 @@ final class MessageTransportResolver
     /**
      * @return list<string>
      */
-    private function normaliseTransports(string $key, mixed $value): array
+    private function normaliseTransports(string $key, mixed $value, bool $cacheable = true): array
     {
+        if ($cacheable && array_key_exists($key, $this->cache)) {
+            return $this->cache[$key];
+        }
+
         if (is_string($value)) {
             $value = [$value];
         } elseif ($value instanceof Closure) {
@@ -57,7 +67,7 @@ final class MessageTransportResolver
                 ? $value($this->transports)
                 : $value();
 
-            return $this->normaliseTransports($key, $value);
+            return $this->normaliseTransports($key, $value, false);
         } elseif ($value instanceof \Traversable) {
             $value = iterator_to_array($value, false);
         } elseif (!is_array($value)) {
@@ -69,7 +79,8 @@ final class MessageTransportResolver
 
         foreach ($value as $transport) {
             if (!is_string($transport)) {
-                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element of type %s.', $key, get_debug_type($transport)));
+                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element
+of type %s.', $key, get_debug_type($transport)));
             }
 
             if (isset($seen[$transport])) {
@@ -78,6 +89,10 @@ final class MessageTransportResolver
 
             $seen[$transport] = true;
             $transports[] = $transport;
+        }
+
+        if ($cacheable) {
+            $this->cache[$key] = $transports;
         }
 
         return $transports;
