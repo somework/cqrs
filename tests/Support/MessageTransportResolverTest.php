@@ -51,6 +51,39 @@ final class MessageTransportResolverTest extends TestCase
 
         self::assertNull($resolver->resolveFor(new MessageTransportResolverTestChildCommand()));
     }
+
+    public function test_caches_static_transports_and_skips_closure_results(): void
+    {
+        $staticCounter = new MessageTransportResolverTestIterationCounter();
+        $dynamicCounter = new MessageTransportResolverTestIterationCounter();
+        $dynamicClosureCalls = 0;
+
+        $resolver = new MessageTransportResolver(new ServiceLocator([
+            MessageTransportResolverTestChildCommand::class => static fn (): \Traversable => new MessageTransportResolverTestCountingIterator(['async_commands', 'default_bus'], $staticCounter),
+            MessageTransportResolver::DEFAULT_KEY => static function () use ($dynamicCounter, &$dynamicClosureCalls): \Closure {
+                return static function () use ($dynamicCounter, &$dynamicClosureCalls): \Traversable {
+                    ++$dynamicClosureCalls;
+
+                    return new MessageTransportResolverTestCountingIterator(['fallback_bus'], $dynamicCounter);
+                };
+            },
+        ]));
+
+        $firstStaticResult = $resolver->resolveFor(new MessageTransportResolverTestChildCommand());
+        $secondStaticResult = $resolver->resolveFor(new MessageTransportResolverTestChildCommand());
+
+        self::assertSame(['async_commands', 'default_bus'], $firstStaticResult);
+        self::assertSame($firstStaticResult, $secondStaticResult);
+        self::assertSame(1, $staticCounter->count);
+
+        $firstDynamicResult = $resolver->resolveFor(new MessageTransportResolverTestUnmatchedCommand());
+        $secondDynamicResult = $resolver->resolveFor(new MessageTransportResolverTestUnmatchedCommand());
+
+        self::assertSame(['fallback_bus'], $firstDynamicResult);
+        self::assertSame(['fallback_bus'], $secondDynamicResult);
+        self::assertSame(2, $dynamicCounter->count);
+        self::assertSame(2, $dynamicClosureCalls);
+    }
 }
 
 class MessageTransportResolverTestParentCommand
@@ -67,4 +100,32 @@ interface MessageTransportResolverTestInterface
 
 class MessageTransportResolverTestInterfaceCommand implements MessageTransportResolverTestInterface
 {
+}
+
+class MessageTransportResolverTestUnmatchedCommand
+{
+}
+
+final class MessageTransportResolverTestIterationCounter
+{
+    public int $count = 0;
+}
+
+final class MessageTransportResolverTestCountingIterator implements \IteratorAggregate
+{
+    /**
+     * @param list<string> $values
+     */
+    public function __construct(
+        private readonly array $values,
+        private readonly MessageTransportResolverTestIterationCounter $counter,
+    ) {
+    }
+
+    public function getIterator(): \Traversable
+    {
+        ++$this->counter->count;
+
+        yield from $this->values;
+    }
 }
