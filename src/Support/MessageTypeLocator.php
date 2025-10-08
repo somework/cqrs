@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Container\ContainerInterface;
+use WeakMap;
 
 use function array_unique;
 use function array_values;
@@ -13,30 +14,32 @@ use function get_parent_class;
 use function implode;
 use function iterator_to_array;
 use function sort;
-use function spl_object_id;
 
 final class MessageTypeLocator
 {
     /**
-     * @var array<int, array<class-string, array<string, class-string>>>
+     * @var WeakMap<ContainerInterface, array<class-string, array<string, class-string>>>
      */
-    private static array $matchCache = [];
+    private static WeakMap $matchCache;
 
     /**
      * @param list<string> $ignoredKeys
      */
     public static function match(ContainerInterface $services, object $message, array $ignoredKeys = []): ?MessageTypeMatch
     {
+        if (!isset(self::$matchCache)) {
+            self::$matchCache = new WeakMap();
+        }
+
         $messageClass = $message::class;
-        $locatorId = spl_object_id($services);
 
         $signatureKeys = array_values(array_unique($ignoredKeys));
         $sortedSignature = $signatureKeys;
         sort($sortedSignature);
         $ignoredSignature = implode("\0", $sortedSignature);
 
-        if (isset(self::$matchCache[$locatorId][$messageClass][$ignoredSignature])) {
-            $type = self::$matchCache[$locatorId][$messageClass][$ignoredSignature];
+        if (isset(self::$matchCache[$services][$messageClass][$ignoredSignature])) {
+            $type = self::$matchCache[$services][$messageClass][$ignoredSignature];
 
             return new MessageTypeMatch($type, $services->get($type));
         }
@@ -55,7 +58,7 @@ final class MessageTypeLocator
             }
 
             if ($services->has($type)) {
-                self::$matchCache[$locatorId][$messageClass][$ignoredSignature] = $type;
+                self::storeMatch($services, $messageClass, $ignoredSignature, $type);
 
                 return new MessageTypeMatch($type, $services->get($type));
             }
@@ -71,7 +74,7 @@ final class MessageTypeLocator
                     }
 
                     if ($services->has($candidate)) {
-                        self::$matchCache[$locatorId][$messageClass][$ignoredSignature] = $candidate;
+                        self::storeMatch($services, $messageClass, $ignoredSignature, $candidate);
 
                         return new MessageTypeMatch($candidate, $services->get($candidate));
                     }
@@ -80,6 +83,23 @@ final class MessageTypeLocator
         }
 
         return null;
+    }
+
+    private static function storeMatch(
+        ContainerInterface $services,
+        string $messageClass,
+        string $ignoredSignature,
+        string $type
+    ): void {
+        if (!isset(self::$matchCache[$services])) {
+            self::$matchCache[$services] = [];
+        }
+
+        if (!isset(self::$matchCache[$services][$messageClass])) {
+            self::$matchCache[$services][$messageClass] = [];
+        }
+
+        self::$matchCache[$services][$messageClass][$ignoredSignature] = $type;
     }
 
     /**
