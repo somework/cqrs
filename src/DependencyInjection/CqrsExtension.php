@@ -47,6 +47,11 @@ use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_filter;
+use function array_map;
+use function array_unique;
+use function array_values;
+use function class_exists;
 use function md5;
 use function sprintf;
 
@@ -645,119 +650,170 @@ final class CqrsExtension extends Extension
      */
     private function registerStampsDecider(ContainerBuilder $container, array $buses): void
     {
-        $commandRetryDefinition = new Definition(RetryPolicyStampDecider::class);
-        $commandRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.command_resolver'));
-        $commandRetryDefinition->setArgument('$messageType', Command::class);
-        $commandRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
-        $commandRetryDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.command_retry', $commandRetryDefinition);
-
-        $commandSerializerDefinition = new Definition(MessageSerializerStampDecider::class);
-        $commandSerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.command_resolver'));
-        $commandSerializerDefinition->setArgument('$messageType', Command::class);
-        $commandSerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
-        $commandSerializerDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.command_serializer', $commandSerializerDefinition);
-
-        $queryRetryDefinition = new Definition(RetryPolicyStampDecider::class);
-        $queryRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.query_resolver'));
-        $queryRetryDefinition->setArgument('$messageType', Query::class);
-        $queryRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
-        $queryRetryDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.query_retry', $queryRetryDefinition);
-
-        $querySerializerDefinition = new Definition(MessageSerializerStampDecider::class);
-        $querySerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.query_resolver'));
-        $querySerializerDefinition->setArgument('$messageType', Query::class);
-        $querySerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
-        $querySerializerDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.query_serializer', $querySerializerDefinition);
-
-        $queryMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
-        $queryMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.query_resolver'));
-        $queryMetadataDefinition->setArgument('$messageType', Query::class);
-        $queryMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
-        $queryMetadataDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.query_metadata', $queryMetadataDefinition);
-
-        $commandMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
-        $commandMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.command_resolver'));
-        $commandMetadataDefinition->setArgument('$messageType', Command::class);
-        $commandMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
-        $commandMetadataDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.command_metadata', $commandMetadataDefinition);
-
-        $eventRetryDefinition = new Definition(RetryPolicyStampDecider::class);
-        $eventRetryDefinition->setArgument('$retryPolicies', new Reference('somework_cqrs.retry.event_resolver'));
-        $eventRetryDefinition->setArgument('$messageType', Event::class);
-        $eventRetryDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 200]);
-        $eventRetryDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.event_retry', $eventRetryDefinition);
-
-        $eventSerializerDefinition = new Definition(MessageSerializerStampDecider::class);
-        $eventSerializerDefinition->setArgument('$serializers', new Reference('somework_cqrs.serializer.event_resolver'));
-        $eventSerializerDefinition->setArgument('$messageType', Event::class);
-        $eventSerializerDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 150]);
-        $eventSerializerDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.event_serializer', $eventSerializerDefinition);
-
-        $eventMetadataDefinition = new Definition(MessageMetadataStampDecider::class);
-        $eventMetadataDefinition->setArgument('$providers', new Reference('somework_cqrs.metadata.event_resolver'));
-        $eventMetadataDefinition->setArgument('$messageType', Event::class);
-        $eventMetadataDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 125]);
-        $eventMetadataDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.stamp_decider.event_metadata', $eventMetadataDefinition);
-
-        $stampFactoryDefinition = new Definition(MessageTransportStampFactory::class);
-        $stampFactoryDefinition->setPublic(false);
-
-        $container->setDefinition('somework_cqrs.transport_stamp_factory', $stampFactoryDefinition);
+        $container->setDefinition('somework_cqrs.transport_stamp_factory', (new Definition(MessageTransportStampFactory::class))
+            ->setPublic(false));
         $container->setAlias(MessageTransportStampFactory::class, 'somework_cqrs.transport_stamp_factory')->setPublic(false);
 
-        $transportDefinition = new Definition(MessageTransportStampDecider::class);
-        $transportDefinition->setArgument('$stampFactory', new Reference('somework_cqrs.transport_stamp_factory'));
-        $transportDefinition->setArgument('$stampTypes', '%somework_cqrs.transport_stamp_types%');
-        $transportDefinition->setArgument('$commandTransports', new Reference('somework_cqrs.transports.command_resolver'));
-        $transportDefinition->setArgument(
-            '$commandAsyncTransports',
-            isset($buses['command_async']) && null !== $buses['command_async']
-                ? new Reference('somework_cqrs.transports.command_async_resolver')
-                : null,
-        );
-        $transportDefinition->setArgument('$queryTransports', new Reference('somework_cqrs.transports.query_resolver'));
-        $transportDefinition->setArgument('$eventTransports', new Reference('somework_cqrs.transports.event_resolver'));
-        $transportDefinition->setArgument(
-            '$eventAsyncTransports',
-            isset($buses['event_async']) && null !== $buses['event_async']
-                ? new Reference('somework_cqrs.transports.event_async_resolver')
-                : null,
-        );
-        $transportDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 175]);
-        $transportDefinition->setPublic(false);
+        $deciderConfigurations = [
+            [
+                'service_id_suffix' => 'command_retry',
+                'class' => RetryPolicyStampDecider::class,
+                'arguments' => [
+                    '$retryPolicies' => $this->createRetryPolicyResolverReference('command'),
+                    '$messageType' => Command::class,
+                ],
+                'priority' => 200,
+            ],
+            [
+                'service_id_suffix' => 'command_serializer',
+                'class' => MessageSerializerStampDecider::class,
+                'arguments' => [
+                    '$serializers' => $this->createSerializerResolverReference('command'),
+                    '$messageType' => Command::class,
+                ],
+                'priority' => 150,
+            ],
+            [
+                'service_id_suffix' => 'query_retry',
+                'class' => RetryPolicyStampDecider::class,
+                'arguments' => [
+                    '$retryPolicies' => $this->createRetryPolicyResolverReference('query'),
+                    '$messageType' => Query::class,
+                ],
+                'priority' => 200,
+            ],
+            [
+                'service_id_suffix' => 'query_serializer',
+                'class' => MessageSerializerStampDecider::class,
+                'arguments' => [
+                    '$serializers' => $this->createSerializerResolverReference('query'),
+                    '$messageType' => Query::class,
+                ],
+                'priority' => 150,
+            ],
+            [
+                'service_id_suffix' => 'query_metadata',
+                'class' => MessageMetadataStampDecider::class,
+                'arguments' => [
+                    '$providers' => $this->createMetadataResolverReference('query'),
+                    '$messageType' => Query::class,
+                ],
+                'priority' => 125,
+            ],
+            [
+                'service_id_suffix' => 'command_metadata',
+                'class' => MessageMetadataStampDecider::class,
+                'arguments' => [
+                    '$providers' => $this->createMetadataResolverReference('command'),
+                    '$messageType' => Command::class,
+                ],
+                'priority' => 125,
+            ],
+            [
+                'service_id_suffix' => 'event_retry',
+                'class' => RetryPolicyStampDecider::class,
+                'arguments' => [
+                    '$retryPolicies' => $this->createRetryPolicyResolverReference('event'),
+                    '$messageType' => Event::class,
+                ],
+                'priority' => 200,
+            ],
+            [
+                'service_id_suffix' => 'event_serializer',
+                'class' => MessageSerializerStampDecider::class,
+                'arguments' => [
+                    '$serializers' => $this->createSerializerResolverReference('event'),
+                    '$messageType' => Event::class,
+                ],
+                'priority' => 150,
+            ],
+            [
+                'service_id_suffix' => 'event_metadata',
+                'class' => MessageMetadataStampDecider::class,
+                'arguments' => [
+                    '$providers' => $this->createMetadataResolverReference('event'),
+                    '$messageType' => Event::class,
+                ],
+                'priority' => 125,
+            ],
+            [
+                'service_id_suffix' => 'message_transport',
+                'class' => MessageTransportStampDecider::class,
+                'arguments' => [
+                    '$stampFactory' => new Reference('somework_cqrs.transport_stamp_factory'),
+                    '$stampTypes' => '%somework_cqrs.transport_stamp_types%',
+                    '$commandTransports' => $this->createTransportResolverReference('command'),
+                    '$commandAsyncTransports' => $this->createOptionalTransportResolverReference('command_async', $buses),
+                    '$queryTransports' => $this->createTransportResolverReference('query'),
+                    '$eventTransports' => $this->createTransportResolverReference('event'),
+                    '$eventAsyncTransports' => $this->createOptionalTransportResolverReference('event_async', $buses),
+                ],
+                'priority' => 175,
+            ],
+            [
+                'service_id' => 'somework_cqrs.dispatch_after_current_bus_stamp_decider',
+                'class' => DispatchAfterCurrentBusStampDecider::class,
+                'arguments' => [
+                    '$decider' => new Reference('somework_cqrs.dispatch_after_current_bus_decider'),
+                ],
+                'priority' => 0,
+            ],
+        ];
 
-        $container->setDefinition('somework_cqrs.stamp_decider.message_transport', $transportDefinition);
+        foreach ($deciderConfigurations as $configuration) {
+            $definition = new Definition($configuration['class']);
 
-        $dispatchAfterDefinition = new Definition(DispatchAfterCurrentBusStampDecider::class);
-        $dispatchAfterDefinition->setArgument('$decider', new Reference('somework_cqrs.dispatch_after_current_bus_decider'));
-        $dispatchAfterDefinition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => 0]);
-        $dispatchAfterDefinition->setPublic(false);
+            foreach ($configuration['arguments'] as $name => $value) {
+                $definition->setArgument($name, $value);
+            }
 
-        $container->setDefinition('somework_cqrs.dispatch_after_current_bus_stamp_decider', $dispatchAfterDefinition);
+            $definition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => $configuration['priority']]);
+            $definition->setPublic(false);
+
+            $serviceId = $configuration['service_id'] ?? sprintf('somework_cqrs.stamp_decider.%s', $configuration['service_id_suffix']);
+            $container->setDefinition($serviceId, $definition);
+        }
 
         $definition = new Definition(StampsDecider::class);
         $definition->setArgument('$deciders', new TaggedIteratorArgument('somework_cqrs.dispatch_stamp_decider'));
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.stamps_decider', $definition);
+    }
+
+    private function createRetryPolicyResolverReference(string $messageType): Reference
+    {
+        return $this->createResolverReference('retry', $messageType);
+    }
+
+    private function createSerializerResolverReference(string $messageType): Reference
+    {
+        return $this->createResolverReference('serializer', $messageType);
+    }
+
+    private function createMetadataResolverReference(string $messageType): Reference
+    {
+        return $this->createResolverReference('metadata', $messageType);
+    }
+
+    private function createTransportResolverReference(string $messageType): Reference
+    {
+        return $this->createResolverReference('transports', $messageType);
+    }
+
+    /**
+     * @param array{command?: string|null, command_async?: string|null, query?: string|null, event?: string|null, event_async?: string|null} $buses
+     */
+    private function createOptionalTransportResolverReference(string $messageType, array $buses): ?Reference
+    {
+        return (isset($buses[$messageType]) && null !== $buses[$messageType])
+            ? $this->createTransportResolverReference($messageType)
+            : null;
+    }
+
+    private function createResolverReference(string $type, string $messageType): Reference
+    {
+        return new Reference(sprintf('somework_cqrs.%s.%s_resolver', $type, $messageType));
     }
 
     /**
