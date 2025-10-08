@@ -6,10 +6,10 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Container\ContainerInterface;
 
-use function class_implements;
-use function get_parent_class;
 use function array_unique;
 use function array_values;
+use function class_implements;
+use function get_parent_class;
 use function implode;
 use function iterator_to_array;
 use function sort;
