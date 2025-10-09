@@ -33,6 +33,12 @@ final class DispatchModeDecider
     /** @var array<class-string, int> */
     private array $interfaceDepthCache = [];
 
+    /** @var array<class-string<Command>, DispatchMode> */
+    private array $commandModeCache = [];
+
+    /** @var array<class-string<Event>, DispatchMode> */
+    private array $eventModeCache = [];
+
     public function resolve(object $message, DispatchMode $requested): DispatchMode
     {
         if (DispatchMode::DEFAULT !== $requested) {
@@ -40,11 +46,23 @@ final class DispatchModeDecider
         }
 
         if ($message instanceof Command) {
-            return $this->resolveFor($message, $this->commandMap, $this->commandDefault);
+            $class = $message::class;
+
+            return $this->commandModeCache[$class] ??= $this->resolveFor(
+                $message,
+                $this->commandMap,
+                $this->commandDefault,
+            );
         }
 
         if ($message instanceof Event) {
-            return $this->resolveFor($message, $this->eventMap, $this->eventDefault);
+            $class = $message::class;
+
+            return $this->eventModeCache[$class] ??= $this->resolveFor(
+                $message,
+                $this->eventMap,
+                $this->eventDefault,
+            );
         }
 
         return DispatchMode::SYNC;
