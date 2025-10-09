@@ -17,6 +17,11 @@ use function is_callable;
 final class HandlerRegistry
 {
     /**
+     * @var array<string, MessageNamingStrategy>
+     */
+    private array $namingCache = [];
+
+    /**
      * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
      */
     public function __construct(
@@ -73,14 +78,18 @@ final class HandlerRegistry
             ? $descriptor->type
             : 'default';
 
-        $strategy = $this->namingStrategies->get($key);
+        if (!isset($this->namingCache[$key])) {
+            $strategy = $this->namingStrategies->get($key);
 
-        if (is_callable($strategy)) {
-            $strategy = $strategy();
+            if (is_callable($strategy)) {
+                $strategy = $strategy();
+            }
+
+            assert($strategy instanceof MessageNamingStrategy);
+
+            $this->namingCache[$key] = $strategy;
         }
 
-        assert($strategy instanceof MessageNamingStrategy);
-
-        return $strategy->getName($descriptor->messageClass);
+        return $this->namingCache[$key]->getName($descriptor->messageClass);
     }
 }
