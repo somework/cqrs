@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -24,6 +25,7 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 use function class_exists;
 use function get_debug_type;
+use function implode;
 use function in_array;
 use function is_object;
 use function is_string;
@@ -50,6 +52,16 @@ final class ListHandlersCommand extends Command
      */
     private readonly array $metadataResolvers;
 
+    /**
+     * @var array<string, MessageTransportResolver>
+     */
+    private readonly array $transportResolvers;
+
+    /**
+     * @var array<string, MessageTransportResolver|null>
+     */
+    private readonly array $asyncTransportResolvers;
+
     public function __construct(
         private readonly HandlerRegistry $registry,
         private readonly DispatchModeDecider $dispatchModeDecider,
@@ -72,6 +84,16 @@ final class ListHandlersCommand extends Command
         MessageMetadataProviderResolver $queryMetadataResolver,
         #[Autowire(service: 'somework_cqrs.metadata.event_resolver')]
         MessageMetadataProviderResolver $eventMetadataResolver,
+        #[Autowire(service: 'somework_cqrs.transports.command_resolver')]
+        MessageTransportResolver $commandTransportResolver,
+        #[Autowire(service: 'somework_cqrs.transports.query_resolver')]
+        MessageTransportResolver $queryTransportResolver,
+        #[Autowire(service: 'somework_cqrs.transports.event_resolver')]
+        MessageTransportResolver $eventTransportResolver,
+        #[Autowire(service: 'somework_cqrs.transports.command_async_resolver')]
+        ?MessageTransportResolver $commandAsyncTransportResolver = null,
+        #[Autowire(service: 'somework_cqrs.transports.event_async_resolver')]
+        ?MessageTransportResolver $eventAsyncTransportResolver = null,
     ) {
         parent::__construct();
 
@@ -91,6 +113,17 @@ final class ListHandlersCommand extends Command
             'command' => $commandMetadataResolver,
             'query' => $queryMetadataResolver,
             'event' => $eventMetadataResolver,
+        ];
+
+        $this->transportResolvers = [
+            'command' => $commandTransportResolver,
+            'query' => $queryTransportResolver,
+            'event' => $eventTransportResolver,
+        ];
+
+        $this->asyncTransportResolvers = [
+            'command' => $commandAsyncTransportResolver,
+            'event' => $eventAsyncTransportResolver,
         ];
     }
 
@@ -132,7 +165,7 @@ final class ListHandlersCommand extends Command
         $headers = ['Type', 'Message', 'Handler', 'Service Id', 'Bus'];
 
         if ($showDetails) {
-            $headers = [...$headers, 'Dispatch Mode', 'Async Defers', 'Retry Policy', 'Serializer', 'Metadata Provider'];
+            $headers = [...$headers, 'Dispatch Mode', 'Async Defers', 'Sync Transports', 'Async Transports', 'Retry Policy', 'Serializer', 'Metadata Provider'];
         }
 
         $table = new Table($output);
@@ -199,6 +232,8 @@ final class ListHandlersCommand extends Command
 
         $dispatchMode = $this->describeDispatchMode($message);
         $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
+        $syncTransports = $this->describeTransports($descriptor->type, $message, false);
+        $asyncTransports = $this->describeTransports($descriptor->type, $message, true);
 
         $retryResolver = $this->retryResolvers[$descriptor->type] ?? null;
         $retry = $this->describeResolvedService(
@@ -221,7 +256,34 @@ final class ListHandlersCommand extends Command
             static fn (MessageMetadataProviderResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        return [$dispatchMode, $asyncDefers, $retry, $serializer, $metadata];
+        return [$dispatchMode, $asyncDefers, $syncTransports, $asyncTransports, $retry, $serializer, $metadata];
+    }
+
+    private function describeTransports(string $type, ?object $message, bool $async): string
+    {
+        if (null === $message) {
+            return 'n/a';
+        }
+
+        $resolver = $async
+            ? ($this->asyncTransportResolvers[$type] ?? null)
+            : ($this->transportResolvers[$type] ?? null);
+
+        if (null === $resolver) {
+            return 'n/a';
+        }
+
+        try {
+            $transports = $resolver->resolveFor($message);
+        } catch (\Throwable $exception) {
+            return sprintf('error: %s', $exception->getMessage());
+        }
+
+        if (null === $transports || [] === $transports) {
+            return 'None';
+        }
+
+        return implode(', ', $transports);
     }
 
     private function describeDispatchMode(?object $message): string
