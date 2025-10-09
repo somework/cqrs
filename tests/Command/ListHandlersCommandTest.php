@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
@@ -158,7 +159,30 @@ final class ListHandlersCommandTest extends TestCase
         $dispatchModeDecider = new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::ASYNC);
         $dispatchAfter = new DispatchAfterCurrentBusDecider(true, new ServiceLocator([]), false, new ServiceLocator([]));
 
-        $tester = new CommandTester($this->createCommand($registry, $dispatchModeDecider, $dispatchAfter));
+        $commandTransports = $this->createTransportResolver([], [
+            TestAsyncCommand::class => ['cmd_sync_a', 'cmd_sync_b'],
+        ]);
+        $commandAsyncTransports = $this->createTransportResolver(['cmd_async_default'], [
+            TestAsyncCommand::class => ['cmd_async_override'],
+        ]);
+        $queryTransports = $this->createTransportResolver(['qry_sync_default']);
+        $eventTransports = $this->createTransportResolver([], [
+            TestEvent::class => ['evt_sync_specific'],
+        ]);
+        $eventAsyncTransports = $this->createTransportResolver(['evt_async_default'], [
+            TestEvent::class => ['evt_async_specific'],
+        ]);
+
+        $tester = new CommandTester($this->createCommand(
+            $registry,
+            $dispatchModeDecider,
+            $dispatchAfter,
+            $commandTransports,
+            $commandAsyncTransports,
+            $queryTransports,
+            $eventTransports,
+            $eventAsyncTransports,
+        ));
 
         $exitCode = $tester->execute(['--details' => true]);
 
@@ -170,22 +194,67 @@ final class ListHandlersCommandTest extends TestCase
         self::assertStringContainsString('Retry Policy', $output);
         self::assertStringContainsString('Serializer', $output);
         self::assertStringContainsString('Metadata Provider', $output);
+        self::assertStringContainsString('Sync Transports', $output);
+        self::assertStringContainsString('Async Transports', $output);
 
         $retryClass = preg_quote(NullRetryPolicy::class, '/');
         $serializerClass = preg_quote(NullMessageSerializer::class, '/');
         $metadataClass = preg_quote(RandomCorrelationMetadataProvider::class, '/');
 
-        $commandRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $commandSyncTransports = preg_quote('cmd_sync_a, cmd_sync_b', '/');
+        $commandAsyncTransports = preg_quote('cmd_async_override', '/');
+        $querySyncTransports = preg_quote('qry_sync_default', '/');
+        $eventSyncTransports = preg_quote('evt_sync_specific', '/');
+        $eventAsyncTransports = preg_quote('evt_async_specific', '/');
+
+        $commandRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*'.$commandSyncTransports.'\s*\|\s*'.$commandAsyncTransports.'\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
         self::assertMatchesRegularExpression($commandRowPattern, $output);
 
-        $eventRowPattern = '/\|\s*Event\s*\|\s*Event label\s*\|\s*'.preg_quote(TestEventHandler::class, '/').'\s*\|\s*app\\.event\\.handler\s*\|\s*messenger\\.bus\\.events\s*\|\s*async\s*\|\s*no\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $eventRowPattern = '/\|\s*Event\s*\|\s*Event label\s*\|\s*'.preg_quote(TestEventHandler::class, '/').'\s*\|\s*app\\.event\\.handler\s*\|\s*messenger\\.bus\\.events\s*\|\s*async\s*\|\s*no\s*\|\s*'.$eventSyncTransports.'\s*\|\s*'.$eventAsyncTransports.'\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
         self::assertMatchesRegularExpression($eventRowPattern, $output);
 
-        $queryRowPattern = '/\|\s*Query\s*\|\s*Query label\s*\|\s*'.preg_quote(TestQueryHandler::class, '/').'\s*\|\s*app\\.query\\.handler\s*\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $queryRowPattern = '/\|\s*Query\s*\|\s*Query label\s*\|\s*'.preg_quote(TestQueryHandler::class, '/').'\s*\|\s*app\\.query\\.handler\s*\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*'.$querySyncTransports.'\s*\|\s*n\/a\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
         self::assertMatchesRegularExpression($queryRowPattern, $output);
 
-        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
+        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
         self::assertMatchesRegularExpression($brokenRowPattern, $output);
+    }
+
+    public function test_details_option_handles_missing_async_transport_resolvers(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => TestAsyncCommand::class,
+                'handler_class' => TestAsyncCommandHandler::class,
+                'service_id' => 'app.command.async_handler',
+                'bus' => 'messenger.bus.commands',
+            ]],
+            'query' => [],
+            'event' => [],
+        ], [
+            'default' => 'Default label',
+            'command' => 'Command label',
+        ]);
+
+        $commandTransports = $this->createTransportResolver(['cmd_sync_only']);
+
+        $tester = new CommandTester($this->createCommand(
+            $registry,
+            null,
+            null,
+            $commandTransports,
+            null,
+        ));
+
+        $tester->execute(['--details' => true]);
+
+        $output = $tester->getDisplay();
+
+        self::assertStringContainsString('cmd_sync_only', $output);
+
+        $asyncColumnPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*cmd_sync_only\s*\|\s*n\/a\s*\|/';
+        self::assertMatchesRegularExpression($asyncColumnPattern, $output);
     }
 
     /**
@@ -229,6 +298,11 @@ final class ListHandlersCommandTest extends TestCase
         HandlerRegistry $registry,
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
+        ?MessageTransportResolver $commandTransports = null,
+        ?MessageTransportResolver $commandAsyncTransports = null,
+        ?MessageTransportResolver $queryTransports = null,
+        ?MessageTransportResolver $eventTransports = null,
+        ?MessageTransportResolver $eventAsyncTransports = null,
     ): ListHandlersCommand {
         $dispatchModeDecider ??= new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC);
         $dispatchAfter ??= DispatchAfterCurrentBusDecider::defaults();
@@ -236,6 +310,10 @@ final class ListHandlersCommandTest extends TestCase
         $retryResolver = RetryPolicyResolver::withoutOverrides(new NullRetryPolicy());
         $serializerResolver = MessageSerializerResolver::withoutOverrides(new NullMessageSerializer());
         $metadataResolver = MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider());
+
+        $commandTransports ??= $this->createTransportResolver();
+        $queryTransports ??= $this->createTransportResolver();
+        $eventTransports ??= $this->createTransportResolver();
 
         return new ListHandlersCommand(
             $registry,
@@ -250,7 +328,27 @@ final class ListHandlersCommandTest extends TestCase
             MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider()),
             MessageMetadataProviderResolver::withoutOverrides(new RandomCorrelationMetadataProvider()),
             $metadataResolver,
+            $commandTransports,
+            $queryTransports,
+            $eventTransports,
+            $commandAsyncTransports,
+            $eventAsyncTransports,
         );
+    }
+
+    private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
+    {
+        $services = [];
+
+        if ([] !== $default) {
+            $services[MessageTransportResolver::DEFAULT_KEY] = static fn (): array => $default;
+        }
+
+        foreach ($map as $message => $transports) {
+            $services[$message] = static fn (): array => $transports;
+        }
+
+        return new MessageTransportResolver(new ServiceLocator($services));
     }
 }
 
