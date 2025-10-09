@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\TestCase;
+use ReflectionProperty;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditLogEvent;
@@ -118,5 +119,35 @@ final class DispatchModeDeciderTest extends TestCase
         $mode = $decider->resolve(new OrderPlacedEvent('order-1'), DispatchMode::DEFAULT);
 
         self::assertSame(DispatchMode::SYNC, $mode);
+    }
+
+    public function test_resolve_caches_command_mode_after_first_lookup(): void
+    {
+        $message = new ImportLegacyDataCommand('legacy.csv');
+        $decider = new DispatchModeDecider(
+            DispatchMode::SYNC,
+            DispatchMode::SYNC,
+            [BulkImportCommand::class => DispatchMode::ASYNC],
+        );
+
+        $firstResult = $decider->resolve($message, DispatchMode::DEFAULT);
+        self::assertSame(DispatchMode::ASYNC, $firstResult);
+
+        $commandCache = new ReflectionProperty($decider, 'commandModeCache');
+        $commandCache->setAccessible(true);
+        $cachedModes = $commandCache->getValue($decider);
+
+        self::assertIsArray($cachedModes);
+        self::assertArrayHasKey($message::class, $cachedModes);
+        self::assertSame(DispatchMode::ASYNC, $cachedModes[$message::class]);
+
+        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
+        $interfaceCache->setAccessible(true);
+        $interfaceCache->setValue($decider, []);
+
+        $secondResult = $decider->resolve($message, DispatchMode::DEFAULT);
+
+        self::assertSame($firstResult, $secondResult);
+        self::assertSame([], $interfaceCache->getValue($decider));
     }
 }
