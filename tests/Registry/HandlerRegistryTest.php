@@ -70,6 +70,69 @@ final class HandlerRegistryTest extends TestCase
         self::assertSame('App\\Command\\ShipOrder', $descriptors[0]->messageClass);
     }
 
+    public function test_get_display_name_caches_resolved_strategies(): void
+    {
+        $metadata = [
+            'command' => [
+                [
+                    'type' => 'command',
+                    'message' => 'App\\Command\\ShipOrder',
+                    'handler_class' => 'App\\Command\\ShipOrderHandler',
+                    'service_id' => 'app.command.ship_order_handler',
+                    'bus' => null,
+                ],
+            ],
+            'query' => [
+                [
+                    'type' => 'query',
+                    'message' => 'App\\Query\\FindOrder',
+                    'handler_class' => 'App\\Query\\FindOrderHandler',
+                    'service_id' => 'app.query.find_order_handler',
+                    'bus' => null,
+                ],
+            ],
+        ];
+
+        $commandCalls = 0;
+        $defaultCalls = 0;
+
+        $locator = new ServiceLocator([
+            'command' => function () use (&$commandCalls): MessageNamingStrategy {
+                ++$commandCalls;
+
+                return new class implements MessageNamingStrategy {
+                    public function getName(string $messageClass): string
+                    {
+                        return sprintf('Command %s', $messageClass);
+                    }
+                };
+            },
+            'default' => function () use (&$defaultCalls): MessageNamingStrategy {
+                ++$defaultCalls;
+
+                return new class implements MessageNamingStrategy {
+                    public function getName(string $messageClass): string
+                    {
+                        return sprintf('Default %s', $messageClass);
+                    }
+                };
+            },
+        ]);
+
+        $registry = new HandlerRegistry($metadata, $locator);
+
+        $commandDescriptor = $registry->byType('command')[0];
+        $queryDescriptor = $registry->byType('query')[0];
+
+        self::assertSame('Command App\\Command\\ShipOrder', $registry->getDisplayName($commandDescriptor));
+        self::assertSame('Command App\\Command\\ShipOrder', $registry->getDisplayName($commandDescriptor));
+        self::assertSame('Default App\\Query\\FindOrder', $registry->getDisplayName($queryDescriptor));
+        self::assertSame('Default App\\Query\\FindOrder', $registry->getDisplayName($queryDescriptor));
+
+        self::assertSame(1, $commandCalls);
+        self::assertSame(1, $defaultCalls);
+    }
+
     private function createRegistry(array $metadata, array $strategies): HandlerRegistry
     {
         $factories = [];
