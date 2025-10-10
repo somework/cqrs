@@ -13,12 +13,13 @@ use function sprintf;
 /**
  * Resolves the RetryPolicy to apply for a given message class.
  */
-final class RetryPolicyResolver
+final class RetryPolicyResolver extends AbstractMessageTypeResolver
 {
     public function __construct(
         private readonly RetryPolicy $defaultPolicy,
-        private readonly ContainerInterface $policies,
+        ContainerInterface $policies,
     ) {
+        parent::__construct($policies);
     }
 
     public static function withoutOverrides(?RetryPolicy $defaultPolicy = null): self
@@ -28,21 +29,23 @@ final class RetryPolicyResolver
 
     public function resolveFor(object $message): RetryPolicy
     {
-        $match = MessageTypeLocator::match($this->policies, $message);
+        /** @var RetryPolicy $policy */
+        $policy = $this->resolveService($message);
 
-        if (null !== $match) {
-            return $this->assertPolicy($match->type, $match->service);
-        }
-
-        return $this->defaultPolicy;
+        return $policy;
     }
 
-    private function assertPolicy(string $type, mixed $service): RetryPolicy
+    protected function assertService(string $type, mixed $service): RetryPolicy
     {
         if (!$service instanceof RetryPolicy) {
             throw new \LogicException(sprintf('Retry policy override for "%s" must implement %s.', $type, RetryPolicy::class));
         }
 
         return $service;
+    }
+
+    protected function resolveFallback(object $message): RetryPolicy
+    {
+        return $this->defaultPolicy;
     }
 }
