@@ -2,7 +2,8 @@
 
 The bundle exposes the `somework_cqrs` configuration tree. Every option accepts
 a service id or fully-qualified class name. When you pass a class name the
-bundle will register it as an autowired, autoconfigured service automatically.
+bundle will register it as an autowired, autoconfigured, private service
+automatically.
 
 ```yaml
 # config/packages/somework_cqrs.yaml
