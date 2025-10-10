@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Closure;
 use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -11,14 +12,15 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 use function get_debug_type;
 use function sprintf;
 
-final class MessageMetadataProviderResolver
+final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
 {
     public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_metadata_global_default';
     public const TYPE_DEFAULT_KEY = '__somework_cqrs_metadata_type_default';
 
     public function __construct(
-        private readonly ContainerInterface $providers,
+        ContainerInterface $providers,
     ) {
+        parent::__construct($providers);
     }
 
     public static function withoutOverrides(?MessageMetadataProvider $defaultProvider = null): self
@@ -33,37 +35,44 @@ final class MessageMetadataProviderResolver
 
     public function resolveFor(object $message): MessageMetadataProvider
     {
-        $match = MessageTypeLocator::match(
-            $this->providers,
-            $message,
-            [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY],
-        );
+        /** @var MessageMetadataProvider $provider */
+        $provider = $this->resolveService($message, [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY]);
 
-        if (null !== $match) {
-            return $this->assertProvider($match->type, $match->service);
-        }
-
-        if ($this->providers->has(self::TYPE_DEFAULT_KEY)) {
-            return $this->assertProvider(self::TYPE_DEFAULT_KEY, $this->providers->get(self::TYPE_DEFAULT_KEY));
-        }
-
-        if (!$this->providers->has(self::GLOBAL_DEFAULT_KEY)) {
-            throw new \LogicException('Metadata provider resolver must be initialised with a global default provider.');
-        }
-
-        return $this->assertProvider(self::GLOBAL_DEFAULT_KEY, $this->providers->get(self::GLOBAL_DEFAULT_KEY));
+        return $provider;
     }
 
-    private function assertProvider(string $key, mixed $service): MessageMetadataProvider
+    protected function assertService(string $key, mixed $service): MessageMetadataProvider
     {
-        if ($service instanceof \Closure) {
+        if ($service instanceof Closure) {
             $service = $service();
         }
 
         if (!$service instanceof MessageMetadataProvider) {
-            throw new \LogicException(sprintf('Metadata provider override for "%s" must implement %s, got %s.', $key, MessageMetadataProvider::class, get_debug_type($service)));
+            $message = sprintf(
+                'Metadata provider override for "%s" must implement %s, got %s.',
+                $key,
+                MessageMetadataProvider::class,
+                get_debug_type($service),
+            );
+
+            throw new \LogicException($message);
         }
 
         return $service;
+    }
+
+    protected function resolveFallback(object $message): MessageMetadataProvider
+    {
+        $provider = $this->resolveFirstAvailable([self::TYPE_DEFAULT_KEY]);
+
+        if (null !== $provider) {
+            return $provider;
+        }
+
+        if (!$this->hasService(self::GLOBAL_DEFAULT_KEY)) {
+            throw new \LogicException('Metadata provider resolver must be initialised with a global default provider.');
+        }
+
+        return $this->getService(self::GLOBAL_DEFAULT_KEY);
     }
 }
