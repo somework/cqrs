@@ -48,6 +48,11 @@ handlers. Implement one of the marker interfaces and type-hint the message on
 `__invoke()`. The compiler pass inspects the argument type to figure out which
 message the handler is responsible for.
 
+When wiring services manually with the `messenger.message_handler` tag you can
+set the `method` attribute to point at a handler method other than `__invoke()`.
+The compiler pass will reflect that method to determine the message type when
+`handles` is not provided.
+
 ```php
 <?php
 
