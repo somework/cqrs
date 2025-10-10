@@ -109,7 +109,10 @@ somework_cqrs:
 * **default_bus** – fallback Messenger bus id. Used whenever a type-specific bus
   is omitted.
 * **buses** – service ids for the synchronous and asynchronous Messenger buses
-  backing each CQRS facade.
+  backing each CQRS facade. Event buses automatically receive middleware that
+  ignores `NoHandlerForMessageException` for messages implementing
+  `SomeWork\CqrsBundle\Contract\Event`, so you can dispatch fire-and-forget
+  events without registering listeners upfront.
 * **naming** – strategies implementing
   `SomeWork\CqrsBundle\Contract\MessageNamingStrategy`. They control the human
   readable message names exposed in CLI tooling and diagnostics.

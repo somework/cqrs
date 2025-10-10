@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle;
 
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\AllowNoHandlerMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
@@ -19,6 +20,7 @@ final class SomeWorkCqrsBundle extends Bundle
         parent::build($container);
 
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
+        $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
         $container->addCompilerPass(new ValidateTransportNamesPass());
     }
 
