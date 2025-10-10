@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\Table;
@@ -62,6 +63,11 @@ final class ListHandlersCommand extends Command
      */
     private readonly array $asyncTransportResolvers;
 
+    /**
+     * @var array<string, array{default: list<string>, map: array<class-string, list<string>>}>
+     */
+    private readonly array $transportMappings;
+
     public function __construct(
         private readonly HandlerRegistry $registry,
         private readonly DispatchModeDecider $dispatchModeDecider,
@@ -90,6 +96,7 @@ final class ListHandlersCommand extends Command
         MessageTransportResolver $queryTransportResolver,
         #[Autowire(service: 'somework_cqrs.transports.event_resolver')]
         MessageTransportResolver $eventTransportResolver,
+        TransportMappingProvider $transportMappingProvider,
         #[Autowire(service: 'somework_cqrs.transports.command_async_resolver')]
         ?MessageTransportResolver $commandAsyncTransportResolver = null,
         #[Autowire(service: 'somework_cqrs.transports.event_async_resolver')]
@@ -125,6 +132,8 @@ final class ListHandlersCommand extends Command
             'command' => $commandAsyncTransportResolver,
             'event' => $eventAsyncTransportResolver,
         ];
+
+        $this->transportMappings = $transportMappingProvider->all();
     }
 
     protected function configure(): void
@@ -232,8 +241,8 @@ final class ListHandlersCommand extends Command
 
         $dispatchMode = $this->describeDispatchMode($message);
         $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
-        $syncTransports = $this->describeTransports($descriptor->type, $message, false);
-        $asyncTransports = $this->describeTransports($descriptor->type, $message, true);
+        $syncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, false);
+        $asyncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, true);
 
         $retryResolver = $this->retryResolvers[$descriptor->type] ?? null;
         $retry = $this->describeResolvedService(
@@ -259,10 +268,10 @@ final class ListHandlersCommand extends Command
         return [$dispatchMode, $asyncDefers, $syncTransports, $asyncTransports, $retry, $serializer, $metadata];
     }
 
-    private function describeTransports(string $type, ?object $message, bool $async): string
+    private function describeTransports(string $type, string $messageClass, ?object $message, bool $async): string
     {
         if (null === $message) {
-            return 'n/a';
+            return $this->describeTransportsFromMapping($type, $messageClass, $async);
         }
 
         $resolver = $async
@@ -279,6 +288,43 @@ final class ListHandlersCommand extends Command
             return sprintf('error: %s', $exception->getMessage());
         }
 
+        return $this->formatTransports($transports);
+    }
+
+    private function describeTransportsFromMapping(string $type, string $messageClass, bool $async): string
+    {
+        $mappingKey = $this->resolveTransportMappingKey($type, $async);
+
+        if (null === $mappingKey) {
+            return 'n/a';
+        }
+
+        $mapping = $this->transportMappings[$mappingKey] ?? ['default' => [], 'map' => []];
+
+        $transports = $mapping['map'][$messageClass] ?? null;
+
+        if (null === $transports) {
+            $transports = $mapping['default'];
+        }
+
+        return $this->formatTransports($transports);
+    }
+
+    private function resolveTransportMappingKey(string $type, bool $async): ?string
+    {
+        return match ($type) {
+            'command' => $async ? 'command_async' : 'command',
+            'query' => $async ? null : 'query',
+            'event' => $async ? 'event_async' : 'event',
+            default => null,
+        };
+    }
+
+    /**
+     * @param list<string>|null $transports
+     */
+    private function formatTransports(?array $transports): string
+    {
         if (null === $transports || [] === $transports) {
             return 'None';
         }
