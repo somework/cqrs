@@ -16,8 +16,10 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\UnobservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Messenger\Envelope;
 
 final class MessengerIntegrationTest extends KernelTestCase
 {
@@ -64,6 +66,16 @@ final class MessengerIntegrationTest extends KernelTestCase
 
         self::assertContains('sync-task', $recorder->events());
         self::assertContains('async-task', $recorder->asyncEvents());
+    }
+
+    public function test_event_bus_allows_events_without_handlers(): void
+    {
+        $eventBus = static::getContainer()->get(EventBus::class);
+
+        $envelope = $eventBus->dispatch(new UnobservedEvent('no-handlers'));
+
+        self::assertInstanceOf(Envelope::class, $envelope);
+        self::assertSame('no-handlers', $envelope->getMessage()->identifier);
     }
 
     public function test_query_bus_returns_handler_result(): void
