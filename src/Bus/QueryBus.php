@@ -10,6 +10,9 @@ use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+use function count;
+use function sprintf;
+
 /**
  * Dispatches queries and returns the handler result.
  */
@@ -30,12 +33,18 @@ final class QueryBus
 
         $envelope = $this->bus->dispatch($query, $stamps);
 
-        /** @var HandledStamp|null $handled */
-        $handled = $envelope->last(HandledStamp::class);
-        if (!$handled instanceof HandledStamp) {
+        /** @var list<HandledStamp> $handledStamps */
+        $handledStamps = $envelope->all(HandledStamp::class);
+        $handledCount = count($handledStamps);
+
+        if (0 === $handledCount) {
             throw new \LogicException('Query was not handled by any handler.');
         }
 
-        return $handled->getResult();
+        if ($handledCount > 1) {
+            throw new \LogicException(sprintf('Query was handled multiple times (%d handlers returned a result). Exactly one handler must handle a query.', $handledCount));
+        }
+
+        return $handledStamps[0]->getResult();
     }
 }
