@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\DependencyInjection\Registration\AllowNoHandlerMiddlewareRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusWiringRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchAfterCurrentBusRegistrar;
@@ -68,6 +69,7 @@ final class CqrsExtension extends Extension
         (new DispatchAfterCurrentBusRegistrar($helper))->register($container, $config['async']['dispatch_after_current_bus']);
         (new StampsDeciderRegistrar($helper))->register($container, $config['buses']);
         (new HandlerLocatorRegistrar())->register($container, $config['buses'], $defaultBusId);
+        (new AllowNoHandlerMiddlewareRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusWiringRegistrar())->register($container, $config['buses'], $defaultBusId);
     }
 
