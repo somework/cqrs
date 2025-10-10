@@ -16,10 +16,32 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 final class StampsDecider implements StampDecider
 {
     /**
+     * @var list<array{decider: StampDecider, messageTypes: list<class-string>}>
+     */
+    private array $entries = [];
+
+    /**
+     * @var array<class-string, list<StampDecider>>
+     */
+    private array $pipelines = [];
+
+    /**
      * @param iterable<StampDecider> $deciders
      */
-    public function __construct(private readonly iterable $deciders = [])
+    public function __construct(iterable $deciders = [])
     {
+        foreach ($deciders as $decider) {
+            $messageTypes = [];
+
+            if ($decider instanceof MessageTypeAwareStampDecider) {
+                $messageTypes = $decider->messageTypes();
+            }
+
+            $this->entries[] = [
+                'decider' => $decider,
+                'messageTypes' => $messageTypes,
+            ];
+        }
     }
 
     public static function withDefaultAsyncDeferral(): self
@@ -77,11 +99,41 @@ final class StampsDecider implements StampDecider
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        foreach ($this->deciders as $decider) {
+        foreach ($this->pipelineFor($message) as $decider) {
             $stamps = $decider->decide($message, $mode, $stamps);
         }
 
         return array_values($stamps);
+    }
+
+    /**
+     * @return list<StampDecider>
+     */
+    private function pipelineFor(object $message): array
+    {
+        $class = $message::class;
+
+        if (!isset($this->pipelines[$class])) {
+            $pipeline = [];
+
+            foreach ($this->entries as $entry) {
+                if ([] === $entry['messageTypes']) {
+                    $pipeline[] = $entry['decider'];
+                    continue;
+                }
+
+                foreach ($entry['messageTypes'] as $messageType) {
+                    if ($message instanceof $messageType) {
+                        $pipeline[] = $entry['decider'];
+                        break;
+                    }
+                }
+            }
+
+            $this->pipelines[$class] = $pipeline;
+        }
+
+        return $this->pipelines[$class];
     }
 
     /**

@@ -10,7 +10,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Adds metadata stamps for supported messages.
  */
-final class MessageMetadataStampDecider implements StampDecider
+final class MessageMetadataStampDecider implements MessageTypeAwareStampDecider
 {
     /**
      * @param class-string $messageType
@@ -19,6 +19,11 @@ final class MessageMetadataStampDecider implements StampDecider
         private readonly MessageMetadataProviderResolver $providers,
         private readonly string $messageType,
     ) {
+    }
+
+    public function messageTypes(): array
+    {
+        return [$this->messageType];
     }
 
     /**
