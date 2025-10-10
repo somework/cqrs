@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
+use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
@@ -232,6 +233,81 @@ final class MessageTransportStampDeciderTest extends TestCase
         $stamps = $decider->decide($message, DispatchMode::SYNC, [$existing]);
 
         self::assertSame([$existing], $stamps);
+    }
+
+    #[RunInSeparateProcess]
+    public function test_skips_optional_senders_locator_stamp_when_class_is_missing(): void
+    {
+        $class = 'Symfony\\Component\\Messenger\\Stamp\\SendersLocatorStamp';
+        self::assertFalse(class_exists($class, false));
+
+        $autoloaded = false;
+        $loader = static function (string $requested) use ($class, &$autoloaded): void {
+            if ($requested === $class) {
+                $autoloaded = true;
+            }
+        };
+
+        spl_autoload_register($loader, true, true);
+
+        try {
+            $message = new CreateTaskCommand('123', 'Test');
+            $resolver = $this->resolverForMessage(CreateTaskCommand::class, ['sync']);
+            $decider = $this->createDecider(
+                command: $resolver,
+                commandAsync: $this->resolverThatShouldNotBeCalled(),
+                query: $this->resolverThatShouldNotBeCalled(),
+                event: $this->resolverThatShouldNotBeCalled(),
+                eventAsync: $this->resolverThatShouldNotBeCalled(),
+            );
+
+            $stamps = $decider->decide($message, DispatchMode::SYNC, [new DummyStamp('existing')]);
+
+            self::assertCount(2, $stamps);
+            self::assertInstanceOf(DummyStamp::class, $stamps[0]);
+            $this->assertStampTransports(['sync'], [$stamps[1]]);
+            self::assertFalse($autoloaded, 'Optional stamp class should not be autoloaded.');
+        } finally {
+            spl_autoload_unregister($loader);
+        }
+    }
+
+    #[RunInSeparateProcess]
+    public function test_skips_optional_send_message_stamp_when_class_is_missing(): void
+    {
+        $class = MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS;
+        self::assertFalse(class_exists($class, false));
+
+        $autoloaded = false;
+        $loader = static function (string $requested) use ($class, &$autoloaded): void {
+            if ($requested === $class) {
+                $autoloaded = true;
+            }
+        };
+
+        spl_autoload_register($loader, true, true);
+
+        try {
+            $message = new CreateTaskCommand('123', 'Test');
+            $resolver = $this->resolverForMessage(CreateTaskCommand::class, ['sync']);
+            $decider = $this->createDecider(
+                command: $resolver,
+                commandAsync: $this->resolverThatShouldNotBeCalled(),
+                query: $this->resolverThatShouldNotBeCalled(),
+                event: $this->resolverThatShouldNotBeCalled(),
+                eventAsync: $this->resolverThatShouldNotBeCalled(),
+                stampTypes: ['command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES],
+            );
+
+            $stamps = $decider->decide($message, DispatchMode::SYNC, [new DummyStamp('existing')]);
+
+            self::assertCount(2, $stamps);
+            self::assertInstanceOf(DummyStamp::class, $stamps[0]);
+            $this->assertStampTransports(['sync'], [$stamps[1]]);
+            self::assertFalse($autoloaded, 'Optional stamp class should not be autoloaded.');
+        } finally {
+            spl_autoload_unregister($loader);
+        }
     }
 
     /**

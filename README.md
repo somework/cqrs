@@ -242,6 +242,9 @@ it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
 via `TransportNamesStamp` by default. Each bus accepts an optional `stamp`
 setting to swap the behaviour to Messenger's `SendMessageToTransportsStamp`
 when running on Symfony 6.3+ (older releases trigger a descriptive exception).
+The bundle checks for Messenger's optional stamp classes before referencing
+them, so older applications without those classes avoid unnecessary autoload
+attempts.
 Defaults are evaluated per bus, so you can send every asynchronous command
 through `async_commands` while routing specific messages to
 `high_priority_async_commands` or mirroring events into an `audit_log` queue.
