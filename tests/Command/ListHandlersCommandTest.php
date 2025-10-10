@@ -18,10 +18,20 @@ use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+/**
+ * @phpstan-type HandlerMetadata array{
+ *     type: string,
+ *     message: class-string,
+ *     handler_class: class-string,
+ *     service_id: string,
+ *     bus: string|null,
+ * }
+ */
 final class ListHandlersCommandTest extends TestCase
 {
     public function test_lists_all_handlers_sorted_by_type_and_name(): void
@@ -173,6 +183,36 @@ final class ListHandlersCommandTest extends TestCase
             TestEvent::class => ['evt_async_specific'],
         ]);
 
+        $mappingProvider = $this->createMappingProvider([
+            'command' => [
+                'default' => [],
+                'map' => [
+                    TestAsyncCommand::class => ['cmd_sync_a', 'cmd_sync_b'],
+                ],
+            ],
+            'command_async' => [
+                'default' => ['cmd_async_default'],
+                'map' => [
+                    TestAsyncCommand::class => ['cmd_async_override'],
+                ],
+            ],
+            'query' => [
+                'default' => ['qry_sync_default'],
+            ],
+            'event' => [
+                'default' => [],
+                'map' => [
+                    TestEvent::class => ['evt_sync_specific'],
+                ],
+            ],
+            'event_async' => [
+                'default' => ['evt_async_default'],
+                'map' => [
+                    TestEvent::class => ['evt_async_specific'],
+                ],
+            ],
+        ]);
+
         $tester = new CommandTester($this->createCommand(
             $registry,
             $dispatchModeDecider,
@@ -182,6 +222,7 @@ final class ListHandlersCommandTest extends TestCase
             $queryTransports,
             $eventTransports,
             $eventAsyncTransports,
+            $mappingProvider,
         ));
 
         $exitCode = $tester->execute(['--details' => true]);
@@ -203,6 +244,7 @@ final class ListHandlersCommandTest extends TestCase
 
         $commandSyncTransports = preg_quote('cmd_sync_a, cmd_sync_b', '/');
         $commandAsyncTransports = preg_quote('cmd_async_override', '/');
+        $commandAsyncDefault = preg_quote('cmd_async_default', '/');
         $querySyncTransports = preg_quote('qry_sync_default', '/');
         $eventSyncTransports = preg_quote('evt_sync_specific', '/');
         $eventAsyncTransports = preg_quote('evt_async_specific', '/');
@@ -216,8 +258,67 @@ final class ListHandlersCommandTest extends TestCase
         $queryRowPattern = '/\|\s*Query\s*\|\s*Query label\s*\|\s*'.preg_quote(TestQueryHandler::class, '/').'\s*\|\s*app\\.query\\.handler\s*\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*'.$querySyncTransports.'\s*\|\s*n\/a\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
         self::assertMatchesRegularExpression($queryRowPattern, $output);
 
-        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
+        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*None\s*\|\s*'.$commandAsyncDefault.'\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
         self::assertMatchesRegularExpression($brokenRowPattern, $output);
+    }
+
+    public function test_details_option_displays_configured_transports_for_uninstantiable_message(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => AbstractConfiguredCommand::class,
+                'handler_class' => AbstractConfiguredCommandHandler::class,
+                'service_id' => 'app.command.abstract_handler',
+                'bus' => 'messenger.bus.commands',
+            ]],
+            'query' => [],
+            'event' => [],
+        ], [
+            'default' => 'Default label',
+            'command' => 'Command label',
+        ]);
+
+        $mappingProvider = $this->createMappingProvider([
+            'command' => [
+                'default' => ['default_sync_transport'],
+                'map' => [
+                    AbstractConfiguredCommand::class => ['abstract_sync_transport'],
+                ],
+            ],
+            'command_async' => [
+                'default' => ['default_async_transport'],
+                'map' => [
+                    AbstractConfiguredCommand::class => ['abstract_async_transport'],
+                ],
+            ],
+        ]);
+
+        $tester = new CommandTester($this->createCommand(
+            $registry,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            $mappingProvider,
+        ));
+
+        $tester->execute(['--details' => true]);
+
+        $output = $tester->getDisplay();
+
+        self::assertStringContainsString('abstract_sync_transport', $output);
+        self::assertStringContainsString('abstract_async_transport', $output);
+
+        $handler = preg_quote(AbstractConfiguredCommandHandler::class, '/');
+        $syncOverride = preg_quote('abstract_sync_transport', '/');
+        $asyncOverride = preg_quote('abstract_async_transport', '/');
+
+        $rowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.$handler.'\s*\|\s*app\\.command\\.abstract_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*'.$syncOverride.'\s*\|\s*'.$asyncOverride.'\s*\|/';
+        self::assertMatchesRegularExpression($rowPattern, $output);
     }
 
     public function test_details_option_handles_missing_async_transport_resolvers(): void
@@ -258,8 +359,8 @@ final class ListHandlersCommandTest extends TestCase
     }
 
     /**
-     * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
-     * @param array<string, string>                                                                                                              $labels
+     * @param array<string, list<HandlerMetadata>> $metadata
+     * @param array<string, string>                $labels
      */
     private function createRegistry(array $metadata, array $labels): HandlerRegistry
     {
@@ -303,6 +404,7 @@ final class ListHandlersCommandTest extends TestCase
         ?MessageTransportResolver $queryTransports = null,
         ?MessageTransportResolver $eventTransports = null,
         ?MessageTransportResolver $eventAsyncTransports = null,
+        ?TransportMappingProvider $transportMappingProvider = null,
     ): ListHandlersCommand {
         $dispatchModeDecider ??= new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC);
         $dispatchAfter ??= DispatchAfterCurrentBusDecider::defaults();
@@ -314,6 +416,7 @@ final class ListHandlersCommandTest extends TestCase
         $commandTransports ??= $this->createTransportResolver();
         $queryTransports ??= $this->createTransportResolver();
         $eventTransports ??= $this->createTransportResolver();
+        $transportMappingProvider ??= $this->createMappingProvider();
 
         return new ListHandlersCommand(
             $registry,
@@ -331,9 +434,33 @@ final class ListHandlersCommandTest extends TestCase
             $commandTransports,
             $queryTransports,
             $eventTransports,
+            $transportMappingProvider,
             $commandAsyncTransports,
             $eventAsyncTransports,
         );
+    }
+
+    /**
+     * @param array<string, array{default?: list<string>, map?: array<class-string, list<string>>}> $overrides
+     */
+    private function createMappingProvider(array $overrides = []): TransportMappingProvider
+    {
+        $mapping = [
+            'command' => ['default' => [], 'map' => []],
+            'command_async' => ['default' => [], 'map' => []],
+            'query' => ['default' => [], 'map' => []],
+            'event' => ['default' => [], 'map' => []],
+            'event_async' => ['default' => [], 'map' => []],
+        ];
+
+        foreach ($overrides as $bus => $config) {
+            $mapping[$bus] = [
+                'default' => $config['default'] ?? [],
+                'map' => $config['map'] ?? [],
+            ];
+        }
+
+        return new TransportMappingProvider($mapping);
     }
 
     private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
@@ -350,6 +477,14 @@ final class ListHandlersCommandTest extends TestCase
 
         return new MessageTransportResolver(new ServiceLocator($services));
     }
+}
+
+abstract class AbstractConfiguredCommand implements \SomeWork\CqrsBundle\Contract\Command
+{
+}
+
+final class AbstractConfiguredCommandHandler
+{
 }
 
 interface TestBrokenCommand extends \SomeWork\CqrsBundle\Contract\Command
