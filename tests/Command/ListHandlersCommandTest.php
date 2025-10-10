@@ -249,16 +249,16 @@ final class ListHandlersCommandTest extends TestCase
         $eventSyncTransports = preg_quote('evt_sync_specific', '/');
         $eventAsyncTransports = preg_quote('evt_async_specific', '/');
 
-        $commandRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*'.$commandSyncTransports.'\s*\|\s*'.$commandAsyncTransports.'\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $commandRowPattern = '~Command\s+Command label\s+'.preg_quote(TestAsyncCommandHandler::class, '~').'\s+app\\.command\\.async_handler\s+messenger\\.bus\\.commands\s+sync\s+yes\s+'.$commandSyncTransports.'\s+'.$commandAsyncTransports.'\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
         self::assertMatchesRegularExpression($commandRowPattern, $output);
 
-        $eventRowPattern = '/\|\s*Event\s*\|\s*Event label\s*\|\s*'.preg_quote(TestEventHandler::class, '/').'\s*\|\s*app\\.event\\.handler\s*\|\s*messenger\\.bus\\.events\s*\|\s*async\s*\|\s*no\s*\|\s*'.$eventSyncTransports.'\s*\|\s*'.$eventAsyncTransports.'\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $eventRowPattern = '~Event\s+Event label\s+'.preg_quote(TestEventHandler::class, '~').'\s+app\\.event\\.handler\s+messenger\\.bus\\.events\s+async\s+no\s+'.$eventSyncTransports.'\s+'.$eventAsyncTransports.'\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
         self::assertMatchesRegularExpression($eventRowPattern, $output);
 
-        $queryRowPattern = '/\|\s*Query\s*\|\s*Query label\s*\|\s*'.preg_quote(TestQueryHandler::class, '/').'\s*\|\s*app\\.query\\.handler\s*\|\s*default\s*\|\s*sync\s*\|\s*n\/a\s*\|\s*'.$querySyncTransports.'\s*\|\s*n\/a\s*\|\s*'.$retryClass.'\s*\|\s*'.$serializerClass.'\s*\|\s*'.$metadataClass.'\s*\|/';
+        $queryRowPattern = '~Query\s+Query label\s+'.preg_quote(TestQueryHandler::class, '~').'\s+app\\.query\\.handler\s+default\s+sync\s+n/a\s+'.$querySyncTransports.'\s+n/a\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
         self::assertMatchesRegularExpression($queryRowPattern, $output);
 
-        $brokenRowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestBrokenCommandHandler::class, '/').'\s*\|\s*app\\.command\\.broken_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*None\s*\|\s*'.$commandAsyncDefault.'\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*n\/a\s*\|/';
+        $brokenRowPattern = '~Command\s+Command label\s+'.preg_quote(TestBrokenCommandHandler::class, '~').'\s+app\\.command\\.broken_handler\s+messenger\\.bus\\.commands\s+n/a\s+n/a\s+None\s+'.$commandAsyncDefault.'\s+n/a\s+n/a\s+n/a~';
         self::assertMatchesRegularExpression($brokenRowPattern, $output);
     }
 
@@ -317,7 +317,7 @@ final class ListHandlersCommandTest extends TestCase
         $syncOverride = preg_quote('abstract_sync_transport', '/');
         $asyncOverride = preg_quote('abstract_async_transport', '/');
 
-        $rowPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.$handler.'\s*\|\s*app\\.command\\.abstract_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*n\/a\s*\|\s*n\/a\s*\|\s*'.$syncOverride.'\s*\|\s*'.$asyncOverride.'\s*\|/';
+        $rowPattern = '~Command\s+Command label\s+'.$handler.'\s+app\\.command\\.abstract_handler\s+messenger\\.bus\\.commands\s+n/a\s+n/a\s+'.$syncOverride.'\s+'.$asyncOverride.'~';
         self::assertMatchesRegularExpression($rowPattern, $output);
     }
 
@@ -354,7 +354,7 @@ final class ListHandlersCommandTest extends TestCase
 
         self::assertStringContainsString('cmd_sync_only', $output);
 
-        $asyncColumnPattern = '/\|\s*Command\s*\|\s*Command label\s*\|\s*'.preg_quote(TestAsyncCommandHandler::class, '/').'\s*\|\s*app\\.command\\.async_handler\s*\|\s*messenger\\.bus\\.commands\s*\|\s*sync\s*\|\s*yes\s*\|\s*cmd_sync_only\s*\|\s*n\/a\s*\|/';
+        $asyncColumnPattern = '~Command\s+Command label\s+'.preg_quote(TestAsyncCommandHandler::class, '~').'\s+app\\.command\\.async_handler\s+messenger\\.bus\\.commands\s+sync\s+yes\s+cmd_sync_only\s+n/a~';
         self::assertMatchesRegularExpression($asyncColumnPattern, $output);
     }
 

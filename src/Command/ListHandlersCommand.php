@@ -39,6 +39,15 @@ use function sprintf;
 final class ListHandlersCommand extends Command
 {
     /**
+     * @var array<string, string>
+     */
+    private const SECTION_TITLES = [
+        'command' => 'Commands',
+        'query' => 'Queries',
+        'event' => 'Events',
+    ];
+
+    /**
      * @var array<string, RetryPolicyResolver>
      */
     private readonly array $retryResolvers;
@@ -152,35 +161,41 @@ final class ListHandlersCommand extends Command
         $types = $this->normaliseTypes($requestedTypes);
         $showDetails = (bool) $input->getOption('details');
 
-        $rows = [];
+        $rowsByType = [];
         foreach ($types as $type) {
             $descriptors = $this->registry->byType($type);
+            $rows = [];
             foreach ($descriptors as $descriptor) {
                 $rows[] = $this->formatDescriptor($descriptor, $showDetails);
             }
+
+            if ([] !== $rows) {
+                usort(
+                    $rows,
+                    static fn (array $a, array $b): int => [$a[1], $a[2]] <=> [$b[1], $b[2]]
+                );
+
+                $rowsByType[$type] = $rows;
+            }
         }
 
-        if ([] === $rows) {
+        if ([] === $rowsByType) {
             $io->warning('No CQRS handlers were found for the given filters.');
 
             return self::SUCCESS;
         }
 
-        usort(
-            $rows,
-            static fn (array $a, array $b): int => [$a[0], $a[1]] <=> [$b[0], $b[1]]
-        );
+        $typesToDisplay = array_keys($rowsByType);
 
-        $headers = ['Type', 'Message', 'Handler', 'Service Id', 'Bus'];
+        foreach ($typesToDisplay as $index => $type) {
+            $io->section(self::SECTION_TITLES[$type] ?? sprintf('%ss', ucfirst($type)));
 
-        if ($showDetails) {
-            $headers = [...$headers, 'Dispatch Mode', 'Async Defers', 'Sync Transports', 'Async Transports', 'Retry Policy', 'Serializer', 'Metadata Provider'];
+            $this->renderTable($output, $rowsByType[$type], $showDetails);
+
+            if ($index < count($typesToDisplay) - 1) {
+                $io->newLine();
+            }
         }
-
-        $table = new Table($output);
-        $table->setHeaders($headers);
-        $table->setRows($rows);
-        $table->render();
 
         return self::SUCCESS;
     }
@@ -400,5 +415,23 @@ final class ListHandlersCommand extends Command
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    /**
+     * @param list<array<int, string>> $rows
+     */
+    private function renderTable(OutputInterface $output, array $rows, bool $showDetails): void
+    {
+        $headers = ['Type', 'Message', 'Handler', 'Service Id', 'Bus'];
+
+        if ($showDetails) {
+            $headers = [...$headers, 'Dispatch Mode', 'Async Defers', 'Sync Transports', 'Async Transports', 'Retry Policy', 'Serializer', 'Metadata Provider'];
+        }
+
+        $table = new Table($output);
+        $table->setHeaders($headers);
+        $table->setRows($rows);
+        $table->setStyle('symfony-style-guide');
+        $table->render();
     }
 }
