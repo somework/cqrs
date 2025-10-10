@@ -16,7 +16,7 @@ use function is_a;
 /**
  * Adds transport name stamps to dispatched messages based on configuration.
  */
-final class MessageTransportStampDecider implements StampDecider
+final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 {
     private const SENDERS_LOCATOR_STAMP_CLASS = 'Symfony\\Component\\Messenger\\Stamp\\SendersLocatorStamp';
 
@@ -49,6 +49,11 @@ final class MessageTransportStampDecider implements StampDecider
         array $stampTypes = self::DEFAULT_STAMP_TYPES,
     ) {
         $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
+    }
+
+    public function messageTypes(): array
+    {
+        return [Command::class, Query::class, Event::class];
     }
 
     /**

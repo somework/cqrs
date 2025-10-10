@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
@@ -65,6 +68,24 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
             $tags = $container->getDefinition($serviceId)->getTag('somework_cqrs.dispatch_stamp_decider');
             self::assertCount(1, $tags, $serviceId.' should have exactly one dispatch stamp decider tag');
             self::assertSame($priority, $tags[0]['priority']);
+        }
+
+        $expectedMessageTypes = [
+            'somework_cqrs.stamp_decider.command_retry' => [Command::class],
+            'somework_cqrs.stamp_decider.command_serializer' => [Command::class],
+            'somework_cqrs.stamp_decider.command_metadata' => [Command::class],
+            'somework_cqrs.stamp_decider.query_retry' => [Query::class],
+            'somework_cqrs.stamp_decider.query_serializer' => [Query::class],
+            'somework_cqrs.stamp_decider.query_metadata' => [Query::class],
+            'somework_cqrs.stamp_decider.event_retry' => [Event::class],
+            'somework_cqrs.stamp_decider.event_serializer' => [Event::class],
+            'somework_cqrs.stamp_decider.event_metadata' => [Event::class],
+            'somework_cqrs.stamp_decider.message_transport' => [Command::class, Query::class, Event::class],
+        ];
+
+        foreach ($expectedMessageTypes as $serviceId => $types) {
+            $tags = $container->getDefinition($serviceId)->getTag('somework_cqrs.dispatch_stamp_decider');
+            self::assertSame($types, $tags[0]['message_types'] ?? null, $serviceId.' should declare message types');
         }
     }
 }

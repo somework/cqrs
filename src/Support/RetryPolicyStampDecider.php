@@ -10,7 +10,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Adds retry policy stamps for supported messages.
  */
-final class RetryPolicyStampDecider implements StampDecider
+final class RetryPolicyStampDecider implements MessageTypeAwareStampDecider
 {
     /**
      * @param class-string $messageType
@@ -19,6 +19,11 @@ final class RetryPolicyStampDecider implements StampDecider
         private readonly RetryPolicyResolver $retryPolicies,
         private readonly string $messageType,
     ) {
+    }
+
+    public function messageTypes(): array
+    {
+        return [$this->messageType];
     }
 
     /**
