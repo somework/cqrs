@@ -15,6 +15,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryableImportLegacyDataCommand;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
+use function array_column;
+
 final class CqrsHandlerPassTest extends TestCase
 {
     public function test_it_collects_metadata_for_union_and_intersection_types(): void
@@ -123,6 +125,55 @@ final class CqrsHandlerPassTest extends TestCase
             'service_id' => 'somework_cqrs.tests.handles_string_handler',
             'bus' => null,
         ], $eventMetadata);
+    }
+
+    public function test_it_supports_associative_handles_definitions(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.associative_handles_handler', HandlesAttributeHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => [
+                    CreateTaskCommand::class => 'handleCreate',
+                    FindTaskQuery::class => ['from_transport' => 'async'],
+                    OrderPlacedEvent::class => ['method' => 'onEvent'],
+                ],
+                'bus' => 'cqrs.bus',
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertSame([
+            [
+                'type' => 'command',
+                'message' => CreateTaskCommand::class,
+                'handler_class' => HandlesAttributeHandler::class,
+                'service_id' => 'somework_cqrs.tests.associative_handles_handler',
+                'bus' => 'cqrs.bus',
+            ],
+        ], $metadata['command']);
+
+        self::assertSame([
+            [
+                'type' => 'query',
+                'message' => FindTaskQuery::class,
+                'handler_class' => HandlesAttributeHandler::class,
+                'service_id' => 'somework_cqrs.tests.associative_handles_handler',
+                'bus' => 'cqrs.bus',
+            ],
+        ], $metadata['query']);
+
+        self::assertSame([
+            [
+                'type' => 'event',
+                'message' => OrderPlacedEvent::class,
+                'handler_class' => HandlesAttributeHandler::class,
+                'service_id' => 'somework_cqrs.tests.associative_handles_handler',
+                'bus' => 'cqrs.bus',
+            ],
+        ], $metadata['event']);
     }
 
     public function test_it_discovers_method_attribute_hint(): void
