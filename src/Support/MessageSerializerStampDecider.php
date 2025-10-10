@@ -10,7 +10,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Adds serializer stamps for supported messages.
  */
-final class MessageSerializerStampDecider implements StampDecider
+final class MessageSerializerStampDecider implements MessageTypeAwareStampDecider
 {
     /**
      * @param class-string $messageType
@@ -19,6 +19,11 @@ final class MessageSerializerStampDecider implements StampDecider
         private readonly MessageSerializerResolver $serializers,
         private readonly string $messageType,
     ) {
+    }
+
+    public function messageTypes(): array
+    {
+        return [$this->messageType];
     }
 
     /**

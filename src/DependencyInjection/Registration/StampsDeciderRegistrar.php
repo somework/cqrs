@@ -51,6 +51,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 200,
+                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'command_serializer',
@@ -60,6 +61,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 150,
+                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'query_retry',
@@ -69,6 +71,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 200,
+                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_serializer',
@@ -78,6 +81,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 150,
+                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_metadata',
@@ -87,6 +91,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 125,
+                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'command_metadata',
@@ -96,6 +101,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 125,
+                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'event_retry',
@@ -105,6 +111,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 200,
+                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_serializer',
@@ -114,6 +121,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 150,
+                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_metadata',
@@ -123,6 +131,7 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 125,
+                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'message_transport',
@@ -137,6 +146,7 @@ final class StampsDeciderRegistrar
                     '$eventAsyncTransports' => $this->helper->createOptionalTransportResolverReference('event_async', $buses),
                 ],
                 'priority' => 175,
+                'message_types' => [Command::class, Query::class, Event::class],
             ],
             [
                 'service_id' => 'somework_cqrs.dispatch_after_current_bus_stamp_decider',
@@ -155,7 +165,13 @@ final class StampsDeciderRegistrar
                 $definition->setArgument($name, $value);
             }
 
-            $definition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => $configuration['priority']]);
+            $tagAttributes = ['priority' => $configuration['priority']];
+
+            if (isset($configuration['message_types'])) {
+                $tagAttributes['message_types'] = $configuration['message_types'];
+            }
+
+            $definition->addTag('somework_cqrs.dispatch_stamp_decider', $tagAttributes);
             $definition->setPublic(false);
 
             $serviceId = $configuration['service_id'] ?? sprintf('somework_cqrs.stamp_decider.%s', $configuration['service_id_suffix']);
