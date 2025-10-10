@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+use function class_exists;
 use function is_a;
 
 /**
@@ -63,10 +64,19 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
+        $sendersLocatorStampExists = class_exists(self::SENDERS_LOCATOR_STAMP_CLASS, false);
+        $sendMessageStampExists = class_exists(MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false);
+
         foreach ($stamps as $stamp) {
-            if ($stamp instanceof TransportNamesStamp
-                || is_a($stamp, self::SENDERS_LOCATOR_STAMP_CLASS, false)
-                || is_a($stamp, MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false)) {
+            if ($stamp instanceof TransportNamesStamp) {
+                return $stamps;
+            }
+
+            if ($sendersLocatorStampExists && is_a($stamp, self::SENDERS_LOCATOR_STAMP_CLASS, false)) {
+                return $stamps;
+            }
+
+            if ($sendMessageStampExists && is_a($stamp, MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false)) {
                 return $stamps;
             }
         }
