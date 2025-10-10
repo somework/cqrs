@@ -41,6 +41,18 @@ final class ApproveInvoiceHandler implements CommandHandler
 The same pattern exists for queries (`#[AsQueryHandler]`) and events
 (`#[AsEventHandler]`).
 
+### Fire-and-forget events
+
+Dispatching an event without any listeners used to trigger Symfony
+Messenger's `NoHandlerForMessageException`. The bundle now ships an internal
+middleware that is automatically added to every configured event bus
+(`buses.event`, `buses.event_async`, or the `default_bus` fallback). The
+middleware catches the exception and returns the original envelope when the
+message implements `SomeWork\CqrsBundle\Contract\Event`, allowing you to
+publish integration or domain events before any projections subscribe to
+them. Command and query buses keep Messenger's default behaviour so unexpected
+gaps in their handler catalogues still surface during development.
+
 ## Interface autoconfiguration
 
 If you prefer interfaces over attributes the bundle can still discover your
