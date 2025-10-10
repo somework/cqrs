@@ -10,6 +10,8 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 
+use function sprintf;
+
 final class ConsoleCommandKernelTest extends KernelTestCase
 {
     protected function setUp(): void
@@ -67,8 +69,18 @@ final class ConsoleCommandKernelTest extends KernelTestCase
         self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullRetryPolicy', $display);
         self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullMessageSerializer', $display);
         self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\RandomCorrelationMetadataProvider', $display);
-        self::assertMatchesRegularExpression('/CreateTaskCommand[^\n]+sync[^\n]+yes/', $display);
-        self::assertMatchesRegularExpression('/FindTaskQuery[^\n]+sync[^\n]+n\/a/', $display);
+
+        $this->assertTableContainsRows($display, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', [
+            ['Message', 'CreateTaskCommand'],
+            ['Dispatch Mode', 'sync'],
+            ['Async Defers', 'yes'],
+        ]);
+
+        $this->assertTableContainsRows($display, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\FindTaskHandler', [
+            ['Message', 'FindTaskQuery'],
+            ['Dispatch Mode', 'sync'],
+            ['Async Defers', 'n/a'],
+        ]);
     }
 
     private function executeCommand(string $name, array $input = []): CommandTester
@@ -84,5 +96,35 @@ final class ConsoleCommandKernelTest extends KernelTestCase
         $tester->execute($input);
 
         return $tester;
+    }
+
+    /**
+     * @param list<array{0: string, 1: string}> $expectedRows
+     */
+    private function assertTableContainsRows(string $output, string $needle, array $expectedRows): void
+    {
+        $table = $this->findTableFor($output, $needle);
+
+        self::assertNotNull($table, sprintf('Failed to locate table containing "%s".', $needle));
+
+        foreach ($expectedRows as [$field, $value]) {
+            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote((string) $value, '/'));
+            self::assertMatchesRegularExpression($pattern, $table);
+        }
+    }
+
+    private function findTableFor(string $output, string $needle): ?string
+    {
+        if (!preg_match_all('/╔.*?╚.*?╝/s', $output, $matches)) {
+            return null;
+        }
+
+        foreach ($matches[0] as $table) {
+            if (str_contains($table, $needle)) {
+                return $table;
+            }
+        }
+
+        return null;
     }
 }
