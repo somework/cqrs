@@ -158,7 +158,8 @@ somework_cqrs:
   `framework.messenger.routing` definitions after the stamp is attached, and
   existing routes remain intact when callers provide their own
   `TransportNamesStamp` or `SendMessageToTransportsStamp` for advanced delivery
-  logic.
+  logic. The bundle guards access to Messenger's optional stamp classes, so
+  projects running without them avoid unnecessary autoload attempts.
 * **async.dispatch_after_current_bus** – toggles whether the bundle appends
   Messenger's `DispatchAfterCurrentBusStamp` when a command or event resolves to
   the asynchronous bus. Leave the `default` values set to `true` to preserve the
