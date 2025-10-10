@@ -13,22 +13,15 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Dispatches commands through configured Messenger buses.
  */
-final class CommandBus
+final class CommandBus extends AbstractMessengerBus
 {
-    private readonly DispatchModeDecider $dispatchModeDecider;
-    private readonly StampsDecider $stampsDecider;
-
     public function __construct(
-        private readonly MessageBusInterface $syncBus,
-        private readonly ?MessageBusInterface $asyncBus = null,
+        MessageBusInterface $syncBus,
+        ?MessageBusInterface $asyncBus = null,
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?StampsDecider $stampsDecider = null,
     ) {
-        $dispatchModeDecider ??= DispatchModeDecider::syncDefaults();
-        $stampsDecider ??= StampsDecider::withDefaultAsyncDeferral();
-
-        $this->dispatchModeDecider = $dispatchModeDecider;
-        $this->stampsDecider = $stampsDecider;
+        parent::__construct($syncBus, $asyncBus, $dispatchModeDecider, $stampsDecider);
     }
 
     /**
@@ -36,10 +29,7 @@ final class CommandBus
      */
     public function dispatch(Command $command, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
-        $resolvedMode = $this->dispatchModeDecider->resolve($command, $mode);
-        $stamps = $this->stampsDecider->decide($command, $resolvedMode, $stamps);
-
-        return $this->selectBus($resolvedMode)->dispatch($command, $stamps);
+        return $this->dispatchMessage($command, $mode, ...$stamps);
     }
 
     /**
@@ -47,7 +37,7 @@ final class CommandBus
      */
     public function dispatchSync(Command $command, StampInterface ...$stamps): Envelope
     {
-        return $this->dispatch($command, DispatchMode::SYNC, ...$stamps);
+        return $this->dispatchMessageSync($command, ...$stamps);
     }
 
     /**
@@ -55,19 +45,11 @@ final class CommandBus
      */
     public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope
     {
-        return $this->dispatch($command, DispatchMode::ASYNC, ...$stamps);
+        return $this->dispatchMessageAsync($command, ...$stamps);
     }
 
-    private function selectBus(DispatchMode $mode): MessageBusInterface
+    protected function missingAsyncBusMessage(): string
     {
-        if (DispatchMode::ASYNC === $mode) {
-            if (!$this->asyncBus instanceof MessageBusInterface) {
-                throw new \LogicException('Asynchronous command bus is not configured.');
-            }
-
-            return $this->asyncBus;
-        }
-
-        return $this->syncBus;
+        return 'Asynchronous command bus is not configured.';
     }
 }
