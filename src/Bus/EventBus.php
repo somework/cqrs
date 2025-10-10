@@ -13,22 +13,15 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Dispatches domain events through Messenger buses.
  */
-final class EventBus
+final class EventBus extends AbstractMessengerBus
 {
-    private readonly DispatchModeDecider $dispatchModeDecider;
-    private readonly StampsDecider $stampsDecider;
-
     public function __construct(
-        private readonly MessageBusInterface $syncBus,
-        private readonly ?MessageBusInterface $asyncBus = null,
+        MessageBusInterface $syncBus,
+        ?MessageBusInterface $asyncBus = null,
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?StampsDecider $stampsDecider = null,
     ) {
-        $dispatchModeDecider ??= DispatchModeDecider::syncDefaults();
-        $stampsDecider ??= StampsDecider::withDefaultAsyncDeferral();
-
-        $this->dispatchModeDecider = $dispatchModeDecider;
-        $this->stampsDecider = $stampsDecider;
+        parent::__construct($syncBus, $asyncBus, $dispatchModeDecider, $stampsDecider);
     }
 
     /**
@@ -36,10 +29,7 @@ final class EventBus
      */
     public function dispatch(Event $event, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
-        $resolvedMode = $this->dispatchModeDecider->resolve($event, $mode);
-        $stamps = $this->stampsDecider->decide($event, $resolvedMode, $stamps);
-
-        return $this->selectBus($resolvedMode)->dispatch($event, $stamps);
+        return $this->dispatchMessage($event, $mode, ...$stamps);
     }
 
     /**
@@ -47,7 +37,7 @@ final class EventBus
      */
     public function dispatchSync(Event $event, StampInterface ...$stamps): Envelope
     {
-        return $this->dispatch($event, DispatchMode::SYNC, ...$stamps);
+        return $this->dispatchMessageSync($event, ...$stamps);
     }
 
     /**
@@ -55,19 +45,11 @@ final class EventBus
      */
     public function dispatchAsync(Event $event, StampInterface ...$stamps): Envelope
     {
-        return $this->dispatch($event, DispatchMode::ASYNC, ...$stamps);
+        return $this->dispatchMessageAsync($event, ...$stamps);
     }
 
-    private function selectBus(DispatchMode $mode): MessageBusInterface
+    protected function missingAsyncBusMessage(): string
     {
-        if (DispatchMode::ASYNC === $mode) {
-            if (!$this->asyncBus instanceof MessageBusInterface) {
-                throw new \LogicException('Asynchronous event bus is not configured.');
-            }
-
-            return $this->asyncBus;
-        }
-
-        return $this->syncBus;
+        return 'Asynchronous event bus is not configured.';
     }
 }
