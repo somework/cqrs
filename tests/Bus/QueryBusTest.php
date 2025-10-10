@@ -73,6 +73,33 @@ final class QueryBusTest extends TestCase
         $queryBus->ask($query);
     }
 
+    public function test_ask_with_multiple_results_throws_exception(): void
+    {
+        $query = new FindTaskQuery('123');
+
+        $firstHandled = new HandledStamp('first', 'first_handler');
+        $secondHandled = new HandledStamp('second', 'second_handler');
+        $envelope = (new Envelope($query))
+            ->with($firstHandled)
+            ->with($secondHandled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->with($query, [])
+            ->willReturn($envelope);
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+        );
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('Query was handled multiple times (2 handlers returned a result). Exactly one handler must handle a query.');
+
+        $queryBus->ask($query);
+    }
+
     public function test_ask_merges_supplied_stamps_with_default_pipeline(): void
     {
         $query = new FindTaskQuery('123');
