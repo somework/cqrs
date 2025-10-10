@@ -4,20 +4,23 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Closure;
 use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+use function get_debug_type;
 use function sprintf;
 
-final class MessageSerializerResolver
+final class MessageSerializerResolver extends AbstractMessageTypeResolver
 {
     public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_serializer_global_default';
     public const TYPE_DEFAULT_KEY = '__somework_cqrs_serializer_type_default';
 
     public function __construct(
-        private readonly ContainerInterface $serializers,
+        ContainerInterface $serializers,
     ) {
+        parent::__construct($serializers);
     }
 
     public static function withoutOverrides(?MessageSerializer $defaultSerializer = null): self
@@ -32,37 +35,44 @@ final class MessageSerializerResolver
 
     public function resolveFor(object $message): MessageSerializer
     {
-        $match = MessageTypeLocator::match(
-            $this->serializers,
-            $message,
-            [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY],
-        );
+        /** @var MessageSerializer $serializer */
+        $serializer = $this->resolveService($message, [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY]);
 
-        if (null !== $match) {
-            return $this->assertSerializer($match->type, $match->service);
-        }
-
-        if ($this->serializers->has(self::TYPE_DEFAULT_KEY)) {
-            return $this->assertSerializer(self::TYPE_DEFAULT_KEY, $this->serializers->get(self::TYPE_DEFAULT_KEY));
-        }
-
-        if (!$this->serializers->has(self::GLOBAL_DEFAULT_KEY)) {
-            throw new \LogicException('Serializer resolver must be initialised with a global default serializer.');
-        }
-
-        return $this->assertSerializer(self::GLOBAL_DEFAULT_KEY, $this->serializers->get(self::GLOBAL_DEFAULT_KEY));
+        return $serializer;
     }
 
-    private function assertSerializer(string $key, mixed $service): MessageSerializer
+    protected function assertService(string $key, mixed $service): MessageSerializer
     {
-        if ($service instanceof \Closure) {
+        if ($service instanceof Closure) {
             $service = $service();
         }
 
         if (!$service instanceof MessageSerializer) {
-            throw new \LogicException(sprintf('Serializer override for "%s" must implement %s, got %s.', $key, MessageSerializer::class, get_debug_type($service)));
+            $message = sprintf(
+                'Serializer override for "%s" must implement %s, got %s.',
+                $key,
+                MessageSerializer::class,
+                get_debug_type($service),
+            );
+
+            throw new \LogicException($message);
         }
 
         return $service;
+    }
+
+    protected function resolveFallback(object $message): MessageSerializer
+    {
+        $serializer = $this->resolveFirstAvailable([self::TYPE_DEFAULT_KEY]);
+
+        if (null !== $serializer) {
+            return $serializer;
+        }
+
+        if (!$this->hasService(self::GLOBAL_DEFAULT_KEY)) {
+            throw new \LogicException('Serializer resolver must be initialised with a global default serializer.');
+        }
+
+        return $this->getService(self::GLOBAL_DEFAULT_KEY);
     }
 }

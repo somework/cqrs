@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use LogicException;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
@@ -51,5 +52,17 @@ final class RetryPolicyResolverTest extends TestCase
         $policy = $resolver->resolveFor(new CreateTaskCommand('1', 'Test'));
 
         self::assertSame($interfacePolicy, $policy);
+    }
+
+    public function test_throws_when_override_is_not_retry_policy(): void
+    {
+        $resolver = new RetryPolicyResolver(new NullRetryPolicy(), new ServiceLocator([
+            TaskCreatedEvent::class => static fn (): string => 'invalid',
+        ]));
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('Retry policy override for "SomeWork\\CqrsBundle\\Tests\\Fixture\\Message\\TaskCreatedEvent" must implement SomeWork\\CqrsBundle\\Contract\\RetryPolicy.');
+
+        $resolver->resolveFor(new TaskCreatedEvent('1'));
     }
 }
