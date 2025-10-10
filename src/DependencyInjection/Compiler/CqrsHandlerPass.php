@@ -106,7 +106,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
     }
 
     /**
-     * @param array{handles?: class-string|array<class-string>, method?: string} $attributes
+     * @param array{handles?: class-string|array<string|int, string|array<mixed>>, method?: string} $attributes
      *
      * @return list<class-string>
      */
@@ -122,7 +122,13 @@ final class CqrsHandlerPass implements CompilerPassInterface
             if (is_array($handles)) {
                 $messages = [];
 
-                foreach ($handles as $handle) {
+                foreach ($handles as $key => $handle) {
+                    if (is_string($key)) {
+                        $messages[] = $key;
+
+                        continue;
+                    }
+
                     if (is_string($handle)) {
                         $messages[] = $handle;
                     }

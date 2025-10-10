@@ -53,6 +53,14 @@ set the `method` attribute to point at a handler method other than `__invoke()`.
 The compiler pass will reflect that method to determine the message type when
 `handles` is not provided.
 
+The `handles` attribute accepts either a single message class string, an array
+of class strings, or an associative array where the keys are the message
+classes. Associative definitions let you pair classes with method names or
+options understood by Messenger (for example `['method' => 'handle']` or
+`['from_transport' => 'async']`). The bundle now records the message classes
+from either format so downstream metadata, console tooling, and runtime
+dispatching stay in sync with Messenger's supported tag shapes.
+
 ```php
 <?php
 
