@@ -18,6 +18,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
+use function array_keys;
 use function array_unique;
 use function array_values;
 use function class_exists;
@@ -66,7 +67,11 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 continue;
             }
 
+            $normalizedTags = [];
+
             foreach ($tags as $attributes) {
+                $messages = [];
+
                 foreach ($this->resolveMessageClasses($handlerClass, $attributes) as $messageClass) {
                     $type = $this->determineType($messageClass);
                     if (null === $type) {
@@ -80,6 +85,26 @@ final class CqrsHandlerPass implements CompilerPassInterface
                         'service_id' => $serviceId,
                         'bus' => $attributes['bus'] ?? null,
                     ];
+
+                    $messages[$messageClass] = true;
+                }
+
+                if (!isset($attributes['handles']) && [] !== $messages) {
+                    foreach (array_keys($messages) as $messageClass) {
+                        $normalizedTags[] = [...$attributes, 'handles' => $messageClass];
+                    }
+
+                    continue;
+                }
+
+                $normalizedTags[] = $attributes;
+            }
+
+            if ($normalizedTags !== $tags) {
+                $definition->clearTag('messenger.message_handler');
+
+                foreach ($normalizedTags as $tagAttributes) {
+                    $definition->addTag('messenger.message_handler', $tagAttributes);
                 }
             }
         }

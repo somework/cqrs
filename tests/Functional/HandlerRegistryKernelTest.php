@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
@@ -59,12 +60,24 @@ final class HandlerRegistryKernelTest extends KernelTestCase
 
         $queries = $registry->byType('query');
 
-        self::assertCount(1, $queries);
+        $actual = array_map(
+            static fn (HandlerDescriptor $descriptor): array => [
+                $descriptor->messageClass,
+                $descriptor->handlerClass,
+                $descriptor->bus,
+            ],
+            $queries,
+        );
 
-        $descriptor = $queries[0];
-        self::assertSame(FindTaskQuery::class, $descriptor->messageClass);
-        self::assertSame('SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\FindTaskHandler', $descriptor->handlerClass);
-        self::assertSame('messenger.bus.queries', $descriptor->bus);
+        usort($actual, static fn (array $left, array $right): int => $left[0] <=> $right[0]);
+
+        self::assertSame(
+            [
+                [FindTaskQuery::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\FindTaskHandler', 'messenger.bus.queries'],
+                [ListTasksQuery::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\ListTasksHandler', 'messenger.bus.queries'],
+            ],
+            $actual,
+        );
     }
 
     public function test_registry_exposes_event_handlers_across_buses(): void

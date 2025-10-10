@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -74,6 +75,15 @@ final class MessengerIntegrationTest extends KernelTestCase
         $result = $queryBus->ask(new FindTaskQuery('task-2'));
 
         self::assertSame('Review PR', $result);
+    }
+
+    public function test_query_handler_with_union_type_hint_is_autowired(): void
+    {
+        $queryBus = static::getContainer()->get(QueryBus::class);
+
+        $result = $queryBus->ask(new ListTasksQuery());
+
+        self::assertSame(['task-1', 'task-2'], $result);
     }
 
     public function test_envelope_is_injected_into_sync_and_async_handlers(): void

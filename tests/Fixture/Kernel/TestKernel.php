@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncProjectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\GenerateReportHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -68,6 +69,7 @@ final class TestKernel extends Kernel
         $services->set(TaskRecorder::class);
         $services->set(CreateTaskHandler::class);
         $services->set(GenerateReportHandler::class);
+        $services->set(ListTasksHandler::class);
         $services->set(FindTaskHandler::class);
         $services->set(TaskNotificationHandler::class);
         $services->set(AsyncProjectionHandler::class);
