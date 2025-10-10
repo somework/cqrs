@@ -4,54 +4,190 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use Closure;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
+use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 final class StampsDeciderTest extends TestCase
 {
-    public function test_invokes_registered_deciders_in_order(): void
-    {
-        $message = new CreateTaskCommand('1', 'Test');
+    /**
+     * @param list<string> $expectedExecutionOrder
+     * @param list<string> $expectedStampNames
+     */
+    #[DataProvider('messageScenarios')]
+    public function test_invokes_only_matching_deciders_in_registration_order(
+        object $message,
+        DispatchMode $mode,
+        array $expectedExecutionOrder,
+        array $expectedStampNames
+    ): void {
+        $executions = [];
         $initialStamps = [new DummyStamp('base')];
 
-        $first = new class implements StampDecider {
+        $recorder = static function (string $name) use (&$executions): void {
+            $executions[] = $name;
+        };
+
+        $decider = new StampsDecider([
+            $this->createTypeDecider('command', [Command::class], $recorder),
+            $this->createTypeDecider('event', [Event::class], $recorder),
+            $this->createTypeDecider('multi', [Command::class, Event::class], $recorder),
+            $this->createGenericDecider('generic', $recorder),
+        ]);
+
+        $stamps = $decider->decide($message, $mode, $initialStamps);
+
+        self::assertSame($expectedExecutionOrder, $executions);
+        self::assertSame($expectedStampNames, array_map(static fn (DummyStamp $stamp) => $stamp->name, $stamps));
+    }
+
+    /**
+     * @return iterable<string, array{object, DispatchMode, list<string>, list<string>}>
+     */
+    public static function messageScenarios(): iterable
+    {
+        yield 'command sync' => [
+            new CreateTaskCommand('1', 'Test'),
+            DispatchMode::SYNC,
+            ['command', 'multi', 'generic'],
+            ['base', 'command', 'multi', 'generic'],
+        ];
+
+        yield 'command async' => [
+            new CreateTaskCommand('1', 'Test'),
+            DispatchMode::ASYNC,
+            ['command', 'multi', 'generic'],
+            ['base', 'command', 'multi', 'generic'],
+        ];
+
+        yield 'event async' => [
+            new TaskCreatedEvent('1'),
+            DispatchMode::ASYNC,
+            ['event', 'multi', 'generic'],
+            ['base', 'event', 'multi', 'generic'],
+        ];
+
+        yield 'event sync' => [
+            new TaskCreatedEvent('1'),
+            DispatchMode::SYNC,
+            ['event', 'multi', 'generic'],
+            ['base', 'event', 'multi', 'generic'],
+        ];
+
+        yield 'multi contract message runs every matching decider' => [
+            new class implements Command, Event {
+            },
+            DispatchMode::SYNC,
+            ['command', 'event', 'multi', 'generic'],
+            ['base', 'command', 'event', 'multi', 'generic'],
+        ];
+
+        yield 'irrelevant message skips type aware deciders' => [
+            new class {
+            },
+            DispatchMode::SYNC,
+            ['generic'],
+            ['base', 'generic'],
+        ];
+    }
+
+    public function test_message_types_are_requested_once_per_decider(): void
+    {
+        $typeAwareDecider = new class implements MessageTypeAwareStampDecider {
+            public int $messageTypeLookups = 0;
+            public int $decisions = 0;
+
+            public function messageTypes(): array
+            {
+                ++$this->messageTypeLookups;
+
+                return [Command::class];
+            }
+
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
-                $stamps[] = new DummyStamp('first');
+                ++$this->decisions;
 
                 return $stamps;
             }
         };
 
-        $second = new class implements StampDecider {
+        $decider = new StampsDecider([$typeAwareDecider]);
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider->decide($message, DispatchMode::SYNC, []);
+        $decider->decide($message, DispatchMode::ASYNC, []);
+
+        self::assertSame(1, $typeAwareDecider->messageTypeLookups);
+        self::assertSame(2, $typeAwareDecider->decisions);
+    }
+
+    /**
+     * @param list<class-string> $messageTypes
+     */
+    private function createTypeDecider(string $name, array $messageTypes, Closure $recorder): MessageTypeAwareStampDecider
+    {
+        return new class($name, $messageTypes, $recorder) implements MessageTypeAwareStampDecider {
+            /**
+             * @param list<class-string> $messageTypes
+             */
+            public function __construct(
+                private readonly string $name,
+                /** @var list<class-string> */
+                private readonly array $messageTypes,
+                private readonly Closure $recorder,
+            ) {
+            }
+
+            public function messageTypes(): array
+            {
+                return $this->messageTypes;
+            }
+
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
-                $stamps[] = new DummyStamp('second');
+                ($this->recorder)($this->name);
+                $stamps[] = new DummyStamp($this->name);
 
                 return $stamps;
             }
         };
+    }
 
-        $decider = new StampsDecider([$first, $second]);
-        $stamps = $decider->decide($message, DispatchMode::ASYNC, $initialStamps);
+    private function createGenericDecider(string $name, Closure $recorder): StampDecider
+    {
+        return new class($name, $recorder) implements StampDecider {
+            public function __construct(
+                private readonly string $name,
+                private readonly Closure $recorder,
+            ) {
+            }
 
-        self::assertCount(3, $stamps);
-        self::assertSame('base', $stamps[0]->name);
-        self::assertSame('first', $stamps[1]->name);
-        self::assertSame('second', $stamps[2]->name);
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                ($this->recorder)($this->name);
+                $stamps[] = new DummyStamp($this->name);
+
+                return $stamps;
+            }
+        };
     }
 
     #[RunInSeparateProcess]
