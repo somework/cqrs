@@ -23,6 +23,8 @@ use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+use function sprintf;
+
 /**
  * @phpstan-type HandlerMetadata array{
  *     type: string,
@@ -238,28 +240,65 @@ final class ListHandlersCommandTest extends TestCase
         self::assertStringContainsString('Sync Transports', $output);
         self::assertStringContainsString('Async Transports', $output);
 
-        $retryClass = preg_quote(NullRetryPolicy::class, '/');
-        $serializerClass = preg_quote(NullMessageSerializer::class, '/');
-        $metadataClass = preg_quote(RandomCorrelationMetadataProvider::class, '/');
+        $this->assertTableContainsRows($output, 'app.command.async_handler', [
+            ['Type', 'Command'],
+            ['Message', 'Command label'],
+            ['Handler', TestAsyncCommandHandler::class],
+            ['Service Id', 'app.command.async_handler'],
+            ['Bus', 'messenger.bus.commands'],
+            ['Dispatch Mode', 'sync'],
+            ['Async Defers', 'yes'],
+            ['Sync Transports', 'cmd_sync_a, cmd_sync_b'],
+            ['Async Transports', 'cmd_async_override'],
+            ['Retry Policy', NullRetryPolicy::class],
+            ['Serializer', NullMessageSerializer::class],
+            ['Metadata Provider', RandomCorrelationMetadataProvider::class],
+        ]);
 
-        $commandSyncTransports = preg_quote('cmd_sync_a, cmd_sync_b', '/');
-        $commandAsyncTransports = preg_quote('cmd_async_override', '/');
-        $commandAsyncDefault = preg_quote('cmd_async_default', '/');
-        $querySyncTransports = preg_quote('qry_sync_default', '/');
-        $eventSyncTransports = preg_quote('evt_sync_specific', '/');
-        $eventAsyncTransports = preg_quote('evt_async_specific', '/');
+        $this->assertTableContainsRows($output, 'app.command.broken_handler', [
+            ['Type', 'Command'],
+            ['Message', 'Command label'],
+            ['Handler', TestBrokenCommandHandler::class],
+            ['Service Id', 'app.command.broken_handler'],
+            ['Bus', 'messenger.bus.commands'],
+            ['Dispatch Mode', 'n/a'],
+            ['Async Defers', 'n/a'],
+            ['Sync Transports', 'None'],
+            ['Async Transports', 'cmd_async_default'],
+            ['Retry Policy', 'n/a'],
+            ['Serializer', 'n/a'],
+            ['Metadata Provider', 'n/a'],
+        ]);
 
-        $commandRowPattern = '~Command\s+Command label\s+'.preg_quote(TestAsyncCommandHandler::class, '~').'\s+app\\.command\\.async_handler\s+messenger\\.bus\\.commands\s+sync\s+yes\s+'.$commandSyncTransports.'\s+'.$commandAsyncTransports.'\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
-        self::assertMatchesRegularExpression($commandRowPattern, $output);
+        $this->assertTableContainsRows($output, 'app.query.handler', [
+            ['Type', 'Query'],
+            ['Message', 'Query label'],
+            ['Handler', TestQueryHandler::class],
+            ['Service Id', 'app.query.handler'],
+            ['Bus', 'default'],
+            ['Dispatch Mode', 'sync'],
+            ['Async Defers', 'n/a'],
+            ['Sync Transports', 'qry_sync_default'],
+            ['Async Transports', 'n/a'],
+            ['Retry Policy', NullRetryPolicy::class],
+            ['Serializer', NullMessageSerializer::class],
+            ['Metadata Provider', RandomCorrelationMetadataProvider::class],
+        ]);
 
-        $eventRowPattern = '~Event\s+Event label\s+'.preg_quote(TestEventHandler::class, '~').'\s+app\\.event\\.handler\s+messenger\\.bus\\.events\s+async\s+no\s+'.$eventSyncTransports.'\s+'.$eventAsyncTransports.'\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
-        self::assertMatchesRegularExpression($eventRowPattern, $output);
-
-        $queryRowPattern = '~Query\s+Query label\s+'.preg_quote(TestQueryHandler::class, '~').'\s+app\\.query\\.handler\s+default\s+sync\s+n/a\s+'.$querySyncTransports.'\s+n/a\s+'.$retryClass.'\s+'.$serializerClass.'\s+'.$metadataClass.'~';
-        self::assertMatchesRegularExpression($queryRowPattern, $output);
-
-        $brokenRowPattern = '~Command\s+Command label\s+'.preg_quote(TestBrokenCommandHandler::class, '~').'\s+app\\.command\\.broken_handler\s+messenger\\.bus\\.commands\s+n/a\s+n/a\s+None\s+'.$commandAsyncDefault.'\s+n/a\s+n/a\s+n/a~';
-        self::assertMatchesRegularExpression($brokenRowPattern, $output);
+        $this->assertTableContainsRows($output, 'app.event.handler', [
+            ['Type', 'Event'],
+            ['Message', 'Event label'],
+            ['Handler', TestEventHandler::class],
+            ['Service Id', 'app.event.handler'],
+            ['Bus', 'messenger.bus.events'],
+            ['Dispatch Mode', 'async'],
+            ['Async Defers', 'no'],
+            ['Sync Transports', 'evt_sync_specific'],
+            ['Async Transports', 'evt_async_specific'],
+            ['Retry Policy', NullRetryPolicy::class],
+            ['Serializer', NullMessageSerializer::class],
+            ['Metadata Provider', RandomCorrelationMetadataProvider::class],
+        ]);
     }
 
     public function test_details_option_displays_configured_transports_for_uninstantiable_message(): void
@@ -313,12 +352,20 @@ final class ListHandlersCommandTest extends TestCase
         self::assertStringContainsString('abstract_sync_transport', $output);
         self::assertStringContainsString('abstract_async_transport', $output);
 
-        $handler = preg_quote(AbstractConfiguredCommandHandler::class, '/');
-        $syncOverride = preg_quote('abstract_sync_transport', '/');
-        $asyncOverride = preg_quote('abstract_async_transport', '/');
-
-        $rowPattern = '~Command\s+Command label\s+'.$handler.'\s+app\\.command\\.abstract_handler\s+messenger\\.bus\\.commands\s+n/a\s+n/a\s+'.$syncOverride.'\s+'.$asyncOverride.'~';
-        self::assertMatchesRegularExpression($rowPattern, $output);
+        $this->assertTableContainsRows($output, 'app.command.abstract_handler', [
+            ['Type', 'Command'],
+            ['Message', 'Command label'],
+            ['Handler', AbstractConfiguredCommandHandler::class],
+            ['Service Id', 'app.command.abstract_handler'],
+            ['Bus', 'messenger.bus.commands'],
+            ['Dispatch Mode', 'n/a'],
+            ['Async Defers', 'n/a'],
+            ['Sync Transports', 'abstract_sync_transport'],
+            ['Async Transports', 'abstract_async_transport'],
+            ['Retry Policy', 'n/a'],
+            ['Serializer', 'n/a'],
+            ['Metadata Provider', 'n/a'],
+        ]);
     }
 
     public function test_details_option_handles_missing_async_transport_resolvers(): void
@@ -354,8 +401,17 @@ final class ListHandlersCommandTest extends TestCase
 
         self::assertStringContainsString('cmd_sync_only', $output);
 
-        $asyncColumnPattern = '~Command\s+Command label\s+'.preg_quote(TestAsyncCommandHandler::class, '~').'\s+app\\.command\\.async_handler\s+messenger\\.bus\\.commands\s+sync\s+yes\s+cmd_sync_only\s+n/a~';
-        self::assertMatchesRegularExpression($asyncColumnPattern, $output);
+        $this->assertTableContainsRows($output, 'app.command.async_handler', [
+            ['Type', 'Command'],
+            ['Message', 'Command label'],
+            ['Handler', TestAsyncCommandHandler::class],
+            ['Service Id', 'app.command.async_handler'],
+            ['Bus', 'messenger.bus.commands'],
+            ['Dispatch Mode', 'sync'],
+            ['Async Defers', 'yes'],
+            ['Sync Transports', 'cmd_sync_only'],
+            ['Async Transports', 'n/a'],
+        ]);
     }
 
     /**
@@ -438,6 +494,36 @@ final class ListHandlersCommandTest extends TestCase
             $commandAsyncTransports,
             $eventAsyncTransports,
         );
+    }
+
+    /**
+     * @param list<array{0: string, 1: string}> $expectedRows
+     */
+    private function assertTableContainsRows(string $output, string $needle, array $expectedRows): void
+    {
+        $table = $this->findTableFor($output, $needle);
+
+        self::assertNotNull($table, sprintf('Failed to locate table containing "%s".', $needle));
+
+        foreach ($expectedRows as [$field, $value]) {
+            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote((string) $value, '/'));
+            self::assertMatchesRegularExpression($pattern, $table);
+        }
+    }
+
+    private function findTableFor(string $output, string $needle): ?string
+    {
+        if (!preg_match_all('/╔.*?╚.*?╝/s', $output, $matches)) {
+            return null;
+        }
+
+        foreach ($matches[0] as $table) {
+            if (str_contains($table, $needle)) {
+                return $table;
+            }
+        }
+
+        return null;
     }
 
     /**
