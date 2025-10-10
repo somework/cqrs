@@ -394,6 +394,13 @@ final class CqrsExtension extends Extension
             $serviceMap = [];
             $typeConfig = $config[$type];
 
+            if (
+                MessageTransportStampFactory::TYPE_SEND_MESSAGE === $typeConfig['stamp']
+                && !class_exists(MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS)
+            ) {
+                throw new InvalidConfigurationException(sprintf('The "send_message" transport stamp type requires the "%s" class. Upgrade symfony/messenger to a version that provides it.', MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS));
+            }
+
             $stampTypes[$type] = $typeConfig['stamp'];
             $mapping[$type] = [
                 'default' => $typeConfig['default'],
