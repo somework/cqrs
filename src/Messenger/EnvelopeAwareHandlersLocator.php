@@ -4,21 +4,27 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Messenger;
 
+use Closure;
 use ReflectionFunction;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlerDescriptor;
 use Symfony\Component\Messenger\Handler\HandlersLocatorInterface;
-
-use function assert;
+use WeakMap;
 
 /**
  * Decorates Messenger's handlers locator to inject envelopes into CQRS handlers.
  */
 final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
 {
+    /**
+     * @var WeakMap<Closure, HandlerDescriptor|array{factory: Closure, options: array, reflection: ReflectionFunction}>
+     */
+    private WeakMap $handlerCache;
+
     public function __construct(private readonly HandlersLocatorInterface $decorated)
     {
+        $this->handlerCache = new WeakMap();
     }
 
     public function getHandlers(Envelope $envelope): iterable
@@ -31,22 +37,49 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
     private function decorateDescriptor(HandlerDescriptor $descriptor, Envelope $envelope): HandlerDescriptor
     {
         $handler = $descriptor->getHandler();
+        if (!$handler instanceof Closure) {
+            return $descriptor;
+        }
+
+        if (isset($this->handlerCache[$handler])) {
+            $cached = $this->handlerCache[$handler];
+
+            if ($cached instanceof HandlerDescriptor) {
+                return $cached;
+            }
+
+            $wrapper = $cached['factory']($envelope);
+
+            return new HandlerDescriptor($wrapper, $cached['options']);
+        }
+
         $reflection = new ReflectionFunction($handler);
         $handlerObject = $reflection->getClosureThis();
 
         if (!$handlerObject instanceof EnvelopeAware) {
+            $this->handlerCache[$handler] = $descriptor;
+
             return $descriptor;
         }
 
-        $wrapper = function (...$arguments) use ($handler, $envelope) {
-            assert($this instanceof EnvelopeAware);
-            $this->setEnvelope($envelope);
+        $options = $descriptor->getOptions();
 
-            return $handler(...$arguments);
+        $factory = static function (Envelope $boundEnvelope) use ($handler, $handlerObject): Closure {
+            return static function (...$arguments) use ($handler, $handlerObject, $boundEnvelope) {
+                $handlerObject->setEnvelope($boundEnvelope);
+
+                return $handler(...$arguments);
+            };
         };
 
-        $wrapper = $wrapper->bindTo($handlerObject, $handlerObject::class);
+        $this->handlerCache[$handler] = [
+            'factory' => $factory,
+            'options' => $options,
+            'reflection' => $reflection,
+        ];
 
-        return new HandlerDescriptor($wrapper, $descriptor->getOptions());
+        $wrapper = $factory($envelope);
+
+        return new HandlerDescriptor($wrapper, $options);
     }
 }
