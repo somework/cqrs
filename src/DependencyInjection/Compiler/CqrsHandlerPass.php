@@ -18,6 +18,11 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
+use function array_unique;
+use function array_values;
+use function class_exists;
+use function interface_exists;
+use function is_array;
 use function is_string;
 
 final class CqrsHandlerPass implements CompilerPassInterface
@@ -62,23 +67,20 @@ final class CqrsHandlerPass implements CompilerPassInterface
             }
 
             foreach ($tags as $attributes) {
-                $messageClass = $this->resolveMessageClass($handlerClass, $attributes);
-                if (null === $messageClass) {
-                    continue;
-                }
+                foreach ($this->resolveMessageClasses($handlerClass, $attributes) as $messageClass) {
+                    $type = $this->determineType($messageClass);
+                    if (null === $type) {
+                        continue;
+                    }
 
-                $type = $this->determineType($messageClass);
-                if (null === $type) {
-                    continue;
+                    $metadata[$type][] = [
+                        'type' => $type,
+                        'message' => $messageClass,
+                        'handler_class' => $handlerClass,
+                        'service_id' => $serviceId,
+                        'bus' => $attributes['bus'] ?? null,
+                    ];
                 }
-
-                $metadata[$type][] = [
-                    'type' => $type,
-                    'message' => $messageClass,
-                    'handler_class' => $handlerClass,
-                    'service_id' => $serviceId,
-                    'bus' => $attributes['bus'] ?? null,
-                ];
             }
         }
 
@@ -104,37 +106,57 @@ final class CqrsHandlerPass implements CompilerPassInterface
     }
 
     /**
-     * @param array{handles?: class-string, method?: string} $attributes
+     * @param array{handles?: class-string|array<class-string>, method?: string} $attributes
+     *
+     * @return list<class-string>
      */
-    private function resolveMessageClass(string $handlerClass, array $attributes): ?string
+    private function resolveMessageClasses(string $handlerClass, array $attributes): array
     {
-        if (isset($attributes['handles']) && is_string($attributes['handles'])) {
-            return $attributes['handles'];
+        if (isset($attributes['handles'])) {
+            $handles = $attributes['handles'];
+
+            if (is_string($handles)) {
+                return [$handles];
+            }
+
+            if (is_array($handles)) {
+                $messages = [];
+
+                foreach ($handles as $handle) {
+                    if (is_string($handle)) {
+                        $messages[] = $handle;
+                    }
+                }
+
+                return array_values(array_unique($messages));
+            }
         }
 
         $reflection = new ReflectionClass($handlerClass);
         if (!$reflection->hasMethod('__invoke')) {
-            return null;
+            return [];
         }
 
         $method = $reflection->getMethod('__invoke');
         $parameters = $method->getParameters();
         if ([] === $parameters) {
-            return null;
+            return [];
         }
 
         $type = $parameters[0]->getType();
         if (null === $type) {
-            return null;
+            return [];
         }
+
+        $messages = [];
 
         foreach ($this->extractTypeNames($type) as $name) {
             if (class_exists($name) || interface_exists($name)) {
-                return $name;
+                $messages[] = $name;
             }
         }
 
-        return null;
+        return array_values(array_unique($messages));
     }
 
     private function determineType(string $messageClass): ?string
@@ -167,9 +189,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
             $names = [];
 
             foreach ($type->getTypes() as $innerType) {
-                if ($innerType instanceof ReflectionNamedType && !$innerType->isBuiltin()) {
-                    $names[] = $innerType->getName();
-                }
+                $names = [...$names, ...$this->extractTypeNames($innerType)];
             }
 
             return $names;
