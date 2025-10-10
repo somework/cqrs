@@ -23,6 +23,7 @@ final class ContainerHelper
             $definition = new Definition($serviceId);
             $definition->setAutowired(true);
             $definition->setAutoconfigured(true);
+            $definition->setPublic(false);
 
             $container->setDefinition($serviceId, $definition);
         }
