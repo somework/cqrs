@@ -133,11 +133,17 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         $reflection = new ReflectionClass($handlerClass);
-        if (!$reflection->hasMethod('__invoke')) {
+        $methodName = $attributes['method'] ?? null;
+
+        if (null === $methodName) {
+            $methodName = '__invoke';
+        }
+
+        if (!$reflection->hasMethod($methodName)) {
             return [];
         }
 
-        $method = $reflection->getMethod('__invoke');
+        $method = $reflection->getMethod($methodName);
         $parameters = $method->getParameters();
         if ([] === $parameters) {
             return [];
