@@ -29,6 +29,7 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
@@ -53,7 +54,7 @@ final class CommandBusTest extends TestCase
     public function test_dispatch_sync_helper_uses_sync_bus(): void
     {
         $command = new CreateTaskCommand('123', 'Test');
-        $envelope = new Envelope($command);
+        $envelope = (new Envelope($command))->with(new HandledStamp('result', 'handler'));
 
         $syncBus = $this->createMock(MessageBusInterface::class);
         $syncBus->expects(self::once())
@@ -66,7 +67,7 @@ final class CommandBusTest extends TestCase
 
         $bus = new CommandBus($syncBus, $asyncBus, stampsDecider: $this->createCommandStampsDecider());
 
-        self::assertSame($envelope, $bus->dispatchSync($command));
+        self::assertSame('result', $bus->dispatchSync($command));
     }
 
     public function test_dispatch_to_async_bus_when_configured(): void

@@ -145,7 +145,8 @@ somework_cqrs:
   that choice always wins.
   The `CommandBus` and `EventBus` also expose `dispatchSync()` and
   `dispatchAsync()` helpers that forward to `dispatch()` with the corresponding
-  mode for convenience.
+  mode for convenience. `CommandBus::dispatchSync()` returns the handler
+  result, mirroring the behaviour of the `QueryBus`.
   When any command or event resolves to `async` you must configure the matching
   Messenger bus via `buses.command_async` or `buses.event_async`. The bundle
   validates this at container-compilation time and throws an

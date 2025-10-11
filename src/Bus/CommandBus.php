@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -35,9 +36,17 @@ final class CommandBus extends AbstractMessengerBus
     /**
      * @param list<StampInterface> $stamps
      */
-    public function dispatchSync(Command $command, StampInterface ...$stamps): Envelope
+    public function dispatchSync(Command $command, StampInterface ...$stamps): mixed
     {
-        return $this->dispatchMessageSync($command, ...$stamps);
+        $envelope = $this->dispatchMessageSync($command, ...$stamps);
+
+        $handledStamp = $envelope->last(HandledStamp::class);
+
+        if (!$handledStamp instanceof HandledStamp) {
+            throw new \LogicException('Synchronous command was not handled by any handler.');
+        }
+
+        return $handledStamp->getResult();
     }
 
     /**
