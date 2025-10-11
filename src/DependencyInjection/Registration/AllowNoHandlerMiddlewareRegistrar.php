@@ -29,19 +29,19 @@ final class AllowNoHandlerMiddlewareRegistrar
     {
         $serviceId = 'somework_cqrs.messenger.middleware.allow_no_handler';
 
-        $busIds = array_filter([
-            $buses['event'] ?? $defaultBusId,
-            $buses['event_async'] ?? null,
-        ]);
-
-        $busIds = array_values(array_unique($busIds));
-
         if (!$container->hasDefinition($serviceId)) {
             $container->setDefinition(
                 $serviceId,
                 (new Definition(AllowNoHandlerMiddleware::class))->setPublic(false)
             );
         }
+
+        $busIds = array_filter([
+            $buses['event'] ?? $defaultBusId,
+            $buses['event_async'] ?? null,
+        ]);
+
+        $busIds = array_values(array_unique($busIds));
 
         if ([] === $busIds) {
             return;
