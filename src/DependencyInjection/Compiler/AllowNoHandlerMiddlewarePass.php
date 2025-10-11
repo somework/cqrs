@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function array_key_exists;
@@ -34,11 +35,12 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
                 continue;
             }
 
-            if (!$container->hasDefinition($busId)) {
+            $definition = $this->resolveMessageBusDefinition($container, $busId);
+
+            if (null === $definition) {
                 continue;
             }
 
-            $definition = $container->findDefinition($busId);
             $arguments = $definition->getArguments();
 
             if (!array_key_exists(0, $arguments)) {
@@ -75,5 +77,37 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
         }
 
         return false;
+    }
+
+    private function resolveMessageBusDefinition(ContainerBuilder $container, string $serviceId, array $visited = []): ?Definition
+    {
+        if (array_key_exists($serviceId, $visited)) {
+            return null;
+        }
+
+        $visited[$serviceId] = true;
+
+        if (!$container->has($serviceId)) {
+            return null;
+        }
+
+        $definition = $container->findDefinition($serviceId);
+        $arguments = $definition->getArguments();
+
+        if (!array_key_exists(0, $arguments)) {
+            return null;
+        }
+
+        $argument = $arguments[0];
+
+        if ($argument instanceof IteratorArgument) {
+            return $definition;
+        }
+
+        if ($argument instanceof Reference) {
+            return $this->resolveMessageBusDefinition($container, (string) $argument, $visited);
+        }
+
+        return null;
     }
 }
