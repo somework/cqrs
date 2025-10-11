@@ -211,7 +211,7 @@ use SomeWork\CqrsBundle\Contract\DispatchMode;
 $commandBus->dispatch($command);                 // Uses the resolved default
 $commandBus->dispatch($command, DispatchMode::ASYNC);
 $commandBus->dispatchAsync($command);            // Shortcut for DispatchMode::ASYNC
-$commandBus->dispatchSync($command);             // Shortcut for DispatchMode::SYNC
+$result = $commandBus->dispatchSync($command);   // Shortcut for DispatchMode::SYNC, returns handler result
 ```
 
 Queries support `dispatchSync()` for symmetry, while events mirror the command
