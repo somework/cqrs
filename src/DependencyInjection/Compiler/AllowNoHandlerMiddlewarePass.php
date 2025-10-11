@@ -49,11 +49,13 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
 
             $argument = $arguments[0];
 
-            if (!$argument instanceof IteratorArgument) {
+            if ($argument instanceof IteratorArgument) {
+                $middlewares = $argument->getValues();
+            } elseif (is_array($argument)) {
+                $middlewares = $argument;
+            } else {
                 continue;
             }
-
-            $middlewares = $argument->getValues();
 
             if ($this->hasMiddlewareReference($middlewares, $middlewareReference)) {
                 continue;
@@ -61,7 +63,11 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
 
             array_unshift($middlewares, $middlewareReference);
 
-            $definition->replaceArgument(0, new IteratorArgument($middlewares));
+            if ($argument instanceof IteratorArgument) {
+                $definition->replaceArgument(0, new IteratorArgument($middlewares));
+            } else {
+                $definition->replaceArgument(0, $middlewares);
+            }
         }
     }
 

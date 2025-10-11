@@ -12,6 +12,7 @@ use function array_filter;
 use function array_merge;
 use function array_unique;
 use function array_values;
+use function is_array;
 
 final class AllowNoHandlerMiddlewareRegistrar
 {
@@ -26,12 +27,7 @@ final class AllowNoHandlerMiddlewareRegistrar
      */
     public function register(ContainerBuilder $container, array $buses, string $defaultBusId): void
     {
-        if (!$container->hasDefinition('somework_cqrs.messenger.middleware.allow_no_handler')) {
-            $container->setDefinition(
-                'somework_cqrs.messenger.middleware.allow_no_handler',
-                (new Definition(AllowNoHandlerMiddleware::class))->setPublic(false)
-            );
-        }
+        $serviceId = 'somework_cqrs.messenger.middleware.allow_no_handler';
 
         $busIds = array_filter([
             $buses['event'] ?? $defaultBusId,
@@ -40,12 +36,23 @@ final class AllowNoHandlerMiddlewareRegistrar
 
         $busIds = array_values(array_unique($busIds));
 
+        if (!$container->hasDefinition($serviceId)) {
+            $container->setDefinition(
+                $serviceId,
+                (new Definition(AllowNoHandlerMiddleware::class))->setPublic(false)
+            );
+        }
+
+        if ([] === $busIds) {
+            return;
+        }
+
         $parameterName = 'somework_cqrs.allow_no_handler.bus_ids';
         $existing = $container->hasParameter($parameterName) ? $container->getParameter($parameterName) : [];
 
         $container->setParameter(
             $parameterName,
-            array_values(array_unique(array_merge($existing, $busIds)))
+            array_values(array_unique(array_merge(is_array($existing) ? $existing : [], $busIds)))
         );
     }
 }

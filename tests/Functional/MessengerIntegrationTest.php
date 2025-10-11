@@ -78,6 +78,21 @@ final class MessengerIntegrationTest extends KernelTestCase
         self::assertSame('no-handlers', $envelope->getMessage()->identifier);
     }
 
+    public function test_event_bus_allows_events_without_handlers_when_kernel_debug_is_enabled(): void
+    {
+        self::ensureKernelShutdown();
+
+        self::bootKernel(['environment' => 'test', 'debug' => true]);
+        static::getContainer()->get(TaskRecorder::class)->reset();
+
+        $eventBus = static::getContainer()->get(EventBus::class);
+
+        $envelope = $eventBus->dispatch(new UnobservedEvent('no-handlers-debug'));
+
+        self::assertInstanceOf(Envelope::class, $envelope);
+        self::assertSame('no-handlers-debug', $envelope->getMessage()->identifier);
+    }
+
     public function test_query_bus_returns_handler_result(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);

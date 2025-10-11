@@ -20,7 +20,7 @@ final class SomeWorkCqrsBundle extends Bundle
         parent::build($container);
 
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
-        $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
+        $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_BEFORE_REMOVING, -1024);
         $container->addCompilerPass(new ValidateTransportNamesPass());
     }
 
