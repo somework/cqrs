@@ -13,7 +13,7 @@ use Symfony\Component\DependencyInjection\Reference;
 
 final class AllowNoHandlerMiddlewarePassTest extends TestCase
 {
-    public function testItPrependsMiddlewareToConfiguredBus(): void
+    public function test_it_prepends_middleware_to_configured_bus(): void
     {
         $container = new ContainerBuilder();
 
@@ -30,16 +30,19 @@ final class AllowNoHandlerMiddlewarePassTest extends TestCase
         /** @var IteratorArgument $argument */
         $argument = $container->findDefinition('messenger.bus.events')->getArgument(0);
 
-        self::assertEquals(
+        $middleware = $argument->getValues();
+
+        self::assertCount(2, $middleware);
+        self::assertSame(
             [
-                new Reference('somework_cqrs.messenger.middleware.allow_no_handler'),
-                new Reference('existing.middleware'),
+                'somework_cqrs.messenger.middleware.allow_no_handler',
+                'existing.middleware',
             ],
-            $argument->getValues()
+            array_map(static fn (Reference $reference): string => (string) $reference, $middleware),
         );
     }
 
-    public function testItResolvesTraceableBusInnerDefinition(): void
+    public function test_it_resolves_traceable_bus_inner_definition(): void
     {
         $container = new ContainerBuilder();
 
@@ -61,12 +64,15 @@ final class AllowNoHandlerMiddlewarePassTest extends TestCase
         /** @var IteratorArgument $argument */
         $argument = $container->findDefinition('debug.traced.messenger.bus.events.inner')->getArgument(0);
 
-        self::assertEquals(
+        $middleware = $argument->getValues();
+
+        self::assertCount(2, $middleware);
+        self::assertSame(
             [
-                new Reference('somework_cqrs.messenger.middleware.allow_no_handler'),
-                new Reference('existing.middleware'),
+                'somework_cqrs.messenger.middleware.allow_no_handler',
+                'existing.middleware',
             ],
-            $argument->getValues()
+            array_map(static fn (Reference $reference): string => (string) $reference, $middleware),
         );
     }
 }
