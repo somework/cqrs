@@ -12,7 +12,7 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 #[CoversClass(MessageMetadataStamp::class)]
 final class MessageMetadataStampTest extends TestCase
 {
-    public function testConstructorRejectsEmptyCorrelationId(): void
+    public function test_constructor_rejects_empty_correlation_id(): void
     {
         $this->expectException(InvalidArgumentException::class);
         $this->expectExceptionMessage('Correlation ID cannot be empty.');
@@ -20,7 +20,7 @@ final class MessageMetadataStampTest extends TestCase
         new MessageMetadataStamp('');
     }
 
-    public function testCreateWithRandomCorrelationIdGeneratesNonEmptyIdentifier(): void
+    public function test_create_with_random_correlation_id_generates_non_empty_identifier(): void
     {
         $extras = ['foo' => 'bar'];
 
@@ -32,7 +32,7 @@ final class MessageMetadataStampTest extends TestCase
         self::assertNotSame($stamp->getCorrelationId(), $anotherStamp->getCorrelationId());
     }
 
-    public function testWithCorrelationIdReturnsNewInstanceWithoutMutatingOriginal(): void
+    public function test_with_correlation_id_returns_new_instance_without_mutating_original(): void
     {
         $original = new MessageMetadataStamp('original-id', ['foo' => 'bar']);
 
@@ -44,7 +44,7 @@ final class MessageMetadataStampTest extends TestCase
         self::assertSame($original->getExtras(), $updated->getExtras());
     }
 
-    public function testWithCorrelationIdValidatesCorrelationId(): void
+    public function test_with_correlation_id_validates_correlation_id(): void
     {
         $stamp = new MessageMetadataStamp('correlation-id');
 
@@ -54,7 +54,7 @@ final class MessageMetadataStampTest extends TestCase
         $stamp->withCorrelationId('');
     }
 
-    public function testWithExtraReturnsNewInstanceWithoutMutatingOriginal(): void
+    public function test_with_extra_returns_new_instance_without_mutating_original(): void
     {
         $original = new MessageMetadataStamp('correlation-id', ['foo' => 'bar']);
 
@@ -68,7 +68,7 @@ final class MessageMetadataStampTest extends TestCase
         self::assertSame(['foo' => 'bar'], $original->getExtras());
     }
 
-    public function testGetExtrasDoesNotAllowExternalMutation(): void
+    public function test_get_extras_does_not_allow_external_mutation(): void
     {
         $stamp = new MessageMetadataStamp('correlation-id', ['foo' => 'bar']);
 
