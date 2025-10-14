@@ -32,7 +32,7 @@ final class EnvelopeAwareTraitTest extends TestCase
 
     private function createDummyEnvelopeAwareObject(): object
     {
-        return new class() {
+        return new class {
             use EnvelopeAwareTrait {
                 setEnvelope as private traitSetEnvelope;
                 getEnvelope as private traitGetEnvelope;
