@@ -1,6 +1,7 @@
 # SomeWork CQRS Bundle
 
 [![CI](https://github.com/somework/cqrs/actions/workflows/ci.yml/badge.svg)](https://github.com/somework/cqrs/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/somework/cqrs/branch/main/graph/badge.svg)](https://codecov.io/gh/somework/cqrs)
 [![PHPStan Level 8](https://img.shields.io/badge/PHPStan-level%208-brightgreen)](https://phpstan.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Latest Version](https://img.shields.io/packagist/v/somework/cqrs-bundle)](https://packagist.org/packages/somework/cqrs-bundle)
