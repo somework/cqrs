@@ -1,5 +1,11 @@
 # SomeWork CQRS Bundle
 
+[![CI](https://github.com/somework/cqrs/actions/workflows/ci.yml/badge.svg)](https://github.com/somework/cqrs/actions/workflows/ci.yml)
+[![PHPStan Level 8](https://img.shields.io/badge/PHPStan-level%208-brightgreen)](https://phpstan.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Latest Version](https://img.shields.io/packagist/v/somework/cqrs-bundle)](https://packagist.org/packages/somework/cqrs-bundle)
+[![Downloads](https://img.shields.io/packagist/dt/somework/cqrs-bundle)](https://packagist.org/packages/somework/cqrs-bundle)
+
 A set of CQRS helpers for Symfony Messenger. The bundle wires command, query,
 and event buses to Messenger, discovers handlers automatically, and ships with
 tooling that keeps your catalogue maintainable.
@@ -18,8 +24,7 @@ tooling that keeps your catalogue maintainable.
 ### Requirements
 
 * PHP 8.2 or newer.
-* Symfony FrameworkBundle 6.4 or 7.x.
-* Symfony Messenger 6.4 or 7.x.
+* Symfony 7.2 or newer.
 
 Install the bundle via Composer:
 
