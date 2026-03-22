@@ -12,6 +12,8 @@ namespace SomeWork\CqrsBundle\Contract;
  * and SHOULD provide explicit accessors for their payload.
  *
  * @psalm-immutable
+ *
+ * @api
  */
 interface Query
 {

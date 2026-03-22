@@ -11,6 +11,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Reference;
 
+/** @internal */
 final class BusWiringRegistrar
 {
     /**
@@ -37,12 +38,14 @@ final class BusWiringRegistrar
 
             $commandBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $commandBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
+            $commandBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
             $queryBusDefinition = $container->getDefinition(QueryBus::class);
             $queryBusDefinition->setArgument('$bus', new Reference($buses['query'] ?? $defaultBusId));
             $queryBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
+            $queryBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
 
         if ($container->hasDefinition(EventBus::class)) {
@@ -58,6 +61,7 @@ final class BusWiringRegistrar
 
             $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $eventBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
+            $eventBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
     }
 }

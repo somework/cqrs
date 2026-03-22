@@ -11,6 +11,8 @@ namespace SomeWork\CqrsBundle\Contract;
  * They MUST NOT contain behavior and SHOULD expose their data via accessors.
  *
  * @psalm-immutable
+ *
+ * @api
  */
 interface Event
 {

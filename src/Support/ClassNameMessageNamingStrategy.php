@@ -8,13 +8,16 @@ use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 
 /**
  * Uses the short class name as the human readable message name.
+ *
+ * @internal
  */
 final class ClassNameMessageNamingStrategy implements MessageNamingStrategy
 {
     public function getName(string $messageClass): string
     {
         $parts = explode('\\', $messageClass);
+        $last = end($parts);
 
-        return end($parts) ?: $messageClass;
+        return '' !== $last ? $last : $messageClass;
     }
 }

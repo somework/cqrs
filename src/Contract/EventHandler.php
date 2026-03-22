@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Contract;
 
 /**
  * @template TEvent of Event
+ *
+ * @api
  */
 interface EventHandler
 {

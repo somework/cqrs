@@ -6,12 +6,14 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Closure;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function get_debug_type;
 use function sprintf;
 
+/** @internal */
 final class MessageSerializerResolver extends AbstractMessageTypeResolver
 {
     public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_serializer_global_default';
@@ -19,8 +21,9 @@ final class MessageSerializerResolver extends AbstractMessageTypeResolver
 
     public function __construct(
         ContainerInterface $serializers,
+        ?LoggerInterface $logger = null,
     ) {
-        parent::__construct($serializers);
+        parent::__construct($serializers, $logger);
     }
 
     public static function withoutOverrides(?MessageSerializer $defaultSerializer = null): self

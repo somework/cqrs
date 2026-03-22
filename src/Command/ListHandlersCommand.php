@@ -26,13 +26,12 @@ use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 use function class_exists;
 use function count;
-use function get_debug_type;
 use function implode;
 use function in_array;
-use function is_object;
 use function is_string;
 use function sprintf;
 
+/** @internal */
 #[AsCommand(
     name: 'somework:cqrs:list',
     description: 'List CQRS commands, queries, and events registered in Messenger.',
@@ -189,7 +188,7 @@ final class ListHandlersCommand extends Command
         $typesToDisplay = array_keys($rowsByType);
 
         foreach ($typesToDisplay as $index => $type) {
-            $io->section(self::SECTION_TITLES[$type] ?? sprintf('%ss', ucfirst($type)));
+            $io->section(self::SECTION_TITLES[$type]);
 
             $this->renderTable($output, $rowsByType[$type], $showDetails);
 
@@ -256,7 +255,10 @@ final class ListHandlersCommand extends Command
      */
     private function describeDescriptor(HandlerDescriptor $descriptor): array
     {
-        $message = $this->instantiateMessage($descriptor->messageClass);
+        [$message, $instantiationFailure] = $this->instantiateMessage($descriptor->messageClass);
+        $fallback = null !== $instantiationFailure
+            ? sprintf('n/a (%s)', $instantiationFailure)
+            : 'n/a';
 
         $dispatchMode = $this->describeDispatchMode($message);
         $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
@@ -284,7 +286,7 @@ final class ListHandlersCommand extends Command
             static fn (MessageMetadataProviderResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        return [
+        $details = [
             'Dispatch Mode' => $dispatchMode,
             'Async Defers' => $asyncDefers,
             'Sync Transports' => $syncTransports,
@@ -293,6 +295,15 @@ final class ListHandlersCommand extends Command
             'Serializer' => $serializer,
             'Metadata Provider' => $metadata,
         ];
+
+        if (null !== $instantiationFailure) {
+            return array_map(
+                static fn (string $value): string => 'n/a' === $value ? $fallback : $value,
+                $details,
+            );
+        }
+
+        return $details;
     }
 
     private function describeTransports(string $type, string $messageClass, ?object $message, bool $async): string
@@ -399,33 +410,32 @@ final class ListHandlersCommand extends Command
             return sprintf('error: %s', $exception->getMessage());
         }
 
-        if (!is_object($service)) {
-            return get_debug_type($service);
-        }
-
         return $service::class;
     }
 
-    private function instantiateMessage(string $messageClass): ?object
+    /**
+     * @return array{object|null, string|null} [message instance, failure reason]
+     */
+    private function instantiateMessage(string $messageClass): array
     {
+        if (!class_exists($messageClass) && !interface_exists($messageClass)) {
+            return [null, 'class not found'];
+        }
+
         if (!class_exists($messageClass)) {
-            return null;
+            return [null, null];
+        }
+
+        $reflection = new ReflectionClass($messageClass);
+
+        if ($reflection->isAbstract()) {
+            return [null, null];
         }
 
         try {
-            $reflection = new ReflectionClass($messageClass);
-        } catch (\ReflectionException) {
-            return null;
-        }
-
-        if ($reflection->isInterface() || $reflection->isAbstract()) {
-            return null;
-        }
-
-        try {
-            return $reflection->newInstanceWithoutConstructor();
-        } catch (\Throwable) {
-            return null;
+            return [$reflection->newInstanceWithoutConstructor(), null];
+        } catch (\Throwable $e) {
+            return [null, sprintf('cannot instantiate: %s', $e->getMessage())];
         }
     }
 

@@ -10,6 +10,8 @@ use Symfony\Component\Messenger\Stamp\SerializerStamp;
 
 /**
  * Message serializer that never applies additional stamps.
+ *
+ * @internal
  */
 final class NullMessageSerializer implements MessageSerializer
 {

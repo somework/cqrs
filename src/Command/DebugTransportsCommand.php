@@ -16,6 +16,7 @@ use function sprintf;
 
 use const PHP_EOL;
 
+/** @internal */
 #[AsCommand(
     name: 'somework:cqrs:debug-transports',
     description: 'Inspect Messenger transport routing for CQRS messages.',

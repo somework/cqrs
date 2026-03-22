@@ -15,6 +15,7 @@ use function implode;
 use function iterator_to_array;
 use function sort;
 
+/** @internal */
 final class MessageTypeLocator
 {
     /**
@@ -67,7 +68,11 @@ final class MessageTypeLocator
         $seenInterfaces = [];
 
         foreach ($classHierarchy as $type) {
-            foreach (class_implements($type, false) as $interface) {
+            $typeInterfaces = class_implements($type, false);
+            if (false === $typeInterfaces) {
+                continue;
+            }
+            foreach ($typeInterfaces as $interface) {
                 foreach (self::interfaceHierarchy($interface, $seenInterfaces) as $candidate) {
                     if (isset($ignored[$candidate])) {
                         continue;
@@ -83,6 +88,14 @@ final class MessageTypeLocator
         }
 
         return null;
+    }
+
+    /**
+     * @internal Intended for test isolation and container reset lifecycle
+     */
+    public static function reset(): void
+    {
+        self::$matchCache = new WeakMap();
     }
 
     private static function storeMatch(
@@ -103,6 +116,8 @@ final class MessageTypeLocator
     }
 
     /**
+     * @param class-string $class
+     *
      * @return iterable<class-string>
      */
     private static function classHierarchy(string $class): iterable
@@ -113,6 +128,7 @@ final class MessageTypeLocator
     }
 
     /**
+     * @param class-string        $interface
      * @param array<string, bool> $seen
      *
      * @return iterable<class-string>
@@ -127,7 +143,12 @@ final class MessageTypeLocator
 
         yield $interface;
 
-        foreach (class_implements($interface, false) as $parent) {
+        $parents = class_implements($interface, false);
+        if (false === $parents) {
+            return;
+        }
+
+        foreach ($parents as $parent) {
             yield from self::interfaceHierarchy($parent, $seen);
         }
     }

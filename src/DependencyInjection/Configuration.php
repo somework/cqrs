@@ -9,9 +9,7 @@ use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
-use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
-use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 
@@ -19,18 +17,17 @@ use function sprintf;
 use function str_ends_with;
 use function substr;
 
+/** @internal */
 final class Configuration implements ConfigurationInterface
 {
     public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder('somework_cqrs');
 
-        /** @var ArrayNodeDefinition $rootNode */
         $rootNode = $treeBuilder->getRootNode();
 
         $children = $rootNode->children();
 
-        /** @var ScalarNodeDefinition $defaultBus */
         $defaultBus = $children->scalarNode('default_bus');
         $defaultBus
             ->defaultNull()
@@ -42,38 +39,32 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Per-message-type bus service ids used by the CQRS facades.');
 
-        /** @var ArrayNodeDefinition $busesChildren */
         $busesChildren = $buses->children();
 
-        /** @var ScalarNodeDefinition $commandBus */
         $commandBus = $busesChildren->scalarNode('command');
         $commandBus
             ->defaultNull()
             ->info('Synchronous command bus service id. Defaults to the Messenger default bus.');
         $commandBus->end();
 
-        /** @var ScalarNodeDefinition $commandAsyncBus */
         $commandAsyncBus = $busesChildren->scalarNode('command_async');
         $commandAsyncBus
             ->defaultNull()
             ->info('Asynchronous command bus service id. Leave null to disable async dispatch.');
         $commandAsyncBus->end();
 
-        /** @var ScalarNodeDefinition $queryBus */
         $queryBus = $busesChildren->scalarNode('query');
         $queryBus
             ->defaultNull()
             ->info('Query bus service id. Defaults to the Messenger default bus.');
         $queryBus->end();
 
-        /** @var ScalarNodeDefinition $eventBus */
         $eventBus = $busesChildren->scalarNode('event');
         $eventBus
             ->defaultNull()
             ->info('Synchronous event bus service id. Defaults to the Messenger default bus.');
         $eventBus->end();
 
-        /** @var ScalarNodeDefinition $eventAsyncBus */
         $eventAsyncBus = $busesChildren->scalarNode('event_async');
         $eventAsyncBus
             ->defaultNull()
@@ -88,7 +79,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Message naming strategies used by diagnostics and tooling.');
 
-        /** @var ArrayNodeDefinition $namingChildren */
         $namingChildren = $naming->children();
         $namingChildren
             ->scalarNode('default')
@@ -114,7 +104,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Retry policy services applied when dispatching messages. Supports per-message overrides.');
 
-        /** @var ArrayNodeDefinition $retryChildren */
         $retryChildren = $retry->children();
         $this->configureRetryPolicySection($retryChildren, 'command');
         $this->configureRetryPolicySection($retryChildren, 'event');
@@ -122,12 +111,43 @@ final class Configuration implements ConfigurationInterface
         $retryChildren->end();
         $retry->end();
 
+        $retryStrategy = $children->arrayNode('retry_strategy');
+        $retryStrategy
+            ->addDefaultsIfNotSet()
+            ->info('Transport-level retry strategy configuration using per-message RetryPolicy.');
+
+        $retryStrategyChildren = $retryStrategy->children();
+
+        $retryStrategyChildren
+            ->arrayNode('transports')
+            ->useAttributeAsKey('transport_name')
+            ->defaultValue([])
+            ->enumPrototype()
+                ->values(['command', 'query', 'event'])
+            ->end()
+            ->info('Map of Messenger transport names to CQRS message types. Each transport will use CqrsRetryStrategy with the corresponding RetryPolicyResolver.');
+
+        $retryStrategyChildren
+            ->floatNode('jitter')
+            ->defaultValue(0.0)
+            ->min(0.0)
+            ->max(1.0)
+            ->info('Jitter factor (0.0-1.0) applied to computed retry delays to prevent thundering herd.');
+
+        $retryStrategyChildren
+            ->integerNode('max_delay')
+            ->defaultValue(0)
+            ->min(0)
+            ->info('Maximum delay in milliseconds (0 = no cap). Prevents overflow with large multiplier/retries combinations.');
+
+        $retryStrategyChildren->end();
+        $retryStrategy->end();
+
         $serialization = $children->arrayNode('serialization');
         $serialization
             ->addDefaultsIfNotSet()
             ->info('MessageSerializer services that provide SerializerStamp instances.');
 
-        /** @var ArrayNodeDefinition $serializationChildren */
         $serializationChildren = $serialization->children();
         $serializationChildren
             ->scalarNode('default')
@@ -145,7 +165,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('MessageMetadataProvider services that supply MessageMetadataStamp instances.');
 
-        /** @var ArrayNodeDefinition $metadataChildren */
         $metadataChildren = $metadata->children();
         $metadataChildren
             ->scalarNode('default')
@@ -163,7 +182,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Default dispatch modes applied when no explicit mode is provided.');
 
-        /** @var ArrayNodeDefinition $dispatchChildren */
         $dispatchChildren = $dispatchModes->children();
         $this->configureDispatchModeSection($dispatchChildren, 'command');
         $this->configureDispatchModeSection($dispatchChildren, 'event');
@@ -175,7 +193,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Messenger transports applied when dispatching messages.');
 
-        /** @var ArrayNodeDefinition $transportChildren */
         $transportChildren = $transports->children();
         $this->configureTransportSection($transportChildren, 'command');
         $this->configureTransportSection($transportChildren, 'command_async');
@@ -190,7 +207,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Asynchronous delivery configuration.');
 
-        /** @var ArrayNodeDefinition $asyncChildren */
         $asyncChildren = $async->children();
 
         $dispatchAfterCurrentBus = $asyncChildren->arrayNode('dispatch_after_current_bus');
@@ -198,7 +214,6 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Controls when DispatchAfterCurrentBusStamp is added to async dispatches.');
 
-        /** @var ArrayNodeDefinition $dispatchAfterChildren */
         $dispatchAfterChildren = $dispatchAfterCurrentBus->children();
         $this->configureDispatchAfterCurrentBusSection($dispatchAfterChildren, 'command');
         $this->configureDispatchAfterCurrentBusSection($dispatchAfterChildren, 'event');
@@ -207,6 +222,56 @@ final class Configuration implements ConfigurationInterface
 
         $asyncChildren->end();
         $async->end();
+
+        $idempotency = $children->arrayNode('idempotency');
+        $idempotency->addDefaultsIfNotSet()->info('Idempotency bridge configuration for DeduplicateStamp integration.');
+        $idempotencyChildren = $idempotency->children();
+        $idempotencyChildren->booleanNode('enabled')->defaultTrue()->info('Enable IdempotencyStamp to DeduplicateStamp bridge.');
+        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->min(1)->info('Default lock TTL in seconds for deduplication.');
+        $idempotencyChildren->end();
+        $idempotency->end();
+
+        $causationId = $children->arrayNode('causation_id');
+        $causationId->addDefaultsIfNotSet()->info('CausationIdMiddleware and CausationIdStampDecider configuration.');
+        $causationIdChildren = $causationId->children();
+        $causationIdChildren->booleanNode('enabled')->defaultTrue()->info('Enable CausationIdMiddleware and paired CausationIdStampDecider.');
+        $causationIdChildren->arrayNode('buses')->defaultValue([])->scalarPrototype()->end()->info('Limit CausationIdMiddleware to specific bus service ids. Empty array means all buses.');
+        $causationIdChildren->end();
+        $causationId->end();
+
+        $sequence = $children->arrayNode('sequence');
+        $sequence->addDefaultsIfNotSet()->info('Event sequence metadata configuration.');
+        $sequenceChildren = $sequence->children();
+        $sequenceChildren->booleanNode('enabled')->defaultTrue()->info('Enable AggregateSequenceStamp for SequenceAware events.');
+        $sequenceChildren->end();
+        $sequence->end();
+
+        $rateLimiting = $children->arrayNode('rate_limiting');
+        $rateLimiting
+            ->addDefaultsIfNotSet()
+            ->info('Rate limiting configuration for per-message dispatch throttling via Symfony RateLimiter.');
+
+        $rateLimitChildren = $rateLimiting->children();
+        $rateLimitChildren
+            ->booleanNode('enabled')
+            ->defaultTrue()
+            ->info('Enable rate limiting. No-op when symfony/rate-limiter is not installed.');
+
+        $this->configureRateLimitSection($rateLimitChildren, 'command');
+        $this->configureRateLimitSection($rateLimitChildren, 'query');
+        $this->configureRateLimitSection($rateLimitChildren, 'event');
+        $rateLimitChildren->end();
+        $rateLimiting->end();
+
+        $outbox = $children->arrayNode('outbox');
+        $outbox->addDefaultsIfNotSet()->info('Transactional outbox configuration.');
+        $outboxChildren = $outbox->children();
+        $outboxChildren->booleanNode('enabled')->defaultFalse()
+            ->info('Enable transactional outbox. Requires doctrine/dbal.');
+        $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')
+            ->info('Database table name for outbox messages.');
+        $outboxChildren->end();
+        $outbox->end();
 
         return $treeBuilder;
     }
@@ -342,6 +407,26 @@ final class Configuration implements ConfigurationInterface
         $node->end();
     }
 
+    private function configureRateLimitSection(NodeBuilder $parent, string $type): void
+    {
+        $node = $parent->arrayNode($type);
+        $node
+            ->addDefaultsIfNotSet()
+            ->info(sprintf('Rate limiter mappings for %s messages.', $type));
+
+        $children = $node->children();
+        $children
+            ->arrayNode('map')
+            ->useAttributeAsKey('message')
+            ->defaultValue([])
+            ->scalarPrototype()
+            ->end()
+            ->info('Map of message FQCNs to Symfony rate limiter names (as configured under framework.rate_limiter).');
+
+        $children->end();
+        $node->end();
+    }
+
     private function configureTransportSection(NodeBuilder $parent, string $type): void
     {
         $isAsync = str_ends_with($type, '_async');
@@ -357,7 +442,7 @@ final class Configuration implements ConfigurationInterface
 
         $children
             ->enumNode('stamp')
-            ->values(['transport_names', 'send_message'])
+            ->values(['transport_names'])
             ->defaultValue('transport_names')
             ->info(sprintf('Messenger stamp type to apply for %s messages.', $label));
 

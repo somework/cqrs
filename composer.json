@@ -11,13 +11,32 @@
     ],
     "require": {
         "php": "^8.2",
-        "symfony/framework-bundle": "^6.4|^7.0",
-        "symfony/messenger": "^6.4|^7.0"
+        "symfony/config": "^7.2",
+        "symfony/console": "^7.2",
+        "symfony/dependency-injection": "^7.2",
+        "symfony/framework-bundle": "^7.2",
+        "symfony/http-kernel": "^7.2",
+        "symfony/messenger": "^7.2",
+        "psr/log": "^3.0"
     },
     "require-dev": {
+        "doctrine/dbal": "^4.0",
+        "doctrine/orm": "^3.6",
         "friendsofphp/php-cs-fixer": "^3.58",
-        "phpstan/phpstan": "^1.10",
-        "phpunit/phpunit": "^10.5"
+        "phpstan/extension-installer": "^1.4",
+        "phpstan/phpstan": "^2.1",
+        "phpstan/phpstan-deprecation-rules": "^2.0",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpstan/phpstan-symfony": "^2.0",
+        "phpunit/phpunit": "^11.5",
+        "symfony/lock": "^7.2",
+        "symfony/rate-limiter": "^7.2"
+    },
+    "suggest": {
+        "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
+        "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",
+        "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)"
     },
     "autoload": {
         "psr-4": {
@@ -30,11 +49,16 @@
         }
     },
     "scripts": {
-        "php-cs-fixer": "php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes",
+        "fix": "php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes",
+        "cs-check": "php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --dry-run --diff",
         "phpstan": "phpstan analyse",
-        "phpunit": "phpunit"
+        "phpunit": "phpunit",
+        "test": ["@cs-check", "@phpstan", "@phpunit"]
     },
     "config": {
-        "sort-packages": true
+        "sort-packages": true,
+        "allow-plugins": {
+            "phpstan/extension-installer": true
+        }
     }
 }

@@ -11,16 +11,13 @@ use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
-use function class_exists;
-use function is_a;
-
 /**
  * Adds transport name stamps to dispatched messages based on configuration.
+ *
+ * @internal
  */
 final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 {
-    private const SENDERS_LOCATOR_STAMP_CLASS = 'Symfony\\Component\\Messenger\\Stamp\\SendersLocatorStamp';
-
     /**
      * @var array<string, string>
      */
@@ -42,11 +39,9 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
      */
     public function __construct(
         private readonly MessageTransportStampFactory $stampFactory,
-        private readonly ?MessageTransportResolver $commandTransports,
-        private readonly ?MessageTransportResolver $commandAsyncTransports,
-        private readonly ?MessageTransportResolver $queryTransports,
-        private readonly ?MessageTransportResolver $eventTransports,
-        private readonly ?MessageTransportResolver $eventAsyncTransports,
+        private readonly TransportResolverMap $commandResolvers,
+        private readonly TransportResolverMap $queryResolvers,
+        private readonly TransportResolverMap $eventResolvers,
         array $stampTypes = self::DEFAULT_STAMP_TYPES,
     ) {
         $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
@@ -58,35 +53,19 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * @param list<StampInterface> $stamps
+     * @param array<int, StampInterface> $stamps
      *
-     * @return list<StampInterface>
+     * @return array<int, StampInterface>
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        $sendersLocatorStampExists = class_exists(self::SENDERS_LOCATOR_STAMP_CLASS, false);
-        $sendMessageStampExists = class_exists(MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false);
-
         foreach ($stamps as $stamp) {
             if ($stamp instanceof TransportNamesStamp) {
                 return $stamps;
             }
-
-            if ($sendersLocatorStampExists && is_a($stamp, self::SENDERS_LOCATOR_STAMP_CLASS, false)) {
-                return $stamps;
-            }
-
-            if ($sendMessageStampExists && is_a($stamp, MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS, false)) {
-                return $stamps;
-            }
         }
 
-        $typeKey = $this->typeKeyFor($message, $mode);
-        if (null === $typeKey) {
-            return $stamps;
-        }
-
-        $resolver = $this->resolverFor($typeKey);
+        $resolver = $this->resolverFor($message, $mode);
 
         if (null === $resolver) {
             return $stamps;
@@ -98,6 +77,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             return $stamps;
         }
 
+        $typeKey = $this->typeKeyFor($message, $mode);
         $stampType = $this->stampTypes[$typeKey] ?? MessageTransportStampFactory::TYPE_TRANSPORT_NAMES;
 
         $stamps[] = $this->stampFactory->create($stampType, $transports);
@@ -105,16 +85,16 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         return $stamps;
     }
 
-    private function resolverFor(string $type): ?MessageTransportResolver
+    private function resolverFor(object $message, DispatchMode $mode): ?MessageTransportResolver
     {
-        return match ($type) {
-            'command' => $this->commandTransports,
-            'command_async' => $this->commandAsyncTransports,
-            'query' => $this->queryTransports,
-            'event' => $this->eventTransports,
-            'event_async' => $this->eventAsyncTransports,
+        $map = match (true) {
+            $message instanceof Command => $this->commandResolvers,
+            $message instanceof Query => $this->queryResolvers,
+            $message instanceof Event => $this->eventResolvers,
             default => null,
         };
+
+        return $map?->resolverFor($mode);
     }
 
     private function typeKeyFor(object $message, DispatchMode $mode): ?string

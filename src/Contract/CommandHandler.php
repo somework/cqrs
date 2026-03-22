@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Contract;
 
 /**
  * @template TCommand of Command
+ *
+ * @api
  */
 interface CommandHandler
 {

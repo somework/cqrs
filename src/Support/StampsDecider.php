@@ -4,14 +4,19 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+use function count;
+
 /**
  * Aggregates registered stamp deciders.
+ *
+ * @internal
  */
 final class StampsDecider implements StampDecider
 {
@@ -28,8 +33,10 @@ final class StampsDecider implements StampDecider
     /**
      * @param iterable<StampDecider> $deciders
      */
-    public function __construct(iterable $deciders = [])
-    {
+    public function __construct(
+        iterable $deciders = [],
+        private readonly ?LoggerInterface $logger = null,
+    ) {
         foreach ($deciders as $decider) {
             $messageTypes = [];
 
@@ -93,14 +100,22 @@ final class StampsDecider implements StampDecider
     }
 
     /**
-     * @param list<StampInterface> $stamps
+     * @param array<int, StampInterface> $stamps
      *
-     * @return list<StampInterface>
+     * @return array<int, StampInterface>
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
         foreach ($this->pipelineFor($message) as $decider) {
+            $stampCountBefore = count($stamps);
             $stamps = $decider->decide($message, $mode, $stamps);
+
+            $this->logger?->debug('Stamp decider processed', [
+                'message' => $message::class,
+                'decider' => $decider::class,
+                'stamps_before' => $stampCountBefore,
+                'stamps_after' => count($stamps),
+            ]);
         }
 
         return array_values($stamps);
@@ -137,6 +152,7 @@ final class StampsDecider implements StampDecider
     }
 
     /**
+     * @param class-string          $messageType
      * @param array<string, string> $transportStampTypes
      */
     public static function withDefaultsFor(
@@ -156,13 +172,19 @@ final class StampsDecider implements StampDecider
         $deciders = [
             new RetryPolicyStampDecider($retryPolicies, $messageType),
             new MessageTransportStampDecider(
-                $transportStampFactory,
-                Command::class === $messageType ? $transports : null,
-                Command::class === $messageType ? $asyncTransports : null,
-                Query::class === $messageType ? $transports : null,
-                Event::class === $messageType ? $transports : null,
-                Event::class === $messageType ? $asyncTransports : null,
-                $stampTypes,
+                stampFactory: $transportStampFactory,
+                commandResolvers: new TransportResolverMap(
+                    sync: Command::class === $messageType ? $transports : null,
+                    async: Command::class === $messageType ? $asyncTransports : null,
+                ),
+                queryResolvers: new TransportResolverMap(
+                    sync: Query::class === $messageType ? $transports : null,
+                ),
+                eventResolvers: new TransportResolverMap(
+                    sync: Event::class === $messageType ? $transports : null,
+                    async: Event::class === $messageType ? $asyncTransports : null,
+                ),
+                stampTypes: $stampTypes,
             ),
             new MessageSerializerStampDecider($serializers, $messageType),
             new MessageMetadataStampDecider($metadata, $messageType),

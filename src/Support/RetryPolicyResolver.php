@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -12,14 +13,17 @@ use function sprintf;
 
 /**
  * Resolves the RetryPolicy to apply for a given message class.
+ *
+ * @internal
  */
 final class RetryPolicyResolver extends AbstractMessageTypeResolver
 {
     public function __construct(
         private readonly RetryPolicy $defaultPolicy,
         ContainerInterface $policies,
+        ?LoggerInterface $logger = null,
     ) {
-        parent::__construct($policies);
+        parent::__construct($policies, $logger);
     }
 
     public static function withoutOverrides(?RetryPolicy $defaultPolicy = null): self

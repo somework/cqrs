@@ -8,11 +8,13 @@ use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function sprintf;
 
+/** @internal */
 final class RetryPolicyRegistrar
 {
     public function __construct(private readonly ContainerHelper $helper)
@@ -39,6 +41,7 @@ final class RetryPolicyRegistrar
             $resolverDefinition = new Definition(RetryPolicyResolver::class);
             $resolverDefinition->setArgument('$defaultPolicy', new Reference(sprintf('somework_cqrs.retry.%s', $type)));
             $resolverDefinition->setArgument('$policies', $locatorReference);
+            $resolverDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
             $resolverDefinition->setPublic(false);
 
             $container->setDefinition(sprintf('somework_cqrs.retry.%s_resolver', $type), $resolverDefinition);

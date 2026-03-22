@@ -10,14 +10,19 @@ use SomeWork\CqrsBundle\Contract\EnvelopeAware;
 use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
 
 /**
+ * @api
+ *
  * Base class for command handlers that exposes a typed {@see handle()} method.
  *
  * @template TCommand of Command
+ *
+ * @implements CommandHandler<TCommand>
  */
 abstract class AbstractCommandHandler implements CommandHandler, EnvelopeAware
 {
     use EnvelopeAwareTrait;
 
+    /** @param TCommand $command */
     final public function __invoke(Command $command): mixed
     {
         return $this->handle($command);

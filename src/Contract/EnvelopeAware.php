@@ -8,6 +8,8 @@ use Symfony\Component\Messenger\Envelope;
 
 /**
  * Allows handlers to receive the current Messenger envelope.
+ *
+ * @api
  */
 interface EnvelopeAware
 {

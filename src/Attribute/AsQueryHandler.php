@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Contract\Query;
 
 /**
  * Attribute to mark a service as a query handler.
+ *
+ * @api
  */
 #[Attribute(Attribute::TARGET_CLASS | Attribute::IS_REPEATABLE)]
 final class AsQueryHandler

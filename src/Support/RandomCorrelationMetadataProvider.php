@@ -10,10 +10,12 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 
 /**
  * Generates random correlation identifiers for dispatched messages.
+ *
+ * @internal
  */
 final class RandomCorrelationMetadataProvider implements MessageMetadataProvider
 {
-    public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
+    public function getStamp(object $message, DispatchMode $mode): MessageMetadataStamp
     {
         return MessageMetadataStamp::createWithRandomCorrelationId();
     }

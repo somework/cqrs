@@ -12,6 +12,8 @@ namespace SomeWork\CqrsBundle\Contract;
  * data via explicit accessors.
  *
  * @psalm-immutable
+ *
+ * @api
  */
 interface Command
 {

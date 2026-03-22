@@ -19,13 +19,14 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\ParameterBag\ParameterBagInterface;
 
 use function array_keys;
+use function array_map;
 use function array_unique;
 use function array_values;
 use function class_exists;
 use function interface_exists;
-use function is_array;
 use function is_string;
 
+/** @internal */
 final class CqrsHandlerPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
@@ -61,7 +62,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
         foreach ($container->findTaggedServiceIds('messenger.message_handler') as $serviceId => $tags) {
             $definition = $container->findDefinition($serviceId);
-            $handlerClass = $this->resolveClassName($definition, $parameterBag);
+            $handlerClass = $this->resolveClassName($definition, $parameterBag, $container);
 
             if (null === $handlerClass) {
                 continue;
@@ -110,15 +111,22 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         $container->setParameter('somework_cqrs.handler_metadata', $metadata);
+
+        $discoveredMessages = [];
+        foreach (['command', 'query'] as $type) {
+            $discoveredMessages[$type] = array_values(array_unique(
+                array_map(static fn (array $entry): string => $entry['message'], $metadata[$type]),
+            ));
+        }
+        $container->setParameter('somework_cqrs.discovered_messages', $discoveredMessages);
     }
 
-    private function resolveClassName(Definition $definition, ParameterBagInterface $parameterBag): ?string
+    private function resolveClassName(Definition $definition, ParameterBagInterface $parameterBag, ContainerBuilder $container): ?string
     {
         $class = $definition->getClass();
-        if (null === $class) {
-            if ($definition instanceof ChildDefinition) {
-                $class = $definition->getClass();
-            }
+
+        if (null === $class && $definition instanceof ChildDefinition) {
+            $class = $container->findDefinition($definition->getParent())->getClass();
         }
 
         if (null === $class) {
@@ -141,28 +149,28 @@ final class CqrsHandlerPass implements CompilerPassInterface
             $handles = $attributes['handles'];
 
             if (is_string($handles)) {
+                /* @var class-string $handles */
                 return [$handles];
             }
 
-            if (is_array($handles)) {
-                $messages = [];
+            $messages = [];
 
-                foreach ($handles as $key => $handle) {
-                    if (is_string($key)) {
-                        $messages[] = $key;
+            foreach ($handles as $key => $handle) {
+                if (is_string($key)) {
+                    $messages[] = $key;
 
-                        continue;
-                    }
-
-                    if (is_string($handle)) {
-                        $messages[] = $handle;
-                    }
+                    continue;
                 }
 
-                return array_values(array_unique($messages));
+                if (is_string($handle)) {
+                    $messages[] = $handle;
+                }
             }
+
+            return array_values(array_unique($messages)); // @phpstan-ignore return.type
         }
 
+        /** @var class-string $handlerClass */
         $reflection = new ReflectionClass($handlerClass);
         $methodName = $attributes['method'] ?? null;
 
@@ -219,7 +227,10 @@ final class CqrsHandlerPass implements CompilerPassInterface
     private function extractTypeNames(ReflectionType $type): array
     {
         if ($type instanceof ReflectionNamedType) {
-            return $type->isBuiltin() ? [] : [$type->getName()];
+            /** @var class-string $name */
+            $name = $type->getName();
+
+            return $type->isBuiltin() ? [] : [$name];
         }
 
         if ($type instanceof ReflectionUnionType || $type instanceof ReflectionIntersectionType) {

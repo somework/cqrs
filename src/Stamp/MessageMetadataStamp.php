@@ -8,22 +8,25 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Carries metadata such as correlation identifiers for Messenger messages.
+ *
+ * @api
  */
 final class MessageMetadataStamp implements StampInterface
 {
     /**
-     * @param non-empty-string     $correlationId
      * @param array<string, mixed> $extras
      */
     public function __construct(
         private readonly string $correlationId,
         private readonly array $extras = [],
+        private readonly ?string $causationId = null,
     ) {
         if ('' === $this->correlationId) {
             throw new \InvalidArgumentException('Correlation ID cannot be empty.');
         }
     }
 
+    /** @param array<string, mixed> $extras */
     public static function createWithRandomCorrelationId(array $extras = []): self
     {
         return new self(self::generateCorrelationId(), $extras);
@@ -37,6 +40,11 @@ final class MessageMetadataStamp implements StampInterface
         return $this->correlationId;
     }
 
+    public function getCausationId(): ?string
+    {
+        return $this->causationId;
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -45,9 +53,14 @@ final class MessageMetadataStamp implements StampInterface
         return $this->extras;
     }
 
+    public function withCausationId(string $causationId): self
+    {
+        return new self($this->correlationId, $this->extras, $causationId);
+    }
+
     public function withCorrelationId(string $correlationId): self
     {
-        return new self($correlationId, $this->extras);
+        return new self($correlationId, $this->extras, $this->causationId);
     }
 
     public function withExtra(string $key, mixed $value): self
@@ -55,7 +68,7 @@ final class MessageMetadataStamp implements StampInterface
         $extras = $this->extras;
         $extras[$key] = $value;
 
-        return new self($this->correlationId, $extras);
+        return new self($this->correlationId, $extras, $this->causationId);
     }
 
     /**

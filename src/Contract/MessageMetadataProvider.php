@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 
 /**
  * Supplies metadata stamps applied when dispatching CQRS messages.
+ *
+ * @api
  */
 interface MessageMetadataProvider
 {

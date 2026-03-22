@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+/** @internal */
 final class DispatchAfterCurrentBusDecider
 {
     public function __construct(
