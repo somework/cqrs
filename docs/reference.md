@@ -230,7 +230,7 @@ power diagnostics, smoke tests, or documentation pages. The registry exposes:
 
 ## Console reference
 
-Three console commands ship with the bundle:
+Five console commands ship with the bundle:
 
 * `somework:cqrs:list` – Prints the handler catalogue in a table. Accepts the
   `--type=<command|query|event>` option multiple times. Add `--details` to the
@@ -246,6 +246,12 @@ Three console commands ship with the bundle:
   messages map to, showing both defaults per bus and explicit per-message
   overrides. Run this command whenever you need to verify routing before
   shipping configuration changes.
+* `somework:cqrs:health` – Verifies CQRS infrastructure health: handler
+  resolvability and transport validity. Returns exit code 0 (healthy), 1
+  (warning), or 2 (critical) — suitable for K8s exec probes and CI pipelines.
+* `somework:cqrs:outbox:relay` – Reads unpublished messages from the outbox
+  table and dispatches them to transports in stored order. Accepts `--limit=N`
+  (default 100). Requires `outbox.enabled: true` and `doctrine/dbal`.
 
 All commands are registered automatically when the bundle is enabled.
 
