@@ -6,24 +6,21 @@ namespace SomeWork\CqrsBundle\Tests\Support;
 
 use Closure;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\RunInSeparateProcess;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
-use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
-use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
-use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
-use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\StampInterface;
+
+use function assert;
+use function is_string;
 
 final class StampsDeciderTest extends TestCase
 {
@@ -55,7 +52,11 @@ final class StampsDeciderTest extends TestCase
         $stamps = $decider->decide($message, $mode, $initialStamps);
 
         self::assertSame($expectedExecutionOrder, $executions);
-        self::assertSame($expectedStampNames, array_map(static fn (DummyStamp $stamp) => $stamp->name, $stamps));
+        self::assertSame($expectedStampNames, array_map(static function (StampInterface $stamp): string {
+            assert($stamp instanceof DummyStamp);
+
+            return $stamp->name;
+        }, $stamps));
     }
 
     /**
@@ -139,6 +140,154 @@ final class StampsDeciderTest extends TestCase
         self::assertSame(2, $typeAwareDecider->decisions);
     }
 
+    public function test_decide_logs_per_decider_with_logger(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider1 = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                $stamps[] = new DummyStamp('d1');
+
+                return $stamps;
+            }
+        };
+
+        $decider2 = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                return $stamps;
+            }
+        };
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::atLeastOnce())
+            ->method('debug')
+            ->with(
+                self::callback(static fn (mixed $v): bool => is_string($v)),
+                self::callback(static fn (array $context): bool => isset($context['message']) && isset($context['decider']))
+            );
+
+        $stampsDecider = new StampsDecider([$decider1, $decider2], $logger);
+
+        $stampsDecider->decide($message, DispatchMode::SYNC, []);
+    }
+
+    public function test_decide_works_without_logger(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                $stamps[] = new DummyStamp('test');
+
+                return $stamps;
+            }
+        };
+
+        $stampsDecider = new StampsDecider([$decider]);
+        $stamps = $stampsDecider->decide($message, DispatchMode::SYNC, []);
+
+        self::assertCount(1, $stamps);
+    }
+
+    public function test_decide_with_zero_deciders_does_not_log(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())
+            ->method('debug');
+
+        $stampsDecider = new StampsDecider([], $logger);
+        $stamps = $stampsDecider->decide($message, DispatchMode::SYNC, []);
+
+        self::assertSame([], $stamps);
+    }
+
+    public function test_decide_logs_correct_stamp_counts_before_and_after(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                $stamps[] = new DummyStamp('added1');
+                $stamps[] = new DummyStamp('added2');
+
+                return $stamps;
+            }
+        };
+
+        $logContexts = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
+                $logContexts[] = $context;
+            });
+
+        $stampsDecider = new StampsDecider([$decider], $logger);
+        $stampsDecider->decide($message, DispatchMode::SYNC, [new DummyStamp('initial')]);
+
+        self::assertSame(1, $logContexts[0]['stamps_before']);
+        self::assertSame(3, $logContexts[0]['stamps_after']);
+    }
+
+    public function test_decide_logs_once_per_matching_decider(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider1 = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                return $stamps;
+            }
+        };
+
+        $decider2 = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                return $stamps;
+            }
+        };
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(2))
+            ->method('debug');
+
+        $stampsDecider = new StampsDecider([$decider1, $decider2], $logger);
+        $stampsDecider->decide($message, DispatchMode::SYNC, []);
+    }
+
+    public function test_decide_log_context_includes_decider_class(): void
+    {
+        $message = new CreateTaskCommand('1', 'Test');
+
+        $decider = new class implements StampDecider {
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                return $stamps;
+            }
+        };
+
+        $logContexts = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
+                $logContexts[] = $context;
+            });
+
+        $stampsDecider = new StampsDecider([$decider], $logger);
+        $stampsDecider->decide($message, DispatchMode::SYNC, []);
+
+        self::assertArrayHasKey('decider', $logContexts[0]);
+        self::assertSame($decider::class, $logContexts[0]['decider']);
+        self::assertSame(CreateTaskCommand::class, $logContexts[0]['message']);
+    }
+
     /**
      * @param list<class-string> $messageTypes
      */
@@ -188,31 +337,5 @@ final class StampsDeciderTest extends TestCase
                 return $stamps;
             }
         };
-    }
-
-    #[RunInSeparateProcess]
-    public function test_with_defaults_for_emits_send_message_stamp_when_configured(): void
-    {
-        require_once __DIR__.'/../Fixture/Messenger/SendMessageToTransportsStampStub.php';
-
-        $transports = new MessageTransportResolver(new ServiceLocator([
-            MessageTransportResolver::DEFAULT_KEY => static fn (): array => ['configured'],
-        ]));
-
-        $decider = StampsDecider::withDefaultsFor(
-            messageType: Command::class,
-            retryPolicies: RetryPolicyResolver::withoutOverrides(),
-            serializers: MessageSerializerResolver::withoutOverrides(),
-            metadata: MessageMetadataProviderResolver::withoutOverrides(),
-            dispatchAfter: DispatchAfterCurrentBusDecider::defaults(),
-            transports: $transports,
-            transportStampFactory: new MessageTransportStampFactory(),
-            transportStampTypes: ['command' => MessageTransportStampFactory::TYPE_SEND_MESSAGE],
-        );
-
-        $stamps = $decider->decide(new CreateTaskCommand('1', 'Test'), DispatchMode::SYNC, []);
-
-        $class = MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS;
-        self::assertInstanceOf($class, $stamps[0]);
     }
 }

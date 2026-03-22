@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Contract\Event as EventContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -22,6 +24,7 @@ use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
@@ -290,8 +293,8 @@ final class EventBusTest extends TestCase
 
         $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Asynchronous event bus is not configured.');
+        $this->expectException(AsyncBusNotConfiguredException::class);
+        $this->expectExceptionMessageMatches('/TaskCreatedEvent/');
 
         $bus->dispatch($event, DispatchMode::ASYNC);
     }
@@ -309,7 +312,7 @@ final class EventBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $event,
-                self::callback(function (array $stamps) use ($transportStamp): bool {
+                self::callback(static function (array $stamps) use ($transportStamp): bool {
                     $transportStamps = array_values(array_filter(
                         $stamps,
                         static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
@@ -346,8 +349,8 @@ final class EventBusTest extends TestCase
 
         $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Asynchronous event bus is not configured.');
+        $this->expectException(AsyncBusNotConfiguredException::class);
+        $this->expectExceptionMessageMatches('/TaskCreatedEvent/');
 
         $bus->dispatchAsync($event);
     }
@@ -375,7 +378,7 @@ final class EventBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $event,
-                self::callback(function (array $stamps) use ($retryStamp, $serializerStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp, $serializerStamp): bool {
                     self::assertSame([$retryStamp, $serializerStamp], $stamps);
 
                     return true;
@@ -598,7 +601,7 @@ final class EventBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $event,
-                self::callback(function (array $stamps) use ($retryStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp): bool {
                     self::assertSame([$retryStamp], $stamps);
 
                     return true;
@@ -616,6 +619,93 @@ final class EventBusTest extends TestCase
         $bus->dispatch($event);
     }
 
+    public function test_dispatch_logs_exactly_three_debug_messages(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(3))
+            ->method('debug');
+
+        $bus = new EventBus(
+            $syncBus,
+            stampsDecider: StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($event);
+    }
+
+    public function test_dispatch_log_context_includes_bus_name_event(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logContexts = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(3))
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
+                $logContexts[] = $context;
+            });
+
+        $bus = new EventBus(
+            $syncBus,
+            stampsDecider: StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($event);
+
+        foreach ($logContexts as $context) {
+            self::assertSame('event', $context['bus']);
+            self::assertSame(TaskCreatedEvent::class, $context['message']);
+        }
+    }
+
+    public function test_dispatch_works_without_logger(): void
+    {
+        $event = new TaskCreatedEvent('123');
+        $envelope = new Envelope($event);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($event, [])
+            ->willReturn($envelope);
+
+        $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
+
+        self::assertSame($envelope, $bus->dispatch($event));
+    }
+
+    public function test_async_dispatch_without_bus_exception_has_event_bus_name(): void
+    {
+        $event = new TaskCreatedEvent('123');
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
+
+        try {
+            $bus->dispatch($event, DispatchMode::ASYNC);
+            self::fail('Expected AsyncBusNotConfiguredException');
+        } catch (AsyncBusNotConfiguredException $e) {
+            self::assertSame('event', $e->busName);
+            self::assertSame(TaskCreatedEvent::class, $e->messageFqcn);
+        }
+    }
+
     private function createEventStampsDecider(
         ?RetryPolicyResolver $retryPolicies = null,
         ?MessageSerializerResolver $serializers = null,
@@ -630,12 +720,10 @@ final class EventBusTest extends TestCase
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, EventContract::class),
             new MessageTransportStampDecider(
-                new MessageTransportStampFactory(),
-                null,
-                null,
-                null,
-                $transports,
-                $asyncTransports,
+                stampFactory: new MessageTransportStampFactory(),
+                commandResolvers: new TransportResolverMap(),
+                queryResolvers: new TransportResolverMap(),
+                eventResolvers: new TransportResolverMap(sync: $transports, async: $asyncTransports),
             ),
             new MessageSerializerStampDecider($serializers, EventContract::class),
             new DispatchAfterCurrentBusStampDecider($dispatchAfter),

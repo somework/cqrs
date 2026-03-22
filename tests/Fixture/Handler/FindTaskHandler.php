@@ -10,8 +10,9 @@ use SomeWork\CqrsBundle\Handler\AbstractQueryHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
-use function assert;
-
+/**
+ * @extends AbstractQueryHandler<FindTaskQuery, mixed>
+ */
 #[AsQueryHandler(query: FindTaskQuery::class, bus: 'messenger.bus.queries')]
 final class FindTaskHandler extends AbstractQueryHandler
 {
@@ -19,13 +20,8 @@ final class FindTaskHandler extends AbstractQueryHandler
     {
     }
 
-    /**
-     * @param FindTaskQuery $query
-     */
     protected function fetch(Query $query): mixed
     {
-        assert($query instanceof FindTaskQuery);
-
         return $this->recorder->task($query->taskId);
     }
 }

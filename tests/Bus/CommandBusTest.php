@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Contract\Command as CommandContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
+use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -22,6 +25,7 @@ use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
@@ -291,8 +295,8 @@ final class CommandBusTest extends TestCase
 
         $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Asynchronous command bus is not configured.');
+        $this->expectException(AsyncBusNotConfiguredException::class);
+        $this->expectExceptionMessageMatches('/CreateTaskCommand/');
 
         $bus->dispatch($command, DispatchMode::ASYNC);
     }
@@ -305,10 +309,28 @@ final class CommandBusTest extends TestCase
 
         $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Asynchronous command bus is not configured.');
+        $this->expectException(AsyncBusNotConfiguredException::class);
+        $this->expectExceptionMessageMatches('/CreateTaskCommand/');
 
         $bus->dispatchAsync($command);
+    }
+
+    public function test_dispatch_sync_without_handler_throws_no_handler_exception(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
+
+        $this->expectException(NoHandlerException::class);
+        $this->expectExceptionMessageMatches('/CreateTaskCommand/');
+
+        $bus->dispatchSync($command);
     }
 
     public function test_dispatch_appends_retry_and_serializer_stamps(): void
@@ -334,7 +356,7 @@ final class CommandBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $command,
-                self::callback(function (array $stamps) use ($retryStamp, $serializerStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp, $serializerStamp): bool {
                     self::assertCount(2, $stamps);
                     self::assertSame($retryStamp, $stamps[0]);
                     self::assertSame($serializerStamp, $stamps[1]);
@@ -383,7 +405,7 @@ final class CommandBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $command,
-                self::callback(function (array $stamps) use ($retryStamp, $serializerStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp, $serializerStamp): bool {
                     self::assertCount(4, $stamps);
                     self::assertSame($retryStamp, $stamps[0]);
                     self::assertInstanceOf(TransportNamesStamp::class, $stamps[1]);
@@ -441,7 +463,7 @@ final class CommandBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $command,
-                self::callback(function (array $stamps) use ($transportStamp): bool {
+                self::callback(static function (array $stamps) use ($transportStamp): bool {
                     $transportStamps = array_values(array_filter(
                         $stamps,
                         static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
@@ -489,7 +511,7 @@ final class CommandBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $command,
-                self::callback(function (array $stamps) use ($retryStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp): bool {
                     self::assertSame([$retryStamp], $stamps);
 
                     return true;
@@ -622,7 +644,7 @@ final class CommandBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $command,
-                self::callback(function (array $stamps) use ($retryStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp): bool {
                     self::assertSame([$retryStamp], $stamps);
 
                     return true;
@@ -640,6 +662,189 @@ final class CommandBusTest extends TestCase
         $bus->dispatch($command);
     }
 
+    public function test_dispatch_logs_mode_resolution_with_logger(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::atLeastOnce())
+            ->method('debug')
+            ->with(
+                self::callback(static fn (string $message): bool => str_contains($message, 'Dispatch mode resolved')
+                        || str_contains($message, 'Stamps decided')
+                        || str_contains($message, 'Dispatching via')),
+                self::callback(static fn (array $context): bool => isset($context['message']) && isset($context['bus']))
+            );
+
+        $bus = new CommandBus(
+            $syncBus,
+            stampsDecider: $this->createCommandStampsDecider(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($command);
+    }
+
+    public function test_dispatch_works_without_logger(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->with($command, [])
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
+
+        self::assertSame($envelope, $bus->dispatch($command));
+    }
+
+    public function test_dispatch_logs_exactly_three_debug_messages(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(3))
+            ->method('debug');
+
+        $bus = new CommandBus(
+            $syncBus,
+            stampsDecider: StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($command);
+    }
+
+    public function test_dispatch_log_messages_contain_correct_strings(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logMessages = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(3))
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logMessages): void {
+                $logMessages[] = $message;
+            });
+
+        $bus = new CommandBus(
+            $syncBus,
+            stampsDecider: StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($command);
+
+        self::assertSame('Dispatch mode resolved', $logMessages[0]);
+        self::assertSame('Stamps decided', $logMessages[1]);
+        self::assertSame('Dispatching via {mode} bus', $logMessages[2]);
+    }
+
+    public function test_dispatch_log_context_includes_bus_name_command(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logContexts = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(3))
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
+                $logContexts[] = $context;
+            });
+
+        $bus = new CommandBus(
+            $syncBus,
+            stampsDecider: StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $bus->dispatch($command);
+
+        foreach ($logContexts as $context) {
+            self::assertSame('command', $context['bus']);
+            self::assertSame(CreateTaskCommand::class, $context['message']);
+        }
+    }
+
+    public function test_dispatch_sync_with_handler_does_not_throw_with_null_logger(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = (new Envelope($command))->with(new HandledStamp('result', 'handler'));
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
+
+        self::assertSame('result', $bus->dispatchSync($command));
+    }
+
+    public function test_async_dispatch_without_bus_exception_has_command_bus_name(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
+
+        try {
+            $bus->dispatch($command, DispatchMode::ASYNC);
+            self::fail('Expected AsyncBusNotConfiguredException');
+        } catch (AsyncBusNotConfiguredException $e) {
+            self::assertSame('command', $e->busName);
+            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+        }
+    }
+
+    public function test_dispatch_sync_no_handler_exception_has_command_bus_name(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $envelope = new Envelope($command);
+
+        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
+
+        try {
+            $bus->dispatchSync($command);
+            self::fail('Expected NoHandlerException');
+        } catch (NoHandlerException $e) {
+            self::assertSame('command', $e->busName);
+            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+        }
+    }
+
     private function createCommandStampsDecider(
         ?RetryPolicyResolver $retryPolicies = null,
         ?MessageSerializerResolver $serializers = null,
@@ -654,12 +859,10 @@ final class CommandBusTest extends TestCase
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, CommandContract::class),
             new MessageTransportStampDecider(
-                new MessageTransportStampFactory(),
-                $transports,
-                $asyncTransports,
-                null,
-                null,
-                null,
+                stampFactory: new MessageTransportStampFactory(),
+                commandResolvers: new TransportResolverMap(sync: $transports, async: $asyncTransports),
+                queryResolvers: new TransportResolverMap(),
+                eventResolvers: new TransportResolverMap(),
             ),
             new MessageSerializerStampDecider($serializers, CommandContract::class),
             new DispatchAfterCurrentBusStampDecider($dispatchAfter),

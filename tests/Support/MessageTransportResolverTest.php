@@ -111,6 +111,9 @@ final class MessageTransportResolverTestIterationCounter
     public int $count = 0;
 }
 
+/**
+ * @implements \IteratorAggregate<int, string>
+ */
 final class MessageTransportResolverTestCountingIterator implements \IteratorAggregate
 {
     /**

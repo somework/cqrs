@@ -19,7 +19,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\UnobservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
-use Symfony\Component\Messenger\Envelope;
+
+use function assert;
 
 final class MessengerIntegrationTest extends KernelTestCase
 {
@@ -28,7 +29,9 @@ final class MessengerIntegrationTest extends KernelTestCase
         parent::setUp();
 
         self::bootKernel();
-        static::getContainer()->get(TaskRecorder::class)->reset();
+        $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
+        $recorder->reset();
     }
 
     protected static function getKernelClass(): string
@@ -39,7 +42,9 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_command_bus_dispatches_sync_command(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);
+        assert($commandBus instanceof CommandBus);
         $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
 
         $commandBus->dispatch(new CreateTaskCommand('task-1', 'Write docs'));
 
@@ -49,7 +54,9 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_command_bus_dispatches_async_command(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);
+        assert($commandBus instanceof CommandBus);
         $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
 
         $commandBus->dispatch(new GenerateReportCommand('report-1'), DispatchMode::ASYNC);
 
@@ -59,7 +66,9 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_event_bus_supports_sync_and_async_dispatch(): void
     {
         $eventBus = static::getContainer()->get(EventBus::class);
+        assert($eventBus instanceof EventBus);
         $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
 
         $eventBus->dispatch(new TaskCreatedEvent('sync-task'));
         $eventBus->dispatch(new TaskCreatedEvent('async-task'), DispatchMode::ASYNC);
@@ -71,17 +80,20 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_event_bus_allows_events_without_handlers(): void
     {
         $eventBus = static::getContainer()->get(EventBus::class);
+        assert($eventBus instanceof EventBus);
 
         $envelope = $eventBus->dispatch(new UnobservedEvent('no-handlers'));
-
-        self::assertInstanceOf(Envelope::class, $envelope);
-        self::assertSame('no-handlers', $envelope->getMessage()->identifier);
+        $message = $envelope->getMessage();
+        assert($message instanceof UnobservedEvent);
+        self::assertSame('no-handlers', $message->identifier);
     }
 
     public function test_query_bus_returns_handler_result(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);
+        assert($commandBus instanceof CommandBus);
         $queryBus = static::getContainer()->get(QueryBus::class);
+        assert($queryBus instanceof QueryBus);
 
         $commandBus->dispatch(new CreateTaskCommand('task-2', 'Review PR'));
         $result = $queryBus->ask(new FindTaskQuery('task-2'));
@@ -92,6 +104,7 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_query_handler_with_union_type_hint_is_autowired(): void
     {
         $queryBus = static::getContainer()->get(QueryBus::class);
+        assert($queryBus instanceof QueryBus);
 
         $result = $queryBus->ask(new ListTasksQuery());
 
@@ -101,7 +114,9 @@ final class MessengerIntegrationTest extends KernelTestCase
     public function test_envelope_is_injected_into_sync_and_async_handlers(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);
+        assert($commandBus instanceof CommandBus);
         $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
 
         $commandBus->dispatch(new CreateTaskCommand('task-envelope-sync', 'Sync envelope check'));
         $commandBus->dispatch(new GenerateReportCommand('report-envelope-async'), DispatchMode::ASYNC);
@@ -117,11 +132,11 @@ final class MessengerIntegrationTest extends KernelTestCase
 
         $syncMetadata = $recorder->metadataStamps(CreateTaskHandler::class);
         self::assertCount(1, $syncMetadata);
-        self::assertNotSame('', $syncMetadata[0]->getCorrelationId());
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $syncMetadata[0]->getCorrelationId());
 
         $asyncMetadata = $recorder->metadataStamps(GenerateReportHandler::class);
         self::assertCount(1, $asyncMetadata);
-        self::assertNotSame('', $asyncMetadata[0]->getCorrelationId());
+        self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $asyncMetadata[0]->getCorrelationId());
         self::assertNotSame($syncMetadata[0]->getCorrelationId(), $asyncMetadata[0]->getCorrelationId());
     }
 }

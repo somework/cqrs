@@ -7,7 +7,6 @@ namespace SomeWork\CqrsBundle\Tests\Messenger;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Messenger\Middleware\AllowNoHandlerMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
-use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
@@ -24,8 +23,9 @@ final class AllowNoHandlerMiddlewareTest extends TestCase
 
         $envelope = $bus->dispatch(new TaskCreatedEvent('noop'));
 
-        self::assertInstanceOf(Envelope::class, $envelope);
-        self::assertSame('noop', $envelope->getMessage()->taskId);
+        $message = $envelope->getMessage();
+        self::assertInstanceOf(TaskCreatedEvent::class, $message);
+        self::assertSame('noop', $message->taskId);
     }
 
     public function test_it_rethrows_for_non_event_messages(): void

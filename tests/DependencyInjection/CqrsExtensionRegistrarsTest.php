@@ -215,9 +215,18 @@ final class CqrsExtensionRegistrarsTest extends TestCase
             $container->getParameter('somework_cqrs.transport_stamp_types'),
         );
 
+        self::assertTrue($container->hasParameter('somework_cqrs.bus.command'));
+        self::assertSame('messenger.default_bus', $container->getParameter('somework_cqrs.bus.command'));
+        self::assertTrue($container->hasParameter('somework_cqrs.bus.command_async'));
+        self::assertSame('messenger.bus.command_async', $container->getParameter('somework_cqrs.bus.command_async'));
+        self::assertTrue($container->hasParameter('somework_cqrs.bus.event_async'));
+        self::assertSame('messenger.bus.event_async', $container->getParameter('somework_cqrs.bus.event_async'));
+
         $dispatchModeDefinition = $container->getDefinition('somework_cqrs.dispatch_mode_decider');
         self::assertSame('sync', $dispatchModeDefinition->getArgument('$commandDefault')->value);
         self::assertSame('async', $dispatchModeDefinition->getArgument('$eventDefault')->value);
+        self::assertTrue($dispatchModeDefinition->hasTag('kernel.reset'));
+        self::assertSame([['method' => 'reset']], $dispatchModeDefinition->getTag('kernel.reset'));
 
         $dispatchAfterDefinition = $container->getDefinition('somework_cqrs.dispatch_after_current_bus_decider');
         self::assertFalse($dispatchAfterDefinition->getArgument('$commandDefault'));

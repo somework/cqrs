@@ -8,6 +8,9 @@ use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 
+/**
+ * @implements QueryHandler<ListTasksQuery, list<string>>
+ */
 final class ListTasksHandler implements QueryHandler
 {
     /**
