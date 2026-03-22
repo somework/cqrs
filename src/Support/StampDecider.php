@@ -9,13 +9,15 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Applies stamp changes for a dispatched message.
+ *
+ * @internal
  */
 interface StampDecider
 {
     /**
-     * @param list<StampInterface> $stamps
+     * @param array<int, StampInterface> $stamps
      *
-     * @return list<StampInterface>
+     * @return array<int, StampInterface>
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array;
 }

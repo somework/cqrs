@@ -8,6 +8,8 @@ use Symfony\Component\Messenger\Envelope;
 
 /**
  * Provides storage for the Messenger envelope currently being handled.
+ *
+ * @api
  */
 trait EnvelopeAwareTrait
 {

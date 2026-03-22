@@ -9,6 +9,7 @@ namespace SomeWork\CqrsBundle\Registry;
  */
 final class HandlerDescriptor
 {
+    /** @param class-string $messageClass */
     public function __construct(
         public readonly string $type,
         public readonly string $messageClass,

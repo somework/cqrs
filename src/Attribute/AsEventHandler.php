@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Contract\Event;
 
 /**
  * Attribute to mark a service as an event handler.
+ *
+ * @api
  */
 #[Attribute(Attribute::TARGET_CLASS | Attribute::IS_REPEATABLE)]
 final class AsEventHandler

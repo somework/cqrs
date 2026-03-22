@@ -13,6 +13,7 @@ use function in_array;
 use function is_array;
 use function sprintf;
 
+/** @internal */
 final class ValidateTransportNamesPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void

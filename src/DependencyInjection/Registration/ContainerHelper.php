@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
-use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -15,6 +14,7 @@ use function class_exists;
 use function md5;
 use function sprintf;
 
+/** @internal */
 final class ContainerHelper
 {
     public function ensureServiceExists(ContainerBuilder $container, string $serviceId): string
@@ -49,7 +49,7 @@ final class ContainerHelper
             $serviceId = sprintf('somework_cqrs.async.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
 
             $definition = new Definition('bool');
-            $definition->setFactory([CqrsExtension::class, 'createBooleanToggle']);
+            $definition->setFactory([self::class, 'createBooleanToggle']);
             $definition->setArguments([$enabled]);
             $definition->setPublic(false);
 
@@ -73,8 +73,13 @@ final class ContainerHelper
      */
     public function createOptionalTransportResolverReference(string $messageType, array $buses): ?Reference
     {
-        return (isset($buses[$messageType]) && null !== $buses[$messageType])
+        return isset($buses[$messageType])
             ? $this->createResolverReference('transports', $messageType)
             : null;
+    }
+
+    public static function createBooleanToggle(bool $value): bool
+    {
+        return $value;
     }
 }

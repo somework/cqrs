@@ -10,14 +10,19 @@ use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 
 /**
+ * @api
+ *
  * Base class for event handlers that exposes a typed {@see on()} method.
  *
  * @template TEvent of Event
+ *
+ * @implements EventHandler<TEvent>
  */
 abstract class AbstractEventHandler implements EventHandler, EnvelopeAware
 {
     use EnvelopeAwareTrait;
 
+    /** @param TEvent $event */
     final public function __invoke(Event $event): void
     {
         $this->on($event);

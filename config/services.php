@@ -26,6 +26,12 @@ return static function (ContainerConfigurator $configurator): void {
             '../src/Support/StampsDecider.php',
             '../src/Support/StampDecider.php',
             '../src/Support/RetryPolicyStampDecider.php',
+            '../src/Support/SequenceStampDecider.php',
+            '../src/Support/RateLimitStampDecider.php',
+            '../src/Support/RateLimitResolver.php',
+            '../src/Outbox/DbalOutboxStorage.php',
+            '../src/Outbox/OutboxSchemaSubscriber.php',
+            '../src/Command/OutboxRelayCommand.php',
         ]);
 
     $services->set(CommandBus::class)->public();

@@ -7,6 +7,8 @@ namespace SomeWork\CqrsBundle\Contract;
 /**
  * @template TQuery of Query
  * @template TResult
+ *
+ * @api
  */
 interface QueryHandler
 {

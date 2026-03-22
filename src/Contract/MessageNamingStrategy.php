@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Contract;
 
 /**
  * Resolves display names for CQRS messages.
+ *
+ * @api
  */
 interface MessageNamingStrategy
 {

@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 
+/** @internal */
 final class DispatchAfterCurrentBusRegistrar
 {
     public function __construct(private readonly ContainerHelper $helper)

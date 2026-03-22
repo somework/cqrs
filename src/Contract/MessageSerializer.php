@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\Stamp\SerializerStamp;
 
 /**
  * Supplies serializer stamps applied when dispatching CQRS messages.
+ *
+ * @api
  */
 interface MessageSerializer
 {

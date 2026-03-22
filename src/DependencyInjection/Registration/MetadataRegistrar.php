@@ -8,11 +8,13 @@ use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function sprintf;
 
+/** @internal */
 final class MetadataRegistrar
 {
     public function __construct(private readonly ContainerHelper $helper)
@@ -55,6 +57,7 @@ final class MetadataRegistrar
 
             $resolverDefinition = new Definition(MessageMetadataProviderResolver::class);
             $resolverDefinition->setArgument('$providers', $locatorReference);
+            $resolverDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
             $resolverDefinition->setPublic(false);
 
             $container->setDefinition(sprintf('somework_cqrs.metadata.%s_resolver', $type), $resolverDefinition);

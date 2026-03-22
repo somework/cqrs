@@ -14,11 +14,13 @@ use WeakMap;
 
 /**
  * Decorates Messenger's handlers locator to inject envelopes into CQRS handlers.
+ *
+ * @internal
  */
 final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
 {
     /**
-     * @var WeakMap<Closure, HandlerDescriptor|array{factory: Closure, options: array, reflection: ReflectionFunction}>
+     * @var WeakMap<Closure, HandlerDescriptor|array{factory: Closure, options: array<string, mixed>, reflection: ReflectionFunction}>
      */
     private WeakMap $handlerCache;
 
@@ -37,7 +39,7 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
     private function decorateDescriptor(HandlerDescriptor $descriptor, Envelope $envelope): HandlerDescriptor
     {
         $handler = $descriptor->getHandler();
-        if (!$handler instanceof Closure) {
+        if (!$handler instanceof Closure) { // @phpstan-ignore instanceof.alwaysTrue
             return $descriptor;
         }
 
@@ -62,6 +64,7 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
             return $descriptor;
         }
 
+        /** @var array<string, mixed> $options */
         $options = $descriptor->getOptions();
 
         $factory = static function (Envelope $boundEnvelope) use ($handler, $handlerObject): Closure {

@@ -15,6 +15,7 @@ use function array_unshift;
 use function is_array;
 use function is_string;
 
+/** @internal */
 final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
@@ -66,12 +67,12 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
     }
 
     /**
-     * @param list<Reference> $middlewares
+     * @param array<int|string, Reference> $middlewares
      */
     private function hasMiddlewareReference(array $middlewares, Reference $middleware): bool
     {
         foreach ($middlewares as $registered) {
-            if ($registered == $middleware) {
+            if ((string) $registered === (string) $middleware) {
                 return true;
             }
         }
@@ -79,6 +80,7 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
         return false;
     }
 
+    /** @param array<string, true> $visited */
     private function resolveMessageBusDefinition(ContainerBuilder $container, string $serviceId, array $visited = []): ?Definition
     {
         if (array_key_exists($serviceId, $visited)) {

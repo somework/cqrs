@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Contract\Command;
 
 /**
  * Attribute to mark a service as a command handler.
+ *
+ * @api
  */
 #[Attribute(Attribute::TARGET_CLASS | Attribute::IS_REPEATABLE)]
 final class AsCommandHandler

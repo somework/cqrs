@@ -13,6 +13,8 @@ use function is_callable;
 
 /**
  * Provides read access to the CQRS handler map that is compiled at container build time.
+ *
+ * @internal
  */
 final class HandlerRegistry
 {
@@ -23,6 +25,7 @@ final class HandlerRegistry
 
     /**
      * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
+     * @param ServiceLocator<MessageNamingStrategy>                                                                                              $namingStrategies
      */
     public function __construct(
         #[Autowire(param: 'somework_cqrs.handler_metadata')]
@@ -61,6 +64,7 @@ final class HandlerRegistry
         return $descriptors;
     }
 
+    /** @param array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null} $entry */
     private function createDescriptor(string $type, array $entry): HandlerDescriptor
     {
         return new HandlerDescriptor(
