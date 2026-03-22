@@ -9,6 +9,12 @@
             "email": "i.pinchuk.work@gmail.com"
         }
     ],
+    "keywords": ["cqrs", "symfony", "messenger", "command-bus", "query-bus", "event-bus", "ddd"],
+    "homepage": "https://github.com/somework/cqrs",
+    "support": {
+        "issues": "https://github.com/somework/cqrs/issues",
+        "source": "https://github.com/somework/cqrs"
+    },
     "require": {
         "php": "^8.2",
         "symfony/config": "^7.2",
@@ -46,6 +52,11 @@
     "autoload-dev": {
         "psr-4": {
             "SomeWork\\CqrsBundle\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.4.x-dev"
         }
     },
     "scripts": {
