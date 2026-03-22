@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Adds retry policy stamps for supported messages.
+ *
+ * @internal
  */
 final class RetryPolicyStampDecider implements MessageTypeAwareStampDecider
 {
@@ -27,9 +29,9 @@ final class RetryPolicyStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * @param list<StampInterface> $stamps
+     * @param array<int, StampInterface> $stamps
      *
-     * @return list<StampInterface>
+     * @return array<int, StampInterface>
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {

@@ -10,15 +10,20 @@ use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 
 /**
+ * @api
+ *
  * Base class for query handlers that exposes a typed {@see fetch()} method.
  *
  * @template TQuery of Query
  * @template TResult
+ *
+ * @implements QueryHandler<TQuery, TResult>
  */
 abstract class AbstractQueryHandler implements QueryHandler, EnvelopeAware
 {
     use EnvelopeAwareTrait;
 
+    /** @param TQuery $query */
     final public function __invoke(Query $query): mixed
     {
         return $this->fetch($query);

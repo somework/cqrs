@@ -6,23 +6,23 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
 use ArrayObject;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
-use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function array_unique;
 use function array_values;
-use function class_exists;
 use function md5;
 use function sprintf;
 
+/** @internal */
 final class TransportRegistrar
 {
+    /** @param array<string, array{stamp: string, default: list<string>, map: array<string, list<string>>}> $config */
     public function register(ContainerBuilder $container, array $config): void
     {
         $configuredTransportNames = [];
@@ -32,13 +32,6 @@ final class TransportRegistrar
         foreach (['command', 'command_async', 'query', 'event', 'event_async'] as $type) {
             $serviceMap = [];
             $typeConfig = $config[$type];
-
-            if (
-                MessageTransportStampFactory::TYPE_SEND_MESSAGE === $typeConfig['stamp']
-                && !class_exists(MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS)
-            ) {
-                throw new InvalidConfigurationException(sprintf('The "send_message" transport stamp type requires the "%s" class. Upgrade symfony/messenger to a version that provides it.', MessageTransportStampFactory::SEND_MESSAGE_TO_TRANSPORTS_STAMP_CLASS));
-            }
 
             $stampTypes[$type] = $typeConfig['stamp'];
             $mapping[$type] = [
@@ -58,7 +51,7 @@ final class TransportRegistrar
                 $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
 
                 foreach ($typeConfig['default'] as $transportName) {
-                    $configuredTransportNames[] = (string) $transportName;
+                    $configuredTransportNames[] = $transportName;
                 }
             }
 
@@ -74,7 +67,7 @@ final class TransportRegistrar
                 $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
 
                 foreach ($transports as $transportName) {
-                    $configuredTransportNames[] = (string) $transportName;
+                    $configuredTransportNames[] = $transportName;
                 }
             }
 
@@ -83,6 +76,7 @@ final class TransportRegistrar
 
             $resolverDefinition = new Definition(MessageTransportResolver::class);
             $resolverDefinition->setArgument('$transports', $locatorReference);
+            $resolverDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
             $resolverDefinition->setPublic(false);
 
             $container->setDefinition(sprintf('somework_cqrs.transports.%s_resolver', $type), $resolverDefinition);

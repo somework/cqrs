@@ -6,12 +6,14 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Closure;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function get_debug_type;
 use function sprintf;
 
+/** @internal */
 final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
 {
     public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_metadata_global_default';
@@ -19,8 +21,9 @@ final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
 
     public function __construct(
         ContainerInterface $providers,
+        ?LoggerInterface $logger = null,
     ) {
-        parent::__construct($providers);
+        parent::__construct($providers, $logger);
     }
 
     public static function withoutOverrides(?MessageMetadataProvider $defaultProvider = null): self

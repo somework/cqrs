@@ -13,6 +13,7 @@ use function array_merge;
 use function array_unique;
 use function array_values;
 
+/** @internal */
 final class AllowNoHandlerMiddlewareRegistrar
 {
     /**
@@ -36,11 +37,12 @@ final class AllowNoHandlerMiddlewareRegistrar
         $busIds = array_filter([
             $buses['event'] ?? $defaultBusId,
             $buses['event_async'] ?? null,
-        ]);
+        ], static fn (mixed $value): bool => null !== $value && '' !== $value);
 
         $busIds = array_values(array_unique($busIds));
 
         $parameterName = 'somework_cqrs.allow_no_handler.bus_ids';
+        /** @var list<string> $existing */
         $existing = $container->hasParameter($parameterName) ? $container->getParameter($parameterName) : [];
 
         $container->setParameter(

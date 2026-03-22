@@ -11,8 +11,10 @@ use Symfony\Component\DependencyInjection\Definition;
 
 use function array_map;
 
+/** @internal */
 final class DispatchModeRegistrar
 {
+    /** @param array<string, array{default: string, map: array<string, string>}> $config */
     public function register(ContainerBuilder $container, array $config): void
     {
         $definition = new Definition(DispatchModeDecider::class);
@@ -27,6 +29,7 @@ final class DispatchModeRegistrar
             array_map(static fn (string $mode): DispatchMode => DispatchMode::from($mode), $config['event']['map'])
         );
         $definition->setPublic(false);
+        $definition->addTag('kernel.reset', ['method' => 'reset']);
 
         $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
         $container->setAlias(DispatchModeDecider::class, 'somework_cqrs.dispatch_mode_decider')->setPublic(false);

@@ -12,6 +12,8 @@ use Symfony\Component\Messenger\Middleware\StackInterface;
 
 /**
  * Ignores missing handlers for event messages to keep dispatching fire-and-forget.
+ *
+ * @internal
  */
 final class AllowNoHandlerMiddleware implements MiddlewareInterface
 {

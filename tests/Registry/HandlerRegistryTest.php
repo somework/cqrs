@@ -67,12 +67,14 @@ final class HandlerRegistryTest extends TestCase
         $descriptors = $registry->byType('command');
 
         self::assertCount(1, $descriptors);
+        // @phpstan-ignore staticMethod.impossibleType (test uses fake class strings)
         self::assertSame('App\\Command\\ShipOrder', $descriptors[0]->messageClass);
     }
 
     public function test_get_display_name_caches_resolved_strategies(): void
     {
-        $metadata = [
+        /** @var array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata */
+        $metadata = [ // @phpstan-ignore varTag.nativeType
             'command' => [
                 [
                     'type' => 'command',
@@ -97,7 +99,7 @@ final class HandlerRegistryTest extends TestCase
         $defaultCalls = 0;
 
         $locator = new ServiceLocator([
-            'command' => function () use (&$commandCalls): MessageNamingStrategy {
+            'command' => static function () use (&$commandCalls): MessageNamingStrategy {
                 ++$commandCalls;
 
                 return new class implements MessageNamingStrategy {
@@ -107,7 +109,7 @@ final class HandlerRegistryTest extends TestCase
                     }
                 };
             },
-            'default' => function () use (&$defaultCalls): MessageNamingStrategy {
+            'default' => static function () use (&$defaultCalls): MessageNamingStrategy {
                 ++$defaultCalls;
 
                 return new class implements MessageNamingStrategy {
@@ -133,6 +135,10 @@ final class HandlerRegistryTest extends TestCase
         self::assertSame(1, $defaultCalls);
     }
 
+    /**
+     * @param array<string, list<array<string, mixed>>> $metadata
+     * @param array<string, MessageNamingStrategy>      $strategies
+     */
     private function createRegistry(array $metadata, array $strategies): HandlerRegistry
     {
         $factories = [];
@@ -142,6 +148,7 @@ final class HandlerRegistryTest extends TestCase
 
         $locator = new ServiceLocator($factories);
 
+        // @phpstan-ignore argument.type (test uses fake class-string values)
         return new HandlerRegistry($metadata, $locator);
     }
 

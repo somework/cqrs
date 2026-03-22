@@ -9,11 +9,14 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function array_filter;
+use function array_keys;
 use function array_unique;
 use function array_values;
+use function implode;
 use function md5;
 use function sprintf;
 
+/** @internal */
 final class HandlerLocatorRegistrar
 {
     /**
@@ -27,7 +30,7 @@ final class HandlerLocatorRegistrar
             $buses['query'] ?? $defaultBusId,
             $buses['event'] ?? $defaultBusId,
             $buses['event_async'] ?? null,
-        ]);
+        ], static fn (mixed $value): bool => null !== $value && '' !== $value);
 
         $busIds = array_values(array_unique($busIds));
 
@@ -45,7 +48,14 @@ final class HandlerLocatorRegistrar
 
     private function resolveBusServiceId(ContainerBuilder $container, string $busId): string
     {
+        $visited = [];
+
         while ($container->hasAlias($busId)) {
+            if (isset($visited[$busId])) {
+                throw new \LogicException(sprintf('Circular alias detected: %s -> %s', implode(' -> ', array_keys($visited)), $busId));
+            }
+
+            $visited[$busId] = true;
             $busId = (string) $container->getAlias($busId);
         }
 

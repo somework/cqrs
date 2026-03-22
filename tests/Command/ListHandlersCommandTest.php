@@ -415,8 +415,8 @@ final class ListHandlersCommandTest extends TestCase
     }
 
     /**
-     * @param array<string, list<HandlerMetadata>> $metadata
-     * @param array<string, string>                $labels
+     * @param array<string, list<array<string, mixed>>> $metadata
+     * @param array<string, string>                     $labels
      */
     private function createRegistry(array $metadata, array $labels): HandlerRegistry
     {
@@ -434,6 +434,7 @@ final class ListHandlersCommandTest extends TestCase
             $factories[$name] = static fn (): MessageNamingStrategy => $strategy;
         }
 
+        // @phpstan-ignore argument.type (test uses fake class-string values)
         return new HandlerRegistry($metadata, new ServiceLocator($factories));
     }
 
@@ -506,14 +507,15 @@ final class ListHandlersCommandTest extends TestCase
         self::assertNotNull($table, sprintf('Failed to locate table containing "%s".', $needle));
 
         foreach ($expectedRows as [$field, $value]) {
-            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote((string) $value, '/'));
+            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote($value, '/'));
             self::assertMatchesRegularExpression($pattern, $table);
         }
     }
 
     private function findTableFor(string $output, string $needle): ?string
     {
-        if (!preg_match_all('/╔.*?╚.*?╝/s', $output, $matches)) {
+        $matched = preg_match_all('/╔.*?╚.*?╝/s', $output, $matches);
+        if (0 === $matched || false === $matched) {
             return null;
         }
 
@@ -546,9 +548,14 @@ final class ListHandlersCommandTest extends TestCase
             ];
         }
 
+        // @phpstan-ignore argument.type (shape is correct but PHPStan loses it after foreach mutation)
         return new TransportMappingProvider($mapping);
     }
 
+    /**
+     * @param list<string>                      $default
+     * @param array<class-string, list<string>> $map
+     */
     private function createTransportResolver(array $default = [], array $map = []): MessageTransportResolver
     {
         $services = [];

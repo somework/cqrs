@@ -10,6 +10,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Retry policy that applies no additional stamps.
+ *
+ * @internal
  */
 final class NullRetryPolicy implements RetryPolicy
 {

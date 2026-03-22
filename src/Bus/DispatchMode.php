@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Bus;
 
 /**
  * Defines how a message should be dispatched by a bus.
+ *
+ * @api
  */
 enum DispatchMode: string
 {

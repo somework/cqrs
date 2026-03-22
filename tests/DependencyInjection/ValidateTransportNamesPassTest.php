@@ -55,7 +55,7 @@ final class ValidateTransportNamesPassTest extends TestCase
 
         $container->compile();
 
-        self::assertTrue(true);
+        $this->addToAssertionCount(1);
     }
 
     private function createContainer(): ContainerBuilder

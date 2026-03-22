@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Contract\Event;
 
 /**
  * Resolves the effective dispatch mode for a message based on configuration.
+ *
+ * @internal
  */
 final class DispatchModeDecider
 {
@@ -30,7 +32,7 @@ final class DispatchModeDecider
         return new self(DispatchMode::SYNC, DispatchMode::SYNC);
     }
 
-    /** @var array<class-string, int> */
+    /** @var array<string, int> */
     private array $interfaceDepthCache = [];
 
     /** @var array<class-string<Command>, DispatchMode> */
@@ -95,10 +97,7 @@ final class DispatchModeDecider
     {
         $classes = [$message::class];
         $parents = class_parents($message);
-
-        if (false !== $parents) {
-            $classes = [...$classes, ...array_values($parents)];
-        }
+        $classes = [...$classes, ...array_values($parents)];
 
         return $classes;
     }
@@ -110,7 +109,7 @@ final class DispatchModeDecider
     {
         $interfaces = class_implements($message);
 
-        if (false === $interfaces || [] === $interfaces) {
+        if ([] === $interfaces) {
             return [];
         }
 
@@ -148,5 +147,12 @@ final class DispatchModeDecider
         $this->interfaceDepthCache[$interface] = $depth;
 
         return $depth;
+    }
+
+    public function reset(): void
+    {
+        $this->commandModeCache = [];
+        $this->eventModeCache = [];
+        $this->interfaceDepthCache = [];
     }
 }

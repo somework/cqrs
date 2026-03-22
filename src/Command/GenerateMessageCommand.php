@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
+use InvalidArgumentException;
 use RuntimeException;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
@@ -24,9 +25,13 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 use function dirname;
+use function is_string;
+use function realpath;
 use function sprintf;
+use function str_contains;
 use function strlen;
 
+/** @internal */
 #[AsCommand(
     name: 'somework:cqrs:generate',
     description: 'Generate a CQRS message and handler skeleton.',
@@ -81,8 +86,10 @@ final class GenerateMessageCommand extends SymfonyCommand
         }
 
         $messageClass = (string) $input->getArgument('name');
-        $handlerClass = (string) ($input->getOption('handler') ?: $messageClass.'Handler');
-        $baseDir = (string) ($input->getOption('dir') ?: $this->kernel->getProjectDir().'/src');
+        $handlerOption = $input->getOption('handler');
+        $handlerClass = is_string($handlerOption) && '' !== $handlerOption ? $handlerOption : $messageClass.'Handler';
+        $dirOption = $input->getOption('dir');
+        $baseDir = is_string($dirOption) && '' !== $dirOption ? $dirOption : $this->kernel->getProjectDir().'/src';
         $force = (bool) $input->getOption('force');
 
         [$messageNamespace, $messageShortClass] = $this->splitClass($messageClass);
@@ -92,9 +99,10 @@ final class GenerateMessageCommand extends SymfonyCommand
         $handlerPath = $this->classToPath($baseDir, $handlerClass);
 
         try {
+            $this->validateTargetPath($baseDir, $this->kernel->getProjectDir());
             $this->dumpFile($messagePath, $this->generateMessage($type, $messageNamespace, $messageShortClass), $force);
             $this->dumpFile($handlerPath, $this->generateHandler($type, $messageClass, $handlerNamespace, $handlerShortClass), $force);
-        } catch (RuntimeException $exception) {
+        } catch (RuntimeException|InvalidArgumentException $exception) {
             $io->error($exception->getMessage());
 
             return self::FAILURE;
@@ -114,7 +122,7 @@ final class GenerateMessageCommand extends SymfonyCommand
         $short = array_pop($parts);
         $namespace = implode('\\', $parts);
 
-        return [$namespace, $short ?? $class];
+        return [$namespace, $short];
     }
 
     private function classToPath(string $baseDir, string $class): string
@@ -124,18 +132,45 @@ final class GenerateMessageCommand extends SymfonyCommand
         return $baseDir.'/'.str_replace('\\', '/', $class).'.php';
     }
 
+    private function validateTargetPath(string $path, string $projectDir): void
+    {
+        if (str_contains($path, "\0")) {
+            throw new InvalidArgumentException('Target path contains invalid characters.');
+        }
+
+        $realProjectDir = realpath($projectDir);
+        if (false === $realProjectDir) {
+            throw new InvalidArgumentException(sprintf('Project directory "%s" does not exist.', $projectDir));
+        }
+
+        $checkPath = $path;
+        while (!file_exists($checkPath)) {
+            $checkPath = dirname($checkPath);
+            if ('.' === $checkPath || '' === $checkPath) {
+                throw new InvalidArgumentException('Target directory must be within the project directory.');
+            }
+        }
+
+        $realPath = realpath($checkPath);
+        if (false === $realPath || !str_starts_with($realPath, $realProjectDir)) {
+            throw new InvalidArgumentException('Target directory must be within the project directory.');
+        }
+    }
+
     private function dumpFile(string $path, string $contents, bool $force): void
     {
         $dir = dirname($path);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0o775, true);
+        if (!is_dir($dir) && !@mkdir($dir, 0o775, true) && !is_dir($dir)) {
+            throw new RuntimeException(sprintf('Unable to create directory "%s".', $dir));
         }
 
         if (!$force && file_exists($path)) {
             throw new RuntimeException(sprintf('File "%s" already exists. Use --force to overwrite.', $path));
         }
 
-        file_put_contents($path, $contents);
+        if (false === file_put_contents($path, $contents)) {
+            throw new RuntimeException(sprintf('Unable to write file "%s".', $path));
+        }
     }
 
     private function generateMessage(string $type, string $namespace, string $class): string
@@ -148,7 +183,7 @@ final class GenerateMessageCommand extends SymfonyCommand
             '',
             'declare(strict_types=1);',
             '',
-            sprintf('namespace %s;', $namespace ?: 'App'),
+            sprintf('namespace %s;', '' !== $namespace ? $namespace : 'App'),
             '',
             sprintf('use %s;', $interface),
             '',
@@ -199,7 +234,7 @@ final class GenerateMessageCommand extends SymfonyCommand
             '',
             'declare(strict_types=1);',
             '',
-            sprintf('namespace %s;', $namespace ?: 'App'),
+            sprintf('namespace %s;', '' !== $namespace ? $namespace : 'App'),
             '',
             sprintf('use %s;', $attribute),
             sprintf('use %s;', $interface),

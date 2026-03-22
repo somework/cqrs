@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+/** @internal */
 final class DispatchAfterCurrentBusStampDecider implements StampDecider
 {
     public function __construct(private readonly DispatchAfterCurrentBusDecider $decider)
@@ -15,9 +16,9 @@ final class DispatchAfterCurrentBusStampDecider implements StampDecider
     }
 
     /**
-     * @param list<StampInterface> $stamps
+     * @param array<int, StampInterface> $stamps
      *
-     * @return list<StampInterface>
+     * @return array<int, StampInterface>
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {

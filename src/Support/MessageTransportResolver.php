@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Closure;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use ReflectionFunction;
 
 use function array_key_exists;
@@ -17,6 +18,8 @@ use function sprintf;
 
 /**
  * Resolves Messenger transport names for a given message.
+ *
+ * @internal
  */
 final class MessageTransportResolver
 {
@@ -29,6 +32,7 @@ final class MessageTransportResolver
 
     public function __construct(
         private readonly ContainerInterface $transports,
+        private readonly ?LoggerInterface $logger = null,
     ) {
     }
 
@@ -40,12 +44,28 @@ final class MessageTransportResolver
         $match = MessageTypeLocator::match($this->transports, $message, [self::DEFAULT_KEY]);
 
         if (null !== $match) {
+            $this->logger?->debug('Resolved transport for {message} via {match_type}', [
+                'message' => $message::class,
+                'match_type' => $match->type,
+                'resolver' => self::class,
+            ]);
+
             return $this->normaliseTransports($match->type, $match->service);
         }
 
         if (!$this->transports->has(self::DEFAULT_KEY)) {
+            $this->logger?->debug('No transport resolved for {message}', [
+                'message' => $message::class,
+                'resolver' => self::class,
+            ]);
+
             return null;
         }
+
+        $this->logger?->debug('Resolved transport for {message} via fallback', [
+            'message' => $message::class,
+            'resolver' => self::class,
+        ]);
 
         return $this->normaliseTransports(self::DEFAULT_KEY, $this->transports->get(self::DEFAULT_KEY));
     }

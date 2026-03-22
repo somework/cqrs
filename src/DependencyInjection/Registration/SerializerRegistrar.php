@@ -8,11 +8,13 @@ use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function sprintf;
 
+/** @internal */
 final class SerializerRegistrar
 {
     public function __construct(private readonly ContainerHelper $helper)
@@ -55,6 +57,7 @@ final class SerializerRegistrar
 
             $resolverDefinition = new Definition(MessageSerializerResolver::class);
             $resolverDefinition->setArgument('$serializers', $locatorReference);
+            $resolverDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
             $resolverDefinition->setPublic(false);
 
             $container->setDefinition(sprintf('somework_cqrs.serializer.%s_resolver', $type), $resolverDefinition);

@@ -10,8 +10,9 @@ use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
-use function assert;
-
+/**
+ * @extends AbstractCommandHandler<CreateTaskCommand>
+ */
 #[AsCommandHandler(command: CreateTaskCommand::class)]
 final class CreateTaskHandler extends AbstractCommandHandler
 {
@@ -19,13 +20,8 @@ final class CreateTaskHandler extends AbstractCommandHandler
     {
     }
 
-    /**
-     * @param CreateTaskCommand $command
-     */
     protected function handle(Command $command): mixed
     {
-        assert($command instanceof CreateTaskCommand);
-
         $this->recorder->recordTask($command->id, $command->name);
         $this->recorder->recordEnvelopeMessage(self::class, $this->getEnvelope());
 

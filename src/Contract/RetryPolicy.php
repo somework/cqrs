@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Provides messenger stamps that control retry behaviour when dispatching messages.
+ *
+ * @api
  */
 interface RetryPolicy
 {

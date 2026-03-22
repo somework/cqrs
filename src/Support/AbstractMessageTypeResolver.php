@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 
+/** @internal */
 abstract class AbstractMessageTypeResolver
 {
     public function __construct(
         private readonly ContainerInterface $services,
+        protected readonly ?LoggerInterface $logger = null,
     ) {
     }
 
@@ -21,8 +24,19 @@ abstract class AbstractMessageTypeResolver
         $match = MessageTypeLocator::match($this->services, $message, $ignoredKeys);
 
         if (null !== $match) {
+            $this->logger?->debug('Resolved {resolver} for {message} via {match_type}', [
+                'message' => $message::class,
+                'match_type' => $match->type,
+                'resolver' => static::class,
+            ]);
+
             return $this->assertService($match->type, $match->service);
         }
+
+        $this->logger?->debug('Resolved {resolver} for {message} via fallback', [
+            'message' => $message::class,
+            'resolver' => static::class,
+        ]);
 
         return $this->resolveFallback($message);
     }

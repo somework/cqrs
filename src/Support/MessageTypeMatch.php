@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+/** @internal */
 final class MessageTypeMatch
 {
     public function __construct(

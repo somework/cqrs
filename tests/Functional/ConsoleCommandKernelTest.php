@@ -83,6 +83,9 @@ final class ConsoleCommandKernelTest extends KernelTestCase
         ]);
     }
 
+    /**
+     * @param array<string, mixed> $input
+     */
     private function executeCommand(string $name, array $input = []): CommandTester
     {
         $kernel = self::$kernel;
@@ -108,14 +111,15 @@ final class ConsoleCommandKernelTest extends KernelTestCase
         self::assertNotNull($table, sprintf('Failed to locate table containing "%s".', $needle));
 
         foreach ($expectedRows as [$field, $value]) {
-            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote((string) $value, '/'));
+            $pattern = sprintf('/║\s*%s\s*│\s*%s\s*║/', preg_quote($field, '/'), preg_quote($value, '/'));
             self::assertMatchesRegularExpression($pattern, $table);
         }
     }
 
     private function findTableFor(string $output, string $needle): ?string
     {
-        if (!preg_match_all('/╔.*?╚.*?╝/s', $output, $matches)) {
+        $matched = preg_match_all('/╔.*?╚.*?╝/s', $output, $matches);
+        if (0 === $matched || false === $matched) {
             return null;
         }
 
