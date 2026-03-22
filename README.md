@@ -44,34 +44,68 @@ bin/console somework:cqrs:list
 
 ## Quick start
 
-```php
-<?php
+### Step 1 -- Define a command message
 
+```php
+namespace App\Application\Command;
+
+use SomeWork\CqrsBundle\Contract\Command;
+
+final class CreateTask implements Command
+{
+    public function __construct(
+        public readonly string $id,
+        public readonly string $name,
+    ) {}
+}
+```
+
+### Step 2 -- Create the handler
+
+```php
 namespace App\Application\Command;
 
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Bus\CommandBus;
-use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 
-final class ShipOrder implements Command
+#[AsCommandHandler(command: CreateTask::class)]
+final class CreateTaskHandler implements CommandHandler
 {
-    public function __construct(public readonly string $orderId) {}
-}
-
-#[AsCommandHandler(command: ShipOrder::class)]
-final class ShipOrderHandler implements CommandHandler
-{
-    public function __invoke(ShipOrder $command): mixed
+    public function __invoke(CreateTask $command): mixed
     {
-        // Dispatch domain logic here
+        // Save task to database...
         return null;
     }
 }
 ```
 
-Inject `SomeWork\CqrsBundle\Bus\CommandBus` and call
-`$commandBus->dispatch(new ShipOrder($id));` to execute your handler.
+### Step 3 -- Inject the bus and dispatch
+
+```php
+namespace App\Controller;
+
+use App\Application\Command\CreateTask;
+use SomeWork\CqrsBundle\Bus\CommandBus;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\Routing\Attribute\Route;
+
+final class TaskController
+{
+    #[Route('/tasks', methods: ['POST'])]
+    public function create(Request $request, CommandBus $commandBus): JsonResponse
+    {
+        $data = $request->toArray();
+
+        $commandBus->dispatch(new CreateTask(
+            id: uuid_create(),
+            name: $data['name'],
+        ));
+
+        return new JsonResponse(['status' => 'ok'], 201);
+    }
+}
+```
 
 ## Console commands
 
@@ -113,6 +147,12 @@ project layout:
 
 ## Resources
 
+* [Usage Guide](docs/usage.md)
+* [Configuration Reference](docs/reference.md)
+* [Testing Guide](docs/testing.md)
+* [Troubleshooting](docs/troubleshooting.md)
+* [Production Guide](docs/production.md)
+* [Upgrade Guide](UPGRADE.md)
 * [Changelog](CHANGELOG.md)
 
 ## Configuration

@@ -5,3 +5,14 @@
 /.php-cs-fixer.cache
 .phpunit.result.cache
 composer.lock
+.planning/
+
+# Docker
+docker-compose.override.yml
+
+# Build logs
+build/
+
+# PHPStan cache (generated, in var/ already ignored but be explicit)
+/var/cache/phpstan/
+config/reference.php
