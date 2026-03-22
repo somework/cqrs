@@ -21,7 +21,7 @@ vendor/bin/phpunit tests/Bus/CommandBusTest.php
 # Run a single test method
 vendor/bin/phpunit --filter testMethodName
 
-# Static analysis (level 6)
+# Static analysis (level 8)
 vendor/bin/phpstan analyse --configuration=phpstan.neon.dist
 
 # Code style (fix)
