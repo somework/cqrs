@@ -16,6 +16,26 @@ on:
   workflow_dispatch:
 
 jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer
+
+      - name: Validate composer.json
+        run: composer validate --strict
+
+      - name: Check for security advisories
+        run: composer audit
+
   cs-fixer:
     name: Code Style
     runs-on: ubuntu-latest
@@ -62,12 +82,21 @@ jobs:
             | tee build/logs/phpstan.log
 
   phpunit:
-    name: PHP ${{ matrix.php }} Tests
+    name: PHP ${{ matrix.php }} Tests (${{ matrix.dependency-versions }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4']
+        coverage: [false]
+        dependency-versions: ['highest']
+        include:
+          - php: '8.4'
+            coverage: true
+            dependency-versions: 'highest'
+          - php: '8.2'
+            coverage: false
+            dependency-versions: 'lowest'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -76,31 +105,46 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: ${{ matrix.php }}
-          coverage: none
+          coverage: ${{ matrix.coverage && 'xdebug' || 'none' }}
           extensions: mbstring
           tools: composer
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: |
+          if [ "${{ matrix.dependency-versions }}" = "lowest" ]; then
+            composer update --prefer-lowest --prefer-stable --no-progress
+          else
+            composer install --prefer-dist --no-progress
+          fi
 
       - name: Prepare log directory
         run: mkdir -p build/logs
 
       - name: PHPUnit
-        run: vendor/bin/phpunit --log-junit build/logs/phpunit-${{ matrix.php }}.xml
+        run: >
+          vendor/bin/phpunit
+          --log-junit build/logs/phpunit-${{ matrix.php }}.xml
+          ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
+
+      - name: Upload coverage to Codecov
+        if: matrix.coverage
+        uses: codecov/codecov-action@v5
+        with:
+          files: build/logs/clover.xml
+          fail_ci_if_error: false
 
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-php-${{ matrix.php }}
+          name: test-results-php-${{ matrix.php }}-${{ matrix.dependency-versions }}
           path: build/logs/
           retention-days: 7
 
   quality-report:
     name: Quality Report
     runs-on: ubuntu-latest
-    needs: [cs-fixer, phpstan, phpunit]
+    needs: [validate, cs-fixer, phpstan, phpunit]
     if: always()
     steps:
       - name: Download artifacts
