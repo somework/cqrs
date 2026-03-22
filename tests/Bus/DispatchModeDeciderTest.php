@@ -150,4 +150,48 @@ final class DispatchModeDeciderTest extends TestCase
         self::assertSame($firstResult, $secondResult);
         self::assertSame([], $interfaceCache->getValue($decider));
     }
+
+    public function test_reset_clears_all_caches(): void
+    {
+        $command = new ImportLegacyDataCommand('legacy.csv');
+        $event = new OrderPlacedEvent('order-1');
+
+        $decider = new DispatchModeDecider(
+            DispatchMode::SYNC,
+            DispatchMode::SYNC,
+            [BulkImportCommand::class => DispatchMode::ASYNC],
+            [AuditLogEvent::class => DispatchMode::ASYNC],
+        );
+
+        $decider->resolve($command, DispatchMode::DEFAULT);
+        $decider->resolve($event, DispatchMode::DEFAULT);
+
+        $commandCache = new ReflectionProperty($decider, 'commandModeCache');
+        $eventCache = new ReflectionProperty($decider, 'eventModeCache');
+        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
+
+        self::assertNotEmpty($commandCache->getValue($decider));
+        self::assertNotEmpty($eventCache->getValue($decider));
+        self::assertNotEmpty($interfaceCache->getValue($decider));
+
+        $decider->reset();
+
+        self::assertSame([], $commandCache->getValue($decider));
+        self::assertSame([], $eventCache->getValue($decider));
+        self::assertSame([], $interfaceCache->getValue($decider));
+    }
+
+    public function test_reset_allows_re_resolution_with_fresh_state(): void
+    {
+        $command = new CreateTaskCommand('id', 'name');
+        $decider = new DispatchModeDecider(DispatchMode::ASYNC, DispatchMode::SYNC);
+
+        $first = $decider->resolve($command, DispatchMode::DEFAULT);
+        self::assertSame(DispatchMode::ASYNC, $first);
+
+        $decider->reset();
+
+        $second = $decider->resolve($command, DispatchMode::DEFAULT);
+        self::assertSame(DispatchMode::ASYNC, $second);
+    }
 }

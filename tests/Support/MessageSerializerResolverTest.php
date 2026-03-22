@@ -18,9 +18,12 @@ final class MessageSerializerResolverTest extends TestCase
     {
         $serializer = $this->createMock(MessageSerializer::class);
 
+        $globalDefault = $this->createMock(MessageSerializer::class);
+        $typeDefault = $this->createMock(MessageSerializer::class);
+
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $this->createMock(MessageSerializer::class),
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $this->createMock(MessageSerializer::class),
+            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
+            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
             MessageSerializerResolverTestParentCommand::class => static fn (): MessageSerializer => $serializer,
         ]));
 
@@ -32,10 +35,12 @@ final class MessageSerializerResolverTest extends TestCase
     public function test_resolves_serializer_from_interface_hierarchy(): void
     {
         $serializer = $this->createMock(MessageSerializer::class);
+        $globalDefault = $this->createMock(MessageSerializer::class);
+        $typeDefault = $this->createMock(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $this->createMock(MessageSerializer::class),
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $this->createMock(MessageSerializer::class),
+            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
+            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
             MessageSerializerResolverTestInterface::class => static fn (): MessageSerializer => $serializer,
         ]));
 

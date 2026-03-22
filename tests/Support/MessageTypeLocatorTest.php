@@ -10,6 +10,12 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 
 final class MessageTypeLocatorTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        MessageTypeLocator::reset();
+    }
+
     public function test_matches_exact_class_before_parent(): void
     {
         $expected = new \stdClass();
@@ -113,6 +119,28 @@ final class MessageTypeLocatorTest extends TestCase
         self::assertSame([MessageTypeLocatorChild::class, MessageTypeLocatorChild::class], $locator->getCalls);
     }
 
+    public function test_reset_clears_cache(): void
+    {
+        $service = new \stdClass();
+        $locator = new ServiceLocator([
+            \stdClass::class => static fn () => $service,
+        ]);
+
+        MessageTypeLocator::match($locator, new \stdClass());
+        MessageTypeLocator::reset();
+
+        // After reset, the WeakMap is reinitialized -- previous entries are gone
+        // Verify by matching against a new locator (old cache should not interfere)
+        $differentService = new \stdClass();
+        $differentLocator = new ServiceLocator([
+            \stdClass::class => static fn () => $differentService,
+        ]);
+
+        $match = MessageTypeLocator::match($differentLocator, new \stdClass());
+        self::assertNotNull($match);
+        self::assertSame($differentService, $match->service);
+    }
+
     public function test_match_recomputes_when_ignored_keys_change(): void
     {
         $child = new \stdClass();
@@ -163,6 +191,9 @@ class MessageTypeLocatorImplementsInterface implements MessageTypeLocatorExtende
 {
 }
 
+/**
+ * @extends ServiceLocator<object>
+ */
 final class SpyServiceLocator extends ServiceLocator
 {
     /** @var list<string> */

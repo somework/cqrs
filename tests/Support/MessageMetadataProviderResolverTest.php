@@ -18,9 +18,12 @@ final class MessageMetadataProviderResolverTest extends TestCase
     {
         $provider = $this->createMock(MessageMetadataProvider::class);
 
+        $globalDefault = $this->createMock(MessageMetadataProvider::class);
+        $typeDefault = $this->createMock(MessageMetadataProvider::class);
+
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $this->createMock(MessageMetadataProvider::class),
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $this->createMock(MessageMetadataProvider::class),
+            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
+            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
             MessageMetadataProviderResolverTestParentCommand::class => static fn (): MessageMetadataProvider => $provider,
         ]));
 
@@ -32,10 +35,12 @@ final class MessageMetadataProviderResolverTest extends TestCase
     public function test_resolves_provider_from_interface_hierarchy(): void
     {
         $provider = $this->createMock(MessageMetadataProvider::class);
+        $globalDefault = $this->createMock(MessageMetadataProvider::class);
+        $typeDefault = $this->createMock(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $this->createMock(MessageMetadataProvider::class),
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $this->createMock(MessageMetadataProvider::class),
+            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
+            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
             MessageMetadataProviderResolverTestInterface::class => static fn (): MessageMetadataProvider => $provider,
         ]));
 

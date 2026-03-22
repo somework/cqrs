@@ -14,6 +14,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
+use function assert;
+
 final class HandlerRegistryKernelTest extends KernelTestCase
 {
     protected function setUp(): void
@@ -31,6 +33,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
     public function test_registry_exposes_command_handlers_with_bus_information(): void
     {
         $registry = static::getContainer()->get(HandlerRegistry::class);
+        assert($registry instanceof HandlerRegistry);
 
         $commands = $registry->byType('command');
 
@@ -57,6 +60,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
     public function test_registry_exposes_query_handlers(): void
     {
         $registry = static::getContainer()->get(HandlerRegistry::class);
+        assert($registry instanceof HandlerRegistry);
 
         $queries = $registry->byType('query');
 
@@ -83,6 +87,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
     public function test_registry_exposes_event_handlers_across_buses(): void
     {
         $registry = static::getContainer()->get(HandlerRegistry::class);
+        assert($registry instanceof HandlerRegistry);
 
         $events = $registry->byType('event');
 
@@ -106,6 +111,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
     public function test_registry_uses_naming_strategy_for_display_name(): void
     {
         $registry = static::getContainer()->get(HandlerRegistry::class);
+        assert($registry instanceof HandlerRegistry);
 
         $descriptor = null;
         foreach ($registry->byType('command') as $candidate) {

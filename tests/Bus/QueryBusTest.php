@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
+use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -27,6 +30,8 @@ use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
+
+use function is_string;
 
 final class QueryBusTest extends TestCase
 {
@@ -67,8 +72,8 @@ final class QueryBusTest extends TestCase
             StampsDecider::withoutDecorators(),
         );
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Query was not handled by any handler.');
+        $this->expectException(NoHandlerException::class);
+        $this->expectExceptionMessageMatches('/FindTaskQuery/');
 
         $queryBus->ask($query);
     }
@@ -94,8 +99,8 @@ final class QueryBusTest extends TestCase
             StampsDecider::withoutDecorators(),
         );
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Query was handled multiple times (2 handlers returned a result). Exactly one handler must handle a query.');
+        $this->expectException(MultipleHandlersException::class);
+        $this->expectExceptionMessageMatches('/FindTaskQuery/');
 
         $queryBus->ask($query);
     }
@@ -144,7 +149,7 @@ final class QueryBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $query,
-                self::callback(function (array $stamps) use ($userStamp, $retryStamp, $serializerStamp, $metadataStamp): bool {
+                self::callback(static function (array $stamps) use ($userStamp, $retryStamp, $serializerStamp, $metadataStamp): bool {
                     self::assertSame([$userStamp, $retryStamp, $serializerStamp, $metadataStamp], $stamps);
 
                     return true;
@@ -308,7 +313,7 @@ final class QueryBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $query,
-                self::callback(function (array $stamps) use ($transportStamp): bool {
+                self::callback(static function (array $stamps) use ($transportStamp): bool {
                     $transportStamps = array_values(array_filter(
                         $stamps,
                         static fn ($stamp): bool => $stamp instanceof TransportNamesStamp,
@@ -433,7 +438,7 @@ final class QueryBusTest extends TestCase
             ->method('dispatch')
             ->with(
                 $query,
-                self::callback(function (array $stamps) use ($retryStamp): bool {
+                self::callback(static function (array $stamps) use ($retryStamp): bool {
                     self::assertSame([$retryStamp], $stamps);
 
                     return true;
@@ -492,6 +497,252 @@ final class QueryBusTest extends TestCase
         );
 
         self::assertSame('value', $queryBus->ask($query));
+    }
+
+    public function test_ask_logs_stamp_decision_and_result_with_logger(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::atLeastOnce())
+            ->method('debug')
+            ->with(
+                self::callback(static fn (mixed $v): bool => is_string($v)),
+                self::callback(static fn (array $context): bool => isset($context['message']) && isset($context['bus']))
+            );
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        self::assertSame('value', $queryBus->ask($query));
+    }
+
+    public function test_ask_works_without_logger(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $queryBus = new QueryBus($bus, StampsDecider::withoutDecorators());
+
+        self::assertSame('value', $queryBus->ask($query));
+    }
+
+    public function test_ask_logs_exactly_two_debug_messages_on_success(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(2))
+            ->method('debug');
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $queryBus->ask($query);
+    }
+
+    public function test_ask_log_messages_contain_correct_strings(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logMessages = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(2))
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logMessages): void {
+                $logMessages[] = $message;
+            });
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $queryBus->ask($query);
+
+        self::assertSame('Stamps decided', $logMessages[0]);
+        self::assertSame('Query handled successfully', $logMessages[1]);
+    }
+
+    public function test_ask_log_context_includes_bus_name_query(): void
+    {
+        $query = new FindTaskQuery('123');
+        $handled = new HandledStamp('value', 'handler');
+        $envelope = (new Envelope($query))->with($handled);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logContexts = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::exactly(2))
+            ->method('debug')
+            ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
+                $logContexts[] = $context;
+            });
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        $queryBus->ask($query);
+
+        foreach ($logContexts as $context) {
+            self::assertSame('query', $context['bus']);
+            self::assertSame(FindTaskQuery::class, $context['message']);
+        }
+    }
+
+    public function test_ask_does_not_log_success_when_no_handler(): void
+    {
+        $query = new FindTaskQuery('123');
+        $envelope = new Envelope($query);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logMessages = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('debug')
+            ->willReturnCallback(static function (string $message) use (&$logMessages): void {
+                $logMessages[] = $message;
+            });
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        try {
+            $queryBus->ask($query);
+            self::fail('Expected NoHandlerException');
+        } catch (NoHandlerException) {
+            // expected
+        }
+
+        self::assertNotContains('Query handled successfully', $logMessages);
+    }
+
+    public function test_ask_does_not_log_success_when_multiple_handlers(): void
+    {
+        $query = new FindTaskQuery('123');
+        $envelope = (new Envelope($query))
+            ->with(new HandledStamp('first', 'handler1'))
+            ->with(new HandledStamp('second', 'handler2'));
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $logMessages = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('debug')
+            ->willReturnCallback(static function (string $message) use (&$logMessages): void {
+                $logMessages[] = $message;
+            });
+
+        $queryBus = new QueryBus(
+            $bus,
+            StampsDecider::withoutDecorators(),
+            logger: $logger,
+        );
+
+        try {
+            $queryBus->ask($query);
+            self::fail('Expected MultipleHandlersException');
+        } catch (MultipleHandlersException) {
+            // expected
+        }
+
+        self::assertNotContains('Query handled successfully', $logMessages);
+    }
+
+    public function test_ask_no_handler_exception_has_query_bus_name(): void
+    {
+        $query = new FindTaskQuery('123');
+        $envelope = new Envelope($query);
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $queryBus = new QueryBus($bus, StampsDecider::withoutDecorators());
+
+        try {
+            $queryBus->ask($query);
+            self::fail('Expected NoHandlerException');
+        } catch (NoHandlerException $e) {
+            self::assertSame('query', $e->busName);
+            self::assertSame(FindTaskQuery::class, $e->messageFqcn);
+        }
+    }
+
+    public function test_ask_multiple_handlers_exception_has_handler_count(): void
+    {
+        $query = new FindTaskQuery('123');
+        $envelope = (new Envelope($query))
+            ->with(new HandledStamp('first', 'handler1'))
+            ->with(new HandledStamp('second', 'handler2'))
+            ->with(new HandledStamp('third', 'handler3'));
+
+        $bus = $this->createMock(MessageBusInterface::class);
+        $bus->expects(self::once())
+            ->method('dispatch')
+            ->willReturn($envelope);
+
+        $queryBus = new QueryBus($bus, StampsDecider::withoutDecorators());
+
+        try {
+            $queryBus->ask($query);
+            self::fail('Expected MultipleHandlersException');
+        } catch (MultipleHandlersException $e) {
+            self::assertSame('query', $e->busName);
+            self::assertSame(3, $e->handlerCount);
+            self::assertSame(FindTaskQuery::class, $e->messageFqcn);
+        }
     }
 
     /**

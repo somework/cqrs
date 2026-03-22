@@ -6,13 +6,18 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\MethodAttributeHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\NonCqrsHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\NoParamHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryableImportLegacyDataCommand;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 use function array_column;
@@ -28,9 +33,11 @@ final class CqrsHandlerPassTest extends TestCase
         $pass = new CqrsHandlerPass();
         $pass->process($container);
 
-        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        $metadataRaw = $container->getParameter('somework_cqrs.handler_metadata');
 
-        self::assertIsArray($metadata);
+        self::assertIsArray($metadataRaw);
+        /** @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = $metadataRaw;
         self::assertArrayHasKey('command', $metadata);
         self::assertArrayHasKey('query', $metadata);
         self::assertArrayHasKey('event', $metadata);
@@ -83,7 +90,10 @@ final class CqrsHandlerPassTest extends TestCase
         $pass = new CqrsHandlerPass();
         $pass->process($container);
 
-        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        $metadataRaw = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadataRaw);
+        /** @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = $metadataRaw;
 
         $commandMetadata = $metadata['command'];
         self::assertSame([
@@ -143,7 +153,10 @@ final class CqrsHandlerPassTest extends TestCase
         $pass = new CqrsHandlerPass();
         $pass->process($container);
 
-        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        $metadataRaw = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadataRaw);
+        /** @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = $metadataRaw;
 
         self::assertSame([
             [
@@ -176,6 +189,100 @@ final class CqrsHandlerPassTest extends TestCase
         ], $metadata['event']);
     }
 
+    public function test_it_resolves_child_definition_handler_class(): void
+    {
+        $container = new ContainerBuilder();
+
+        $container->register('somework_cqrs.tests.parent_handler', CreateTaskHandler::class)
+            ->setAbstract(true);
+
+        $child = new ChildDefinition('somework_cqrs.tests.parent_handler');
+        $child->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class]);
+        $container->setDefinition('somework_cqrs.tests.child_handler', $child);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['command']);
+        self::assertSame(CreateTaskHandler::class, $metadata['command'][0]['handler_class']);
+    }
+
+    public function test_it_skips_child_definition_with_unresolvable_parent(): void
+    {
+        $container = new ContainerBuilder();
+
+        $container->register('somework_cqrs.tests.parent_no_class')
+            ->setAbstract(true);
+
+        $child = new ChildDefinition('somework_cqrs.tests.parent_no_class');
+        $child->addTag('messenger.message_handler');
+        $container->setDefinition('somework_cqrs.tests.child_no_class', $child);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['command']);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
+    }
+
+    public function test_it_resolves_parameterized_class_name(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('handler.class', CreateTaskHandler::class);
+        $container->register('somework_cqrs.tests.parameterized_handler', '%handler.class%')
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['command']);
+        self::assertSame(CreateTaskHandler::class, $metadata['command'][0]['handler_class']);
+    }
+
+    public function test_it_skips_handler_with_no_invoke_parameters(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.no_param_handler', NoParamHandler::class)
+            ->addTag('messenger.message_handler');
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['command']);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
+    }
+
+    public function test_it_skips_non_cqrs_message_type(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.non_cqrs_handler', NonCqrsHandler::class)
+            ->addTag('messenger.message_handler');
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['command']);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
+    }
+
     public function test_it_discovers_method_attribute_hint(): void
     {
         $container = new ContainerBuilder();
@@ -187,7 +294,10 @@ final class CqrsHandlerPassTest extends TestCase
         $pass = new CqrsHandlerPass();
         $pass->process($container);
 
-        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        $metadataRaw = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadataRaw);
+        /** @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = $metadataRaw;
         $commandMetadata = $metadata['command'];
 
         self::assertContains([
@@ -197,5 +307,27 @@ final class CqrsHandlerPassTest extends TestCase
             'service_id' => 'somework_cqrs.tests.method_attribute_handler',
             'bus' => null,
         ], $commandMetadata);
+    }
+
+    public function test_it_discovers_pure_intersection_type_handler(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.intersection_type_handler', IntersectionTypeHandler::class)
+            ->addTag('messenger.message_handler');
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadataRaw = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadataRaw);
+        /** @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = $metadataRaw;
+
+        self::assertCount(1, $metadata['command']);
+        self::assertSame(CreateTaskCommand::class, $metadata['command'][0]['message']);
+        self::assertSame(IntersectionTypeHandler::class, $metadata['command'][0]['handler_class']);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
     }
 }

@@ -10,8 +10,9 @@ use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
-use function assert;
-
+/**
+ * @extends AbstractCommandHandler<GenerateReportCommand>
+ */
 #[AsCommandHandler(command: GenerateReportCommand::class, bus: 'messenger.bus.commands_async')]
 final class GenerateReportHandler extends AbstractCommandHandler
 {
@@ -19,13 +20,8 @@ final class GenerateReportHandler extends AbstractCommandHandler
     {
     }
 
-    /**
-     * @param GenerateReportCommand $command
-     */
     protected function handle(Command $command): mixed
     {
-        assert($command instanceof GenerateReportCommand);
-
         $this->recorder->recordReport($command->reportId);
         $this->recorder->recordEnvelopeMessage(self::class, $this->getEnvelope());
 

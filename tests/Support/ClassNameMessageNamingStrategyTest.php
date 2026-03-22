@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 
@@ -18,14 +19,12 @@ final class ClassNameMessageNamingStrategyTest extends TestCase
         $this->strategy = new ClassNameMessageNamingStrategy();
     }
 
-    /**
-     * @dataProvider provideMessageClassLabels
-     */
+    #[DataProvider('provideMessageClassLabels')]
     public function test_it_returns_documented_label(string $messageClass, string $expectedLabel): void
     {
         self::assertSame(
             $expectedLabel,
-            $this->strategy->getName($messageClass),
+            $this->strategy->getName($messageClass), // @phpstan-ignore argument.type
             sprintf('The label for "%s" documents the default handler presentation.', $messageClass),
         );
     }

@@ -152,8 +152,8 @@ final class CqrsExtensionTransportsTest extends TestCase
     }
 
     /**
-     * @param list<string>         $expected
-     * @param list<StampInterface> $stamps
+     * @param list<string>               $expected
+     * @param array<int, StampInterface> $stamps
      */
     private function assertTransportNames(array $expected, array $stamps): void
     {
