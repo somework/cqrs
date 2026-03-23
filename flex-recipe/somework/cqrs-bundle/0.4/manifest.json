@@ -1,0 +1,8 @@
+{
+    "bundles": {
+        "SomeWork\\CqrsBundle\\SomeWorkCqrsBundle": ["all"]
+    },
+    "copy-from-recipe": {
+        "config/": "%CONFIG_DIR%/"
+    }
+}
