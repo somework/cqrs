@@ -23,7 +23,7 @@ abstract class AbstractCommandHandler implements CommandHandler, EnvelopeAware
     use EnvelopeAwareTrait;
 
     /** @param TCommand $command */
-    final public function __invoke(Command $command): mixed
+    final public function __invoke($command): mixed
     {
         return $this->handle($command);
     }

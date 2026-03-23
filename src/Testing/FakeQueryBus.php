@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Testing;
 
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -12,7 +13,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  *
  * @api
  */
-final class FakeQueryBus implements RecordsBusDispatches
+final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
 {
     /** @var list<array{message: Query, stamps: list<StampInterface>}> */
     private array $dispatched = [];

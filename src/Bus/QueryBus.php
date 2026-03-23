@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
@@ -21,7 +22,7 @@ use function count;
  *
  * @api
  */
-final class QueryBus
+final class QueryBus implements QueryBusInterface
 {
     private const BUS_NAME = 'query';
 

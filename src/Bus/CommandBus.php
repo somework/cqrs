@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
@@ -18,7 +19,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  *
  * @api
  */
-final class CommandBus extends AbstractMessengerBus
+final class CommandBus extends AbstractMessengerBus implements CommandBusInterface
 {
     protected const BUS_NAME = 'command';
 

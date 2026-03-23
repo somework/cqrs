@@ -24,7 +24,7 @@ abstract class AbstractQueryHandler implements QueryHandler, EnvelopeAware
     use EnvelopeAwareTrait;
 
     /** @param TQuery $query */
-    final public function __invoke(Query $query): mixed
+    final public function __invoke($query): mixed
     {
         return $this->fetch($query);
     }

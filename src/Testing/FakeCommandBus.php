@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Testing;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -14,7 +15,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  *
  * @api
  */
-final class FakeCommandBus implements RecordsBusDispatches
+final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
 {
     /** @var list<array{message: Command, mode: DispatchMode, stamps: list<StampInterface>}> */
     private array $dispatched = [];

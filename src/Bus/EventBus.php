@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\EventBusInterface;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
@@ -16,7 +17,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  *
  * @api
  */
-final class EventBus extends AbstractMessengerBus
+final class EventBus extends AbstractMessengerBus implements EventBusInterface
 {
     protected const BUS_NAME = 'event';
 

@@ -23,7 +23,7 @@ abstract class AbstractEventHandler implements EventHandler, EnvelopeAware
     use EnvelopeAwareTrait;
 
     /** @param TEvent $event */
-    final public function __invoke(Event $event): void
+    final public function __invoke($event): void
     {
         $this->on($event);
     }

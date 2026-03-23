@@ -18,7 +18,7 @@ use SomeWork\CqrsBundle\Contract\QueryHandler;
 final class HandlerContractTest extends TestCase
 {
     #[Test]
-    public function commandHandlerInvokeHasNoPhpTypeOnParameter(): void
+    public function command_handler_invoke_has_no_php_type_on_parameter(): void
     {
         $reflection = new ReflectionClass(CommandHandler::class);
         $method = $reflection->getMethod('__invoke');
@@ -31,7 +31,7 @@ final class HandlerContractTest extends TestCase
     }
 
     #[Test]
-    public function queryHandlerInvokeHasNoPhpTypeOnParameter(): void
+    public function query_handler_invoke_has_no_php_type_on_parameter(): void
     {
         $reflection = new ReflectionClass(QueryHandler::class);
         $method = $reflection->getMethod('__invoke');
@@ -44,7 +44,7 @@ final class HandlerContractTest extends TestCase
     }
 
     #[Test]
-    public function eventHandlerInvokeHasNoPhpTypeOnParameter(): void
+    public function event_handler_invoke_has_no_php_type_on_parameter(): void
     {
         $reflection = new ReflectionClass(EventHandler::class);
         $method = $reflection->getMethod('__invoke');

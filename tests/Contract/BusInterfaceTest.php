@@ -8,7 +8,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
-use ReflectionMethod;
+use ReflectionNamedType;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
@@ -25,7 +25,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 final class BusInterfaceTest extends TestCase
 {
     #[Test]
-    public function commandBusInterfaceDeclaresDispatchMethod(): void
+    public function command_bus_interface_declares_dispatch_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -36,19 +36,19 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('command', $params[0]->getName());
-        self::assertSame(Command::class, $params[0]->getType()?->getName());
+        self::assertSame(Command::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('mode', $params[1]->getName());
-        self::assertSame(DispatchMode::class, $params[1]->getType()?->getName());
+        self::assertSame(DispatchMode::class, self::namedTypeName($params[1]->getType()));
         self::assertTrue($params[1]->isDefaultValueAvailable());
         self::assertSame(DispatchMode::DEFAULT, $params[1]->getDefaultValue());
         self::assertSame('stamps', $params[2]->getName());
         self::assertTrue($params[2]->isVariadic());
-        self::assertSame(StampInterface::class, $params[2]->getType()?->getName());
-        self::assertSame(Envelope::class, $method->getReturnType()?->getName());
+        self::assertSame(StampInterface::class, self::namedTypeName($params[2]->getType()));
+        self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
     #[Test]
-    public function commandBusInterfaceDeclaresDispatchSyncMethod(): void
+    public function command_bus_interface_declares_dispatch_sync_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -58,14 +58,14 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('command', $params[0]->getName());
-        self::assertSame(Command::class, $params[0]->getType()?->getName());
+        self::assertSame(Command::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('stamps', $params[1]->getName());
         self::assertTrue($params[1]->isVariadic());
         self::assertSame('mixed', (string) $method->getReturnType());
     }
 
     #[Test]
-    public function commandBusInterfaceDeclaresDispatchAsyncMethod(): void
+    public function command_bus_interface_declares_dispatch_async_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -75,14 +75,14 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('command', $params[0]->getName());
-        self::assertSame(Command::class, $params[0]->getType()?->getName());
+        self::assertSame(Command::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('stamps', $params[1]->getName());
         self::assertTrue($params[1]->isVariadic());
-        self::assertSame(Envelope::class, $method->getReturnType()?->getName());
+        self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
     #[Test]
-    public function queryBusInterfaceDeclaresAskMethod(): void
+    public function query_bus_interface_declares_ask_method(): void
     {
         $reflection = new ReflectionClass(QueryBusInterface::class);
 
@@ -93,15 +93,15 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('query', $params[0]->getName());
-        self::assertSame(Query::class, $params[0]->getType()?->getName());
+        self::assertSame(Query::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('stamps', $params[1]->getName());
         self::assertTrue($params[1]->isVariadic());
-        self::assertSame(StampInterface::class, $params[1]->getType()?->getName());
+        self::assertSame(StampInterface::class, self::namedTypeName($params[1]->getType()));
         self::assertSame('mixed', (string) $method->getReturnType());
     }
 
     #[Test]
-    public function eventBusInterfaceDeclaresDispatchMethod(): void
+    public function event_bus_interface_declares_dispatch_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 
@@ -112,18 +112,18 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('event', $params[0]->getName());
-        self::assertSame(Event::class, $params[0]->getType()?->getName());
+        self::assertSame(Event::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('mode', $params[1]->getName());
-        self::assertSame(DispatchMode::class, $params[1]->getType()?->getName());
+        self::assertSame(DispatchMode::class, self::namedTypeName($params[1]->getType()));
         self::assertTrue($params[1]->isDefaultValueAvailable());
         self::assertSame(DispatchMode::DEFAULT, $params[1]->getDefaultValue());
         self::assertSame('stamps', $params[2]->getName());
         self::assertTrue($params[2]->isVariadic());
-        self::assertSame(Envelope::class, $method->getReturnType()?->getName());
+        self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
     #[Test]
-    public function eventBusInterfaceDeclaresDispatchSyncMethod(): void
+    public function event_bus_interface_declares_dispatch_sync_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 
@@ -133,14 +133,14 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('event', $params[0]->getName());
-        self::assertSame(Event::class, $params[0]->getType()?->getName());
+        self::assertSame(Event::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('stamps', $params[1]->getName());
         self::assertTrue($params[1]->isVariadic());
-        self::assertSame(Envelope::class, $method->getReturnType()?->getName());
+        self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
     #[Test]
-    public function eventBusInterfaceDeclaresDispatchAsyncMethod(): void
+    public function event_bus_interface_declares_dispatch_async_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 
@@ -150,9 +150,16 @@ final class BusInterfaceTest extends TestCase
         $params = $method->getParameters();
 
         self::assertSame('event', $params[0]->getName());
-        self::assertSame(Event::class, $params[0]->getType()?->getName());
+        self::assertSame(Event::class, self::namedTypeName($params[0]->getType()));
         self::assertSame('stamps', $params[1]->getName());
         self::assertTrue($params[1]->isVariadic());
-        self::assertSame(Envelope::class, $method->getReturnType()?->getName());
+        self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
+    }
+
+    private static function namedTypeName(?\ReflectionType $type): string
+    {
+        self::assertInstanceOf(ReflectionNamedType::class, $type);
+
+        return $type->getName();
     }
 }
