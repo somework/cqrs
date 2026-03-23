@@ -28,7 +28,7 @@ it to `config/bundles.php`:
 ```php
 return [
     // ...
-    SomeWork\CqrsBundle\CqrsBundle::class => ['all' => true],
+    SomeWork\CqrsBundle\SomeWorkCqrsBundle::class => ['all' => true],
 ];
 ```
 
