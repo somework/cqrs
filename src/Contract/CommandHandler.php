@@ -19,5 +19,5 @@ interface CommandHandler
      *
      * @param TCommand $command
      */
-    public function __invoke(Command $command): mixed;
+    public function __invoke($command): mixed;
 }

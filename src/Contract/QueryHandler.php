@@ -22,5 +22,5 @@ interface QueryHandler
      *
      * @return TResult
      */
-    public function __invoke(Query $query): mixed;
+    public function __invoke($query): mixed;
 }
