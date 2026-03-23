@@ -13,7 +13,15 @@ use function implode;
 use function is_array;
 use function sprintf;
 
-/** @internal */
+/**
+ * Validates that commands and queries have exactly one handler at compile time.
+ *
+ * This pass runs during container compilation only. Handlers registered after
+ * compilation (e.g., runtime service decoration or test double injection) are
+ * not validated by this pass.
+ *
+ * @internal
+ */
 final class ValidateHandlerCountPass implements CompilerPassInterface
 {
     private const VALIDATED_TYPES = ['command', 'query'];

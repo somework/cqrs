@@ -209,18 +209,15 @@ final class GenerateMessageCommand extends SymfonyCommand
         $shortAttribute = basename(str_replace('\\', '/', $attribute));
         $shortMessage = basename(str_replace('\\', '/', $messageClass));
 
-        $methodSignature = sprintf('    public function __invoke(%s $message): mixed', $shortMessage);
+        $methodSignature = sprintf('    public function __invoke(%s $message): void', $shortMessage);
         $methodBody = [
             '        // TODO: Implement handler logic.',
-            '',
-            '        return null;',
         ];
 
         if ('query' === $type) {
+            $methodSignature = sprintf('    public function __invoke(%s $message): mixed', $shortMessage);
             $methodBody = [
-                '        // TODO: Return the query result.',
-                '',
-                '        return null;',
+                "        throw new \\LogicException('Not implemented: replace with query result.');",
             ];
         }
 

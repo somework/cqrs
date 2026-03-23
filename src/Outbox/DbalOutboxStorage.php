@@ -22,7 +22,7 @@ use function sprintf;
  */
 final class DbalOutboxStorage implements OutboxStorage
 {
-    /** Intentionally mutable for lazy table creation — see autoSetup(). */
+    /** Intentionally mutable for lazy table creation — process-local, not distributed across workers. See autoSetup(). */
     private bool $setupDone = false;
 
     public function __construct(

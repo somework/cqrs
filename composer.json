@@ -40,6 +40,12 @@
         "symfony/lock": "^7.2",
         "symfony/rate-limiter": "^7.2"
     },
+    "conflict": {
+        "doctrine/dbal": "<4.0",
+        "open-telemetry/api": "<1.8",
+        "symfony/lock": "<7.2",
+        "symfony/rate-limiter": "<7.2"
+    },
     "suggest": {
         "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
         "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",

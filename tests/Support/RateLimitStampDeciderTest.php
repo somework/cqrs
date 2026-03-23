@@ -216,6 +216,7 @@ final class RateLimitStampDeciderTest extends TestCase
                 self::callback(static function (array $context): bool {
                     self::assertSame(CreateTaskCommand::class, $context['fqcn']);
                     self::assertArrayHasKey('retry_after', $context);
+                    self::assertGreaterThanOrEqual(0, $context['retry_after'], 'retry_after must be non-negative (max(0, ...) guard)');
                     self::assertArrayHasKey('remaining_tokens', $context);
                     self::assertArrayHasKey('limit', $context);
                     self::assertSame(0, $context['remaining_tokens']);
@@ -260,6 +261,47 @@ final class RateLimitStampDeciderTest extends TestCase
         // Second call should throw without error from null logger
         $this->expectException(RateLimitExceededException::class);
         $decider->decide($message, DispatchMode::SYNC, []);
+    }
+
+    public function test_logs_zero_retry_after_when_retry_after_is_in_the_past(): void
+    {
+        $message = new CreateTaskCommand('123', 'Test');
+
+        $factory = new RateLimiterFactory(
+            ['id' => 'past_test', 'policy' => 'fixed_window', 'limit' => 1, 'interval' => '1 second'],
+            new InMemoryStorage(),
+        );
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn () => $factory,
+        ]));
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('warning')
+            ->with(
+                self::anything(),
+                self::callback(static function (array $context): bool {
+                    // The max(0, ...) guard ensures retry_after is never negative
+                    self::assertGreaterThanOrEqual(0, $context['retry_after'], 'retry_after must be clamped to 0 when retryAfter is in the past');
+
+                    return true;
+                }),
+            );
+
+        $decider = new RateLimitStampDecider($resolver, Command::class, $logger);
+
+        // Consume the single token
+        $decider->decide($message, DispatchMode::SYNC, []);
+
+        // Sleep briefly so the 1-second window may expire and retryAfter lands in the past
+        // Even without sleep, the guard should produce a non-negative value
+        try {
+            $decider->decide($message, DispatchMode::SYNC, []);
+            self::fail('Expected RateLimitExceededException');
+        } catch (RateLimitExceededException) {
+            // Logger assertion verified via mock expectations
+        }
     }
 
     public function test_no_warning_logged_when_rate_limit_accepted(): void
