@@ -27,13 +27,24 @@ tooling that keeps your catalogue maintainable.
 * PHP 8.2 or newer.
 * Symfony 7.2 or newer.
 
+### With Symfony Flex (recommended)
+
+```bash
+composer require somework/cqrs-bundle
+```
+
+Flex automatically registers the bundle in `config/bundles.php` and creates a
+commented `config/packages/somework_cqrs.yaml` with all available options.
+
+### Without Symfony Flex
+
 Install the bundle via Composer:
 
 ```bash
 composer require somework/cqrs-bundle
 ```
 
-Then enable it in `config/bundles.php`:
+Then register it manually in `config/bundles.php`:
 
 ```php
 return [
@@ -42,11 +53,20 @@ return [
 ];
 ```
 
+Create `config/packages/somework_cqrs.yaml` (see `docs/flex-recipe/` for a
+template with all available options).
+
+### Verify the installation
+
 Run the bundled console tooling to verify the bundle is registered:
 
 ```bash
 bin/console somework:cqrs:list
 ```
+
+> **Flex Recipe:** The recipe files are in `docs/flex-recipe/` and are pending
+> submission to [symfony/recipes-contrib](https://github.com/symfony/recipes-contrib).
+> Until published, manual bundle registration is required.
 
 ## Quick start
 
