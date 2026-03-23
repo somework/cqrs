@@ -131,4 +131,56 @@ final class CqrsAssertionsTraitTest extends TestCase
         // Should match because DispatchedMessage uses instanceof
         self::assertDispatched($bus, Command::class);
     }
+
+    public function test_assert_dispatched_with_callback_passes(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('test-id') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        self::assertDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'test-id');
+    }
+
+    public function test_assert_dispatched_with_callback_fails_when_no_match(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('actual') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        $this->expectException(AssertionFailedError::class);
+
+        self::assertDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'wrong');
+    }
+
+    public function test_assert_not_dispatched_with_callback_passes_when_callback_does_not_match(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('actual') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'wrong');
+    }
+
+    public function test_assert_not_dispatched_with_callback_fails_when_callback_matches(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('match') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        $this->expectException(AssertionFailedError::class);
+
+        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'match');
+    }
 }

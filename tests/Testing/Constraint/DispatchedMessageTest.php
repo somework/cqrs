@@ -191,4 +191,70 @@ final class DispatchedMessageTest extends TestCase
 
         self::assertThat($bus, new LogicalNot($constraint));
     }
+
+    public function test_callback_matching_passes_when_property_matches(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('expected-id') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => $m->id === 'expected-id');
+
+        self::assertThat($bus, $constraint);
+    }
+
+    public function test_callback_non_matching_fails(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class('actual-id') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command);
+
+        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => $m->id === 'wrong-id');
+
+        self::assertThat($bus, new LogicalNot($constraint));
+    }
+
+    public function test_null_callback_backward_compat(): void
+    {
+        $bus = new FakeCommandBus();
+        $command = new class implements Command {};
+
+        $bus->dispatch($command);
+
+        $constraint = new DispatchedMessage($command::class, null);
+
+        self::assertThat($bus, $constraint);
+    }
+
+    public function test_callback_matches_second_message_in_iteration(): void
+    {
+        $bus = new FakeCommandBus();
+        $command1 = new class('first') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+        $command2 = new class('second') implements Command {
+            public function __construct(public readonly string $id) {}
+        };
+
+        $bus->dispatch($command1);
+        $bus->dispatch($command2);
+
+        // Both are anonymous classes with different FQCNs, so we match on Command interface
+        $constraint = new DispatchedMessage(Command::class, static fn (object $m): bool => $m->id === 'second');
+
+        self::assertThat($bus, $constraint);
+    }
+
+    public function test_to_string_includes_matching_callback_when_provided(): void
+    {
+        $constraint = new DispatchedMessage('App\MyCommand', static fn (object $m): bool => true);
+
+        self::assertStringContainsString('matching callback', $constraint->toString());
+    }
 }

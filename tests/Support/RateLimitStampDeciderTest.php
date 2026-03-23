@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 use Symfony\Component\RateLimiter\Storage\InMemoryStorage;
@@ -192,5 +193,93 @@ final class RateLimitStampDeciderTest extends TestCase
 
         self::assertSame([Command::class], $commandDecider->messageTypes());
         self::assertSame([Event::class], $eventDecider->messageTypes());
+    }
+
+    public function test_logs_warning_when_rate_limit_exceeded(): void
+    {
+        $message = new CreateTaskCommand('123', 'Test');
+
+        $factory = new RateLimiterFactory(
+            ['id' => 'log_test', 'policy' => 'fixed_window', 'limit' => 1, 'interval' => '1 hour'],
+            new InMemoryStorage(),
+        );
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn () => $factory,
+        ]));
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::once())
+            ->method('warning')
+            ->with(
+                'Message {fqcn} throttled by rate limiter, retry after {retry_after}s',
+                self::callback(static function (array $context): bool {
+                    self::assertSame(CreateTaskCommand::class, $context['fqcn']);
+                    self::assertArrayHasKey('retry_after', $context);
+                    self::assertArrayHasKey('remaining_tokens', $context);
+                    self::assertArrayHasKey('limit', $context);
+                    self::assertSame(0, $context['remaining_tokens']);
+                    self::assertSame(1, $context['limit']);
+
+                    return true;
+                }),
+            );
+
+        $decider = new RateLimitStampDecider($resolver, Command::class, $logger);
+
+        // First call consumes the token
+        $decider->decide($message, DispatchMode::SYNC, []);
+
+        // Second call should log warning and throw
+        try {
+            $decider->decide($message, DispatchMode::SYNC, []);
+            self::fail('Expected RateLimitExceededException');
+        } catch (RateLimitExceededException) {
+            // Expected -- logger assertion is verified by mock expectations
+        }
+    }
+
+    public function test_null_logger_still_throws_on_rate_limit_exceeded(): void
+    {
+        $message = new CreateTaskCommand('123', 'Test');
+
+        $factory = new RateLimiterFactory(
+            ['id' => 'null_log_test', 'policy' => 'fixed_window', 'limit' => 1, 'interval' => '1 hour'],
+            new InMemoryStorage(),
+        );
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn () => $factory,
+        ]));
+
+        $decider = new RateLimitStampDecider($resolver, Command::class, null);
+
+        // First call consumes the token
+        $decider->decide($message, DispatchMode::SYNC, []);
+
+        // Second call should throw without error from null logger
+        $this->expectException(RateLimitExceededException::class);
+        $decider->decide($message, DispatchMode::SYNC, []);
+    }
+
+    public function test_no_warning_logged_when_rate_limit_accepted(): void
+    {
+        $message = new CreateTaskCommand('123', 'Test');
+
+        $factory = new RateLimiterFactory(
+            ['id' => 'no_log_test', 'policy' => 'no_limit'],
+            new InMemoryStorage(),
+        );
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn () => $factory,
+        ]));
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+
+        $decider = new RateLimitStampDecider($resolver, Command::class, $logger);
+
+        $decider->decide($message, DispatchMode::SYNC, []);
     }
 }
