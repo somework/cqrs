@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\AllowNoHandlerMiddlewareRegistrar;
+use SomeWork\CqrsBundle\DependencyInjection\Registration\BusInterfaceRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusWiringRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchAfterCurrentBusRegistrar;
@@ -128,6 +129,7 @@ final class CqrsExtension extends Extension
         (new HandlerLocatorRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new AllowNoHandlerMiddlewareRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusWiringRegistrar())->register($container, $config['buses'], $defaultBusId);
+        (new BusInterfaceRegistrar())->register($container);
 
         $container->setParameter('somework_cqrs.retry_strategy.transports', $config['retry_strategy']['transports']);
         $container->setParameter('somework_cqrs.retry_strategy.jitter', $config['retry_strategy']['jitter']);
