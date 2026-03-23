@@ -29,6 +29,7 @@
         "doctrine/dbal": "^4.0",
         "doctrine/orm": "^3.6",
         "friendsofphp/php-cs-fixer": "^3.58",
+        "open-telemetry/api": "^1.8",
         "phpstan/extension-installer": "^1.4",
         "phpstan/phpstan": "^2.1",
         "phpstan/phpstan-deprecation-rules": "^2.0",
