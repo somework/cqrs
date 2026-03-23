@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Attribute;
 
 use Attribute;
-use SomeWork\CqrsBundle\Contract\Command;
 
 /**
  * Attribute to mark a service as a command handler.
@@ -16,7 +15,9 @@ use SomeWork\CqrsBundle\Contract\Command;
 final class AsCommandHandler
 {
     /**
-     * @param class-string<Command> $command
+     * Relaxed from class-string<Command> to support attribute-only handlers (DX-02).
+     *
+     * @param class-string          $command
      * @param non-empty-string|null $bus
      */
     public function __construct(

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Attribute;
 
 use Attribute;
-use SomeWork\CqrsBundle\Contract\Event;
 
 /**
  * Attribute to mark a service as an event handler.
@@ -16,7 +15,9 @@ use SomeWork\CqrsBundle\Contract\Event;
 final class AsEventHandler
 {
     /**
-     * @param class-string<Event>   $event
+     * Relaxed from class-string<Event> to support attribute-only handlers (DX-02).
+     *
+     * @param class-string          $event
      * @param non-empty-string|null $bus
      */
     public function __construct(

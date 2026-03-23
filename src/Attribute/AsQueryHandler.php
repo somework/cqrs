@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Attribute;
 
 use Attribute;
-use SomeWork\CqrsBundle\Contract\Query;
 
 /**
  * Attribute to mark a service as a query handler.
@@ -16,7 +15,9 @@ use SomeWork\CqrsBundle\Contract\Query;
 final class AsQueryHandler
 {
     /**
-     * @param class-string<Query>   $query
+     * Relaxed from class-string<Query> to support attribute-only handlers (DX-02).
+     *
+     * @param class-string          $query
      * @param non-empty-string|null $bus
      */
     public function __construct(

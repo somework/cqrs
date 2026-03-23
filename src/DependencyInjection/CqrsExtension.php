@@ -170,6 +170,7 @@ final class CqrsExtension extends Extension
                 $definition->addTag('messenger.message_handler', [
                     'handles' => $attribute->command,
                     'bus' => $bus,
+                    'somework_cqrs_type' => 'command',
                 ]);
             }
         );
@@ -181,6 +182,7 @@ final class CqrsExtension extends Extension
                 $definition->addTag('messenger.message_handler', [
                     'handles' => $attribute->query,
                     'bus' => $bus,
+                    'somework_cqrs_type' => 'query',
                 ]);
             }
         );
@@ -192,6 +194,7 @@ final class CqrsExtension extends Extension
                 $definition->addTag('messenger.message_handler', [
                     'handles' => $attribute->event,
                     'bus' => $bus,
+                    'somework_cqrs_type' => 'event',
                 ]);
             }
         );

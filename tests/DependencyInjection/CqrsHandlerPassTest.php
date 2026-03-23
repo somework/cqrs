@@ -6,6 +6,9 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
@@ -16,6 +19,9 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryableImportLegacyDataCommand;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -327,6 +333,154 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertCount(1, $metadata['command']);
         self::assertSame(CreateTaskCommand::class, $metadata['command'][0]['message']);
         self::assertSame(IntersectionTypeHandler::class, $metadata['command'][0]['handler_class']);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
+    }
+
+    public function test_attribute_only_command_handler_discovered(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.attr_command_handler', AttributeOnlyCommandHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => PlainCommand::class,
+                'bus' => 'messenger.bus.commands',
+                'somework_cqrs_type' => 'command',
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['command']);
+        self::assertSame([
+            'type' => 'command',
+            'message' => PlainCommand::class,
+            'handler_class' => AttributeOnlyCommandHandler::class,
+            'service_id' => 'somework_cqrs.tests.attr_command_handler',
+            'bus' => 'messenger.bus.commands',
+        ], $metadata['command'][0]);
+        self::assertSame([], $metadata['query']);
+        self::assertSame([], $metadata['event']);
+    }
+
+    public function test_attribute_only_query_handler_discovered(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.attr_query_handler', AttributeOnlyQueryHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => PlainQuery::class,
+                'bus' => 'messenger.bus.queries',
+                'somework_cqrs_type' => 'query',
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['query']);
+        self::assertSame([
+            'type' => 'query',
+            'message' => PlainQuery::class,
+            'handler_class' => AttributeOnlyQueryHandler::class,
+            'service_id' => 'somework_cqrs.tests.attr_query_handler',
+            'bus' => 'messenger.bus.queries',
+        ], $metadata['query'][0]);
+        self::assertSame([], $metadata['command']);
+        self::assertSame([], $metadata['event']);
+    }
+
+    public function test_attribute_only_event_handler_discovered(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.attr_event_handler', AttributeOnlyEventHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => PlainEvent::class,
+                'bus' => 'messenger.bus.events',
+                'somework_cqrs_type' => 'event',
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['event']);
+        self::assertSame([
+            'type' => 'event',
+            'message' => PlainEvent::class,
+            'handler_class' => AttributeOnlyEventHandler::class,
+            'service_id' => 'somework_cqrs.tests.attr_event_handler',
+            'bus' => 'messenger.bus.events',
+        ], $metadata['event'][0]);
+        self::assertSame([], $metadata['command']);
+        self::assertSame([], $metadata['query']);
+    }
+
+    public function test_both_attribute_and_interface_not_duplicated(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.dual_handler', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => CreateTaskCommand::class,
+                'bus' => 'messenger.bus.commands',
+                'somework_cqrs_type' => 'command',
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        // CreateTaskCommand implements Command interface, so determineType finds it.
+        // The somework_cqrs_type fallback is not used. Only one entry expected.
+        self::assertCount(1, $metadata['command']);
+        self::assertSame(CreateTaskCommand::class, $metadata['command'][0]['message']);
+    }
+
+    public function test_existing_interface_handlers_still_work(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('somework_cqrs.tests.create_task_handler', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertCount(1, $metadata['command']);
+        self::assertSame([
+            'type' => 'command',
+            'message' => CreateTaskCommand::class,
+            'handler_class' => CreateTaskHandler::class,
+            'service_id' => 'somework_cqrs.tests.create_task_handler',
+            'bus' => null,
+        ], $metadata['command'][0]);
+    }
+
+    public function test_attribute_without_cqrs_type_tag_still_skipped(): void
+    {
+        $container = new ContainerBuilder();
+        // No somework_cqrs_type tag attribute - plain message without interface
+        $container->register('somework_cqrs.tests.no_type_handler', AttributeOnlyCommandHandler::class)
+            ->addTag('messenger.message_handler', [
+                'handles' => PlainCommand::class,
+            ]);
+
+        $pass = new CqrsHandlerPass();
+        $pass->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['command']);
         self::assertSame([], $metadata['query']);
         self::assertSame([], $metadata['event']);
     }

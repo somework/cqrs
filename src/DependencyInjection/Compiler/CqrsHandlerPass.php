@@ -75,6 +75,11 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
                 foreach ($this->resolveMessageClasses($handlerClass, $attributes) as $messageClass) {
                     $type = $this->determineType($messageClass);
+
+                    if (null === $type && isset($attributes['somework_cqrs_type'])) {
+                        $type = $attributes['somework_cqrs_type'];
+                    }
+
                     if (null === $type) {
                         continue;
                     }
