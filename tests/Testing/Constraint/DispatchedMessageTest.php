@@ -196,12 +196,15 @@ final class DispatchedMessageTest extends TestCase
     {
         $bus = new FakeCommandBus();
         $command = new class('expected-id') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
-        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => $m->id === 'expected-id');
+        /* @phpstan-ignore property.notFound */
+        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => 'expected-id' === $m->id);
 
         self::assertThat($bus, $constraint);
     }
@@ -210,12 +213,15 @@ final class DispatchedMessageTest extends TestCase
     {
         $bus = new FakeCommandBus();
         $command = new class('actual-id') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
-        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => $m->id === 'wrong-id');
+        /* @phpstan-ignore property.notFound */
+        $constraint = new DispatchedMessage($command::class, static fn (object $m): bool => 'wrong-id' === $m->id);
 
         self::assertThat($bus, new LogicalNot($constraint));
     }
@@ -236,17 +242,22 @@ final class DispatchedMessageTest extends TestCase
     {
         $bus = new FakeCommandBus();
         $command1 = new class('first') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
         $command2 = new class('second') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command1);
         $bus->dispatch($command2);
 
         // Both are anonymous classes with different FQCNs, so we match on Command interface
-        $constraint = new DispatchedMessage(Command::class, static fn (object $m): bool => $m->id === 'second');
+        /* @phpstan-ignore property.notFound */
+        $constraint = new DispatchedMessage(Command::class, static fn (object $m): bool => 'second' === $m->id);
 
         self::assertThat($bus, $constraint);
     }

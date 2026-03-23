@@ -18,14 +18,24 @@ use function implode;
  */
 final class DispatchedMessage extends Constraint
 {
+    private readonly ?\Closure $callback;
+
     public function __construct(
         private readonly string $expectedClass,
+        ?callable $callback = null,
     ) {
+        $this->callback = null !== $callback ? $callback(...) : null;
     }
 
     public function toString(): string
     {
-        return 'has dispatched a message of class "'.$this->expectedClass.'"';
+        $description = 'has dispatched a message of class "'.$this->expectedClass.'"';
+
+        if (null !== $this->callback) {
+            $description .= ' matching callback';
+        }
+
+        return $description;
     }
 
     protected function matches(mixed $other): bool
@@ -35,7 +45,15 @@ final class DispatchedMessage extends Constraint
         }
 
         foreach ($other->getDispatched() as $record) {
-            if ($record['message'] instanceof $this->expectedClass) {
+            if (!$record['message'] instanceof $this->expectedClass) {
+                continue;
+            }
+
+            if (null === $this->callback) {
+                return true;
+            }
+
+            if (($this->callback)($record['message'])) {
                 return true;
             }
         }

@@ -7,7 +7,9 @@ namespace SomeWork\CqrsBundle\Support;
 /**
  * Identifies the message types supported by a stamp decider.
  *
- * @internal
+ * Implement alongside StampDecider to restrict which message types trigger your decider.
+ *
+ * @api
  */
 interface MessageTypeAwareStampDecider extends StampDecider
 {

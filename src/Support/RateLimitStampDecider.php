@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -21,6 +22,7 @@ final class RateLimitStampDecider implements MessageTypeAwareStampDecider
     public function __construct(
         private readonly RateLimitResolver $resolver,
         private readonly string $messageType,
+        private readonly ?LoggerInterface $logger = null,
     ) {
     }
 
@@ -50,7 +52,20 @@ final class RateLimitStampDecider implements MessageTypeAwareStampDecider
         $rateLimit = $limiter->consume(1);
 
         if (!$rateLimit->isAccepted()) {
-            throw new RateLimitExceededException($message::class, $rateLimit->getRetryAfter(), $rateLimit->getRemainingTokens(), $rateLimit->getLimit());
+            $retryAfter = $rateLimit->getRetryAfter();
+            $retrySeconds = $retryAfter->getTimestamp() - time();
+
+            $this->logger?->warning(
+                'Message {fqcn} throttled by rate limiter, retry after {retry_after}s',
+                [
+                    'fqcn' => $message::class,
+                    'retry_after' => max(0, $retrySeconds),
+                    'remaining_tokens' => $rateLimit->getRemainingTokens(),
+                    'limit' => $rateLimit->getLimit(),
+                ],
+            );
+
+            throw new RateLimitExceededException($message::class, $retryAfter, $rateLimit->getRemainingTokens(), $rateLimit->getLimit());
         }
 
         return $stamps;

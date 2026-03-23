@@ -28,26 +28,30 @@ trait CqrsAssertionsTrait
     /**
      * Assert that the given bus has dispatched a message of the expected class.
      *
-     * @param class-string $messageClass
+     * @param class-string  $messageClass
+     * @param callable|null $callback     Optional callback for property-level message verification
      */
     protected static function assertDispatched(
         RecordsBusDispatches $bus,
         string $messageClass,
+        ?callable $callback = null,
         string $message = '',
     ): void {
-        static::assertThat($bus, new DispatchedMessage($messageClass), $message);
+        static::assertThat($bus, new DispatchedMessage($messageClass, $callback), $message);
     }
 
     /**
      * Assert that the given bus has NOT dispatched a message of the expected class.
      *
-     * @param class-string $messageClass
+     * @param class-string  $messageClass
+     * @param callable|null $callback     Optional callback for property-level message verification
      */
     protected static function assertNotDispatched(
         RecordsBusDispatches $bus,
         string $messageClass,
+        ?callable $callback = null,
         string $message = '',
     ): void {
-        static::assertThat($bus, new LogicalNot(new DispatchedMessage($messageClass)), $message);
+        static::assertThat($bus, new LogicalNot(new DispatchedMessage($messageClass, $callback)), $message);
     }
 }

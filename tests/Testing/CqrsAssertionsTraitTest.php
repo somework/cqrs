@@ -72,7 +72,7 @@ final class CqrsAssertionsTraitTest extends TestCase
         $bus = new FakeCommandBus();
 
         try {
-            self::assertDispatched($bus, Command::class, 'Custom failure message');
+            self::assertDispatched($bus, Command::class, null, 'Custom failure message');
             self::fail('Expected AssertionFailedError');
         } catch (AssertionFailedError $e) {
             self::assertStringContainsString('Custom failure message', $e->getMessage());
@@ -87,7 +87,7 @@ final class CqrsAssertionsTraitTest extends TestCase
         $bus->dispatch($command);
 
         try {
-            self::assertNotDispatched($bus, $command::class, 'Should not have been dispatched');
+            self::assertNotDispatched($bus, $command::class, null, 'Should not have been dispatched');
             self::fail('Expected AssertionFailedError');
         } catch (AssertionFailedError $e) {
             self::assertStringContainsString('Should not have been dispatched', $e->getMessage());
@@ -136,51 +136,63 @@ final class CqrsAssertionsTraitTest extends TestCase
     {
         $bus = new FakeCommandBus();
         $command = new class('test-id') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
-        self::assertDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'test-id');
+        /* @phpstan-ignore property.notFound */
+        self::assertDispatched($bus, $command::class, static fn (object $m): bool => 'test-id' === $m->id);
     }
 
     public function test_assert_dispatched_with_callback_fails_when_no_match(): void
     {
         $bus = new FakeCommandBus();
         $command = new class('actual') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
         $this->expectException(AssertionFailedError::class);
 
-        self::assertDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'wrong');
+        /* @phpstan-ignore property.notFound */
+        self::assertDispatched($bus, $command::class, static fn (object $m): bool => 'wrong' === $m->id);
     }
 
     public function test_assert_not_dispatched_with_callback_passes_when_callback_does_not_match(): void
     {
         $bus = new FakeCommandBus();
         $command = new class('actual') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
-        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'wrong');
+        /* @phpstan-ignore property.notFound */
+        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => 'wrong' === $m->id);
     }
 
     public function test_assert_not_dispatched_with_callback_fails_when_callback_matches(): void
     {
         $bus = new FakeCommandBus();
         $command = new class('match') implements Command {
-            public function __construct(public readonly string $id) {}
+            public function __construct(public readonly string $id)
+            {
+            }
         };
 
         $bus->dispatch($command);
 
         $this->expectException(AssertionFailedError::class);
 
-        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => $m->id === 'match');
+        /* @phpstan-ignore property.notFound */
+        self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => 'match' === $m->id);
     }
 }
