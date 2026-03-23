@@ -5,25 +5,63 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionNamedType;
+use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Bus\EventBus;
+use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\EventBusInterface;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
+use SomeWork\CqrsBundle\Testing\FakeCommandBus;
+use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Testing\FakeQueryBus;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
+
+use function sprintf;
 
 #[CoversClass(CommandBusInterface::class)]
 #[CoversClass(QueryBusInterface::class)]
 #[CoversClass(EventBusInterface::class)]
 final class BusInterfaceTest extends TestCase
 {
+    /**
+     * @return iterable<string, array{class-string, class-string}>
+     */
+    public static function implementationProvider(): iterable
+    {
+        yield 'CommandBus implements CommandBusInterface' => [CommandBus::class, CommandBusInterface::class];
+        yield 'FakeCommandBus implements CommandBusInterface' => [FakeCommandBus::class, CommandBusInterface::class];
+        yield 'QueryBus implements QueryBusInterface' => [QueryBus::class, QueryBusInterface::class];
+        yield 'FakeQueryBus implements QueryBusInterface' => [FakeQueryBus::class, QueryBusInterface::class];
+        yield 'EventBus implements EventBusInterface' => [EventBus::class, EventBusInterface::class];
+        yield 'FakeEventBus implements EventBusInterface' => [FakeEventBus::class, EventBusInterface::class];
+    }
+
+    /**
+     * @param class-string $concreteClass
+     * @param class-string $interfaceClass
+     */
+    #[Test]
+    #[DataProvider('implementationProvider')]
+    public function bus_class_implements_its_interface(string $concreteClass, string $interfaceClass): void
+    {
+        $reflection = new ReflectionClass($concreteClass);
+
+        self::assertTrue(
+            $reflection->implementsInterface($interfaceClass),
+            sprintf('%s must implement %s', $concreteClass, $interfaceClass),
+        );
+    }
+
     #[Test]
     public function command_bus_interface_declares_dispatch_method(): void
     {

@@ -60,9 +60,9 @@ final class BusInterfaceWiringTest extends KernelTestCase
     {
         $container = static::getContainer();
 
-        // If aliases were not public, these calls would throw
-        self::assertNotNull($container->get(CommandBusInterface::class));
-        self::assertNotNull($container->get(QueryBusInterface::class));
-        self::assertNotNull($container->get(EventBusInterface::class));
+        // If aliases were not public, these get() calls would throw ServiceNotFoundException
+        self::assertInstanceOf(CommandBusInterface::class, $container->get(CommandBusInterface::class));
+        self::assertInstanceOf(QueryBusInterface::class, $container->get(QueryBusInterface::class));
+        self::assertInstanceOf(EventBusInterface::class, $container->get(EventBusInterface::class));
     }
 }

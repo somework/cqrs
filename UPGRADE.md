@@ -35,6 +35,52 @@ The following changes may happen in any minor or patch release:
 - Bug fixes that change incorrect behavior
 - Adding new `@api` or `@internal` annotations
 
+## v0.4.0
+
+### Bus Interfaces (DX-01)
+
+Three new interfaces are available for type-hinting bus dependencies:
+
+- `CommandBusInterface` (implemented by `CommandBus` and `FakeCommandBus`)
+- `QueryBusInterface` (implemented by `QueryBus` and `FakeQueryBus`)
+- `EventBusInterface` (implemented by `EventBus` and `FakeEventBus`)
+
+**Recommended migration:** Replace concrete bus type-hints with interfaces:
+
+```diff
+- public function __construct(private readonly CommandBus $commandBus) {}
++ public function __construct(private readonly CommandBusInterface $commandBus) {}
+```
+
+The interfaces are autowired to the real bus implementations. For testing, override
+in `services_test.yaml`:
+
+```yaml
+services:
+    SomeWork\CqrsBundle\Contract\CommandBusInterface:
+        class: SomeWork\CqrsBundle\Testing\FakeCommandBus
+```
+
+### Handler __invoke Signature Change (DX-04)
+
+The `CommandHandler`, `QueryHandler`, and `EventHandler` interfaces no longer
+declare a PHP type on the `__invoke()` parameter. This allows concrete handlers
+to use specific message types without union type workarounds:
+
+```diff
+- public function __invoke(CreateTaskCommand|Command $command): mixed
++ public function __invoke(CreateTaskCommand $command): mixed
+```
+
+**Impact:** This is backward compatible at runtime (removing a type widens
+acceptance). However, if your handler explicitly typed the parameter as `Command`,
+`Query`, or `Event` to match the old interface signature, you may now use the
+specific message type instead. No action is required -- existing handlers continue
+to work.
+
+Static analysis (PHPStan) continues to enforce type safety via `@template`
+annotations.
+
 ## Upgrading from 1.x to 2.0
 
 ### Requirements
