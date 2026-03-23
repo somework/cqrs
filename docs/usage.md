@@ -239,6 +239,182 @@ somework_cqrs:
 With the override above `ShipOrder` commands are sent to the async bus
 immediately, even if they are dispatched from inside another handler.
 
+## Dispatching commands
+
+Inject `CommandBusInterface` and call `dispatch()` to send a command to its
+handler. The bus returns a Messenger `Envelope` by default:
+
+```php
+<?php
+
+namespace App\Controller;
+
+use App\Application\Command\ApproveInvoice;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use Symfony\Component\HttpFoundation\Response;
+
+final class InvoiceController
+{
+    public function __construct(
+        private readonly CommandBusInterface $commandBus,
+    ) {
+    }
+
+    public function approve(string $invoiceId): Response
+    {
+        $this->commandBus->dispatch(new ApproveInvoice($invoiceId));
+
+        return new Response('', Response::HTTP_ACCEPTED);
+    }
+}
+```
+
+When you need the handler's return value (for example a server-generated ID),
+use `dispatchSync()`:
+
+```php
+$orderId = $this->commandBus->dispatchSync(new CreateOrder($items));
+```
+
+`dispatchSync()` forces synchronous execution and returns the handler result
+directly. `dispatchAsync()` routes the command to the configured async
+transport.
+
+## Asking queries
+
+`QueryBusInterface` exposes a single `ask()` method that is always synchronous
+and always returns the handler result:
+
+```php
+<?php
+
+namespace App\Controller;
+
+use App\ReadModel\Query\FindInvoice;
+use SomeWork\CqrsBundle\Contract\QueryBusInterface;
+use Symfony\Component\HttpFoundation\JsonResponse;
+
+final class InvoiceApiController
+{
+    public function __construct(
+        private readonly QueryBusInterface $queryBus,
+    ) {
+    }
+
+    public function show(string $invoiceId): JsonResponse
+    {
+        $invoice = $this->queryBus->ask(new FindInvoice($invoiceId));
+
+        return new JsonResponse($invoice);
+    }
+}
+```
+
+The query bus enforces exactly one handler per query. Zero handlers or multiple
+handlers both throw an exception at dispatch time.
+
+## Dispatching events
+
+Events support zero to many handlers and are fire-and-forget. Use
+`EventBusInterface` to dispatch domain events:
+
+```php
+<?php
+
+namespace App\Application\Command;
+
+use App\Domain\Event\InvoiceApproved;
+use SomeWork\CqrsBundle\Contract\EventBusInterface;
+
+final class ApproveInvoiceHandler
+{
+    public function __construct(
+        private readonly EventBusInterface $eventBus,
+    ) {
+    }
+
+    public function __invoke(ApproveInvoice $command): void
+    {
+        // ... approve the invoice ...
+
+        $this->eventBus->dispatch(new InvoiceApproved($command->invoiceId));
+    }
+}
+```
+
+Events dispatched without any registered listener will not throw an exception.
+The bundle's `AllowNoHandlerMiddleware` silences `NoHandlerForMessageException`
+for `Event` instances automatically.
+
+Multiple handlers can subscribe to the same event:
+
+```php
+#[AsEventHandler(event: InvoiceApproved::class)]
+final class SendApprovalNotification { /* ... */ }
+
+#[AsEventHandler(event: InvoiceApproved::class)]
+final class UpdateApprovalDashboard { /* ... */ }
+```
+
+## Async routing with the #[Asynchronous] attribute
+
+Instead of configuring transport routing in YAML, you can annotate a message
+class with `#[Asynchronous]` to route it to the async transport automatically:
+
+```php
+<?php
+
+use SomeWork\CqrsBundle\Attribute\Asynchronous;
+use SomeWork\CqrsBundle\Contract\Command;
+
+#[Asynchronous]
+final class SendWelcomeEmail implements Command
+{
+    public function __construct(
+        public readonly string $userId,
+    ) {
+    }
+}
+```
+
+The default transport name is `async`. Pass a custom transport name when your
+infrastructure uses a different name:
+
+```php
+#[Asynchronous(transport: 'notifications')]
+final class SendWelcomeEmail implements Command { /* ... */ }
+```
+
+The `AsynchronousStampDecider` reads this attribute at dispatch time and adds a
+`TransportNamesStamp`. It only applies when the dispatch mode is not `SYNC`, and
+it yields to any `TransportNamesStamp` already present in the stamps array.
+
+## Attribute-only handlers
+
+Since v0.4.0 the marker interfaces (`CommandHandler`, `QueryHandler`,
+`EventHandler`) are optional. A class annotated with the handler attribute alone
+is auto-discovered and registered:
+
+```php
+<?php
+
+use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
+
+#[AsCommandHandler(command: CreateTask::class)]
+final class CreateTaskHandler
+{
+    public function __invoke(CreateTask $command): mixed
+    {
+        // Handle the command
+        return null;
+    }
+}
+```
+
+The compiler pass infers the message type from the attribute's `command`,
+`query`, or `event` parameter. When both an attribute and a marker interface are
+present, the interface takes priority for type classification.
+
 ## Metadata providers and correlation IDs
 
 Each dispatch can attach a `MessageMetadataStamp` carrying a correlation ID and
