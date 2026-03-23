@@ -118,7 +118,7 @@ final class AttributeOnlyHandlerTest extends KernelTestCase
         $metadata = static::getContainer()->getParameter('somework_cqrs.handler_metadata');
         assert(is_array($metadata));
 
-        /** @var array<string, list<array<string, mixed>>> $metadata */
+        /* @var array<string, list<array<string, mixed>>> $metadata */
         return $metadata;
     }
 
