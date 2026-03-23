@@ -33,11 +33,7 @@ nav:
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_mermaid
+  - pymdownx.superfences
   - pymdownx.tabbed:
       alternate_style: true
   - admonition
