@@ -43,7 +43,8 @@
     "suggest": {
         "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
         "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",
-        "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)"
+        "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)",
+        "open-telemetry/api": "Required for OpenTelemetry tracing bridge (^1.8)"
     },
     "autoload": {
         "psr-4": {

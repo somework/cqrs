@@ -14,6 +14,8 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function sprintf;
+
 #[CoversClass(OpenTelemetryMiddlewarePass::class)]
 final class OpenTelemetryMiddlewarePassTest extends TestCase
 {

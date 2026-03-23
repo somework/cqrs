@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\AllowNoHandlerMiddlewarePas
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CausationIdMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
@@ -27,6 +28,7 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
         $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
         $container->addCompilerPass(new CausationIdMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
+        $container->addCompilerPass(new OpenTelemetryMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
         $container->addCompilerPass(new CqrsRetryStrategyPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
         $container->addCompilerPass(new ValidateTransportNamesPass());

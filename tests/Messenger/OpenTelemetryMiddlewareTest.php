@@ -63,11 +63,9 @@ final class OpenTelemetryMiddlewareTest extends TestCase
         $this->tracer
             ->expects(self::exactly(2))
             ->method('spanBuilder')
-            ->willReturnCallback(function (string $name) use ($dispatchSpanBuilder, $handleSpanBuilder): SpanBuilderInterface {
-                return str_starts_with($name, 'cqrs.dispatch')
+            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
                     ? $dispatchSpanBuilder
-                    : $handleSpanBuilder;
-            });
+                    : $handleSpanBuilder);
 
         $dispatchSpan->expects(self::once())->method('activate')->willReturn($dispatchScope);
         $handleSpan->expects(self::once())->method('activate')->willReturn($handleScope);
@@ -105,11 +103,9 @@ final class OpenTelemetryMiddlewareTest extends TestCase
 
         $this->tracer
             ->method('spanBuilder')
-            ->willReturnCallback(function (string $name) use ($dispatchSpanBuilder, $handleSpanBuilder): SpanBuilderInterface {
-                return str_starts_with($name, 'cqrs.dispatch')
+            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
                     ? $dispatchSpanBuilder
-                    : $handleSpanBuilder;
-            });
+                    : $handleSpanBuilder);
 
         $dispatchSpan->method('activate')->willReturn($dispatchScope);
         $handleSpan->method('activate')->willReturn($handleScope);
@@ -169,11 +165,9 @@ final class OpenTelemetryMiddlewareTest extends TestCase
 
         $this->tracer
             ->method('spanBuilder')
-            ->willReturnCallback(function (string $name) use ($dispatchSpanBuilder, $handleSpanBuilder): SpanBuilderInterface {
-                return str_starts_with($name, 'cqrs.dispatch')
+            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
                     ? $dispatchSpanBuilder
-                    : $handleSpanBuilder;
-            });
+                    : $handleSpanBuilder);
 
         $dispatchSpan->method('activate')->willReturn($dispatchScope);
         $handleSpan->method('activate')->willReturn($handleScope);
@@ -213,7 +207,7 @@ final class OpenTelemetryMiddlewareTest extends TestCase
 
         $dispatchSpanBuilder
             ->method('setAttribute')
-            ->willReturnCallback(function (string $key, mixed $value) use ($dispatchSpanBuilder, &$capturedAttributes): SpanBuilderInterface {
+            ->willReturnCallback(static function (string $key, mixed $value) use ($dispatchSpanBuilder, &$capturedAttributes): SpanBuilderInterface {
                 $capturedAttributes[$key] = $value;
 
                 return $dispatchSpanBuilder;
@@ -221,11 +215,9 @@ final class OpenTelemetryMiddlewareTest extends TestCase
 
         $this->tracer
             ->method('spanBuilder')
-            ->willReturnCallback(function (string $name) use ($dispatchSpanBuilder, $handleSpanBuilder): SpanBuilderInterface {
-                return str_starts_with($name, 'cqrs.dispatch')
+            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
                     ? $dispatchSpanBuilder
-                    : $handleSpanBuilder;
-            });
+                    : $handleSpanBuilder);
 
         $dispatchSpan->method('activate')->willReturn($dispatchScope);
         $handleSpan->method('activate')->willReturn($handleScope);
