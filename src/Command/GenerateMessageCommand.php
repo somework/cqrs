@@ -209,9 +209,11 @@ final class GenerateMessageCommand extends SymfonyCommand
         $shortAttribute = basename(str_replace('\\', '/', $attribute));
         $shortMessage = basename(str_replace('\\', '/', $messageClass));
 
-        $methodSignature = sprintf('    public function __invoke(%s $message): void', $shortMessage);
+        $methodSignature = sprintf('    public function __invoke(%s $message): mixed', $shortMessage);
         $methodBody = [
             '        // TODO: Implement handler logic.',
+            '',
+            '        return null;',
         ];
 
         if ('query' === $type) {

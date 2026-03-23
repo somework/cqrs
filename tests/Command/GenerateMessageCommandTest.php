@@ -55,7 +55,7 @@ final class GenerateMessageCommandTest extends TestCase
         $handlerContents = file_get_contents($handlerPath);
         self::assertIsString($handlerContents);
         self::assertStringContainsString('#[AsCommandHandler(ShipOrder::class)]', $handlerContents);
-        self::assertStringContainsString('public function __invoke(ShipOrder $message): void', $handlerContents);
+        self::assertStringContainsString('public function __invoke(ShipOrder $message): mixed', $handlerContents);
         self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
     }
 
@@ -174,8 +174,8 @@ final class GenerateMessageCommandTest extends TestCase
 
         $handlerContents = file_get_contents($this->projectDir.'/src/App/Command/DoSomethingHandler.php');
         self::assertIsString($handlerContents);
-        self::assertStringContainsString('public function __invoke(DoSomething $message): void', $handlerContents);
-        self::assertStringNotContainsString('return null;', $handlerContents);
+        self::assertStringContainsString('public function __invoke(DoSomething $message): mixed', $handlerContents);
+        self::assertStringContainsString('return null;', $handlerContents);
         self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
 
         $messageContents = file_get_contents($this->projectDir.'/src/App/Command/DoSomething.php');
@@ -277,7 +277,7 @@ final class GenerateMessageCommandTest extends TestCase
         $handlerContents = file_get_contents($handlerPath);
         self::assertIsString($handlerContents);
         self::assertStringContainsString('final class CustomDoSomethingHandler implements CommandHandler', $handlerContents);
-        self::assertStringContainsString('public function __invoke(DoSomething $message): void', $handlerContents);
+        self::assertStringContainsString('public function __invoke(DoSomething $message): mixed', $handlerContents);
     }
 
     public function test_generates_query_message_with_correct_interface(): void
