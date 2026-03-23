@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Support\AsynchronousStampDecider;
 use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
@@ -147,6 +148,12 @@ final class StampsDeciderRegistrar
                 'message_types' => [Event::class],
             ],
             [
+                'service_id_suffix' => 'asynchronous',
+                'class' => AsynchronousStampDecider::class,
+                'arguments' => [],
+                'priority' => 180,
+            ],
+            [
                 'service_id_suffix' => 'message_transport',
                 'class' => MessageTransportStampDecider::class,
                 'arguments' => [
@@ -200,6 +207,7 @@ final class StampsDeciderRegistrar
                     'arguments' => [
                         '$resolver' => new Reference(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)),
                         '$messageType' => $contract,
+                        '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                     ],
                     'priority' => 225,
                     'message_types' => [$contract],
