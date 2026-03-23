@@ -1,0 +1,42 @@
+site_name: SomeWork CQRS Bundle
+site_url: https://somework.github.io/cqrs/
+site_description: CQRS helpers for Symfony Messenger
+repo_url: https://github.com/somework/cqrs
+repo_name: somework/cqrs
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.expand
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Usage Guide: usage.md
+  - Configuration: reference.md
+  - Testing: testing.md
+  - Advanced:
+    - Retry Policies: retry.md
+    - Transactional Outbox: outbox.md
+    - Event Ordering: event-ordering.md
+    - Idempotency: idempotency.md
+    - Rate Limiting: rate-limiting.md
+  - Production: production.md
+  - Troubleshooting: troubleshooting.md
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_mermaid
+  - pymdownx.tabbed:
+      alternate_style: true
+  - admonition
+  - pymdownx.details
