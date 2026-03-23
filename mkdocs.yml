@@ -18,6 +18,8 @@ nav:
   - Getting Started: getting-started.md
   - Usage Guide: usage.md
   - Configuration: reference.md
+  - Migration Guide: migration.md
+  - Middleware & Stamp Pipeline: middleware.md
   - Testing: testing.md
   - Advanced:
     - Retry Policies: retry.md
