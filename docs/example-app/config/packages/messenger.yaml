@@ -1,0 +1,14 @@
+framework:
+    messenger:
+        # Uncomment the following to enable async transport:
+        # transports:
+        #     async:
+        #         dsn: 'doctrine://default'
+        #         retry_strategy:
+        #             max_retries: 3
+        #             delay: 1000
+        #             multiplier: 2
+
+        # Route messages to transports:
+        # routing:
+        #     'App\Task\Event\TaskCreated': async

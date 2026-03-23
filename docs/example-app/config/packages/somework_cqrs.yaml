@@ -1,0 +1,14 @@
+somework_cqrs:
+    command:
+        # Per-message overrides:
+        # map:
+        #     App\Task\Command\CreateTask:
+        #         retry_policy: App\Retry\TaskRetryPolicy
+        default: ~
+
+    query:
+        default: ~
+
+    event:
+        # dispatch_mode: async  # Default dispatch mode for all events
+        default: ~
