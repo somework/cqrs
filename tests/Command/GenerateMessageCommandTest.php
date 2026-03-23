@@ -49,11 +49,14 @@ final class GenerateMessageCommandTest extends TestCase
         $messageContents = file_get_contents($messagePath);
         self::assertIsString($messageContents);
         self::assertStringContainsString('final class ShipOrder implements Command', $messageContents);
+        self::assertStringContainsString('public readonly string $id,', $messageContents);
+        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
 
         $handlerContents = file_get_contents($handlerPath);
         self::assertIsString($handlerContents);
         self::assertStringContainsString('#[AsCommandHandler(ShipOrder::class)]', $handlerContents);
         self::assertStringContainsString('public function __invoke(ShipOrder $message): mixed', $handlerContents);
+        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
     }
 
     public function test_fails_when_files_exist_without_force(): void
@@ -173,6 +176,12 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertIsString($handlerContents);
         self::assertStringContainsString('public function __invoke(DoSomething $message): mixed', $handlerContents);
         self::assertStringContainsString('return null;', $handlerContents);
+        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
+
+        $messageContents = file_get_contents($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertIsString($messageContents);
+        self::assertStringContainsString('public readonly string $id,', $messageContents);
+        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
     }
 
     public function test_query_handler_has_mixed_return_type(): void
@@ -191,6 +200,12 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertIsString($handlerContents);
         self::assertStringContainsString('public function __invoke(FindSomething $message): mixed', $handlerContents);
         self::assertStringContainsString('Return the query result', $handlerContents);
+        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
+
+        $messageContents = file_get_contents($this->projectDir.'/src/App/Query/FindSomething.php');
+        self::assertIsString($messageContents);
+        self::assertStringContainsString('public readonly string $id,', $messageContents);
+        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
     }
 
     public function test_event_handler_has_void_return_type(): void
@@ -210,6 +225,12 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertStringContainsString('public function __invoke(SomethingHappened $message): void', $handlerContents);
         self::assertStringNotContainsString('return null', $handlerContents);
         self::assertStringContainsString('React to the event', $handlerContents);
+        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
+
+        $messageContents = file_get_contents($this->projectDir.'/src/App/Event/SomethingHappened.php');
+        self::assertIsString($messageContents);
+        self::assertStringContainsString('public readonly string $id,', $messageContents);
+        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
     }
 
     public function test_force_flag_overwrites_existing_files(): void
