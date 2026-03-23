@@ -7,18 +7,96 @@
 [![Latest Version](https://img.shields.io/packagist/v/somework/cqrs-bundle)](https://packagist.org/packages/somework/cqrs-bundle)
 [![Downloads](https://img.shields.io/packagist/dt/somework/cqrs-bundle)](https://packagist.org/packages/somework/cqrs-bundle)
 
-A set of CQRS helpers for Symfony Messenger. The bundle wires command, query,
-and event buses to Messenger, discovers handlers automatically, and ships with
-tooling that keeps your catalogue maintainable.
+A Symfony bundle that wires Command, Query, and Event buses on top of Symfony Messenger. It auto-discovers handlers via PHP attributes, provides a configurable stamp pipeline, and ships with testing utilities and production-grade patterns.
 
-## Features
+## Why this bundle?
 
-* PHP attributes (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`)
-  and marker interfaces that auto-tag handlers for Messenger.
-* Console tooling to list registered handlers and scaffold new messages.
-* Configuration hooks for naming strategies, retry policies, serializer stamps,
-  and metadata providers.
-* Plays nicely with multiple Messenger buses (sync and async).
+Symfony Messenger is a powerful transport layer, but it leaves CQRS wiring as an exercise for the developer. This bundle fills the gap:
+
+- **Auto-discovery** -- Annotate handlers with `#[AsCommandHandler]`, `#[AsQueryHandler]`, or `#[AsEventHandler]` and they are registered automatically. No YAML tags, no manual wiring.
+- **Stamp pipeline** -- A composable `StampDecider` pipeline attaches retry policies, transport routing, serializer stamps, metadata, and dispatch-after-current-bus stamps per message type or per individual message class.
+- **Type-safe buses** -- Three dedicated buses (`CommandBus`, `QueryBus`, `EventBus`) with distinct semantics: commands support sync/async dispatch, queries always return a result, events are fire-and-forget with zero-to-many handlers.
+- **Testing utilities** -- `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` with `assertDispatched()`, `assertNotDispatched()`, and callback-based property assertions for fast, isolated unit tests.
+
+### Architecture
+
+```mermaid
+flowchart LR
+    A[Your Code] --> B[CommandBus / QueryBus / EventBus]
+    B --> C[DispatchModeDecider]
+    C --> D[StampsDecider Pipeline]
+    D --> E1[RetryPolicy]
+    D --> E2[Transport]
+    D --> E3[Serializer]
+    D --> E4[Metadata]
+    D --> E5[DispatchAfterCurrentBus]
+    D --> F[Symfony Messenger]
+    F --> G[Handler]
+```
+
+### How does it compare?
+
+| Capability | Raw Messenger | CQRS Bundle | Ecotone |
+|---|---|---|---|
+| **Handler discovery** | Manual YAML tags or `#[AsMessageHandler]` | `#[AsCommandHandler]` / `#[AsQueryHandler]` / `#[AsEventHandler]` with auto-discovery | Attribute-based with conventions |
+| **Type safety** | Single `MessageBusInterface` | Separate `CommandBus`, `QueryBus`, `EventBus` with typed dispatch methods | Separate gateway interfaces |
+| **Bus abstraction** | You build it | Three buses with sync/async routing, `DispatchMode` enum | Command/Query/Event buses built-in |
+| **Retry configuration** | Per-transport YAML only | Per-message-class via `RetryPolicy` interface + resolver hierarchy | Per-endpoint via attributes |
+| **Testing support** | `InMemoryTransport` | `FakeBus` implementations with `assertDispatched()` + callback assertions | Test support module |
+| **Async routing** | `routing` YAML config | `DispatchMode` + `#[Asynchronous]` attribute + per-message transport mapping | Async via polled endpoints |
+| **Stamp pipeline** | Manual stamp attachment | Composable `StampDecider` pipeline with priority ordering | Interceptors (before/after/around) |
+| **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` | Built-in aggregate versioning |
+| **Transactional outbox** | Not built-in | `OutboxStorage` interface + DBAL implementation | Built-in with Doctrine |
+| **Sagas / Process managers** | Not built-in | Not built-in | Built-in saga support |
+| **Event sourcing** | Not built-in | Not built-in | Built-in event sourcing |
+| **OpenTelemetry** | Not built-in | Bridge middleware with trace spans | Not built-in |
+| **Learning curve** | Low (part of Symfony) | Low (thin layer over Messenger) | Moderate (own conventions) |
+| **Dependencies** | Symfony only | Symfony Messenger | Ecotone framework |
+
+> **Choose raw Messenger** when your app has simple dispatch needs and you want zero additional dependencies.
+> **Choose this bundle** when you want structured CQRS buses, per-message configuration, and testing utilities while staying close to Messenger.
+> **Choose Ecotone** when you need sagas, event sourcing, or a full CQRS/ES framework.
+
+### Feature matrix
+
+**Core**
+- CommandBus with sync/async dispatch and result extraction
+- QueryBus with single-handler validation and typed results
+- EventBus with zero-to-many handlers and fire-and-forget semantics
+- Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`)
+- Handler interfaces optional -- attributes alone are sufficient
+
+**Stamp Pipeline**
+- Composable `StampDecider` system with priority ordering (`@api` -- extend it yourself)
+- Per-message retry policies via `RetryPolicy` interface
+- Per-message transport routing with `TransportNamesStamp` or `SendMessageToTransportsStamp`
+- Per-message serializer stamps
+- Per-message metadata stamps with correlation ID support
+- `DispatchAfterCurrentBusStamp` control per message
+
+**Patterns**
+- Causation ID propagation across nested dispatches
+- Idempotency bridge (`IdempotencyStamp` to `DeduplicateStamp`)
+- Event ordering with `SequenceAware` and `AggregateSequenceStamp`
+- Rate limiting via Symfony Rate Limiter integration
+- Transactional outbox with DBAL storage and relay command
+
+**Developer Experience**
+- `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing
+- `assertDispatched()` / `assertNotDispatched()` with callback-based property assertions
+- `somework:cqrs:generate` scaffold command for messages and handlers
+- `somework:cqrs:list` handler catalogue
+- `somework:cqrs:debug-transports` transport diagnostics
+- `somework:cqrs:health-check` for monitoring
+
+**Observability**
+- OpenTelemetry bridge middleware (trace spans for dispatch and handling)
+- PSR-3 structured logging across buses, deciders, and resolvers
+
+**Integration**
+- Symfony Flex recipe for zero-touch installation
+- `CommandBusInterface`, `QueryBusInterface`, `EventBusInterface` for DI and testing
+- `#[Asynchronous]` attribute for transport routing without YAML config
 
 ## Installation
 
@@ -111,7 +189,7 @@ final class CreateTaskHandler implements CommandHandler
 namespace App\Controller;
 
 use App\Application\Command\CreateTask;
-use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
@@ -119,7 +197,7 @@ use Symfony\Component\Routing\Attribute\Route;
 final class TaskController
 {
     #[Route('/tasks', methods: ['POST'])]
-    public function create(Request $request, CommandBus $commandBus): JsonResponse
+    public function create(Request $request, CommandBusInterface $commandBus): JsonResponse
     {
         $data = $request->toArray();
 
@@ -133,286 +211,27 @@ final class TaskController
 }
 ```
 
-## Console commands
+## Documentation
 
-* `bin/console somework:cqrs:list` – renders a table of commands, queries, and
-  events detected in the container. Filter by message type via
-  `--type=command|query|event`.
-* `bin/console somework:cqrs:generate command App\Application\Command\ShipOrder`
-  – generates a message and handler skeleton under your project `src/`
-  directory. Use `--dir=` to override the base directory and `--force` to
-  overwrite existing files.
+Full documentation is available at **[somework.github.io/cqrs](https://somework.github.io/cqrs/)**.
 
-### Handler registry and diagnostics
-
-The bundle exposes a `SomeWork\CqrsBundle\Registry\HandlerRegistry` service that
-holds the metadata discovered at compile time. You can inject it to build custom
-dashboards, health checks, or documentation. The bundled `somework:cqrs:list`
-command uses the registry to produce a concise overview of your catalogue:
-
-```
-$ bin/console somework:cqrs:list
-+---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
-| Type    | Message                                    | Handler                                       | Service Id                                   | Bus                      |
-+---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
-| Command | App\Application\Command\ShipOrder          | App\Application\Command\ShipOrderHandler      | app.command.ship_order_handler               | messenger.bus.commands   |
-| Query   | App\ReadModel\Query\FindOrder              | App\ReadModel\Query\FindOrderHandler          | app.read_model.find_order_handler            | default                  |
-+---------+--------------------------------------------+-----------------------------------------------+----------------------------------------------+--------------------------+
-```
-
-### Message scaffolding options
-
-The generator accepts a handful of options so you can tailor the output to your
-project layout:
-
-* `--handler=App\\Application\\Command\\ShipOrderHandler` – override the
-  handler class name instead of using the `<Message>Handler` default.
-* `--dir=app/src` – change the base directory used to materialise the class
-  files. The argument is relative to the project root returned by the kernel.
-* `--force` – replace existing files instead of halting with an error.
-
-## Resources
-
-* [Usage Guide](docs/usage.md)
-* [Configuration Reference](docs/reference.md)
-* [Testing Guide](docs/testing.md)
-* [Troubleshooting](docs/troubleshooting.md)
-* [Production Guide](docs/production.md)
-* [Upgrade Guide](UPGRADE.md)
+* [Getting Started](docs/getting-started.md) -- progressive tutorial from install to advanced patterns
+* [Usage Guide](docs/usage.md) -- core patterns, dispatch modes, console commands
+* [Configuration Reference](docs/reference.md) -- every `somework_cqrs` option explained
+* [Testing Guide](docs/testing.md) -- FakeBus, assertions, integration testing
+* [Production Guide](docs/production.md) -- deployment, workers, monitoring
+* [Troubleshooting](docs/troubleshooting.md) -- common issues and solutions
+* [Upgrade Guide](UPGRADE.md) -- migration between versions
 * [Changelog](CHANGELOG.md)
 
-## Configuration
+### Advanced topics
 
-All options live under the `somework_cqrs` key. They allow you to point each
-CQRS facade at specific Messenger buses, override naming strategies, and provide
-retry/serialization policies that append Messenger stamps.
+* [Retry Policies](docs/retry.md)
+* [Transactional Outbox](docs/outbox.md)
+* [Event Ordering](docs/event-ordering.md)
+* [Idempotency](docs/idempotency.md)
+* [Rate Limiting](docs/rate-limiting.md)
 
-```yaml
-somework_cqrs:
-    default_bus: messenger.default_bus
-    buses:
-        command: messenger.bus.commands
-        command_async: messenger.bus.commands_async
-        query: messenger.bus.queries
-        event: messenger.bus.events
-        event_async: messenger.bus.events_async
-    naming:
-        default: SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy
-    retry_policies:
-        command:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
-            map:
-                App\Application\Command\ShipOrder: app.command.retry_policy
-                App\Domain\Contract\RequiresImmediateRetry: app.command.retry_policy_for_interface
-    serialization:
-        default: SomeWork\CqrsBundle\Support\NullMessageSerializer
-        command:
-            default: null
-            map:
-                App\Application\Command\ShipOrder: app.command.serializer
-        query:
-            default: app.query_serializer
-            map: {}
-        event:
-            default: SomeWork\CqrsBundle\Support\NullMessageSerializer
-            map:
-                App\Domain\Event\OrderShipped: app.event.serializer
-    metadata:
-        default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
-        command:
-            default: null
-            map:
-                App\Application\Command\ShipOrder: app.command.metadata_provider
-        query:
-            default: null
-            map: {}
-        event:
-            default: null
-            map:
-                App\Domain\Event\OrderShipped: app.event.metadata_provider
-    dispatch_modes:
-        command:
-            default: sync
-            map:
-                App\Application\Command\ShipOrder: async
-        event:
-            default: sync
-            map:
-                App\Domain\Event\OrderShipped: async
-    transports:
-        command:
-            stamp: transport_names
-            default: []
-            map:
-                App\Application\Command\ShipOrder: ['sync_commands']
-        command_async:
-            stamp: transport_names
-            default: ['async_commands']
-            map:
-                App\Application\Command\ShipOrder: ['high_priority_async_commands']
-        query:
-            stamp: transport_names
-            default: []
-            map: {}
-        event:
-            stamp: transport_names
-            default: []
-            map:
-                App\Domain\Event\OrderShipped: ['sync_events']
-        event_async:
-            stamp: transport_names
-            default: ['async_events']
-            map:
-                App\Domain\Event\OrderShipped:
-                    - 'async_events'
-                    - 'audit_log'
-    async:
-        dispatch_after_current_bus:
-            command:
-                default: true
-                map:
-                    App\Application\Command\ShipOrder: false
-            event:
-                default: true
-                map: {}
-```
+## License
 
-Use the `map` section inside each `retry_policies` entry to override the
-default policy for specific messages while keeping a shared fallback for the
-rest of the type. Keys may reference concrete messages, parent classes, or
-interfaces so you can coordinate retry behaviour across a group of messages.
-
-`serialization` follows the same shape. Configure a `default` service applied to
-every message type, override each type via its `default` entry, and list
-message-specific serializer services inside `map`. The buses check for
-message-specific serializers first, then fall back to the type default and
-finally to the global default.
-
-`metadata` controls which `MessageMetadataStamp` gets appended to dispatched
-messages. The bundle defaults to generating random correlation identifiers via
-`RandomCorrelationMetadataProvider`. Override the per-type `default` or
-configure `map` entries when you need deterministic IDs for specific messages.
-
-`dispatch_modes` lets you pick whether commands and events run on their
-synchronous or asynchronous Messenger buses when callers omit the `DispatchMode`
-argument. Use `async.dispatch_after_current_bus` to control Messenger's
-`DispatchAfterCurrentBusStamp`. Keep the defaults enabled so async messages wait
-for the current bus to finish before being dispatched, or flip individual
-messages to `false` when they should be sent immediately.
-
-Need additional stamps? Implement `SomeWork\CqrsBundle\Support\StampDecider`, tag
-the service with `somework_cqrs.dispatch_stamp_decider`, and the bundle will run
-it alongside the built-in `DispatchAfterCurrentBusStamp` logic.
-
-`transports` configures the Messenger transport names the bundle will attach
-via `TransportNamesStamp` by default. Each bus accepts an optional `stamp`
-setting to swap the behaviour to Messenger's `SendMessageToTransportsStamp`
-when running on Symfony 6.3+ (older releases trigger a descriptive exception).
-The bundle checks for Messenger's optional stamp classes before referencing
-them, so older applications without those classes avoid unnecessary autoload
-attempts.
-Defaults are evaluated per bus, so you can send every asynchronous command
-through `async_commands` while routing specific messages to
-`high_priority_async_commands` or mirroring events into an `audit_log` queue.
-Messenger still evaluates your `framework.messenger.routing` rules after the
-stamp is applied. Existing routes continue to work, and if callers attach their
-own `TransportNamesStamp`/`SendMessageToTransportsStamp` the bundle leaves those
-choices intact for advanced delivery strategies.
-
-### How message overrides are resolved
-
-Whenever a configuration section exposes a `map` of message-specific services
-(`retry_policies`, `serialization`, `dispatch_modes`, or
-`async.dispatch_after_current_bus`), the bundle resolves the entry using a shared
-matching strategy. The lookup happens in three steps:
-
-1. Check for an **exact class match**.
-2. Walk up the **parent class hierarchy**, returning the first configured
-   ancestor.
-3. Evaluate **interfaces** implemented by the message, followed by any parent
-   interfaces, and pick the first configured entry.
-
-This ordering keeps overrides predictable – concrete classes always win, then
-inheritance, then shared contracts. If nothing matches the resolver falls back
-to the type-specific `default` and, when available, the global default service.
-
-See [`docs/reference.md`](docs/reference.md) for a complete description of every
-option and [`docs/usage.md`](docs/usage.md) for more examples.
-
-## Messenger configuration
-
-The bundle relies on standard Messenger buses. Configure them according to your
-environment (sync, async, transports) and wire the CQRS facades to the desired
-bus ids.
-
-### Shared defaults (`config/packages/messenger.yaml`)
-
-```yaml
-framework:
-    messenger:
-        default_bus: messenger.bus.commands
-        buses:
-            messenger.bus.commands: ~
-            messenger.bus.commands_async:
-                default_middleware:
-                    enabled: true
-            messenger.bus.queries: ~
-            messenger.bus.events: ~
-            messenger.bus.events_async:
-                default_middleware:
-                    enabled: true
-```
-
-### Production transport setup (`config/packages/prod/messenger.yaml`)
-
-Configure real transports and routing so asynchronous commands and events leave
-the HTTP process.
-
-```yaml
-framework:
-    messenger:
-        transports:
-            async:
-                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
-                options:
-                    auto_setup: false
-        routing:
-            'App\\Application\\Command\\GenerateReportCommand': async
-            'App\\Domain\\Event\\TaskCreated': async
-```
-
-Run the worker with `bin/console messenger:consume async` to process queued
-messages.
-
-### Development overrides (`config/packages/dev/messenger.yaml`)
-
-Point the async transport at a developer-friendly backend and allow Messenger to
-create it on the fly:
-
-```yaml
-framework:
-    messenger:
-        transports:
-            async:
-                dsn: '%env(resolve:MESSENGER_TRANSPORT_DSN)%'
-                options:
-                    auto_setup: true
-```
-
-### Test overrides (`config/packages/test/messenger.yaml`)
-
-Use an in-memory transport so functional tests can assert on dispatched messages
-without spawning workers.
-
-```yaml
-framework:
-    messenger:
-        transports:
-            async: 'in-memory://'
-        routing:
-            'App\\Application\\Command\\GenerateReportCommand': async
-            'App\\Domain\\Event\\TaskCreated': async
-```
-
-With these settings the command, event, and query bus facades provided by the
-bundle transparently adapt to each environment.
+MIT. See [LICENSE](LICENSE).
