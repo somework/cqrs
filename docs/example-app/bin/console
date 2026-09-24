@@ -5,12 +5,29 @@ declare(strict_types=1);
 
 use App\Kernel;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Dotenv\Dotenv;
 
-require dirname(__DIR__) . '/vendor/autoload.php';
+if (!is_file(dirname(__DIR__).'/vendor/autoload.php')) {
+    fwrite(STDERR, "Dependencies are missing. Run \"composer install\" in the example-app directory first.\n");
+    exit(1);
+}
 
-(new Dotenv())->bootEnv(dirname(__DIR__) . '/.env');
+require dirname(__DIR__).'/vendor/autoload.php';
 
-$kernel = new Kernel($_SERVER['APP_ENV'], (bool) $_SERVER['APP_DEBUG']);
+$input = new ArgvInput();
+
+// Honour --env / --no-debug before the kernel is created (no symfony/runtime needed).
+if (null !== $env = $input->getParameterOption(['--env', '-e'], null, true)) {
+    putenv('APP_ENV='.$_SERVER['APP_ENV'] = $_ENV['APP_ENV'] = $env);
+}
+
+if ($input->hasParameterOption('--no-debug', true)) {
+    putenv('APP_DEBUG='.$_SERVER['APP_DEBUG'] = $_ENV['APP_DEBUG'] = '0');
+}
+
+(new Dotenv())->bootEnv(dirname(__DIR__).'/.env');
+
+$kernel = new Kernel((string) $_SERVER['APP_ENV'], (bool) $_SERVER['APP_DEBUG']);
 $application = new Application($kernel);
-$application->run();
+$application->run($input);

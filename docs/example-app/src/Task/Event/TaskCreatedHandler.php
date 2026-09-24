@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace App\Task\Event;
 
+use App\Task\TaskActivityLog;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 
 /**
- * Reacts to task creation by logging the event.
+ * Reacts to task creation by recording an activity entry.
  *
  * Demonstrates the fire-and-forget event pattern. In a real application,
  * this could send a notification, update a read model, or trigger a workflow.
@@ -16,8 +17,13 @@ use SomeWork\CqrsBundle\Contract\EventHandler;
 #[AsEventHandler(event: TaskCreated::class)]
 final class TaskCreatedHandler implements EventHandler
 {
+    public function __construct(
+        private readonly TaskActivityLog $activityLog,
+    ) {
+    }
+
     public function __invoke(TaskCreated $event): void
     {
-        echo \sprintf("[Event] Task created: %s (%s)\n", $event->title, $event->id);
+        $this->activityLog->record(\sprintf('TaskCreated handled: "%s" (%s)', $event->title, $event->id));
     }
 }
