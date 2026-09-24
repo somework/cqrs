@@ -282,7 +282,7 @@ final class Configuration implements ConfigurationInterface
         $outboxChildren->booleanNode('enabled')->defaultFalse()
             ->info('Enable transactional outbox. Requires doctrine/dbal.');
         $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
-            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
+            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; avoid reserved SQL words).');
         self::requireName($tableName);
         $tableName->validate()
             ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $value))
@@ -293,7 +293,10 @@ final class Configuration implements ConfigurationInterface
         self::requireName($outboxChildren->scalarNode('serializer')->defaultValue('messenger.default_serializer')->cannotBeEmpty()
             ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.'));
         $outboxChildren->booleanNode('auto_setup')->defaultTrue()
-            ->info('Create the outbox table on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+            ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
+        $outboxChildren->integerNode('max_attempts')->defaultValue(10)
+            ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1). Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
         $outboxChildren->end();
         $outbox->end();
 

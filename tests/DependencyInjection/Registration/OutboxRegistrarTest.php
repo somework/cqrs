@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Registration;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
@@ -88,15 +89,27 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame('orders', $container->getDefinition('somework_cqrs.outbox.schema_subscriber')->getTag('doctrine.event_listener')[0]['connection']);
     }
 
-    public function test_registers_setup_and_purge_commands(): void
+    public function test_registers_setup_failed_and_purge_commands(): void
     {
         $container = $this->createContainerWithRegistrar();
+
+        self::assertSame(OutboxFailedCommand::class, $container->getDefinition('somework_cqrs.outbox.failed_command')->getClass());
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.failed_command')->hasTag('console.command'));
 
         self::assertSame(OutboxSetupCommand::class, $container->getDefinition('somework_cqrs.outbox.setup_command')->getClass());
         self::assertSame(OutboxPurgeCommand::class, $container->getDefinition('somework_cqrs.outbox.purge_command')->getClass());
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.setup_command')->hasTag('console.command'));
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.purge_command')->hasTag('console.command'));
         self::assertSame('somework_cqrs.outbox.storage', (string) $container->getAlias(DbalOutboxStorage::class));
+    }
+
+    public function test_the_relay_lock_is_scoped_to_the_connection_and_table(): void
+    {
+        $container = new ContainerBuilder();
+        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'orders_outbox', 'connection' => 'orders']);
+
+        // OutboxRelayLockPass adds the application scope.
+        self::assertSame('orders.orders_outbox', $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$lockName'));
     }
 
     public function test_relay_uses_the_lock_factory_when_available(): void

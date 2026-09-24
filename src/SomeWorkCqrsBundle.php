@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\DeduplicationLockReleasePas
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
@@ -45,6 +46,7 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new DeduplicationLockReleasePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CqrsRetryStrategyPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new TransportRoutingPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
+        $container->addCompilerPass(new OutboxRelayLockPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
         $container->addCompilerPass(new ValidateTransportNamesPass());
         $container->addCompilerPass(new ValidateHandlerCountPass());

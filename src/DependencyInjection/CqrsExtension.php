@@ -142,6 +142,10 @@ final class CqrsExtension extends Extension
             throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
         }
 
+        if (is_int($config['outbox']['max_attempts']) && $config['outbox']['max_attempts'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
+        }
+
         $idempotencyConfig = $config['idempotency'];
         $idempotencyConfig['enabled'] = true === $idempotencyConfig['enabled']
             && ($this->classExists)(DeduplicateStamp::class)

@@ -20,24 +20,39 @@ final class InMemoryOutboxStorage implements OutboxStorage
     /** @var array<string, DateTimeImmutable> */
     private array $published = [];
 
+    /** @var array<string, array{error: string, retryAt: DateTimeImmutable|null}> Last failure per message */
+    public array $failures = [];
+
     /** @var list<string> */
     public array $failMarkingPublished = [];
+
+    /** Whether markFailed() fails, e.g. because the database is down. */
+    public bool $failMarkingFailed = false;
+
+    /** When false, failed messages are returned again right away (a storage ignoring the retry time). */
+    public bool $postponeFailures = true;
 
     public function store(OutboxMessage $message): void
     {
         $this->messages[$message->id] = $message;
     }
 
-    public function fetchUnpublished(int $limit, int $offset = 0): array
+    public function fetchUnpublished(int $limit): array
     {
-        $unpublished = [];
+        $now = new DateTimeImmutable();
+        $due = [];
         foreach ($this->messages as $id => $message) {
-            if (!isset($this->published[$id])) {
-                $unpublished[] = $message;
+            $failure = $this->failures[$id] ?? null;
+            if (isset($this->published[$id])) {
+                continue;
             }
+            if (null !== $failure && $this->postponeFailures && (null === $failure['retryAt'] || $failure['retryAt'] > $now)) {
+                continue;
+            }
+            $due[] = $message;
         }
 
-        return array_slice($unpublished, $offset, $limit);
+        return array_slice($due, 0, $limit);
     }
 
     public function markPublished(string $id): void
@@ -47,6 +62,25 @@ final class InMemoryOutboxStorage implements OutboxStorage
         }
 
         $this->published[$id] = new DateTimeImmutable();
+    }
+
+    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void
+    {
+        if ($this->failMarkingFailed) {
+            throw new \RuntimeException('Database is down.');
+        }
+
+        if (!isset($this->messages[$id])) {
+            throw new \RuntimeException(sprintf('Unknown message "%s".', $id));
+        }
+
+        if (isset($this->published[$id])) {
+            return;
+        }
+
+        $message = $this->messages[$id];
+        $this->messages[$id] = new OutboxMessage($message->id, $message->body, $message->headers, $message->createdAt, $message->transportName, $message->attempts + 1);
+        $this->failures[$id] = ['error' => $error, 'retryAt' => $retryAt];
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -65,5 +99,27 @@ final class InMemoryOutboxStorage implements OutboxStorage
     public function isPublished(string $id): bool
     {
         return isset($this->published[$id]);
+    }
+
+    public function attempts(string $id): int
+    {
+        return isset($this->messages[$id]) ? $this->messages[$id]->attempts : 0;
+    }
+
+    /**
+     * Unpublished messages, failed or not.
+     *
+     * @return list<string>
+     */
+    public function unpublishedIds(): array
+    {
+        $ids = [];
+        foreach ($this->messages as $id => $message) {
+            if (!isset($this->published[$id])) {
+                $ids[] = $id;
+            }
+        }
+
+        return $ids;
     }
 }

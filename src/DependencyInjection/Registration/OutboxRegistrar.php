@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
+use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
@@ -22,9 +23,9 @@ use function sprintf;
 final class OutboxRegistrar
 {
     /**
-     * @param array{enabled: bool, table_name: string, connection?: string, serializer?: string, auto_setup?: bool} $config
-     * @param bool                                                                                                  $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
-     * @param array<string, string|null>                                                                            $buses               The "somework_cqrs.buses" configuration
+     * @param array{enabled: bool, table_name: string, connection?: string, serializer?: string, auto_setup?: bool, max_attempts?: int|string} $config
+     * @param bool                                                                                                                             $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
+     * @param array<string, string|null>                                                                                                       $buses               The "somework_cqrs.buses" configuration
      */
     public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus'): void
     {
@@ -53,13 +54,10 @@ final class OutboxRegistrar
             'query' => new Reference($buses['query'] ?? $defaultBusId),
             'event' => new Reference($buses['event_async'] ?? $buses['event'] ?? $defaultBusId),
         ]));
-        // Scoped to the application and the table: relays of other projects on the same host must not block it.
-        $relayDef->setArgument('$lockName', sprintf(
-            'somework_cqrs.outbox.relay.%s.%s.%s',
-            $container->hasParameter('kernel.project_dir') ? '%kernel.project_dir%' : 'app',
-            $connection,
-            $config['table_name'],
-        ));
+        // Scoped to the connection and the table here, and to the application by OutboxRelayLockPass:
+        // relays of other projects sharing the lock store must not block it.
+        $relayDef->setArgument('$lockName', sprintf('%s.%s', $connection, $config['table_name']));
+        $relayDef->setArgument('$maxAttempts', $config['max_attempts'] ?? 10);
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
@@ -69,6 +67,12 @@ final class OutboxRegistrar
         $setupDef->addTag('console.command');
         $setupDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.setup_command', $setupDef);
+
+        $failedDef = new Definition(OutboxFailedCommand::class);
+        $failedDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $failedDef->addTag('console.command');
+        $failedDef->setPublic(false);
+        $container->setDefinition('somework_cqrs.outbox.failed_command', $failedDef);
 
         $purgeDef = new Definition(OutboxPurgeCommand::class);
         $purgeDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));

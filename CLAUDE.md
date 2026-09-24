@@ -41,7 +41,7 @@ Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (lates
 - `somework:cqrs:generate <type> <FQCN>` — scaffolds a message + attribute-based handler following the project's PSR-4 mapping (`--handler=`, `--dir=`, `--force`)
 - `somework:cqrs:debug-transports` — inspects Messenger transport routing for CQRS messages
 - `somework:cqrs:health` — instantiates every handler and Messenger transport; exit code 0/1/2
-- `somework:cqrs:outbox:relay|setup|purge` — transactional outbox operations (registered when `outbox.enabled`)
+- `somework:cqrs:outbox:relay|setup|failed|purge` — transactional outbox operations (registered when `outbox.enabled`); the relay retries failing rows with backoff and gives up after `outbox.max_attempts`
 
 ## Architecture
 
@@ -75,6 +75,7 @@ reports messages that were sent to a transport or deduplicated).
 - `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` — insert middleware via `MessengerMiddlewareInjector`
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
+- `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 

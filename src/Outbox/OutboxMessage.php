@@ -37,9 +37,15 @@ final class OutboxMessage
         public readonly string $headers,
         public readonly DateTimeImmutable $createdAt,
         public readonly ?string $transportName = null,
+        /** Failed attempts to publish the message so far. */
+        public readonly int $attempts = 0,
     ) {
         if ('' === $this->id) {
             throw new \InvalidArgumentException('Outbox message id cannot be empty.');
+        }
+
+        if ($this->attempts < 0) {
+            throw new \InvalidArgumentException('Outbox message attempts cannot be negative.');
         }
 
         if ('' === $this->body) {

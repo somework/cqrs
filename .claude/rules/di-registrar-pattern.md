@@ -33,6 +33,7 @@ Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the containe
 |------|------------------|-----|
 | `CqrsHandlerPass` | BEFORE_OPTIMIZATION, 1 | Normalises handler tags (message, buses) before Messenger's `MessengerPass` (priority 0) consumes them |
 | `CqrsRetryStrategyPass` | BEFORE_OPTIMIZATION, 0 | Validates `retry_strategy.transports` and wires `CqrsRetryStrategy` into `messenger.retry_strategy_locator` (wrapping the transport's own strategy as fallback) |
+| `OutboxRelayLockPass` | BEFORE_OPTIMIZATION, 0 | Prefixes the relay lock name with `%cache.prefix.seed%` (FrameworkBundle's parameter, unknown while the extension loads) |
 | `TransportRoutingPass` | BEFORE_OPTIMIZATION, 0 | Passes the message types routed by `framework.messenger.routing` (keys of `messenger.senders_locator`) to `MessageTransportStampDecider` |
 | `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |
 | `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` | BEFORE_OPTIMIZATION, -8 | Run after `MessengerPass` built the handler locators and bus middleware lists, and before optimization so references to aliases still resolve |

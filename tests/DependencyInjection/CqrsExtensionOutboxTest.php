@@ -142,6 +142,20 @@ final class CqrsExtensionOutboxTest extends TestCase
         );
     }
 
+    public function test_max_attempts_defaults_to_ten_and_reaches_the_relay(): void
+    {
+        self::assertSame(10, $this->createContainer(['outbox' => ['enabled' => true]])->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$maxAttempts'));
+        self::assertSame(3, $this->createContainer(['outbox' => ['enabled' => true, 'max_attempts' => 3]])->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$maxAttempts'));
+    }
+
+    public function test_max_attempts_below_one_is_rejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.outbox.max_attempts" must be at least 1, 0 given.');
+
+        $this->createContainer(['outbox' => ['enabled' => true, 'max_attempts' => 0]]);
+    }
+
     public function test_empty_config_is_valid(): void
     {
         // Ensures bundle loads cleanly with zero config

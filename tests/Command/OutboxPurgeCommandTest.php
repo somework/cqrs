@@ -15,6 +15,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 
+use const DATE_ATOM;
+
 #[CoversClass(OutboxPurgeCommand::class)]
 final class OutboxPurgeCommandTest extends TestCase
 {
@@ -61,6 +63,20 @@ final class OutboxPurgeCommandTest extends TestCase
         yield 'bare number (a time zone offset for DateTime)' => ['7'];
         yield 'unknown unit' => ['7 fortnights'];
         yield 'relative expression' => ['last monday'];
+        yield 'overflowing number (would become a future cut-off)' => ['99999999999999999999 days'];
+    }
+
+    public function test_a_very_old_cutoff_is_clamped_to_year_one(): void
+    {
+        $storage = $this->createMock(OutboxStorage::class);
+        $storage->expects(self::once())
+            ->method('purgePublished')
+            ->with(self::callback(static fn (DateTimeImmutable $before): bool => '0001-01-01T00:00:00+00:00' === $before->format(DATE_ATOM)))
+            ->willReturn(0);
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--older-than' => '999999 years']));
     }
 
     #[DataProvider('invalidAges')]

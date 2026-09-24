@@ -14,11 +14,12 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `MessageSentToTransportException` and `DuplicateMessageException` for `CommandBus::dispatchSync()` and `QueryBus::ask()`.
 - `TraceContextStamp`: W3C trace context propagated from the dispatching process to the worker.
 - `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock.
-- Outbox: `OutboxMessage::fromEnvelope()` (time-ordered UUIDv7 ids), `OutboxStorage::purgePublished()`, an `$offset` for `fetchUnpublished()`,
-  the `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:purge` commands, and the `outbox.connection`, `outbox.serializer` and `outbox.auto_setup` options.
-- The outbox relay runs as a single instance when symfony/lock is installed (lock scoped to the project, connection and table, extended after every row) and stops after 5 consecutive send failures.
+- Outbox: `OutboxMessage::fromEnvelope()` (time-ordered UUIDv7 ids), `OutboxStorage::purgePublished()` and `OutboxStorage::markFailed()`,
+  the `somework:cqrs:outbox:setup`, `somework:cqrs:outbox:failed` and `somework:cqrs:outbox:purge` commands, and the `outbox.connection`, `outbox.serializer`, `outbox.auto_setup` and `outbox.max_attempts` options.
+- The outbox relay retries failing rows with an exponential backoff (1 minute up to 1 hour) and gives up after `outbox.max_attempts` attempts; the table stores `attempts`, `available_at`, `failed_at` and `last_error`, and `setup` adds them to existing tables.
+- The outbox relay runs as a single instance when symfony/lock is installed (lock scoped to `framework.cache.prefix_seed`, the connection and the table, extended after every row) and stops after 5 consecutive send failures.
 - Configuration validation: service ids must be non-empty strings, and per-message map keys must be existing classes or interfaces (a leading `\` is allowed).
-- `HealthChecker`, `CheckResult` and `CheckSeverity`, as well as `OutboxMessage` and `OutboxStorage`, are part of the public API (`@api`).
+- `HealthChecker`, `CheckResult` and `CheckSeverity`, as well as `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage`, are part of the public API (`@api`).
 - The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered).
 
 ### Changed
@@ -41,8 +42,8 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services; a handler registered without a bus (e.g. a plain `#[AsMessageHandler]`) counts on every bus.
 - A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error. A handler implementing several handler interfaces (e.g. a process manager with `__invoke(CreateTask|TaskCreated $message)`) registers each union member under its own type.
 - The bundle middleware is only added to the default bus when a facade falls back to it.
-- The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, skips undecodable rows and exits with 1 when a row failed.
-- `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>`; `outbox.table_name` must be a plain or schema-qualified identifier.
+- The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, postpones failing rows, exits with 1 when a row failed and with 2 for an invalid `--limit`; `--limit` counts processed rows.
+- `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (at most 6 digits); `outbox.table_name` must be a plain or schema-qualified identifier, and a reserved word is reported as such.
 - `somework:cqrs:health` instantiates every CQRS handler and every Messenger transport.
 - `somework:cqrs:generate` follows the PSR-4 mapping of the project's `composer.json`, resolves `--dir` against the project directory, validates class names, generates attribute-based handlers with a typed `__invoke()` and exits with 2 on invalid input.
 - `somework:cqrs:list` exits with 2 for an unknown `--type`.

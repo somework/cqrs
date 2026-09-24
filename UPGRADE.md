@@ -179,27 +179,42 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 
 ### Transactional outbox
 
-- `OutboxStorage` (still `@internal`) gained `fetchUnpublished(int $limit, int $offset = 0)` and
-  `purgePublished(DateTimeImmutable $publishedBefore): int`. Custom implementations must add them.
+- **The table gains four columns** (`attempts`, `available_at`, `failed_at`, `last_error`). `store()` keeps
+  working on the old table, but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the
+  missing columns; `auto_setup: true` does the same outside a transaction), generate a Doctrine migration
+  (with doctrine/orm the schema listener includes them), or add them by hand, see
+  [Upgrading from 0.4](docs/outbox.md#upgrading-from-04).
+- `OutboxStorage` is now `@api` and changed: `fetchUnpublished(int $limit)` returns only due messages
+  (unpublished, not given up, retry time passed), and custom implementations must add
+  `markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void` and
+  `purgePublished(DateTimeImmutable $publishedBefore): int`. `OutboxMessage` has a new `attempts` property
+  (constructor argument `$attempts = 0`).
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
   that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
   Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the
   configured connection), or set `outbox.auto_setup: false` when migrations own the table.
 - New options: `outbox.connection` (DBAL connection name, default `default`), `outbox.serializer`
-  (default `messenger.default_serializer`) and `outbox.auto_setup` (default `true`).
+  (default `messenger.default_serializer`), `outbox.auto_setup` (default `true`) and `outbox.max_attempts`
+  (default `10`).
 - Build rows with `OutboxMessage::fromEnvelope($envelope, $serializer, 'transport')`: ids are time-ordered UUIDv7;
   the constructor rejects empty ids and bodies.
 - The relay dispatches each message on the bus of its type (`buses.command_async`, else `buses.command`, for
   commands; `buses.event_async`, else `buses.event`, for events; the default bus otherwise), so workers route it
   to the bus that has its handlers. A `BusNameStamp` stored with the envelope is kept.
-- The relay sends each message to its stored transport, runs as a single instance when symfony/lock is
-  installed, skips rows that fail, stops after 5 consecutive send failures and exits with code 1 when any row
-  failed (monitor the exit code).
+- The relay sends each message to its stored transport and runs as a single instance when symfony/lock is
+  installed. A row that fails is postponed (1 minute, doubling up to 1 hour) instead of being retried on every
+  run, and given up after `outbox.max_attempts` attempts; list and requeue given-up rows with the new
+  `somework:cqrs:outbox:failed` command. The relay stops after 5 consecutive send failures and exits with code 1
+  when any row failed (monitor the exit code); an invalid `--limit` now exits with 2 instead of 1. `--limit`
+  counts processed rows, failed ones included.
+- The relay lock is named after `framework.cache.prefix_seed` (default: the project directory), the connection
+  and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
+  relays of two releases cannot run at the same time.
 - Dates are now stored in UTC. Rows written by earlier versions keep the local time they were written in;
   this only matters for the relay order and the purge cut-off of rows written in the last hours before the upgrade.
-- `OutboxMessage` and `OutboxStorage` are now `@api`.
+- `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage` are now `@api`.
 - `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores), and
-  `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (e.g. `7 days`).
+  `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - Tables created by earlier versions keep working. With very long table names the index is now named
   `idx_<hash>_published_created`; generated migrations may propose renaming it.

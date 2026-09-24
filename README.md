@@ -75,7 +75,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - Idempotency bridge (`IdempotencyStamp` to Messenger's `DeduplicateStamp`)
 - Event ordering metadata with `SequenceAware` and `AggregateSequenceStamp`
 - Rate limiting via Symfony Rate Limiter
-- Transactional outbox with DBAL storage and relay, setup, and purge commands
+- Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands
 
 **Developer experience**
 - `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing

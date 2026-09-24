@@ -20,13 +20,12 @@ interface OutboxStorage
     public function store(OutboxMessage $message): void;
 
     /**
-     * Returns unpublished messages, oldest first.
-     *
-     * @param int $offset number of unpublished messages to skip (the relay skips messages that failed in the current run)
+     * Returns the messages that are due, oldest first: unpublished, not given up, and past the
+     * retry time of their last failed attempt.
      *
      * @return list<OutboxMessage>
      */
-    public function fetchUnpublished(int $limit, int $offset = 0): array;
+    public function fetchUnpublished(int $limit): array;
 
     /**
      * Marks a message as published. Marking an already published message is a no-op.
@@ -34,6 +33,17 @@ interface OutboxStorage
      * @throws \RuntimeException when the message does not exist
      */
     public function markPublished(string $id): void;
+
+    /**
+     * Records a failed attempt to publish a message and increments its attempt counter.
+     *
+     * A failed message must not be returned by {@see fetchUnpublished()} before $retryAt; with
+     * $retryAt null the message is given up and never returned again. Recording a failure for an
+     * already published message is a no-op.
+     *
+     * @throws \RuntimeException when the message does not exist
+     */
+    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.

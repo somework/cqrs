@@ -237,7 +237,8 @@ database transaction and a relay sends them to Messenger afterwards. See
 
 The table is created on first use (`auto_setup: true`), but never inside an open
 transaction: storing the first message inside a transaction throws a
-`LogicException` if the table does not exist yet. Create it during deployment:
+`LogicException` if the table does not exist yet. Create it, or upgrade a table of
+an earlier version, during deployment:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -261,15 +262,18 @@ oldest first, and marks each one published after dispatching it.
   warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
   (for example a `MessageMetadataStamp`) to the envelope you store.
-* A row that fails is logged, skipped for the rest of the run, and makes the
-  command exit with `1`. It is retried on the next run. After 5 consecutive
-  send failures (broker or database down) the run stops early.
+* A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
+  makes the command exit with `1`; the rows behind it are not blocked. After
+  `outbox.max_attempts` attempts (default 10) the relay gives up on the row. After
+  5 consecutive send failures (broker or database down) the run stops early.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
 * When symfony/lock is installed, only one relay runs at a time; a second one
   prints "Another outbox relay is already running." and exits with `0`. The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
-  lock, which only protects relays on the same host.
+  lock, which only protects relays on the same host. The lock name includes
+  `framework.cache.prefix_seed`; set it to a stable value when every release is
+  deployed to a new directory, so old and new relays share the lock.
 
 Run the relay from cron:
 
@@ -294,6 +298,18 @@ user=www-data
 `somework:cqrs:outbox:purge --older-than="7 days"` deletes rows published before
 the given age (a relative date such as `"12 hours"`; default `7 days`).
 Unpublished rows are never deleted.
+
+### Given-up rows
+
+Monitor the relay's exit code and the given-up rows:
+
+```bash
+bin/console somework:cqrs:outbox:failed              # what the relay gave up on, and why
+bin/console somework:cqrs:outbox:failed --requeue    # after fixing the cause
+```
+
+A long broker outage can use up the attempts of the oldest rows; requeue them
+once the broker is back.
 
 ## Health checks
 

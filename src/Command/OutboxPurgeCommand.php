@@ -15,6 +15,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
 use function is_string;
+use function max;
 use function preg_match;
 use function sprintf;
 use function strtolower;
@@ -46,13 +47,17 @@ final class OutboxPurgeCommand extends Command
         $olderThan = $input->getOption('older-than');
 
         // Only "<number> <unit>": a bare number would be parsed as a time zone offset by DateTime.
-        if (!is_string($olderThan) || 1 !== preg_match('/^\s*(\d+)\s*(second|minute|hour|day|week|month|year)s?\s*$/i', $olderThan, $matches)) {
-            $io->error('"--older-than" must be a relative age such as "7 days" or "12 hours".');
+        // At most 6 digits: larger numbers overflow and would turn the cut-off into a future date.
+        if (!is_string($olderThan) || 1 !== preg_match('/^\s*(\d{1,6})\s*(second|minute|hour|day|week|month|year)s?\s*$/i', $olderThan, $matches)) {
+            $io->error('"--older-than" must be a relative age such as "7 days" or "12 hours" (at most 6 digits).');
 
             return self::INVALID;
         }
 
-        $before = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify(sprintf('-%d %s', (int) $matches[1], strtolower($matches[2])));
+        $now = new DateTimeImmutable('now', new DateTimeZone('UTC'));
+        $before = $now->modify(sprintf('-%d %s', (int) $matches[1], strtolower($matches[2])));
+        // Databases reject dates before year 1; nothing was published that long ago anyway.
+        $before = max($before, new DateTimeImmutable('0001-01-01 00:00:00', new DateTimeZone('UTC')));
 
         $deleted = $this->outboxStorage->purgePublished($before);
 

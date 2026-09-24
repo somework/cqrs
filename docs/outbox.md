@@ -7,8 +7,9 @@ database table **in the same transaction** as the business change. The
 `somework:cqrs:outbox:relay` command later sends the stored messages to Messenger.
 
 !!! note "Stability"
-    `OutboxStorage` and `OutboxMessage`, the types you write with, are part of the public API
-    (`@api`). `DbalOutboxStorage` is `@internal`: depend on the `OutboxStorage` interface.
+    `OutboxStorage`, `OutboxMessage` and `DbalOutboxStorage` are part of the public API
+    (`@api`). Type-hint the `OutboxStorage` interface in your code; `DbalOutboxStorage` is
+    public for `addTableToSchema()` in migrations and for the setup and failed-message tools.
 
 ## How it works
 
@@ -18,7 +19,9 @@ database table **in the same transaction** as the business change. The
 3. `somework:cqrs:outbox:relay` reads unpublished rows oldest first, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
    goes to the transport stored with the row, or follows the Messenger routing when no
-   transport was stored. Then the relay marks the row as published.
+   transport was stored. Then the relay marks the row as published. A row that fails is
+   retried later with an increasing delay, and given up after `max_attempts` attempts (see
+   [Failures](#failures)).
 
 Writing to the outbox is always explicit. The CQRS buses (`EventBus::dispatch()` and so on)
 never write to the outbox.
@@ -48,15 +51,17 @@ somework_cqrs:
         connection: default
         serializer: messenger.default_serializer
         auto_setup: true
+        max_attempts: 10
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `false` | Registers the outbox storage and the three console commands. It decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
-| `table_name` | `somework_cqrs_outbox` | Name of the outbox table. |
+| `enabled` | `false` | Registers the outbox storage and the four console commands. It decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
+| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table`. Avoid reserved SQL words such as `order`; the setup reports them. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
-| `auto_setup` | `true` | Creates the table on first use if it is missing, but never inside an open transaction. Set it to `false` when migrations manage the table. |
+| `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Set it to `false` when migrations manage the table. |
+| `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). See [Failures](#failures). |
 
 ## Writing to the outbox
 
@@ -142,7 +147,8 @@ millisecond by one process keep their order.
 The table has to exist before the first `store()`. There are three ways to create it:
 
 **Setup command.** Run it once per environment, for example in your deployment script. It
-creates the table if it is missing and does nothing otherwise:
+creates the table if it is missing, adds the columns that a table created by an earlier
+version lacks, and does nothing otherwise:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -181,7 +187,7 @@ final class Version20260101000000 extends AbstractMigration
 ```
 
 **`auto_setup: true` (default).** The first time a process uses the storage, it checks
-whether the table exists and creates it if needed. It never creates the table inside an open
+whether the table exists and is up to date, and creates or upgrades it if needed. It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -200,9 +206,31 @@ on it for the write path.
 | `transport_name` | VARCHAR(190) | Yes | Target transport; `null` follows the Messenger routing |
 | `created_at` | DATETIME_IMMUTABLE | No | When the row was built |
 | `published_at` | DATETIME_IMMUTABLE | Yes | When the relay sent it (`null` = unpublished) |
+| `attempts` | INTEGER, default `0` | No | Failed attempts to relay the row |
+| `available_at` | DATETIME_IMMUTABLE | Yes | Earliest time of the next attempt after a failure (`null` = now) |
+| `failed_at` | DATETIME_IMMUTABLE | Yes | When the relay gave up on the row (`null` = still relayed) |
+| `last_error` | TEXT | Yes | Exception class and message of the last failure |
 
 An index on `(published_at, created_at)`, named `idx_<table>_published_created`, serves the
-relay query.
+relay query. `attempts`, `available_at`, `failed_at` and `last_error` were added in 0.5.0;
+[upgrade](#upgrading-from-04) a table created by an earlier version.
+
+### Upgrading from 0.4
+
+`store()` keeps working on a table of an earlier version, so deploying the new version does
+not break writes. The relay needs the new columns. Add them with one of:
+
+- `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction);
+- `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
+  the new columns);
+- a migration of your own:
+
+```sql
+ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL;
+ALTER TABLE somework_cqrs_outbox ADD available_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL; -- DATETIME on MySQL
+ALTER TABLE somework_cqrs_outbox ADD failed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;    -- DATETIME on MySQL
+ALTER TABLE somework_cqrs_outbox ADD last_error TEXT DEFAULT NULL;
+```
 
 ## Relaying
 
@@ -213,9 +241,9 @@ bin/console somework:cqrs:outbox:relay --limit=500
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--limit`, `-l` | `100` | Maximum number of messages to relay in this run (positive integer). |
+| `--limit`, `-l` | `100` | Maximum number of rows to process (relay or fail) in this run (positive integer). |
 
-For each unpublished row, oldest first (`created_at`, then `id`), the relay:
+For each due row, oldest first (`created_at`, then `id`), the relay:
 
 1. decodes the row with the outbox serializer;
 2. adds a `TransportNamesStamp` with the stored transport name, if one was stored;
@@ -226,21 +254,28 @@ For each unpublished row, oldest first (`created_at`, then `id`), the relay:
 
 What happens in special cases:
 
-- **Failing rows are skipped and reported.** If decoding, dispatching or marking a row
-  fails, the relay prints `Failed to relay message "<id>": <reason>` and moves on. The row
-  stays unpublished, so the next run tries it again. When any row failed, the command exits
-  with code `1`.
+- **Failing rows are retried later.** If decoding, dispatching or marking a row fails, the
+  relay records the failure (`attempts`, `last_error`) and postpones the row: the next
+  attempt waits 1 minute, then 2, 4, 8 … minutes, at most 1 hour. It prints
+  `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
+  and moves on, so a failing row never blocks the rows behind it. When any row failed, the
+  command exits with code `1`. See [Failures](#failures) for what happens after the last
+  attempt.
 - **An outage stops the run.** After 5 consecutive rows could not be sent (or marked as
   published), the relay prints `Stopping after 5 consecutive failures to send messages.` and
-  exits with `1` instead of walking the whole backlog. Rows that cannot be decoded do not
-  count towards this limit: they are skipped so they cannot block the queue.
+  exits with `1` instead of walking the whole backlog. Those 5 rows count one attempt each.
+  Rows that cannot be decoded do not count towards this limit. If a failure cannot even be
+  recorded (the database is down), the run stops right away.
 - **Messages handled inline trigger a warning.** If no transport received a message (no
   stored transport name and no routing), the default bus handles it synchronously inside the
   relay process on the bus of its type. The relay prints a warning and still marks the row as
   published. Store a transport name or add routing to avoid this.
 - **Only one relay runs at a time.** When `symfony/lock` is installed, the command takes a
-  lock named after the project directory, the connection and the table, and extends it after
-  every row; if the lock is lost, the run stops with exit code `1`. The lock comes from the application's `lock.factory` service.
+  lock named after the application, the connection and the table, and extends it after
+  every row; if the lock is lost, the run stops with exit code `1`. The application part is
+  `framework.cache.prefix_seed`, which defaults to the project directory. If every release
+  is deployed to a new directory, set `prefix_seed` to a stable value (Symfony recommends
+  this anyway), so the relays of the old and the new release share the lock. The lock comes from the application's `lock.factory` service.
   FrameworkBundle registers that service when `framework.lock` is enabled, which is the
   default once `symfony/lock` is installed. Without that service, Symfony's
   `LockableTrait` creates a local semaphore or flock store. The default stores only guard
@@ -252,8 +287,8 @@ What happens in special cases:
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | All selected rows were relayed, there was nothing to relay, or another relay holds the lock |
-| `1` | At least one row failed, the transport looked unavailable, or the lock was lost |
+| `0` | All selected rows were relayed, no row was due, or another relay holds the lock |
+| `1` | At least one row failed, the transport looked unavailable, a failure could not be recorded, or the lock was lost |
 | `2` | Invalid `--limit` |
 
 The relay handles at most `--limit` rows per run and then exits. Run it on a schedule, for
@@ -263,9 +298,25 @@ example from cron:
 * * * * * /path/to/project/bin/console somework:cqrs:outbox:relay --limit=500
 ```
 
-The rows do not track failed attempts. A row that can never be relayed (for example, its
-message class was removed) fails on every run and makes every run exit with `1`. Fix or
-delete such rows by hand.
+## Failures
+
+A row that still fails after `max_attempts` attempts (default 10, about 4 hours of retries)
+is given up: the relay prints `Gave up on message "<id>" after 10 attempt(s): <reason>`, sets
+`failed_at` and never selects the row again. It stays in the table for inspection. List the
+given-up rows and hand them back to the relay once the cause is fixed:
+
+```bash
+bin/console somework:cqrs:outbox:failed                    # id, transport, dates, attempts, last error
+bin/console somework:cqrs:outbox:failed --limit=200
+bin/console somework:cqrs:outbox:failed --requeue          # every given-up row
+bin/console somework:cqrs:outbox:failed --requeue <id> <id>
+```
+
+Requeued rows start again with `attempts = 0`. A long transport outage can also use up the
+attempts of the oldest rows (each run tries up to 5 rows before it stops); requeue them
+after the outage, or raise `max_attempts`. `purge` never deletes given-up rows; delete them
+with SQL (`DELETE FROM somework_cqrs_outbox WHERE failed_at IS NOT NULL`) if you do not want
+to relay them.
 
 ## Purging published rows
 
@@ -277,8 +328,9 @@ bin/console somework:cqrs:outbox:purge --older-than="12 hours"
 ```
 
 `--older-than` takes a number and a unit (`second`, `minute`, `hour`, `day`, `week`, `month` or
-`year`, singular or plural), such as `7 days`, `12 hours` or `1 month`. The default is `7 days`. Only rows whose `published_at` is older than that are deleted. Unpublished rows
-are never deleted. An invalid value exits with code `2`. Schedule the purge, for example
+`year`, singular or plural), such as `7 days`, `12 hours` or `1 month`, with at most 6 digits.
+The default is `7 days`. Only rows whose `published_at` is older than that are deleted.
+Unpublished rows, including given-up ones, are never deleted. An invalid value exits with code `2`. Schedule the purge, for example
 daily.
 
 ## Delivery guarantees
@@ -290,8 +342,8 @@ daily.
   recording processed message ids under a unique constraint. The bundle's
   [idempotency bridge](idempotency.md) does not cover this case: relayed messages do not
   pass through the CQRS stamp pipeline.
-- **Order.** Rows are relayed in the order they were stored. A row that fails is skipped
-  for the rest of the run, so later rows can overtake it. Several workers consuming the
+- **Order.** Rows are relayed in the order they were stored. A row that fails is postponed,
+  so later rows overtake it. Several workers consuming the
   transport can also process messages out of order.
 - **Latency.** Messages leave the outbox only when the relay runs. Your schedule sets the
   delay.
@@ -319,13 +371,12 @@ interface OutboxStorage
     public function store(OutboxMessage $message): void;
 
     /**
-     * Returns unpublished messages, oldest first.
-     *
-     * @param int $offset number of unpublished messages to skip (the relay skips messages that failed in the current run)
+     * Returns the messages that are due, oldest first: unpublished, not given up, and past the
+     * retry time of their last failed attempt.
      *
      * @return list<OutboxMessage>
      */
-    public function fetchUnpublished(int $limit, int $offset = 0): array;
+    public function fetchUnpublished(int $limit): array;
 
     /**
      * Marks a message as published. Marking an already published message is a no-op.
@@ -333,6 +384,17 @@ interface OutboxStorage
      * @throws \RuntimeException when the message does not exist
      */
     public function markPublished(string $id): void;
+
+    /**
+     * Records a failed attempt to publish a message and increments its attempt counter.
+     *
+     * A failed message must not be returned by {@see fetchUnpublished()} before $retryAt; with
+     * $retryAt null the message is given up and never returned again. Recording a failure for an
+     * already published message is a no-op.
+     *
+     * @throws \RuntimeException when the message does not exist
+     */
+    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.
@@ -345,11 +407,12 @@ An implementation must meet these rules:
 
 - `store()` must write through the same transaction as your business data. Otherwise the
   outbox guarantees nothing.
-- `fetchUnpublished()` returns unpublished messages only, in a stable oldest-first order.
-  `$offset` skips that many unpublished messages. The relay passes the number of rows that
-  failed earlier in the same run.
+- `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
+  passed), in a stable oldest-first order.
+- `markFailed()` stores the attempt and the retry time. The relay decides when to give up
+  (`$retryAt` null) from the `attempts` of the message, so keep the counter.
 - Rebuild each message with
-  `new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null)`.
+  `new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null, int $attempts = 0)`.
   Keep the values exactly as stored. `$headers` is the JSON string produced by
   `fromEnvelope()`, and `$id` and `$body` must not be empty.
 
@@ -368,8 +431,8 @@ three caveats:
 
 - `outbox.enabled: true` still requires `doctrine/dbal` to be installed.
 - `table_name`, `connection` and `auto_setup` only configure the DBAL storage.
-- `somework:cqrs:outbox:setup` only works with `DbalOutboxStorage`; with another storage it
-  exits with `1` and asks you to create the schema yourself.
+- `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:failed` only work with
+  `DbalOutboxStorage`; with another storage they exit with `1`.
 
 ## Limitations
 
@@ -377,5 +440,6 @@ three caveats:
   not supported.
 - **One database.** The outbox table must be reachable through the same connection and
   transaction as your business data. Distributed transactions are not supported.
-- **No dead-lettering of rows.** Rows that always fail stay unpublished until you handle
-  them. Once a row is relayed, Messenger's retry and failure transports take over.
+- **Given-up rows wait for you.** Rows the relay gave up on stay in the table until you
+  requeue or delete them. Once a row is relayed, Messenger's retry and failure transports
+  take over.

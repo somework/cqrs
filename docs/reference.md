@@ -75,6 +75,7 @@ somework_cqrs:
         connection: default
         serializer: messenger.default_serializer
         auto_setup: true
+        max_attempts: 10
 ```
 
 ## Rules that apply to every section
@@ -635,10 +636,11 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `false` | boolean (no environment variables) |
-| `table_name` | `somework_cqrs_outbox` | non-empty string |
+| `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table`; avoid reserved SQL words |
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
+| `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row |
 
 Enabling the outbox requires doctrine/dbal (compilation fails otherwise) and
 registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
@@ -646,8 +648,8 @@ registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
 
 * Use the connection that holds your business data, so storing an outbox row
   is part of the same transaction.
-* With `auto_setup: true` the table is created on first use, but never inside an
-  open transaction: that throws a `LogicException` asking you to run
+* With `auto_setup: true` the table is created (or upgraded with the columns
+  added in 0.5.0) on first use, but never inside an open transaction: that throws a `LogicException` asking you to run
   `somework:cqrs:outbox:setup`. Disable `auto_setup` when migrations manage the
   table. With doctrine/orm installed, the table is also added to the schema of
   the outbox connection, so `doctrine:migrations:diff` picks it up.
@@ -676,8 +678,9 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 | `somework:cqrs:generate` | `<type> <name> [--handler=FQCN] [--dir=DIR] [--force]` | `0`; `1` when a file exists (without `--force`) or cannot be written; `2` for an invalid type, class name or path |
 | `somework:cqrs:debug-transports` | none | `0` |
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
-| `somework:cqrs:outbox:setup` | none | `0` |
+| `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage other than `DbalOutboxStorage` |
 | `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed; `2` for an invalid limit |
+| `somework:cqrs:outbox:failed` | `[--requeue] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage other than `DbalOutboxStorage`; `2` for ids without `--requeue` or an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list
@@ -735,10 +738,14 @@ checks.
 
 ### Outbox commands
 
-* `somework:cqrs:outbox:setup` creates the outbox table if it does not exist.
-* `somework:cqrs:outbox:relay` sends unpublished rows in the order they were
-  stored and marks them published. Rows that fail are skipped for the rest of
-  the run and make the command exit with `1`.
+* `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
+  and adds the columns a table of an earlier version lacks.
+* `somework:cqrs:outbox:relay` sends due rows in the order they were stored and
+  marks them published. A row that fails is retried later (1 minute, doubling up
+  to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
+  it is given up.
+* `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
+  `--requeue` hands all of them, or the given ids, back to the relay.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.
 
 See [Production: outbox operations](production.md#outbox-operations).
