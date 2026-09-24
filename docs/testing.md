@@ -1,73 +1,124 @@
-# Testing with somework/cqrs-bundle
+# Testing
 
-This bundle provides a set of testing utilities that let you verify bus dispatching behavior
-without booting the Symfony container or wiring Messenger transports. The utilities are
-purpose-built for the three bus types (command, query, event) and integrate directly with
-PHPUnit's assertion API.
+The bundle ships test helpers in the `SomeWork\CqrsBundle\Testing` namespace:
 
-The real bus classes (`CommandBus`, `QueryBus`, `EventBus`) are `final` and depend on
-Messenger infrastructure, which makes mocking them impractical. Instead, the bundle ships
-**FakeBus** test doubles that record every dispatch call and let you inspect what happened
-after the fact. Combined with `CqrsAssertionsTrait`, you get clean, readable test
-assertions without manual array inspection.
+- **Fake buses**: `FakeCommandBus`, `FakeQueryBus` and `FakeEventBus`. They implement
+  `CommandBusInterface`, `QueryBusInterface` and `EventBusInterface` and record every call
+  instead of dispatching through Messenger.
+- **Assertions**: `CqrsAssertionsTrait` (or the `CqrsTestCase` base class) adds
+  `assertDispatched()` and `assertNotDispatched()`. The `DispatchedMessage` PHPUnit
+  constraint does the matching behind them.
 
-To get started, either extend `CqrsTestCase` (for simple unit tests) or add
-`CqrsAssertionsTrait` to any existing test class. Both approaches give you
-`assertDispatched()` and `assertNotDispatched()` helpers, plus automatic
-`MessageTypeLocator` cache cleanup between tests.
+The real `CommandBus`, `QueryBus` and `EventBus` classes are `final`. Type-hint the
+interfaces in your services so a test can pass in a fake.
 
-## FakeBus Usage
+## Requirements
+
+The assertion helpers (`CqrsAssertionsTrait`, `CqrsTestCase`, `Constraint\DispatchedMessage`)
+are built on PHPUnit. The bundle does not require PHPUnit itself, so your application must
+install it:
+
+```bash
+composer require --dev phpunit/phpunit
+```
+
+The trait uses the `#[Before]` attribute, which needs PHPUnit 10 or newer. The bundle's own
+test suite runs on PHPUnit 11.5. The fake buses have no PHPUnit dependency.
+
+## Fake buses
+
+| Class | Methods it records | Configuring results | Other methods |
+|-------|--------------------|---------------------|---------------|
+| `FakeCommandBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | `willReturn(mixed $result)`: the value `dispatchSync()` returns (default `null`) | `getDispatched()`, `reset()` |
+| `FakeQueryBus` | `ask()` | `willReturn(mixed $result)`: the default result; `willReturnFor(string $queryClass, mixed $result)`: the result for one query class | `getDispatched()`, `reset()` |
+| `FakeEventBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | none | `getDispatched()`, `reset()` |
+
+A fake handles nothing. It does not run the stamp pipeline or resolve dispatch modes, and it
+sends nothing to a transport. The dispatch methods return `new Envelope($message, $stamps)`,
+built from the stamps you passed.
+
+### What `getDispatched()` returns
+
+`getDispatched()` returns one **array per call**, in call order. The entries are neither
+envelopes nor bare messages:
+
+| Fake | Shape of each record |
+|------|----------------------|
+| `FakeCommandBus`, `FakeEventBus` | `['message' => object, 'mode' => DispatchMode, 'stamps' => list<StampInterface>]` |
+| `FakeQueryBus` | `['message' => object, 'stamps' => list<StampInterface>]` (no `mode`: queries are always synchronous) |
+
+The `mode` entry records the method that was called:
+
+- `dispatchSync()` records `DispatchMode::SYNC`.
+- `dispatchAsync()` records `DispatchMode::ASYNC`.
+- `dispatch()` records the mode argument you passed, or `DispatchMode::DEFAULT` when you
+  passed none. The fake does not resolve `DEFAULT` through `dispatch_modes` or
+  `#[Asynchronous]`.
+
+`reset()` clears the records. On `FakeCommandBus` and `FakeQueryBus` it also clears any
+results set with `willReturn()` or `willReturnFor()`.
 
 ### FakeCommandBus
 
-Use `FakeCommandBus` to test services that dispatch commands. It records every call to
-`dispatch()`, `dispatchSync()`, and `dispatchAsync()`.
-
 ```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit;
+
+use App\Application\Command\CreateTask;
+use App\Application\TaskService;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 
-final class OrderServiceTest extends TestCase
+final class TaskServiceTest extends TestCase
 {
     use CqrsAssertionsTrait;
 
-    public function test_placing_order_dispatches_command(): void
+    public function test_creating_a_task_dispatches_create_task(): void
     {
         $commandBus = new FakeCommandBus();
-        $service = new OrderService($commandBus);
+        $service = new TaskService($commandBus);
 
-        $service->placeOrder('order-123', 'Widget', 3);
+        $service->createTask('task-1', 'Write docs');
 
-        // Simple class-level assertion
-        self::assertDispatched($commandBus, PlaceOrderCommand::class);
+        self::assertDispatched($commandBus, CreateTask::class);
 
-        // Inspect specific property values
-        $dispatched = $commandBus->getDispatched();
-        self::assertCount(1, $dispatched);
-        self::assertSame('order-123', $dispatched[0]['message']->orderId);
-        self::assertSame(3, $dispatched[0]['message']->quantity);
+        $records = $commandBus->getDispatched();
+        self::assertCount(1, $records);
+        self::assertSame('task-1', $records[0]['message']->id);
     }
 
-    public function test_dispatch_sync_returns_configured_result(): void
+    public function test_dispatch_sync_returns_the_configured_result(): void
     {
         $commandBus = new FakeCommandBus();
-        $commandBus->willReturn('generated-id-456');
+        $commandBus->willReturn('task-42');
 
-        $service = new OrderService($commandBus);
-        $result = $service->createOrderSync('Widget', 1);
+        $service = new TaskService($commandBus);
 
-        self::assertSame('generated-id-456', $result);
+        // TaskService calls $commandBus->dispatchSync(...) and returns the handler result.
+        self::assertSame('task-42', $service->createTaskAndReturnId('Write docs'));
     }
 }
 ```
 
 ### FakeQueryBus
 
-Use `FakeQueryBus` to test services that ask queries. Configure return values with
-`willReturn()` for a default result, or `willReturnFor()` for per-query-class results.
+`willReturnFor()` matches the query's exact class; subclasses do not inherit a result. It
+takes precedence over `willReturn()`. When neither is set, `ask()` returns `null`.
 
 ```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit;
+
+use App\Application\Query\FindTask;
+use App\Application\Query\ListTasks;
+use App\Application\TaskDashboard;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeQueryBus;
@@ -76,360 +127,379 @@ final class TaskDashboardTest extends TestCase
 {
     use CqrsAssertionsTrait;
 
-    public function test_dashboard_loads_tasks(): void
+    public function test_dashboard_lists_tasks(): void
     {
         $queryBus = new FakeQueryBus();
-        $queryBus->willReturn([
-            ['id' => 'task-1', 'name' => 'Review PR'],
-            ['id' => 'task-2', 'name' => 'Deploy staging'],
-        ]);
+        $queryBus->willReturn([]);                                     // default for every query
+        $queryBus->willReturnFor(ListTasks::class, ['task-1', 'task-2']); // result for ListTasks only
 
         $dashboard = new TaskDashboard($queryBus);
-        $result = $dashboard->load();
 
-        self::assertDispatched($queryBus, ListTasksQuery::class);
-        self::assertCount(2, $result);
-    }
-
-    public function test_per_query_class_results(): void
-    {
-        $queryBus = new FakeQueryBus();
-        $queryBus->willReturnFor(FindTaskQuery::class, ['id' => 'task-1', 'name' => 'Review PR']);
-        $queryBus->willReturnFor(ListTasksQuery::class, []);
-
-        $dashboard = new TaskDashboard($queryBus);
-        $task = $dashboard->findTask('task-1');
-
-        self::assertSame('task-1', $task['id']);
-        self::assertDispatched($queryBus, FindTaskQuery::class);
+        self::assertSame(['task-1', 'task-2'], $dashboard->taskIds());
+        self::assertDispatched($queryBus, ListTasks::class);
+        self::assertNotDispatched($queryBus, FindTask::class);
     }
 }
 ```
 
 ### FakeEventBus
 
-Use `FakeEventBus` to test services that dispatch events. It records `dispatch()`,
-`dispatchSync()`, and `dispatchAsync()` calls with their dispatch mode.
+The records include the stamps passed to the bus, so a test can check them too:
 
 ```php
-use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
-use SomeWork\CqrsBundle\Testing\FakeEventBus;
+<?php
 
-final class UserRegistrationServiceTest extends TestCase
-{
-    use CqrsAssertionsTrait;
+declare(strict_types=1);
 
-    public function test_registration_dispatches_event(): void
-    {
-        $eventBus = new FakeEventBus();
-        $service = new UserRegistrationService($eventBus);
+namespace App\Tests\Unit;
 
-        $service->register('user@example.com', 'Jane Doe');
-
-        self::assertDispatched($eventBus, UserRegisteredEvent::class);
-    }
-
-    public function test_duplicate_registration_does_not_dispatch(): void
-    {
-        $eventBus = new FakeEventBus();
-        $service = new UserRegistrationService($eventBus);
-
-        $service->registerIdempotent('user@example.com', 'Jane Doe');
-        $service->registerIdempotent('user@example.com', 'Jane Doe');
-
-        // Verify only one event was dispatched (idempotency)
-        $dispatched = $eventBus->getDispatched();
-        self::assertCount(1, $dispatched);
-    }
-}
-```
-
-### Resetting Between Tests
-
-If you use `CqrsAssertionsTrait` or extend `CqrsTestCase`, `MessageTypeLocator` is reset
-automatically before each test via a `#[Before]` hook. FakeBus instances are typically
-created per test method, so they start empty. If you share a FakeBus across tests (e.g.,
-via `setUp()`), call `reset()` explicitly:
-
-```php
-protected function setUp(): void
-{
-    parent::setUp();
-    $this->commandBus = new FakeCommandBus();
-    // Or if reusing: $this->commandBus->reset();
-}
-```
-
-## Handler Isolation Testing
-
-Handlers are plain PHP classes with an `__invoke()` method. Test them directly without
-any bus infrastructure -- inject real or fake dependencies and call `__invoke()` with
-a message instance.
-
-### Command Handler
-
-```php
-use PHPUnit\Framework\TestCase;
-
-final class CreateTaskHandlerTest extends TestCase
-{
-    public function test_creates_task_in_repository(): void
-    {
-        $repository = new InMemoryTaskRepository();
-        $handler = new CreateTaskHandler($repository);
-
-        $handler(new CreateTaskCommand(
-            id: 'task-123',
-            name: 'Write documentation',
-        ));
-
-        $task = $repository->findById('task-123');
-        self::assertNotNull($task);
-        self::assertSame('Write documentation', $task->name);
-    }
-}
-```
-
-### Query Handler
-
-```php
-use PHPUnit\Framework\TestCase;
-
-final class FindTaskHandlerTest extends TestCase
-{
-    public function test_returns_task_when_found(): void
-    {
-        $repository = new InMemoryTaskRepository();
-        $repository->save(new Task('task-123', 'Review PR'));
-
-        $handler = new FindTaskHandler($repository);
-        $result = $handler(new FindTaskQuery(id: 'task-123'));
-
-        self::assertSame('task-123', $result->id);
-        self::assertSame('Review PR', $result->name);
-    }
-
-    public function test_returns_null_when_not_found(): void
-    {
-        $repository = new InMemoryTaskRepository();
-        $handler = new FindTaskHandler($repository);
-
-        $result = $handler(new FindTaskQuery(id: 'nonexistent'));
-
-        self::assertNull($result);
-    }
-}
-```
-
-Handlers are tested WITHOUT buses. Inject real or fake dependencies (repositories,
-services), not the bus itself. The bus is a dispatch mechanism, not a handler dependency.
-
-## Async Dispatch Testing
-
-FakeBus test doubles record the `DispatchMode` for each dispatch call. Use this to
-verify that your service dispatches messages with the expected mode.
-
-### Verifying Async Command Dispatch
-
-```php
+use App\Application\Event\TaskCreated;
+use App\Application\TaskService;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
+use SomeWork\CqrsBundle\Testing\FakeEventBus;
 
-final class BulkImportServiceTest extends TestCase
+final class TaskCreatedEventTest extends TestCase
 {
     use CqrsAssertionsTrait;
 
-    public function test_bulk_import_dispatches_async(): void
-    {
-        $commandBus = new FakeCommandBus();
-        $service = new BulkImportService($commandBus);
-
-        $service->importBatch(['item-1', 'item-2', 'item-3']);
-
-        $dispatched = $commandBus->getDispatched();
-        self::assertCount(3, $dispatched);
-
-        foreach ($dispatched as $record) {
-            self::assertSame(DispatchMode::ASYNC, $record['mode']);
-        }
-    }
-}
-```
-
-### Verifying Event Dispatch Mode
-
-```php
-use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Testing\FakeEventBus;
-
-final class NotificationServiceTest extends TestCase
-{
-    public function test_critical_events_dispatched_sync(): void
+    public function test_task_created_is_published_asynchronously_with_an_idempotency_key(): void
     {
         $eventBus = new FakeEventBus();
-        $service = new NotificationService($eventBus);
+        $service = new TaskService(new FakeCommandBus(), $eventBus);
 
-        $service->notifyCritical('System overload detected');
+        $service->createTask('task-1', 'Write docs');
 
-        $dispatched = $eventBus->getDispatched();
-        self::assertCount(1, $dispatched);
-        self::assertSame(DispatchMode::SYNC, $dispatched[0]['mode']);
+        self::assertDispatched(
+            $eventBus,
+            TaskCreated::class,
+            static fn (TaskCreated $event): bool => 'task-1' === $event->taskId,
+        );
+
+        $record = $eventBus->getDispatched()[0];
+        self::assertSame(DispatchMode::ASYNC, $record['mode']);
+        self::assertInstanceOf(IdempotencyStamp::class, $record['stamps'][0]);
     }
 }
 ```
 
-### Filtering Dispatched Messages by Mode
+## Assertions
 
-When a service dispatches multiple messages with different modes, filter the
-`getDispatched()` array:
+`CqrsAssertionsTrait` provides two `protected static` assertions:
 
-```php
-$dispatched = $commandBus->getDispatched();
+- `assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
+- `assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 
-$asyncDispatches = array_filter(
-    $dispatched,
-    static fn (array $record): bool => $record['mode'] === DispatchMode::ASYNC,
-);
+Their parameters work as follows:
 
-$syncDispatches = array_filter(
-    $dispatched,
-    static fn (array $record): bool => $record['mode'] === DispatchMode::SYNC,
-);
-
-self::assertCount(2, $asyncDispatches);
-self::assertCount(1, $syncDispatches);
-```
-
-## CqrsTestCase vs CqrsAssertionsTrait
-
-### Extend CqrsTestCase
-
-Use `CqrsTestCase` when your test class does not already extend another base class.
-It extends `PHPUnit\Framework\TestCase` and includes `CqrsAssertionsTrait`:
+- `$bus` is any object that implements `RecordsBusDispatches`. The three fakes do, and your
+  own test doubles can too.
+- A record matches when its message is an `instanceof $messageClass`, so subclasses and
+  interfaces match as well.
+- `$callback` receives the message and returns `true` for a match. `assertDispatched()`
+  passes when at least one recorded message matches both the class and the callback.
+  `assertNotDispatched()` passes when none does.
+- `$message` is the custom failure message. It is the **fourth** parameter, so pass it by
+  name when you have no callback. A message string passed third lands in `$callback` and
+  causes a `TypeError`.
 
 ```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit;
+
+use App\Application\Command\CreateTask;
+use App\Application\Command\DeleteTask;
 use SomeWork\CqrsBundle\Testing\CqrsTestCase;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 
-final class OrderServiceTest extends CqrsTestCase
+final class AssertionExamplesTest extends CqrsTestCase
 {
-    public function test_order_dispatched(): void
+    public function test_examples(): void
     {
         $bus = new FakeCommandBus();
-        // ... test logic ...
-        self::assertDispatched($bus, PlaceOrderCommand::class);
+        $bus->dispatch(new CreateTask('task-1', 'Write docs'));
+
+        self::assertDispatched($bus, CreateTask::class);
+        self::assertDispatched($bus, CreateTask::class, static fn (CreateTask $c): bool => 'Write docs' === $c->name);
+        self::assertDispatched($bus, CreateTask::class, message: 'CreateTask must be dispatched after the form is submitted');
+        self::assertNotDispatched($bus, DeleteTask::class);
     }
 }
 ```
 
-### Use CqrsAssertionsTrait Directly
+On failure, the message names the classes that were actually dispatched
+(`Actually dispatched: App\Application\Command\CreateTask`), or says
+`No messages were dispatched.`
 
-Use the trait when you already extend `KernelTestCase`, `WebTestCase`, or any other
-base class:
+### CqrsTestCase or CqrsAssertionsTrait
+
+`CqrsTestCase` is an abstract `PHPUnit\Framework\TestCase` that uses the trait. Extend it
+for plain unit tests. When your test already extends `KernelTestCase`, `WebTestCase` or
+another base class, use the trait instead.
+
+The trait also adds `resetCqrsState()`, which is marked `#[Before]`. It clears the bundle's
+internal message-type resolution cache before each test. That cache is keyed by service
+locator, so separate containers do not share entries. The reset is only a safety net, and
+you never need to call it yourself.
+
+### Using the constraint directly
+
+`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null)`.
+You can combine it with PHPUnit's logical constraints:
 
 ```php
-use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
-use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit;
+
+use App\Application\Command\CreateTask;
+use App\Application\Command\DeleteTask;
+use PHPUnit\Framework\Constraint\LogicalNot;
+use PHPUnit\Framework\Constraint\LogicalOr;
+use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 
-final class OrderIntegrationTest extends KernelTestCase
+final class ConstraintExamplesTest extends TestCase
+{
+    public function test_constraint(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->dispatch(new CreateTask('task-1', 'Write docs'));
+
+        self::assertThat($bus, new DispatchedMessage(CreateTask::class));
+        self::assertThat($bus, new LogicalNot(new DispatchedMessage(DeleteTask::class)));
+        self::assertThat($bus, LogicalOr::fromConstraints(
+            new DispatchedMessage(CreateTask::class),
+            new DispatchedMessage(DeleteTask::class),
+        ));
+    }
+}
+```
+
+## Testing handlers directly
+
+Handlers are services with a typed `__invoke()` method. To test one, create it with real or
+in-memory dependencies and call it with a message. No bus is involved:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit;
+
+use App\Application\Command\CreateTask;
+use App\Application\Command\CreateTaskHandler;
+use App\Application\Query\FindTask;
+use App\Application\Query\FindTaskHandler;
+use App\Tests\Double\InMemoryTaskRepository;
+use PHPUnit\Framework\TestCase;
+
+final class TaskHandlersTest extends TestCase
+{
+    public function test_create_then_find(): void
+    {
+        $repository = new InMemoryTaskRepository();
+
+        (new CreateTaskHandler($repository))(new CreateTask('task-1', 'Write docs'));
+        $task = (new FindTaskHandler($repository))(new FindTask('task-1'));
+
+        self::assertSame('Write docs', $task->name);
+    }
+}
+```
+
+Handlers that extend `AbstractCommandHandler`, `AbstractQueryHandler` or
+`AbstractEventHandler` are `EnvelopeAware`. When you call them directly, first pass an
+envelope with `$handler->setEnvelope(new Envelope($message))` if `handle()`, `fetch()` or
+`on()` reads `$this->getEnvelope()`.
+
+## Swapping the buses for fakes in the test container
+
+Kernel and web tests use the real services. To make everything that depends on
+`CommandBusInterface`, `QueryBusInterface` or `EventBusInterface` receive a fake, redefine
+the interface aliases for the `test` environment. Use either `config/services_test.yaml` or
+a `when@test` block in `config/services.yaml`:
+
+```yaml
+# config/services.yaml
+when@test:
+    services:
+        SomeWork\CqrsBundle\Testing\FakeCommandBus:
+            public: true
+        SomeWork\CqrsBundle\Testing\FakeQueryBus:
+            public: true
+        SomeWork\CqrsBundle\Testing\FakeEventBus:
+            public: true
+
+        SomeWork\CqrsBundle\Contract\CommandBusInterface:
+            alias: SomeWork\CqrsBundle\Testing\FakeCommandBus
+            public: true
+        SomeWork\CqrsBundle\Contract\QueryBusInterface:
+            alias: SomeWork\CqrsBundle\Testing\FakeQueryBus
+            public: true
+        SomeWork\CqrsBundle\Contract\EventBusInterface:
+            alias: SomeWork\CqrsBundle\Testing\FakeEventBus
+            public: true
+```
+
+Application configuration overrides the aliases the bundle registers. Every service that
+type-hints an interface then gets the fake. Fetch the same instance from the test container
+to configure it and assert on it:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Functional;
+
+use App\Application\Command\CreateTask;
+use App\Application\Query\FindTask;
+use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
+use SomeWork\CqrsBundle\Testing\FakeCommandBus;
+use SomeWork\CqrsBundle\Testing\FakeQueryBus;
+use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
+
+final class TaskControllerTest extends WebTestCase
 {
     use CqrsAssertionsTrait;
 
-    public function test_order_flow(): void
+    public function test_post_dispatches_create_task(): void
     {
-        self::bootKernel();
-        $bus = new FakeCommandBus();
-        // ... integration test logic ...
-        self::assertDispatched($bus, PlaceOrderCommand::class);
+        $client = static::createClient();
+
+        $client->request('POST', '/tasks', server: ['CONTENT_TYPE' => 'application/json'], content: '{"name":"Write docs"}');
+
+        self::assertResponseStatusCodeSame(201);
+        self::assertDispatched(
+            static::getContainer()->get(FakeCommandBus::class),
+            CreateTask::class,
+            static fn (CreateTask $command): bool => 'Write docs' === $command->name,
+        );
+    }
+
+    public function test_get_renders_the_query_result(): void
+    {
+        $client = static::createClient();
+        static::getContainer()->get(FakeQueryBus::class)->willReturnFor(FindTask::class, ['id' => 'task-1', 'name' => 'Write docs']);
+
+        $client->request('GET', '/tasks/task-1');
+
+        self::assertResponseIsSuccessful();
     }
 }
 ```
 
-### MessageTypeLocator Auto-Reset
+The fakes are ordinary shared services, so each freshly booted kernel gets new, empty
+instances. Only the interface aliases change. The concrete `SomeWork\CqrsBundle\Bus\CommandBus`,
+`QueryBus` and `EventBus` services stay registered and public, and services that type-hint
+those classes still get the real buses.
 
-Both `CqrsTestCase` and `CqrsAssertionsTrait` include a `#[Before]` hook that calls
-`MessageTypeLocator::reset()` before each test method. This clears the static `WeakMap`
-cache used for message-to-service resolution, preventing state leakage between tests.
+## Kernel tests through the real buses
 
-Without this reset, a test that boots the kernel and resolves message types could
-pollute the cache for subsequent tests that use a different container configuration.
-
-## PHPUnit Constraint API
-
-The `DispatchedMessage` constraint can be used directly with `assertThat()` for
-advanced assertion composition.
-
-### Direct Constraint Usage
+To test the whole flow (stamp pipeline, Messenger middleware, handlers), boot the kernel and
+fetch the buses from the container:
 
 ```php
-use SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage;
-use SomeWork\CqrsBundle\Testing\FakeCommandBus;
+<?php
 
-$bus = new FakeCommandBus();
-$bus->dispatch(new CreateTaskCommand('task-1', 'Review PR'));
+declare(strict_types=1);
 
-// Direct assertThat usage
-self::assertThat($bus, new DispatchedMessage(CreateTaskCommand::class));
+namespace App\Tests\Integration;
+
+use App\Application\Command\CreateTask;
+use App\Application\Query\FindTask;
+use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Bus\QueryBus;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+
+final class TaskFlowTest extends KernelTestCase
+{
+    public function test_a_created_task_can_be_found(): void
+    {
+        self::bootKernel();
+        $container = static::getContainer();
+
+        // The concrete services are the real buses even when the interfaces point to fakes.
+        $commandBus = $container->get(CommandBus::class);
+        $queryBus = $container->get(QueryBus::class);
+
+        $commandBus->dispatchSync(new CreateTask('task-1', 'Write docs'));
+        $task = $queryBus->ask(new FindTask('task-1'));
+
+        self::assertSame('Write docs', $task->name);
+    }
+}
 ```
 
-### Composing with LogicalNot
+If you did not swap in fakes, fetching `CommandBusInterface::class` and `QueryBusInterface::class`
+works as well, because both aliases are public.
+
+`dispatchSync()` and `ask()` return the handler result. When the single handler throws,
+they rethrow its exception unwrapped, so `expectException(TaskNotFound::class)` works
+directly. Messages that the dispatch mode or routing sends to an asynchronous transport are
+not handled during the test. In the test environment, point those transports at Messenger's
+in-memory transport and assert on what was sent:
+
+```yaml
+# config/packages/messenger.yaml
+when@test:
+    framework:
+        messenger:
+            transports:
+                async: 'in-memory://'
+```
 
 ```php
-use PHPUnit\Framework\Constraint\LogicalNot;
-use SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage;
+<?php
 
-// Assert message was NOT dispatched
-self::assertThat(
-    $bus,
-    new LogicalNot(new DispatchedMessage(DeleteTaskCommand::class)),
-);
+declare(strict_types=1);
+
+namespace App\Tests\Integration;
+
+use App\Application\Event\TaskCreated;
+use SomeWork\CqrsBundle\Bus\EventBus;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+
+final class AsyncEventTest extends KernelTestCase
+{
+    public function test_task_created_goes_to_the_async_transport(): void
+    {
+        self::bootKernel();
+        $container = static::getContainer();
+
+        // TaskCreated is routed to the "async" transport (Messenger routing or somework_cqrs.transports).
+        $container->get(EventBus::class)->dispatchAsync(new TaskCreated('task-1'));
+
+        $sent = $container->get('messenger.transport.async')->getSent();
+        self::assertCount(1, $sent);
+        self::assertInstanceOf(TaskCreated::class, $sent[0]->getMessage());
+    }
+}
 ```
 
-### Custom Assertion Messages
-
-Both `assertDispatched()` and `assertNotDispatched()` accept an optional message
-parameter for clearer failure output:
-
-```php
-self::assertDispatched(
-    $commandBus,
-    PlaceOrderCommand::class,
-    'Expected order command after payment confirmation',
-);
-```
-
-When a dispatch assertion fails, the constraint provides helpful context including
-which message classes were actually dispatched (or "No messages were dispatched" if
-the bus is empty).
+`dispatchAsync()` requires an async bus (`somework_cqrs.buses.event_async` for events,
+`command_async` for commands). Without one, the bus throws
+`AsyncBusNotConfiguredException`.
 
 ## Tips
 
-- **Always use CqrsAssertionsTrait or CqrsTestCase** to get automatic
-  `MessageTypeLocator` cleanup between tests. Without it, static cache from one test
-  can affect another.
-
-- **Do not mock final bus classes.** Use `FakeCommandBus`, `FakeQueryBus`, and
-  `FakeEventBus` instead. They implement the same method signatures and provide
-  introspection via `getDispatched()`.
-
-- **Test handlers in isolation, test dispatching in integration.** Handlers are pure
-  logic -- test them by calling `__invoke()` directly with real or fake dependencies.
-  Use FakeBus to verify that your services dispatch the right messages.
-
-- **Inspect `getDispatched()` for property values.** The `assertDispatched()` helper
-  only checks the message class. For property-level assertions, access the dispatch
-  records directly:
-
-  ```php
-  $dispatched = $bus->getDispatched();
-  self::assertSame('expected-id', $dispatched[0]['message']->id);
-  ```
-
-- **Use `willReturn()` and `willReturnFor()` on FakeQueryBus** to configure return
-  values. `willReturn()` sets a default for all queries; `willReturnFor()` sets a
-  result for a specific query class.
+- **Type-hint the interfaces** (`CommandBusInterface`, `QueryBusInterface`,
+  `EventBusInterface`) in your services. Unit tests can then pass a fake, and the test
+  container can swap the aliases.
+- **Unit-test handlers without buses.** Call `__invoke()` directly. Use the fakes to test the
+  code that dispatches.
+- **Check message properties** with the `assertDispatched()` callback, or read
+  `getDispatched()[n]['message']`.
+- **Check the dispatch mode** through the `mode` entry of a record, not by relying on
+  `dispatch_modes` configuration: the fakes record the mode the caller passed.
