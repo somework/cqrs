@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
@@ -56,7 +58,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 
     /**
      * @param array<string, string> $stampTypes
-     * @param list<string>          $routedMessageTypes Classes, interfaces and "*" routed by framework.messenger.routing
+     * @param list<string>          $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
      */
     public function __construct(
         private readonly MessageTransportStampFactory $stampFactory,
@@ -159,7 +161,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * Whether framework.messenger.routing has an entry for the message, its parents or interfaces.
+     * Whether framework.messenger.routing routes the message.
      */
     private function isRouted(object $message): bool
     {
@@ -167,11 +169,9 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             return false;
         }
 
-        if (isset($this->routedMessageTypes['*']) || isset($this->routedMessageTypes[$message::class])) {
-            return true;
-        }
-
-        foreach ([...class_parents($message), ...class_implements($message)] as $type) {
+        // The types Messenger's SendersLocator looks up: the class, its parents and interfaces,
+        // namespace wildcards ("App\Message\*") and "*".
+        foreach (HandlersLocator::listTypes(new Envelope($message)) as $type) {
             if (isset($this->routedMessageTypes[$type])) {
                 return true;
             }

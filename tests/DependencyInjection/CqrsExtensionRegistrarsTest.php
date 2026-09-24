@@ -254,7 +254,7 @@ final class CqrsExtensionRegistrarsTest extends TestCase
         $asyncReference = $commandBusDefinition->getArgument('$asyncBus');
         self::assertInstanceOf(Reference::class, $asyncReference);
         self::assertSame('messenger.bus.command_async', (string) $asyncReference);
-        self::assertSame(ContainerInterface::NULL_ON_INVALID_REFERENCE, $asyncReference->getInvalidBehavior());
+        self::assertSame(ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE, $asyncReference->getInvalidBehavior(), 'A typo in the async bus id fails the build.');
         $stampsDeciderReference = $commandBusDefinition->getArgument('$stampsDecider');
         self::assertInstanceOf(Reference::class, $stampsDeciderReference);
         self::assertSame('somework_cqrs.stamps_decider', (string) $stampsDeciderReference);

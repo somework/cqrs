@@ -87,7 +87,10 @@ interfaces declare no method, because PHP does not allow an implementation to
 narrow a parameter type; the compiler pass reads the type of the first
 parameter of `__invoke()` to find out which message the handler is responsible
 for. A union type (`__invoke(InvoicePaid|InvoiceVoided $event)`) registers the
-handler for each member.
+handler for each member. Every member must match an interface the handler
+implements: a process manager that implements `CommandHandler` and
+`EventHandler` can accept `ShipOrder|OrderPaid`, while a `CommandHandler` that
+also accepts an event fails the container compilation.
 
 ```php
 <?php
@@ -147,11 +150,11 @@ final class CreateTaskHandler
 ```
 
 The attribute's `command`, `query`, or `event` argument declares the handled
-message. Whether the message is treated as a command, query, or event is
-decided by the marker interface the message class implements; the attribute
-type is only used for messages that implement none of them. When a class has
-both the attribute and a handler marker interface, the attribute defines the
-registration.
+message. The attribute type must match the marker interface the message class
+implements (`#[AsCommandHandler]` for an event fails the container
+compilation); for a message that implements none of them, the attribute type
+decides. When a class has both the attribute and a handler marker interface,
+the attribute defines the registration.
 
 ## Abstract base handlers
 
@@ -642,6 +645,11 @@ infrastructure uses a different name:
 #[Asynchronous(transport: 'notifications')]
 final class SendWelcomeEmail implements Command { /* ... */ }
 ```
+
+When the message has a handler in the application, the container compilation
+checks that the transport exists. A route in `framework.messenger.routing`
+counts as routing the message when it names the class, a parent class, an
+interface, a namespace wildcard (`App\Message\*`) or `*`.
 
 `dispatchSync()` still handles an `#[Asynchronous]` message synchronously.
 

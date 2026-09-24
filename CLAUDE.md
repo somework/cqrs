@@ -70,6 +70,7 @@ reports messages that were sent to a transport or deduplicated).
 **Console Commands** (`src/Command/`) — diagnostics, scaffolding, health and outbox commands. See Console Commands section above.
 
 **DI / Compiler Passes** (`src/DependencyInjection/`) — `CqrsExtension` loads `config/services.php` (fixed services only) and runs the registrars in `Registration/` that wire resolvers, stamp deciders, outbox and rate limiting from bundle config. Compiler passes (see `.claude/rules/di-registrar-pattern.md` for phases):
+- `ValidateBusIdsPass` — every `buses.*` id must be a Messenger bus
 - `CqrsHandlerPass` — normalises handler tags: infers messages from `__invoke()` types, assigns sync + async buses, resolves bus aliases, records `somework_cqrs.handler_metadata`
 - `EnvelopeAwareHandlersLocatorPass` — decorates each bus handlers locator for `EnvelopeAware` handlers
 - `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` — insert middleware via `MessengerMiddlewareInjector`

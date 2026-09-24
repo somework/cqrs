@@ -43,6 +43,9 @@ final class MessageTransportStampDeciderAsynchronousTest extends TestCase
         yield 'bare attribute falls back to "async"' => [new AsyncTaskCommand('1'), [], [], ['async']];
         yield 'bare attribute leaves routed messages to Messenger' => [new AsyncTaskCommand('1'), [], [AsyncTaskCommand::class], null];
         yield 'bare attribute respects a wildcard route' => [new AsyncTaskCommand('1'), [], ['*'], null];
+        yield 'bare attribute respects a namespace route' => [new AsyncTaskCommand('1'), [], ['SomeWork\\CqrsBundle\\Tests\\Fixture\\*'], null];
+        yield 'bare attribute respects an interface route' => [new AsyncTaskCommand('1'), [], [\SomeWork\CqrsBundle\Contract\Command::class], null];
+        yield 'a route for another namespace does not count' => [new AsyncTaskCommand('1'), [], ['App\\Message\\*'], ['async']];
     }
 
     /**

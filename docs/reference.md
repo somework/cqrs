@@ -209,6 +209,12 @@ somework_cqrs:
   ```
   Asynchronous dispatch is configured for commands (the default dispatch mode is "async"), but "somework_cqrs.buses.command_async" is null. Define the Messenger bus id used for async commands before the container is compiled.
   ```
+* Every configured bus id must be a Messenger bus (a service tagged
+  `messenger.bus`, or an alias of one); anything else fails the compilation:
+
+  ```
+  "somework_cqrs.buses.event_async" is "event.asyn_bus", which is not a Messenger bus. Known buses: command.bus, event.async_bus, event.bus. Declare it under "framework.messenger.buses".
+  ```
 
 ## naming
 

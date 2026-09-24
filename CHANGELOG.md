@@ -29,18 +29,18 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - Stamps passed by the caller take precedence over the stamp pipeline: `MessageMetadataStamp`, `SerializerStamp`, `AggregateSequenceStamp`, `DeduplicateStamp` and `DispatchAfterCurrentBusStamp` are no longer replaced or duplicated. The causation id is added to the last metadata stamp and an explicit causation id is kept.
 - `IdempotencyStamp` stays on the envelope next to the `DeduplicateStamp` it produces.
 - `dispatchSync()` and `ask()` rethrow the exception of the single failing handler instead of `HandlerFailedException`, raise `NoHandlerException` instead of Messenger's `NoHandlerForMessageException`, and ignore `DispatchAfterCurrentBusStamp`.
-- `#[Asynchronous]` transports follow the configuration precedence (exact-class entry, attribute, parent/interface entries, default); a bare attribute no longer overrides Messenger's routing.
+- `#[Asynchronous]` transports follow the configuration precedence (exact-class entry, attribute, parent/interface entries, default); a bare attribute no longer overrides Messenger's routing (including `*` and namespace wildcards such as `App\Message\*`).
 - Per-message maps resolve interfaces most specific first, independent of the declaration order.
 - Retry policy stamps no longer override stamps passed by the caller.
 - The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware, so deferred messages pass through it too.
 - OpenTelemetry: one span per pass, `cqrs.dispatch <Message>` (PRODUCER) when dispatching and `cqrs.consume <Message>` (CONSUMER) in the worker; deferred messages keep the trace they were dispatched in.
 - `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever; delays are capped before and after jitter.
 - `retry_strategy.transports` keys are kept as written and must name existing transports.
-- `causation_id.buses` entries must name existing buses.
+- `causation_id.buses` entries must name existing buses, and every `buses.*` id must be a Messenger bus (a typo in an async bus id used to surface only at runtime as "bus is not configured"); the transport of `#[Asynchronous(transport: ...)]` on a handled message must exist.
 - The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` no longer accept environment variables.
 - Rate limiting stays inactive until a limiter is mapped; mapping one without symfony/rate-limiter is a configuration error.
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services; a handler registered without a bus (e.g. a plain `#[AsMessageHandler]`) counts on every bus.
-- A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error. A handler implementing several handler interfaces (e.g. a process manager with `__invoke(CreateTask|TaskCreated $message)`) registers each union member under its own type.
+- A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error. A handler implementing several handler interfaces (e.g. a process manager with `__invoke(CreateTask|TaskCreated $message)`) registers each union member under its own type; a union member whose type matches none of the handler's interfaces is a compile error.
 - The bundle middleware is only added to the default bus when a facade falls back to it.
 - The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, postpones failing rows, exits with 1 when a row failed and with 2 for an invalid `--limit`; `--limit` counts processed rows.
 - `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (at most 6 digits); `outbox.table_name` must be a plain or schema-qualified identifier, and a reserved word is reported as such.

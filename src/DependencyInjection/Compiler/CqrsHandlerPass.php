@@ -82,6 +82,14 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
             $normalizedTags = [];
 
+            // Types declared for each method: one tag per marker interface the handler implements.
+            $declaredTypes = [];
+            foreach ($tags as $attributes) {
+                if (isset($attributes[self::TYPE_ATTRIBUTE])) {
+                    $declaredTypes[$attributes['method'] ?? '__invoke'][$attributes[self::TYPE_ATTRIBUTE]] = true;
+                }
+            }
+
             foreach ($tags as $attributes) {
                 $declaredType = $attributes[self::TYPE_ATTRIBUTE] ?? null;
                 $hasExplicitHandles = isset($attributes['handles']);
@@ -93,15 +101,22 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
                 $cqrsMessages = [];
                 $mismatches = [];
+                $coveredElsewhere = 0;
                 foreach ($routes as $index => $messageClass) {
                     $messageType = $this->determineType($container, $messageClass);
 
                     if (null !== $declaredType && null !== $messageType && $messageType !== $declaredType) {
+                        unset($routes[$index]);
+
                         // A handler implementing several marker interfaces (e.g. CommandHandler and
                         // EventHandler with __invoke(PlaceOrder|OrderPlaced)) gets one tag per interface:
-                        // each tag keeps the members of its own type.
-                        $mismatches[$messageClass] = $messageType;
-                        unset($routes[$index]);
+                        // each tag keeps the members of its own type. A member no tag of the handler
+                        // covers would never be handled, and an explicit attribute must match.
+                        if (!$hasExplicitHandles && isset($declaredTypes[$attributes['method'] ?? '__invoke'][$messageType])) {
+                            ++$coveredElsewhere;
+                        } else {
+                            $mismatches[$messageClass] = $messageType;
+                        }
 
                         continue;
                     }
@@ -113,8 +128,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
                     }
                 }
 
-                // An explicit attribute, or an interface none of whose message types match, is a mistake.
-                if ([] !== $mismatches && ($hasExplicitHandles || [] === $cqrsMessages)) {
+                if ([] !== $mismatches) {
                     $messageClass = array_key_first($mismatches);
                     $messageType = $mismatches[$messageClass];
 
@@ -122,6 +136,12 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 }
 
                 $routes = array_values($routes);
+
+                // Every member belongs to another interface of the handler (e.g. QueryHandler next to
+                // CommandHandler and EventHandler): this tag has nothing left to route.
+                if ([] === $routes && $coveredElsewhere > 0) {
+                    continue;
+                }
 
                 $buses = $this->resolveBuses($container, $attributes, $declaredType);
 

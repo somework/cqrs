@@ -84,6 +84,8 @@ A handler attribute whose type contradicts the message, such as `#[AsCommandHand
 event, is now a compile error; before, the handler was registered on the command bus and never called.
 A handler that implements several handler interfaces and accepts a union (`CommandHandler` and `EventHandler`
 with `__invoke(CreateTask|TaskCreated $message)`) is registered for each message under the type that matches it.
+A union member whose type matches none of the handler's interfaces (a `CommandHandler` that also accepts an
+event) is a compile error: implement the matching interface, or split the handler.
 
 ### `#[Asynchronous]` is honoured for default dispatch
 

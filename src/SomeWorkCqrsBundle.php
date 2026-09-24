@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateBusIdsPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
@@ -30,6 +31,8 @@ final class SomeWorkCqrsBundle extends Bundle
     {
         parent::build($container);
 
+        // Configured bus ids must be Messenger buses before handlers are registered on them.
+        $container->addCompilerPass(new ValidateBusIdsPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 2);
         // Before Symfony's MessengerPass (priority 0): normalises handler tags and buses.
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
         // After MessengerPass: decorates the handlers locators it registers.

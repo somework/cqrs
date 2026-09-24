@@ -31,7 +31,7 @@ final class BusWiringRegistrar
 
             $commandAsync = $buses['command_async'] ?? null;
             if (null !== $commandAsync) {
-                $commandBusDefinition->setArgument('$asyncBus', new Reference($commandAsync, ContainerInterface::NULL_ON_INVALID_REFERENCE));
+                $commandBusDefinition->setArgument('$asyncBus', new Reference($commandAsync));
             } else {
                 $commandBusDefinition->setArgument('$asyncBus', null);
             }
@@ -54,7 +54,7 @@ final class BusWiringRegistrar
 
             $eventAsync = $buses['event_async'] ?? null;
             if (null !== $eventAsync) {
-                $eventBusDefinition->setArgument('$asyncBus', new Reference($eventAsync, ContainerInterface::NULL_ON_INVALID_REFERENCE));
+                $eventBusDefinition->setArgument('$asyncBus', new Reference($eventAsync));
             } else {
                 $eventBusDefinition->setArgument('$asyncBus', null);
             }

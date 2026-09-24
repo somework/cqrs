@@ -693,4 +693,35 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertSame([CreateTaskCommand::class], array_values(array_unique(array_column($metadata['command'], 'message'))));
         self::assertSame([TaskCreatedEvent::class], array_values(array_unique(array_column($metadata['event'], 'message'))));
     }
+
+    public function test_a_union_member_of_a_type_the_handler_does_not_implement_is_rejected(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // Implements CommandHandler only, but also accepts an event.
+        $container->register('handler.half', TaskProcessManager::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(sprintf('is registered as a command handler, but %s is an event', TaskCreatedEvent::class));
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_an_interface_without_members_of_its_type_adds_no_registration(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.process_manager', TaskProcessManager::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command'])
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'query'])
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'event']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['query']);
+        foreach ($container->getDefinition('handler.process_manager')->getTag('messenger.message_handler') as $tag) {
+            self::assertContains($tag['handles'] ?? null, [CreateTaskCommand::class, TaskCreatedEvent::class], 'No tag lets Messenger route every union member.');
+        }
+    }
 }
