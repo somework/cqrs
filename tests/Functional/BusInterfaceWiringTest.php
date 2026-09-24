@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
@@ -31,32 +30,28 @@ final class BusInterfaceWiringTest extends KernelTestCase
         return TestKernel::class;
     }
 
-    #[Test]
-    public function container_resolves_command_bus_interface_to_command_bus(): void
+    public function test_container_resolves_command_bus_interface_to_command_bus(): void
     {
         $bus = static::getContainer()->get(CommandBusInterface::class);
 
         self::assertInstanceOf(CommandBus::class, $bus);
     }
 
-    #[Test]
-    public function container_resolves_query_bus_interface_to_query_bus(): void
+    public function test_container_resolves_query_bus_interface_to_query_bus(): void
     {
         $bus = static::getContainer()->get(QueryBusInterface::class);
 
         self::assertInstanceOf(QueryBus::class, $bus);
     }
 
-    #[Test]
-    public function container_resolves_event_bus_interface_to_event_bus(): void
+    public function test_container_resolves_event_bus_interface_to_event_bus(): void
     {
         $bus = static::getContainer()->get(EventBusInterface::class);
 
         self::assertInstanceOf(EventBus::class, $bus);
     }
 
-    #[Test]
-    public function interface_aliases_are_public(): void
+    public function test_interface_aliases_are_public(): void
     {
         $container = static::getContainer();
 

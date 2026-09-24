@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 
+#[CoversClass(SomeWorkCqrsBundle::class)]
 final class CqrsBundleTest extends TestCase
 {
     public function test_bundle_provides_extension_instance(): void

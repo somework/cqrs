@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\SequenceAware;
 
+#[CoversNothing]
 final class SequenceAwareTest extends TestCase
 {
     public function test_stub_event_returns_correct_aggregate_id_and_sequence_number(): void

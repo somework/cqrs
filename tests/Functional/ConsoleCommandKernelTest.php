@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -12,6 +13,7 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 use function sprintf;
 
+#[CoversNothing]
 final class ConsoleCommandKernelTest extends KernelTestCase
 {
     protected function setUp(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -21,6 +22,7 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(MessageTransportStampDecider::class)]
 final class MessageTransportStampDeciderTest extends TestCase
 {
     public function test_appends_transport_names_for_sync_command(): void

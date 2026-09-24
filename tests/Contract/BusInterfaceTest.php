@@ -6,7 +6,6 @@ namespace SomeWork\CqrsBundle\Tests\Contract;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use ReflectionNamedType;
@@ -53,9 +52,8 @@ final class BusInterfaceTest extends TestCase
      * @param class-string $concreteClass
      * @param class-string $interfaceClass
      */
-    #[Test]
     #[DataProvider('implementationProvider')]
-    public function bus_class_implements_its_interface(string $concreteClass, string $interfaceClass): void
+    public function test_bus_class_implements_its_interface(string $concreteClass, string $interfaceClass): void
     {
         $reflection = new ReflectionClass($concreteClass);
 
@@ -65,8 +63,7 @@ final class BusInterfaceTest extends TestCase
         );
     }
 
-    #[Test]
-    public function command_bus_interface_declares_dispatch_method(): void
+    public function test_command_bus_interface_declares_dispatch_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -88,8 +85,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
-    #[Test]
-    public function command_bus_interface_declares_dispatch_sync_method(): void
+    public function test_command_bus_interface_declares_dispatch_sync_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -105,8 +101,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame('mixed', (string) $method->getReturnType());
     }
 
-    #[Test]
-    public function command_bus_interface_declares_dispatch_async_method(): void
+    public function test_command_bus_interface_declares_dispatch_async_method(): void
     {
         $reflection = new ReflectionClass(CommandBusInterface::class);
 
@@ -122,8 +117,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
-    #[Test]
-    public function query_bus_interface_declares_ask_method(): void
+    public function test_query_bus_interface_declares_ask_method(): void
     {
         $reflection = new ReflectionClass(QueryBusInterface::class);
 
@@ -141,8 +135,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame('mixed', (string) $method->getReturnType());
     }
 
-    #[Test]
-    public function event_bus_interface_declares_dispatch_method(): void
+    public function test_event_bus_interface_declares_dispatch_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 
@@ -163,8 +156,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
-    #[Test]
-    public function event_bus_interface_declares_dispatch_sync_method(): void
+    public function test_event_bus_interface_declares_dispatch_sync_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 
@@ -180,8 +172,7 @@ final class BusInterfaceTest extends TestCase
         self::assertSame(Envelope::class, self::namedTypeName($method->getReturnType()));
     }
 
-    #[Test]
-    public function event_bus_interface_declares_dispatch_async_method(): void
+    public function test_event_bus_interface_declares_dispatch_async_method(): void
     {
         $reflection = new ReflectionClass(EventBusInterface::class);
 

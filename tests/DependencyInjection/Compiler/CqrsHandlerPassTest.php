@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
+namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;

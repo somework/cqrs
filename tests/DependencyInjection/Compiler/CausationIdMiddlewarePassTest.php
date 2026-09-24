@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
+namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
@@ -86,24 +86,22 @@ final class CausationIdMiddlewarePassTest extends TestCase
     {
         $container = new ContainerBuilder();
         $container->setParameter('somework_cqrs.default_bus', 'messenger.default_bus');
+        $bus = $container->register('messenger.default_bus', \stdClass::class)->setArguments([new IteratorArgument([])]);
 
-        $pass = new CausationIdMiddlewarePass();
-        $pass->process($container);
+        (new CausationIdMiddlewarePass())->process($container);
 
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        self::assertSame([], $bus->getArgument(0)->getValues());
     }
 
     public function test_skips_when_default_bus_parameter_missing(): void
     {
         $container = new ContainerBuilder();
         $container->register('somework_cqrs.messenger.middleware.causation_id', \stdClass::class);
+        $bus = $container->register('messenger.default_bus', \stdClass::class)->setArguments([new IteratorArgument([])]);
 
-        $pass = new CausationIdMiddlewarePass();
-        $pass->process($container);
+        (new CausationIdMiddlewarePass())->process($container);
 
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        self::assertSame([], $bus->getArgument(0)->getValues());
     }
 
     public function test_skips_all_buses_when_disabled(): void

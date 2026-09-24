@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
@@ -11,6 +12,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
+#[CoversClass(CqrsExtension::class)]
 final class CqrsExtensionAsyncValidationTest extends TestCase
 {
     public function test_it_requires_async_command_bus_when_default_dispatch_is_async(): void

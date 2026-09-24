@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Command;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
@@ -34,6 +35,7 @@ use function sprintf;
  *     bus: string|null,
  * }
  */
+#[CoversClass(ListHandlersCommand::class)]
 final class ListHandlersCommandTest extends TestCase
 {
     public function test_lists_all_handlers_sorted_by_type_and_name(): void

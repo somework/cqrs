@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
@@ -14,6 +15,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(RetryPolicyResolver::class)]
 final class RetryPolicyResolverTest extends TestCase
 {
     public function test_returns_default_policy_when_message_not_overridden(): void

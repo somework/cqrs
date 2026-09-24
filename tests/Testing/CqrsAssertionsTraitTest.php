@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 
 #[CoversTrait(CqrsAssertionsTrait::class)]
 final class CqrsAssertionsTraitTest extends TestCase
@@ -57,14 +58,18 @@ final class CqrsAssertionsTraitTest extends TestCase
         self::assertNotDispatched($bus, $command::class);
     }
 
-    public function test_reset_cqrs_state_clears_message_type_locator(): void
+    public function test_reset_cqrs_state_clears_the_message_type_cache(): void
     {
-        // Calling reset should not throw -- structural test
+        $locator = new SpyServiceLocator([\stdClass::class => static fn (): object => new \stdClass()]);
+
+        MessageTypeLocator::match($locator, new \stdClass());
+        MessageTypeLocator::match($locator, new \stdClass());
+        self::assertSame(1, $locator->lookupCount(), 'The second lookup is served from the cache.');
+
         $this->resetCqrsState();
 
-        // Verify MessageTypeLocator::reset() was called by confirming no exception
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        MessageTypeLocator::match($locator, new \stdClass());
+        self::assertSame(2, $locator->lookupCount());
     }
 
     public function test_assert_dispatched_with_custom_message(): void

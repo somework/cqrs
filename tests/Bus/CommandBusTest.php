@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\CommandBus;
@@ -37,6 +38,7 @@ use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(CommandBus::class)]
 final class CommandBusTest extends TestCase
 {
     public function test_dispatch_uses_sync_bus_by_default(): void

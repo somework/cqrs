@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -15,6 +16,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 
+#[CoversClass(MessageMetadataStampDecider::class)]
 final class MessageMetadataStampDeciderTest extends TestCase
 {
     public function test_appends_metadata_stamp_for_supported_messages(): void

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -15,6 +16,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 
+#[CoversClass(MessageSerializerStampDecider::class)]
 final class MessageSerializerStampDeciderTest extends TestCase
 {
     public function test_appends_serializer_stamp_for_supported_messages(): void

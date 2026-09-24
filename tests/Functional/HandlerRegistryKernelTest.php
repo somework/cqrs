@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
@@ -16,6 +17,7 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 use function assert;
 
+#[CoversNothing]
 final class HandlerRegistryKernelTest extends KernelTestCase
 {
     protected function setUp(): void

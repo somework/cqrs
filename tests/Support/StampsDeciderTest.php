@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use Closure;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -22,6 +23,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 use function assert;
 use function is_string;
 
+#[CoversClass(StampsDecider::class)]
 final class StampsDeciderTest extends TestCase
 {
     /**

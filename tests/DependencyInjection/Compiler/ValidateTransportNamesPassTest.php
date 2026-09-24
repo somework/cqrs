@@ -2,15 +2,18 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
+namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(ValidateTransportNamesPass::class)]
 final class ValidateTransportNamesPassTest extends TestCase
 {
     public function test_it_throws_when_transport_is_missing(): void

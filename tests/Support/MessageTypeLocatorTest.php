@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\MessageTypeLocator;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageTypeLocator::class)]
 final class MessageTypeLocatorTest extends TestCase
 {
     protected function setUp(): void
@@ -202,30 +205,4 @@ interface MessageTypeLocatorExtendedInterface extends MessageTypeLocatorInterfac
 
 class MessageTypeLocatorImplementsInterface implements MessageTypeLocatorExtendedInterface
 {
-}
-
-/**
- * @extends ServiceLocator<object>
- */
-final class SpyServiceLocator extends ServiceLocator
-{
-    /** @var list<string> */
-    public array $hasCalls = [];
-
-    /** @var list<string> */
-    public array $getCalls = [];
-
-    public function has(string $id): bool
-    {
-        $this->hasCalls[] = $id;
-
-        return parent::has($id);
-    }
-
-    public function get(string $id): mixed
-    {
-        $this->getCalls[] = $id;
-
-        return parent::get($id);
-    }
 }

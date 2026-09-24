@@ -4,12 +4,14 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Command;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\DebugTransportsCommand;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 
+#[CoversClass(DebugTransportsCommand::class)]
 final class DebugTransportsCommandTest extends TestCase
 {
     public function test_displays_transport_mapping_table(): void

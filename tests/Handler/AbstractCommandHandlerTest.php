@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Handler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
@@ -16,8 +15,7 @@ use Symfony\Component\Messenger\Envelope;
 #[CoversClass(AbstractCommandHandler::class)]
 final class AbstractCommandHandlerTest extends TestCase
 {
-    #[Test]
-    public function invoke_delegates_to_handle(): void
+    public function test_invoke_delegates_to_handle(): void
     {
         $command = new CreateTaskCommand('id-1', 'Test');
         $handler = new class extends AbstractCommandHandler {
@@ -37,8 +35,7 @@ final class AbstractCommandHandlerTest extends TestCase
         self::assertSame('command-result', $result);
     }
 
-    #[Test]
-    public function handler_implements_envelope_aware(): void
+    public function test_handler_implements_envelope_aware(): void
     {
         $handler = new class extends AbstractCommandHandler {
             protected function handle(Command $command): mixed
@@ -50,8 +47,7 @@ final class AbstractCommandHandlerTest extends TestCase
         self::assertInstanceOf(EnvelopeAware::class, $handler); // @phpstan-ignore staticMethod.alreadyNarrowedType
     }
 
-    #[Test]
-    public function envelope_is_accessible_after_set(): void
+    public function test_envelope_is_accessible_after_set(): void
     {
         $envelope = new Envelope(new \stdClass());
         $handler = new class extends AbstractCommandHandler {
@@ -71,8 +67,7 @@ final class AbstractCommandHandlerTest extends TestCase
         self::assertSame($envelope, $handler->capturedEnvelope);
     }
 
-    #[Test]
-    public function get_envelope_throws_when_not_set(): void
+    public function test_get_envelope_throws_when_not_set(): void
     {
         $handler = new class extends AbstractCommandHandler {
             protected function handle(Command $command): mixed

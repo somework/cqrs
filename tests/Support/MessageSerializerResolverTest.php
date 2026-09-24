@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
@@ -12,6 +13,7 @@ use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageSerializerResolver::class)]
 final class MessageSerializerResolverTest extends TestCase
 {
     public function test_resolves_serializer_from_class_hierarchy(): void

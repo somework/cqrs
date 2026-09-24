@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
@@ -12,6 +13,7 @@ use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageMetadataProviderResolver::class)]
 final class MessageMetadataProviderResolverTest extends TestCase
 {
     public function test_resolves_provider_from_class_hierarchy(): void
