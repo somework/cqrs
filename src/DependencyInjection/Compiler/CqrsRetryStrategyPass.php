@@ -5,12 +5,15 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
 use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_keys;
+use function implode;
 use function sprintf;
 
 /**
@@ -50,6 +53,10 @@ final class CqrsRetryStrategyPass implements CompilerPassInterface
         $maxDelay = $container->getParameter('somework_cqrs.retry_strategy.max_delay');
 
         foreach ($transports as $transportName => $messageType) {
+            if (!isset($refs[$transportName])) {
+                throw new InvalidConfigurationException(sprintf('Transport "%s" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "%s".', $transportName, implode('", "', array_keys($refs))));
+            }
+
             $resolverServiceId = sprintf('somework_cqrs.retry.%s_resolver', $messageType);
 
             if (!$container->hasDefinition($resolverServiceId)) {
@@ -58,7 +65,7 @@ final class CqrsRetryStrategyPass implements CompilerPassInterface
 
             $strategyDef = new Definition(CqrsRetryStrategy::class);
             $strategyDef->setArgument('$resolver', new Reference($resolverServiceId));
-            $strategyDef->setArgument('$fallback', $refs[$transportName] ?? null);
+            $strategyDef->setArgument('$fallback', $refs[$transportName]);
             $strategyDef->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
             $strategyDef->setArgument('$jitter', $jitter);
             $strategyDef->setArgument('$maxDelay', $maxDelay);

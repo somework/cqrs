@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\AbstractMessageTypeResolver;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
@@ -13,6 +14,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
+use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
 use Symfony\Component\RateLimiter\Storage\InMemoryStorage;
 
 #[CoversClass(RateLimitResolver::class)]
@@ -113,5 +115,16 @@ final class RateLimitResolverTest extends TestCase
             ['id' => 'test', 'policy' => 'no_limit'],
             new InMemoryStorage(),
         );
+    }
+
+    #[RequiresMethod(RateLimiterFactoryInterface::class, 'create')]
+    public function test_accepts_any_rate_limiter_factory_implementation(): void
+    {
+        $factory = $this->createMock(RateLimiterFactoryInterface::class);
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn (): RateLimiterFactoryInterface => $factory,
+        ]));
+
+        self::assertSame($factory, $resolver->resolveFor(new CreateTaskCommand('1', 'x')));
     }
 }

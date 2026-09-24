@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
+use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
+use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
@@ -16,6 +18,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
 
 /**
  * Per-message overrides must resolve to the configured services in a compiled container
@@ -63,5 +67,20 @@ final class ConfigurationOverridesTest extends KernelTestCase
 
         $this->expectException(RateLimitExceededException::class);
         $queryBus->ask(new ListTasksQuery());
+    }
+
+    public function test_mapped_transport_uses_the_cqrs_retry_strategy(): void
+    {
+        $locator = self::getContainer()->get('messenger.retry_strategy_locator');
+        self::assertInstanceOf(ContainerInterface::class, $locator);
+
+        $strategy = $locator->get('async');
+        self::assertInstanceOf(CqrsRetryStrategy::class, $strategy);
+
+        // ExponentialBackoffRetryPolicy (mapped for CreateTaskCommand): 3 retries, 1s initial delay, x2.
+        $envelope = new Envelope(new CreateTaskCommand('1', 'x'), [new RedeliveryStamp(1)]);
+        self::assertTrue($strategy->isRetryable($envelope));
+        self::assertSame(2000, $strategy->getWaitingTime($envelope));
+        self::assertFalse($strategy->isRetryable(new Envelope(new CreateTaskCommand('1', 'x'), [new RedeliveryStamp(3)])));
     }
 }

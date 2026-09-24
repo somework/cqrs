@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
+use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
 
 use function get_debug_type;
 use function sprintf;
@@ -25,22 +26,31 @@ final class RateLimitResolver extends AbstractMessageTypeResolver
         parent::__construct($limiters, $logger);
     }
 
-    public function resolveFor(object $message): ?RateLimiterFactory
+    /**
+     * @return RateLimiterFactory|RateLimiterFactoryInterface|null null when no limiter is mapped
+     */
+    public function resolveFor(object $message): ?object
     {
-        /* @var ?RateLimiterFactory */
-        return $this->resolveService($message);
+        /** @var RateLimiterFactory|RateLimiterFactoryInterface|null $factory */
+        $factory = $this->resolveService($message);
+
+        return $factory;
     }
 
-    protected function assertService(string $key, mixed $service): RateLimiterFactory
+    /**
+     * Accepts RateLimiterFactory and, on symfony/rate-limiter 7.3+, any RateLimiterFactoryInterface
+     * (e.g. compound limiters).
+     */
+    protected function assertService(string $key, mixed $service): object
     {
-        if (!$service instanceof RateLimiterFactory) {
+        if (!$service instanceof RateLimiterFactory && !$service instanceof RateLimiterFactoryInterface) {
             throw new \LogicException(sprintf('Rate limiter for "%s" must be an instance of %s, got %s.', $key, RateLimiterFactory::class, get_debug_type($service)));
         }
 
         return $service;
     }
 
-    protected function resolveFallback(object $message): ?RateLimiterFactory
+    protected function resolveFallback(object $message): ?object
     {
         return null;
     }

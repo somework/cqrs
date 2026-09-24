@@ -121,6 +121,7 @@ final class Configuration implements ConfigurationInterface
         $retryStrategyChildren
             ->arrayNode('transports')
             ->useAttributeAsKey('transport_name')
+            ->normalizeKeys(false)
             ->defaultValue([])
             ->enumPrototype()
                 ->values(['command', 'query', 'event'])

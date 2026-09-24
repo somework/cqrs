@@ -39,7 +39,9 @@ final class OverridesTestKernel extends Kernel
             'secret' => 'test-secret',
             'http_method_override' => false,
             'test' => true,
-            'messenger' => [],
+            'messenger' => [
+                'transports' => ['async' => 'in-memory://'],
+            ],
             'rate_limiter' => [
                 'list_tasks' => [
                     'policy' => 'fixed_window',
@@ -64,6 +66,10 @@ final class OverridesTestKernel extends Kernel
                         'map' => [CreateTaskCommand::class => false],
                     ],
                 ],
+            ],
+            'retry_strategy' => [
+                'transports' => ['async' => 'command'],
+                'max_delay' => 60000,
             ],
             'rate_limiting' => [
                 'query' => [
