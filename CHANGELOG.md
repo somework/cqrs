@@ -66,7 +66,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The internal handler type marker leaked into Messenger's handler options (`debug:messenger`).
 - `dispatchSync()` and `ask()` reported a misleading `NoHandlerException` when the message was sent to a transport or deduplicated.
 - The container could not be compiled when an OpenTelemetry tracer provider was registered; exceptions were recorded twice on spans.
-- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch; a failing lock release no longer hides the handler's exception. The compilation log warns when the lock store (flock, semaphore, in-memory) cannot deduplicate.
+- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch; a failing lock release no longer hides the handler's exception. The compilation log warns when the lock store (flock, semaphore, in-memory, PostgreSQL advisory, ZooKeeper; also from `LOCK_DSN`) cannot deduplicate, and an async dispatch whose lock key cannot be serialized fails with an explanation instead of `UnserializableKeyException`.
 - A nested dispatch handled by the same envelope-aware handler service left the outer invocation with the inner envelope.
 - A failed async dispatch without an async bus consumed a rate-limiter token.
 - `CausationIdContext::pop()` threw on an empty stack.

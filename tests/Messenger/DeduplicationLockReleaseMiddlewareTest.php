@@ -10,17 +10,28 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Messenger\DeduplicationLockReleaseMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\RecordingLogger;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Lock\Exception\UnserializableKeyException;
 use Symfony\Component\Lock\Key;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\PersistingStoreInterface;
+use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
+use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
+use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
+use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+
+use function bin2hex;
+use function random_bytes;
+use function sprintf;
 
 #[CoversClass(DeduplicationLockReleaseMiddleware::class)]
 #[RequiresMethod(DeduplicateStamp::class, '__construct')]
@@ -97,6 +108,29 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
         }
 
         self::assertTrue($logger->hasRecordContaining('warning', 'Could not release the deduplication lock'));
+    }
+
+    public function test_an_async_dispatch_with_a_store_that_cannot_serialize_keys_is_explained(): void
+    {
+        $locks = new LockFactory(new FlockStore());
+        $transport = new InMemoryTransport(new PhpSerializer());
+        $bus = new MessageBus([
+            new DeduplicateMiddleware($locks),
+            new DeduplicationLockReleaseMiddleware($locks),
+            new SendMessageMiddleware(new SendersLocator([CreateTaskCommand::class => ['async']], new ServiceLocator(['async' => static fn (): InMemoryTransport => $transport]))),
+        ]);
+        $stamp = new DeduplicateStamp('flock-'.bin2hex(random_bytes(4)));
+
+        try {
+            $bus->dispatch(new CreateTaskCommand('1', 'x'), [$stamp]);
+            self::fail('Expected the unserializable key to be reported.');
+        } catch (\LogicException $exception) {
+            self::assertStringContainsString(sprintf('The idempotency lock of "%s" cannot be sent to a transport', CreateTaskCommand::class), $exception->getMessage());
+            self::assertInstanceOf(UnserializableKeyException::class, $exception->getPrevious());
+        }
+
+        self::assertSame([], $transport->getSent());
+        self::assertTrue($locks->createLockFromKey($stamp->getKey())->acquire(), 'The lock was released.');
     }
 
     private function bus(\Closure $handler, ?LockFactory $locks = null, ?RecordingLogger $logger = null): MessageBus

@@ -16,10 +16,13 @@ with a lock from the Lock component.
   enabled automatically once `symfony/lock` is installed, unless you turned it off.
 - **A shared lock store that keeps keys until their TTL.** The default stores do not work:
   `flock` and `semaphore` release a key as soon as the dispatch returns, so a second
-  dispatch with the same key goes through, and their keys cannot be sent to async transports
-  (`UnserializableKeyException`). `in-memory` only deduplicates within one process. Point
-  `framework.lock` at Redis, Memcached or a database; the container compilation log warns
-  when the configured store is one of the local ones:
+  dispatch with the same key goes through, and `in-memory` only deduplicates within one
+  process. The keys of `flock`, `semaphore`, `postgresql+advisory` and `zookeeper` stores
+  are tied to the process or connection and cannot be sent with async messages: an
+  asynchronous dispatch with an `IdempotencyStamp` then fails with a `LogicException` that
+  names the problem. Point `framework.lock` at Redis, Memcached or a PDO/DBAL database; the
+  container compilation log warns when the configured store is one of the others (for a DSN
+  from an environment variable, with the value it had when the container was compiled):
 
 ```yaml
 # config/packages/lock.yaml
@@ -44,6 +47,8 @@ It reports one of the following:
 
 - `Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.`
 - `Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").`
+- `Idempotency is enabled but the lock store "flock" only lives in one process or host: …`
+- `Idempotency is enabled but the lock store "postgresql+advisory://…" ties its keys to one connection: …`
 
 ## Usage
 

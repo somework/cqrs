@@ -57,16 +57,27 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             return;
         }
 
-        $store = self::lockStoreDsn($container);
-        if (null !== $store && 1 === preg_match('/^(flock|semaphore|in-memory)(:|$)/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store "%s" only lives in one process or host: the "flock" and "semaphore" stores release a key as soon as the dispatch returns and cannot be sent to async transports. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $store));
+        [$store, $fromEnvironment] = self::lockStoreDsn($container) ?? [null, false];
+        if (null === $store) {
+            return;
+        }
+
+        $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $store) : sprintf('"%s"', $store);
+
+        if (1 === preg_match('/^(flock|semaphore|in-memory)(:|$)/', $store)) {
+            $container->log($this, sprintf('Idempotency is enabled but the lock store %s only lives in one process or host: it does not deduplicate across servers, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+        } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
+            $container->log($this, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages, so asynchronous dispatches with an IdempotencyStamp fail. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
         }
     }
 
     /**
-     * DSN of the store behind "lock.factory" as configured in framework.lock, when it is a literal.
+     * DSN of the store behind "lock.factory" as configured in framework.lock, and whether it came
+     * from environment variables (resolved with the values of the compiling process).
+     *
+     * @return array{string, bool}|null
      */
-    private static function lockStoreDsn(ContainerBuilder $container): ?string
+    private static function lockStoreDsn(ContainerBuilder $container): ?array
     {
         if (!$container->has('lock.factory')) {
             return null;
@@ -83,9 +94,18 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             return null;
         }
 
-        // Environment placeholders are only known at runtime.
-        $resolved = $container->resolveEnvPlaceholders($dsn, null, $usedEnvs);
+        $container->resolveEnvPlaceholders($dsn, null, $usedEnvs);
+        if ([] === ($usedEnvs ?? [])) {
+            return [$dsn, false];
+        }
 
-        return [] === ($usedEnvs ?? []) && is_string($resolved) ? $resolved : null;
+        // Only a hint: the runtime environment may differ (the Flex recipe defaults LOCK_DSN to "flock").
+        try {
+            $resolved = $container->resolveEnvPlaceholders($dsn, true);
+        } catch (\Throwable) {
+            return null;
+        }
+
+        return is_string($resolved) ? [$resolved, true] : null;
     }
 }

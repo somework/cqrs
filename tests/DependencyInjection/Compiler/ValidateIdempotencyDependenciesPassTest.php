@@ -87,22 +87,54 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{string, bool}>
+     * @return iterable<string, array{string, string|null}>
      */
     public static function lockStores(): iterable
     {
-        yield 'flock (FrameworkBundle default)' => ['flock', true];
-        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', true];
-        yield 'in-memory' => ['in-memory', true];
-        yield 'flock with a path' => ['flock:///var/lock', true];
-        yield 'redis' => ['redis://localhost', false];
-        yield 'environment variable' => ['%env(LOCK_DSN)%', false];
+        yield 'flock (FrameworkBundle default)' => ['flock', 'only lives in one process or host'];
+        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'only lives in one process or host'];
+        yield 'in-memory' => ['in-memory', 'only lives in one process or host'];
+        yield 'flock with a path' => ['flock:///var/lock', 'only lives in one process or host'];
+        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'ties its keys to one connection'];
+        yield 'ZooKeeper' => ['zookeeper://localhost:2181', 'ties its keys to one connection'];
+        yield 'redis' => ['redis://localhost', null];
+        yield 'dbal' => ['mysql://db/app', null];
     }
 
     #[DataProvider('lockStores')]
-    public function test_warns_about_lock_stores_that_are_local_to_a_process(string $dsn, bool $warns): void
+    public function test_warns_about_lock_stores_that_cannot_back_idempotency(string $dsn, ?string $warning): void
+    {
+        $container = $this->containerWithLockStore($dsn);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        if (null !== $warning) {
+            self::assertCount(1, $log);
+            self::assertStringContainsString($warning, $log[0]);
+        } else {
+            self::assertSame([], $log);
+        }
+    }
+
+    public function test_a_store_from_an_environment_variable_is_checked_with_its_value_at_compile_time(): void
     {
         $container = $this->enabledContainer();
+        $container->setParameter('env(CQRS_TEST_LOCK_DSN)', 'flock');
+        $placeholder = $container->getParameterBag()->resolveValue('%env(CQRS_TEST_LOCK_DSN)%');
+        self::assertIsString($placeholder);
+        $container = $this->containerWithLockStore($placeholder, $container);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        self::assertCount(1, $log);
+        self::assertStringContainsString('"flock" (the environment value when the container was compiled)', $log[0]);
+    }
+
+    private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder
+    {
+        $container ??= $this->enabledContainer();
         $container->register('messenger.middleware.deduplicate_middleware', DeduplicateMiddleware::class);
         // What FrameworkBundle registers for "framework.lock: <dsn>".
         $container->register('.lock.default.store.abc', PersistingStoreInterface::class)
@@ -111,15 +143,7 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         $container->setDefinition('lock.default.factory', (new ChildDefinition('lock.factory.abstract'))->replaceArgument(0, new Reference('.lock.default.store.abc')));
         $container->setAlias('lock.factory', 'lock.default.factory');
 
-        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
-
-        $log = $container->getCompiler()->getLog();
-        if ($warns) {
-            self::assertCount(1, $log);
-            self::assertStringContainsString('only lives in one process or host', $log[0]);
-        } else {
-            self::assertSame([], $log);
-        }
+        return $container;
     }
 
     private function enabledContainer(): ContainerBuilder
