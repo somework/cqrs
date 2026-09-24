@@ -134,9 +134,10 @@ The bundle registers every class carrying `#[AsCommandHandler]`, `#[AsQueryHandl
 interface. No manual service wiring is needed.
 
 **Handler contracts**: each handler has a typed `__invoke()` (for example
-`__invoke(CreateTask $command): mixed`). The attribute names the handled message; the marker
-interfaces declare no methods, so implementing one is optional. Without the attribute, the message
-is taken from the type of the first `__invoke()` parameter.
+`__invoke(CreateTask $command): mixed`). The attribute names the handled message. The marker
+interfaces declare no methods, so the handlers here implement them only as documentation; a handler
+registered through a marker interface alone gets its message from the type of the first
+`__invoke()` parameter.
 
 **Typed buses**: commands, queries and events each have their own bus (`command.bus`, `query.bus`
 and `event.bus` in `messenger.yaml`, mapped under `somework_cqrs.buses`). Commands and events support
@@ -159,7 +160,7 @@ commented examples in `somework_cqrs.yaml` and `php bin/console somework:cqrs:li
 
 The `in-memory://` transport keeps messages inside the PHP process, which is enough to see the
 routing. To process messages with a worker (`php bin/console messenger:consume async`), use a
-persistent transport DSN; see the [Usage Guide](../usage.md).
+persistent transport DSN; see the [Production guide](../production.md) for worker setup.
 
 ## Learn more
 

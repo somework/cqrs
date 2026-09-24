@@ -18,6 +18,9 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+use function count;
+use function sprintf;
+
 /**
  * Walks through the task domain: dispatches commands, shows the events they raised
  * and reads the result back through queries.
@@ -43,7 +46,7 @@ final class DemoCommand extends Command
         // dispatch() uses the configured dispatch mode (sync here) and returns the Messenger envelope.
         $envelope = $this->commandBus->dispatch(new CreateTask('task-1', 'Write the documentation'));
         $metadata = $envelope->last(MessageMetadataStamp::class);
-        $io->writeln(\sprintf(
+        $io->writeln(sprintf(
             'CreateTask(task-1) dispatched, correlation id: %s',
             $metadata instanceof MessageMetadataStamp ? $metadata->getCorrelationId() : 'n/a',
         ));
@@ -80,9 +83,9 @@ final class DemoCommand extends Command
         $task = $this->queryBus->ask(new FindTaskById('task-2'));
         $io->writeln(null === $task
             ? 'FindTaskById(task-2): not found'
-            : \sprintf('FindTaskById(task-2): "%s" (%s)', $task['title'], $task['completed'] ? 'done' : 'open'));
+            : sprintf('FindTaskById(task-2): "%s" (%s)', $task['title'], $task['completed'] ? 'done' : 'open'));
 
-        $io->success(\sprintf('Created %d tasks, completed 1, handled %d event(s).', \count($tasks), \count($this->activityLog->entries())));
+        $io->success(sprintf('Created %d tasks, completed 1, handled %d event(s).', count($tasks), count($this->activityLog->entries())));
 
         return Command::SUCCESS;
     }

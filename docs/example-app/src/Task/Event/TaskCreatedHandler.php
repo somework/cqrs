@@ -8,6 +8,8 @@ use App\Task\TaskActivityLog;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 
+use function sprintf;
+
 /**
  * Reacts to task creation by recording an activity entry.
  *
@@ -24,6 +26,6 @@ final class TaskCreatedHandler implements EventHandler
 
     public function __invoke(TaskCreated $event): void
     {
-        $this->activityLog->record(\sprintf('TaskCreated handled: "%s" (%s)', $event->title, $event->id));
+        $this->activityLog->record(sprintf('TaskCreated handled: "%s" (%s)', $event->title, $event->id));
     }
 }

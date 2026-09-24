@@ -9,7 +9,7 @@ use Symfony\Component\Console\Input\ArgvInput;
 use Symfony\Component\Dotenv\Dotenv;
 
 if (!is_file(dirname(__DIR__).'/vendor/autoload.php')) {
-    fwrite(STDERR, "Dependencies are missing. Run \"composer install\" in the example-app directory first.\n");
+    fwrite(\STDERR, "Dependencies are missing. Run \"composer install\" in the example-app directory first.\n");
     exit(1);
 }
 
