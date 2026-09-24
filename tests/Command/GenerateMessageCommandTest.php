@@ -62,7 +62,7 @@ final class GenerateMessageCommandTest extends TestCase
         $handler = $this->read('src/Application/Command/ShipOrderHandler.php');
         self::assertStringContainsString('#[AsCommandHandler(ShipOrder::class)]', $handler);
         self::assertStringContainsString('final class ShipOrderHandler', $handler);
-        self::assertStringContainsString('public function __invoke(ShipOrder $command): void', $handler);
+        self::assertStringContainsString('public function __invoke(ShipOrder $command): mixed', $handler);
         // Same namespace: the message needs no import.
         self::assertStringNotContainsString('use App\\Application\\Command\\ShipOrder;', $handler);
     }
@@ -153,7 +153,7 @@ final class GenerateMessageCommandTest extends TestCase
         $handler = $this->read('src/Handler/CancelOrder.php');
         self::assertStringContainsString('use App\\Command\\CancelOrder as CancelOrderMessage;', $handler);
         self::assertStringContainsString('#[AsCommandHandler(CancelOrderMessage::class)]', $handler);
-        self::assertStringContainsString('public function __invoke(CancelOrderMessage $command): void', $handler);
+        self::assertStringContainsString('public function __invoke(CancelOrderMessage $command): mixed', $handler);
     }
 
     public function test_query_and_event_handler_signatures(): void

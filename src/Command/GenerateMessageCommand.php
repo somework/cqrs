@@ -313,9 +313,10 @@ final class GenerateMessageCommand extends SymfonyCommand
         }
 
         [$signature, $body] = match ($type) {
+            // Commands may return a result to CommandBus::dispatchSync() callers.
             'command' => [
-                sprintf('    public function __invoke(%s $command): void', $messageAlias),
-                ['        // TODO: Implement the command.'],
+                sprintf('    public function __invoke(%s $command): mixed', $messageAlias),
+                ['        // TODO: Implement the command.', '', '        return null;'],
             ],
             'query' => [
                 sprintf('    public function __invoke(%s $query): mixed', $messageAlias),
