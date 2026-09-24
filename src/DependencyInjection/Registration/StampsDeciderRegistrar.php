@@ -63,7 +63,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'command_serializer',
@@ -73,7 +72,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'query_retry',
@@ -83,7 +81,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_serializer',
@@ -93,7 +90,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_metadata',
@@ -103,7 +99,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 125,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'command_metadata',
@@ -113,7 +108,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 125,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'event_retry',
@@ -123,7 +117,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_serializer',
@@ -133,7 +126,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_metadata',
@@ -143,7 +135,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 125,
-                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'asynchronous',
@@ -171,7 +162,6 @@ final class StampsDeciderRegistrar
                     ),
                 ],
                 'priority' => 175,
-                'message_types' => [Command::class, Query::class, Event::class],
             ],
         ];
 
@@ -193,7 +183,6 @@ final class StampsDeciderRegistrar
                 'class' => SequenceStampDecider::class,
                 'arguments' => [],
                 'priority' => 110,
-                'message_types' => [Event::class],
             ];
         }
 
@@ -208,7 +197,6 @@ final class StampsDeciderRegistrar
                         '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                     ],
                     'priority' => 225,
-                    'message_types' => [$contract],
                 ];
             }
         }
@@ -241,13 +229,8 @@ final class StampsDeciderRegistrar
                 $definition->setArgument($name, $value);
             }
 
-            $tagAttributes = ['priority' => $configuration['priority']];
-
-            if (isset($configuration['message_types'])) {
-                $tagAttributes['message_types'] = $configuration['message_types'];
-            }
-
-            $definition->addTag('somework_cqrs.dispatch_stamp_decider', $tagAttributes);
+            // Deciders narrow themselves to message types at runtime (MessageTypeAwareStampDecider).
+            $definition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => $configuration['priority']]);
             $definition->setPublic(false);
 
             $serviceId = $configuration['service_id']

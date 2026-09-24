@@ -99,8 +99,7 @@ final class MessageTransportResolver
 
         foreach ($value as $transport) {
             if (!is_string($transport)) {
-                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element
-of type %s.', $key, get_debug_type($transport)));
+                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element of type %s.', $key, get_debug_type($transport)));
             }
 
             if (isset($seen[$transport])) {

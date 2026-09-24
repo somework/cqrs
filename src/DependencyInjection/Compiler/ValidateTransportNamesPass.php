@@ -8,8 +8,6 @@ use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
-use function array_map;
-use function in_array;
 use function is_array;
 use function sprintf;
 
@@ -27,23 +25,11 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
             return;
         }
 
-        $knownMessengerTransportNames = [];
-        if ($container->hasParameter('messenger.transport_names')) {
-            $transportNamesParameter = $container->getParameter('messenger.transport_names');
-            if (is_array($transportNamesParameter)) {
-                $knownMessengerTransportNames = array_map(static fn ($value): string => (string) $value, $transportNamesParameter);
-            }
-        }
-
         foreach ($configuredTransportNames as $transportName) {
             $transportName = (string) $transportName;
             $transportServiceId = sprintf('messenger.transport.%s', $transportName);
 
             if ($container->hasDefinition($transportServiceId) || $container->hasAlias($transportServiceId)) {
-                continue;
-            }
-
-            if (in_array($transportName, $knownMessengerTransportNames, true)) {
                 continue;
             }
 

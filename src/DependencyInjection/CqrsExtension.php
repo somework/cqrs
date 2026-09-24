@@ -32,7 +32,6 @@ use SomeWork\CqrsBundle\DependencyInjection\Registration\TransportRegistrar;
 use SomeWork\CqrsBundle\Health\HealthChecker;
 use SomeWork\CqrsBundle\Messenger\CausationIdMiddleware;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
-use SomeWork\CqrsBundle\Support\MessageTypeLocatorResetter;
 use SomeWork\CqrsBundle\Support\StampDecider;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\FileLocator;
@@ -48,6 +47,8 @@ use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
 use function class_exists;
+use function is_array;
+use function is_bool;
 use function sprintf;
 
 /** @internal */
@@ -70,6 +71,8 @@ final class CqrsExtension extends Extension
         /** @var array<string, mixed> $config */
         $config = $this->processConfiguration($configuration, $configs);
 
+        self::assertCompileTimeFlags($config);
+
         /** @var string $defaultBusId */
         $defaultBusId = $config['default_bus'] ?? 'messenger.default_bus';
         $container->setParameter('somework_cqrs.default_bus', $defaultBusId);
@@ -88,11 +91,6 @@ final class CqrsExtension extends Extension
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
-
-        $resetter = new Definition(MessageTypeLocatorResetter::class);
-        $resetter->addTag('kernel.reset', ['method' => 'reset']);
-        $resetter->setPublic(false);
-        $container->setDefinition('somework_cqrs.message_type_locator_resetter', $resetter);
 
         $causationCtx = new Definition(CausationIdContext::class);
         $causationCtx->addTag('kernel.reset', ['method' => 'reset']);
@@ -173,6 +171,24 @@ final class CqrsExtension extends Extension
     public function getAlias(): string
     {
         return 'somework_cqrs';
+    }
+
+    /**
+     * These flags decide which services are registered, so they must be known when the container
+     * is compiled; an environment variable would only be resolved at runtime and be ignored.
+     *
+     * @param array<string, mixed> $config
+     */
+    private static function assertCompileTimeFlags(array $config): void
+    {
+        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting'] as $section) {
+            $sectionConfig = $config[$section] ?? null;
+            $value = is_array($sectionConfig) ? ($sectionConfig['enabled'] ?? null) : null;
+
+            if (!is_bool($value)) {
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.', $section));
+            }
+        }
     }
 
     /**

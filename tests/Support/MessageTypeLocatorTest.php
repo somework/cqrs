@@ -119,6 +119,19 @@ final class MessageTypeLocatorTest extends TestCase
         self::assertSame([MessageTypeLocatorChild::class, MessageTypeLocatorChild::class], $locator->getCalls);
     }
 
+    public function test_a_miss_is_cached_too(): void
+    {
+        $locator = new SpyServiceLocator([]);
+        $message = new MessageTypeLocatorChild();
+
+        self::assertNull(MessageTypeLocator::match($locator, $message));
+        $lookups = $locator->hasCalls;
+        self::assertNotSame([], $lookups);
+
+        self::assertNull(MessageTypeLocator::match($locator, $message));
+        self::assertSame($lookups, $locator->hasCalls, 'The hierarchy is not walked again for a known miss.');
+    }
+
     public function test_reset_clears_cache(): void
     {
         $service = new \stdClass();

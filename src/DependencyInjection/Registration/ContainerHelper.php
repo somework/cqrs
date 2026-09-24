@@ -16,9 +16,14 @@ use function sprintf;
 /** @internal */
 final class ContainerHelper
 {
+    /**
+     * Registers a service for a class name used as service id, unless it is already defined.
+     * Abstract classes are left alone: they cannot be instantiated, and the missing service is
+     * reported by the container instead.
+     */
     public function ensureServiceExists(ContainerBuilder $container, string $serviceId): string
     {
-        if (!$container->has($serviceId) && class_exists($serviceId)) {
+        if (!$container->has($serviceId) && class_exists($serviceId) && !(new \ReflectionClass($serviceId))->isAbstract()) {
             $definition = new Definition($serviceId);
             $definition->setAutowired(true);
             $definition->setAutoconfigured(true);

@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use WeakMap;
 
+use function array_key_exists;
 use function array_unique;
 use function array_values;
 use function class_implements;
@@ -19,7 +20,10 @@ use function sort;
 final class MessageTypeLocator
 {
     /**
-     * @var WeakMap<ContainerInterface, array<class-string, array<string, class-string>>>
+     * Matched type per locator, message class and ignored keys; null records "no match".
+     * Service locators are immutable, so entries never go stale; they are released with the locator.
+     *
+     * @var WeakMap<ContainerInterface, array<class-string, array<string, class-string|null>>>
      */
     private static WeakMap $matchCache;
 
@@ -39,10 +43,10 @@ final class MessageTypeLocator
         sort($sortedSignature);
         $ignoredSignature = implode("\0", $sortedSignature);
 
-        if (isset(self::$matchCache[$services][$messageClass][$ignoredSignature])) {
+        if (isset(self::$matchCache[$services][$messageClass]) && array_key_exists($ignoredSignature, self::$matchCache[$services][$messageClass])) {
             $type = self::$matchCache[$services][$messageClass][$ignoredSignature];
 
-            return new MessageTypeMatch($type, $services->get($type));
+            return null === $type ? null : new MessageTypeMatch($type, $services->get($type));
         }
 
         $ignored = [];
@@ -87,11 +91,13 @@ final class MessageTypeLocator
             }
         }
 
+        self::storeMatch($services, $messageClass, $ignoredSignature, null);
+
         return null;
     }
 
     /**
-     * @internal Intended for test isolation and container reset lifecycle
+     * @internal Intended for test isolation
      */
     public static function reset(): void
     {
@@ -102,7 +108,7 @@ final class MessageTypeLocator
         ContainerInterface $services,
         string $messageClass,
         string $ignoredSignature,
-        string $type
+        ?string $type,
     ): void {
         if (!isset(self::$matchCache[$services])) {
             self::$matchCache[$services] = [];

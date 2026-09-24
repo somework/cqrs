@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
@@ -54,7 +55,7 @@ final class CqrsExtensionAsyncValidationTest extends TestCase
                     'event' => [
                         'default' => DispatchMode::SYNC->value,
                         'map' => [
-                            'App\\Domain\\Event\\OrderPlaced' => DispatchMode::ASYNC->value,
+                            TaskCreatedEvent::class => DispatchMode::ASYNC->value,
                         ],
                     ],
                 ],
