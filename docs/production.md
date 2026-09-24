@@ -258,16 +258,23 @@ oldest first, and marks each one published after dispatching it.
   messages) with their stored transport name as `TransportNamesStamp`; rows
   without a transport name follow `framework.messenger.routing`. Workers then
   hand each message to the bus where its handlers are registered. A row that is
-  not sent to any transport is handled synchronously, and the command prints a
-  warning.
+  not sent to any transport is handled synchronously, and the command prints and
+  logs a warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
   (for example a `MessageMetadataStamp`) to the envelope you store.
 * A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
   makes the command exit with `1`; the rows behind it are not blocked. After
-  `outbox.max_attempts` attempts (default 10) the relay gives up on the row. After
-  5 consecutive send failures (broker or database down) the run stops early.
+  `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
+* A transport that fails 3 times in a row with a `TransportException` (broker
+  down, or rejecting messages) is paused until the next run, while the rows of
+  the other transports are relayed. Its rows get three times `max_attempts`
+  (about a day) before they are given up. If the database fails, the run stops
+  right away.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
+* SIGTERM and SIGINT (with the `pcntl` extension) let the relay finish the
+  current row, then it exits with `1`. A deploy or a container stop therefore
+  does not leave a row half done.
 * When symfony/lock is installed, only one relay runs at a time; a second one
   prints "Another outbox relay is already running." and exits with `0`. The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
@@ -308,8 +315,11 @@ bin/console somework:cqrs:outbox:failed              # what the relay gave up on
 bin/console somework:cqrs:outbox:failed --requeue    # after fixing the cause
 ```
 
-A broker outage does not use up attempts: a run that could not send any message
-does not count its transport failures.
+A broker outage uses up attempts slowly: rows whose transport fails get three
+times `max_attempts` (30 attempts by default, about a day of retries), and each
+run tries at most 3 rows of a failing transport. Once the outage is over,
+requeue the rows it gave up on. The health check warns while rows keep failing,
+long before they are given up.
 
 ## Health checks
 

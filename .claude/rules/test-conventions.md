@@ -24,6 +24,10 @@ protected function setUp(): void
 
 Test kernels live in `tests/Fixture/Kernel/`, register a `NullLogger` as `logger` (keeps the output clean) and cache in `var/cache/<kernel>/` inside the project. `AsyncTransportTestKernel` uses a serializing `in-memory://` transport and `messenger:consume` for real async round trips; prefer it over asserting on the async bus handling messages inline.
 
+## Database Tests
+
+Tests that touch the outbox database get their connection from `TestDatabase::connect()` (in-memory SQLite, or the database of `CQRS_TEST_DATABASE_URL`, whose tables it drops first) and carry `#[Group('database')]`, which CI runs on PostgreSQL and MySQL. Use UUIDs as outbox ids (PostgreSQL stores them in a `uuid` column) and build legacy tables with the schema API (`TestDatabase::createTableOfVersion04()`), not with SQLite-only DDL.
+
 ## File Organization
 
 Test files mirror `src/` structure: `tests/Bus/CommandBusTest.php` tests `src/Bus/CommandBus.php`. Fixtures (stub messages, handlers, kernels, services) live in `tests/Fixture/` with sub-directories by type — reuse these rather than creating new stubs per test.

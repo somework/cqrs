@@ -30,6 +30,7 @@ use function count;
 use function explode;
 use function get_debug_type;
 use function implode;
+use function in_array;
 use function is_string;
 use function method_exists;
 use function sha1;
@@ -90,24 +91,36 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
+     * @param list<string|null> $excludedTransports
+     *
      * @return list<OutboxMessage>
      */
-    public function fetchUnpublished(int $limit): array
+    public function fetchUnpublished(int $limit, array $excludedTransports = []): array
     {
         $this->ensureTableExists();
 
-        $rows = $this->guard(fn (): array => $this->connection->createQueryBuilder()
-            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'attempts')
+        $query = $this->connection->createQueryBuilder()
+            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'attempts', 'last_error')
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NULL')
             ->andWhere('available_at IS NULL OR available_at <= :now')
-            ->orderBy('created_at', 'ASC')
+            // Due since: a row that failed queues up again behind the rows stored before its retry time.
+            ->orderBy('COALESCE(available_at, created_at)', 'ASC')
             ->addOrderBy('id', 'ASC')
             ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
-            ->setMaxResults($limit)
-            ->executeQuery()
-            ->fetchAllAssociative());
+            ->setMaxResults($limit);
+
+        $excludedNames = array_values(array_filter($excludedTransports, is_string(...)));
+        if (in_array(null, $excludedTransports, true)) {
+            $query->andWhere('transport_name IS NOT NULL');
+        }
+        if ([] !== $excludedNames) {
+            $query->andWhere('transport_name IS NULL OR transport_name NOT IN (:excluded)')
+                ->setParameter('excluded', $excludedNames, ArrayParameterType::STRING);
+        }
+
+        $rows = $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative());
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -119,6 +132,7 @@ final class DbalOutboxStorage implements OutboxStorage
                 createdAt: self::readUtc($row['created_at'], $platform),
                 transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
                 attempts: (int) $row['attempts'],
+                lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
             ),
             $rows,
         );
@@ -146,11 +160,11 @@ final class DbalOutboxStorage implements OutboxStorage
         }
     }
 
-    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool
     {
         $this->ensureTableExists();
 
-        $updated = $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
+        $query = $this->connection->createQueryBuilder()
             ->update($this->tableName)
             ->set('attempts', ':attempts')
             ->set('last_error', ':last_error')
@@ -162,12 +176,19 @@ final class DbalOutboxStorage implements OutboxStorage
             ->setParameter('last_error', $error)
             ->setParameter('available_at', null === $retryAt ? null : self::utc($retryAt), Types::DATETIME_IMMUTABLE)
             ->setParameter('failed_at', null === $retryAt ? self::now() : null, Types::DATETIME_IMMUTABLE)
-            ->setParameter('id', $id)
-            ->executeStatement());
+            ->setParameter('id', $id);
 
-        if (0 === (int) $updated) {
-            $this->assertExists($id, 'record an attempt');
+        if (null !== $previousAttempts) {
+            $query->andWhere('attempts = :previous_attempts')->setParameter('previous_attempts', $previousAttempts, Types::INTEGER);
         }
+
+        if (0 !== (int) $this->guard(static fn (): int|string => $query->executeStatement())) {
+            return true;
+        }
+
+        $this->assertExists($id, 'record an attempt');
+
+        return false;
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -203,9 +224,11 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Counts the due and the given-up messages, for monitoring.
+     * Counts the due, the retrying and the given-up messages, for monitoring.
      *
-     * @return array{due: int, oldest_due: DateTimeImmutable|null, failed: int}
+     * "Retrying" messages were attempted at least once and are neither published nor given up.
+     *
+     * @return array{due: int, oldest_due: DateTimeImmutable|null, retrying: int, oldest_retrying: DateTimeImmutable|null, failed: int}
      */
     public function status(): array
     {
@@ -222,6 +245,15 @@ final class DbalOutboxStorage implements OutboxStorage
             ->executeQuery()
             ->fetchAssociative());
 
+        $retrying = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
+            ->select('COUNT(*) AS retrying', 'MIN(created_at) AS oldest_retrying')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NULL')
+            ->andWhere('attempts > 0')
+            ->executeQuery()
+            ->fetchAssociative());
+
         $failed = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
             ->select('COUNT(*)')
             ->from($this->tableName)
@@ -230,11 +262,15 @@ final class DbalOutboxStorage implements OutboxStorage
             ->executeQuery()
             ->fetchOne());
 
+        $platform = $this->connection->getDatabasePlatform();
         $oldestDue = false === $due ? null : ($due['oldest_due'] ?? null);
+        $oldestRetrying = false === $retrying ? null : ($retrying['oldest_retrying'] ?? null);
 
         return [
             'due' => false === $due ? 0 : (int) $due['due'],
-            'oldest_due' => null === $oldestDue ? null : self::readUtc($oldestDue, $this->connection->getDatabasePlatform()),
+            'oldest_due' => null === $oldestDue ? null : self::readUtc($oldestDue, $platform),
+            'retrying' => false === $retrying ? 0 : (int) $retrying['retrying'],
+            'oldest_retrying' => null === $oldestRetrying ? null : self::readUtc($oldestRetrying, $platform),
             'failed' => (int) $failed,
         ];
     }
@@ -272,7 +308,7 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Hands messages the relay gave up on back to it, with a fresh attempt counter.
+     * Hands messages the relay gave up on back to it, with a fresh attempt counter and no last error.
      *
      * @param list<string> $ids The messages to requeue; all given-up messages when empty
      *
@@ -287,6 +323,7 @@ final class DbalOutboxStorage implements OutboxStorage
             ->set('failed_at', 'NULL')
             ->set('available_at', 'NULL')
             ->set('attempts', '0')
+            ->set('last_error', 'NULL')
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL');
 

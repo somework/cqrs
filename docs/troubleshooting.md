@@ -409,19 +409,28 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `Message "..." (...) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.`
   The row has no transport name and no `framework.messenger.routing` entry
   matches it.
+* `Message "..." (...) was neither sent to a transport nor handled …` Nothing
+  received the message: Messenger's deduplication dropped it as a duplicate, or
+  it is an event without handlers or routing. The row is marked as published.
 * `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
   The row is postponed (1 minute, doubling up to 1 hour) and the rows behind it
-  are relayed; the command exits with `1`.
+  are relayed; the command exits with `1`. The maximum is three times
+  `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
+* `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
+  The broker is down or rejects the messages. The rows of the other transports
+  are still relayed; the paused ones are tried again by the next run.
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
-  `outbox.max_attempts` times. Fix the cause, then list and requeue it with
-  `somework:cqrs:outbox:failed [--requeue]`. A reason of `The relay stopped
-  during this attempt …` means that the row crashed the relay process (a PHP
-  fatal error or running out of memory).
-* `No message could be sent in this run: the transport seems unavailable, …` Every
-  send failed with a `TransportException`; those attempts do not count and the rows
-  are retried after their delay.
-* `Stopping after 5 consecutive failures to send messages.` The transport looks
-  unavailable; the next run tries again.
+  `outbox.max_attempts` times (three times as many for transport failures). Fix
+  the cause, then list and requeue it with `somework:cqrs:outbox:failed
+  [--requeue]`. A reason of `The relay did not finish this attempt …` means that
+  the process died during the last attempt: a PHP fatal error or running out of
+  memory caused by the row, a killed process, or a lost database connection. The
+  message may have been sent; check the consumer before requeuing it.
+* `Skipped <n> message(s) that another relay claimed first.` Two relays ran at
+  the same time (no `symfony/lock`, or a lock store that only guards one host).
+  Nothing was sent twice; configure a shared lock store.
+* `Stopped by signal <number> after <count> message(s) …` The process received
+  SIGTERM or SIGINT and stopped after the current row; the next run continues.
 * `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
   table does not exist or lacks the columns of this version (run
   `somework:cqrs:outbox:setup`).

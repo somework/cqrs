@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Command;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
@@ -16,12 +17,14 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnavailableTransport;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
@@ -30,6 +33,7 @@ use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
+use Symfony\Component\Messenger\Transport\Sender\SenderInterface;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
@@ -38,8 +42,13 @@ use function array_map;
 use function mb_check_encoding;
 use function mb_strlen;
 use function preg_replace;
+use function sprintf;
 use function str_repeat;
+use function str_starts_with;
 use function time;
+
+use const SIGINT;
+use const SIGTERM;
 
 #[CoversClass(OutboxRelayCommand::class)]
 final class OutboxRelayCommandTest extends TestCase
@@ -213,7 +222,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = $this->execute();
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Stopping: the attempt to relay message "p1" could not be recorded (RuntimeException: Database is down.)', self::display($tester));
+        self::assertStringContainsString('Stopping: the outbox storage failed (RuntimeException: Could not record an attempt to relay message "p1": RuntimeException: Database is down.)', self::display($tester));
         self::assertSame([], $this->async->getSent());
     }
 
@@ -230,31 +239,32 @@ final class OutboxRelayCommandTest extends TestCase
 
         self::assertNotNull($seenBeforeSending);
         self::assertSame(1, $seenBeforeSending[0]);
-        self::assertStringContainsString('The relay stopped during this attempt', (string) $seenBeforeSending[1]);
+        self::assertSame(OutboxRelayCommand::INTERRUPTED, $seenBeforeSending[1]);
         self::assertSame([], $seenBeforeSending[2], 'The next run does not start with the same message again.');
         self::assertTrue($this->storage->isPublished($message->id));
     }
 
-    public function test_a_run_that_sent_nothing_does_not_count_transport_failures(): void
+    public function test_a_transport_failure_counts_against_three_times_the_maximum_number_of_attempts(): void
     {
-        // The last attempt fails while the transport is down: nothing could be sent in this run.
+        // The broker is down: the attempt counts, but an outage gets about a day before messages are given up.
         $this->storage->store($this->outboxMessage('m1', new CreateTaskCommand('1', 'a'), attempts: 9));
         $bus = new RecordingBus(new TransportException('Connection refused'));
 
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
         $tester->execute([]);
 
-        self::assertStringContainsString('the failed attempts of 1 message(s) do not count', self::display($tester));
-        self::assertSame(9, $this->storage->attempts('m1'), 'The attempt is given back.');
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Failed to relay message "m1" (attempt 10 of 30, next attempt after', self::display($tester));
+        self::assertSame(10, $this->storage->attempts('m1'));
         $retryAt = $this->storage->failures['m1']['retryAt'];
         self::assertNotNull($retryAt);
         self::assertEqualsWithDelta(time() + 3600, $retryAt->getTimestamp(), 5);
     }
 
-    public function test_a_transport_failure_on_the_last_attempt_is_given_up_when_other_messages_were_sent(): void
+    public function test_a_message_whose_transport_keeps_failing_is_given_up_after_three_times_the_maximum_number_of_attempts(): void
     {
-        // The failing row is the oldest one, so it is tried before the transport proves to work.
-        $this->storage->store($this->outboxMessage('bad', new CreateTaskCommand('bad', 'b'), attempts: 9));
+        // e.g. the broker rejects the message because it is too large.
+        $this->storage->store($this->outboxMessage('bad', new CreateTaskCommand('bad', 'b'), attempts: 29));
         $this->storage->store($this->outboxMessage('good', new CreateTaskCommand('good', 'a')));
         $bus = new CallbackBus(static function (object $message): void {
             if ($message instanceof CreateTaskCommand && 'bad' === $message->id) {
@@ -265,9 +275,24 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
         $tester->execute([]);
 
-        self::assertStringContainsString('Gave up on message "bad" after 10 attempt(s): Symfony\Component\Messenger\Exception\TransportException: Message too large for the broker', self::display($tester));
+        self::assertStringContainsString('Gave up on message "bad" after 30 attempt(s): Symfony\Component\Messenger\Exception\TransportException: Message too large for the broker', self::display($tester));
         self::assertNull($this->storage->failures['bad']['retryAt']);
         self::assertTrue($this->storage->isPublished('good'));
+    }
+
+    public function test_a_handler_that_fails_to_send_another_message_counts_against_the_maximum_number_of_attempts(): void
+    {
+        // The message was handled inline and its handler ran: its side effects must not repeat for a day.
+        $this->storage->store($this->outboxMessage('inline', new CreateTaskCommand('1', 'a'), attempts: 9));
+        $bus = new CallbackBus(static function (object $message): void {
+            throw new HandlerFailedException(new Envelope($message), [new TransportException('Connection refused')]);
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertStringContainsString('Gave up on message "inline" after 10 attempt(s)', self::display($tester));
+        self::assertNull($this->storage->failures['inline']['retryAt']);
     }
 
     public function test_a_message_that_fails_on_its_own_is_given_up_after_the_last_attempt_even_if_it_is_the_oldest(): void
@@ -289,15 +314,31 @@ final class OutboxRelayCommandTest extends TestCase
 
     public function test_a_message_whose_last_attempt_killed_the_process_is_given_up_without_trying_again(): void
     {
-        $this->storage->store($this->outboxMessage('crashed', new CreateTaskCommand('1', 'a'), attempts: 10));
+        $this->storage->store($this->outboxMessage('crashed', new CreateTaskCommand('1', 'a'), attempts: 10, lastError: OutboxRelayCommand::INTERRUPTED));
         $bus = new RecordingBus();
 
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
         $tester->execute([]);
 
-        self::assertStringContainsString('Gave up on message "crashed" after 10 attempt(s): The relay stopped during this attempt', self::display($tester));
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Gave up on message "crashed" after 10 attempt(s): The relay did not finish this attempt', self::display($tester));
+        self::assertStringContainsString('the message may have been sent', self::display($tester));
         self::assertSame([], $bus->messageClasses());
         self::assertNull($this->storage->failures['crashed']['retryAt']);
+    }
+
+    public function test_a_message_over_a_lowered_maximum_gets_one_more_attempt_and_keeps_its_real_error(): void
+    {
+        // max_attempts was lowered from 10 to 3 while the message had failed 5 times.
+        $this->storage->store($this->outboxMessage('m1', new CreateTaskCommand('1', 'a'), attempts: 5, lastError: 'DomainException: Handler rejected the message'));
+        $bus = new RecordingBus(new \DomainException('Handler rejected the message again'));
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks, maxAttempts: 3));
+        $tester->execute([]);
+
+        self::assertCount(1, $bus->messageClasses());
+        self::assertStringContainsString('Gave up on message "m1" after 6 attempt(s): DomainException: Handler rejected the message again', self::display($tester));
+        self::assertSame('DomainException: Handler rejected the message again', $this->storage->lastError('m1'));
     }
 
     public function test_a_failing_storage_stops_the_run_with_exit_code_1(): void
@@ -357,16 +398,19 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertCount(1, $this->storage->fetchUnpublished(10));
     }
 
-    public function test_a_message_that_cannot_be_marked_published_is_reported(): void
+    public function test_a_message_that_cannot_be_marked_published_stops_the_run(): void
     {
         $message = $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
         $this->storage->failMarkingPublished = [$message->id];
 
         $tester = $this->execute();
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Cannot mark', self::display($tester));
+        self::assertStringContainsString(sprintf('Stopping: the outbox storage failed (RuntimeException: Message "%s" was sent but could not be marked as published, so it will be sent again: RuntimeException: Cannot mark', $message->id), self::display($tester));
+        self::assertCount(1, $this->async->getSent(), 'The storage failed: the run stops.');
         self::assertSame(1, $this->storage->attempts($message->id), 'The message is sent again later (at-least-once).');
+        self::assertSame(OutboxRelayCommand::INTERRUPTED, $this->storage->lastError($message->id), 'It is not recorded as a failure of the message.');
     }
 
     public function test_rejects_an_invalid_limit(): void
@@ -430,7 +474,7 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame([\stdClass::class], $defaultBus->messageClasses());
     }
 
-    public function test_stops_after_consecutive_send_failures(): void
+    public function test_a_failing_transport_is_paused_for_the_rest_of_the_run(): void
     {
         for ($i = 1; $i <= 20; ++$i) {
             $this->store(new CreateTaskCommand((string) $i, 'x'), 'async');
@@ -441,13 +485,130 @@ final class OutboxRelayCommandTest extends TestCase
         $tester->execute(['--limit' => '100']);
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Stopping after 5 consecutive failures to send messages.', self::display($tester));
-        self::assertCount(5, $bus->messageClasses());
+        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertCount(3, $bus->messageClasses(), 'The backlog of a transport that is down is not walked.');
         self::assertCount(20, $this->storage->unpublishedIds());
-        self::assertCount(5, $this->storage->failures, 'Only the messages that were tried are postponed.');
-        foreach ($this->storage->unpublishedIds() as $id) {
-            self::assertSame(0, $this->storage->attempts($id), 'An outage does not use up attempts.');
+        self::assertCount(3, $this->storage->failures, 'Only the messages that were tried are postponed.');
+    }
+
+    public function test_a_failing_transport_does_not_hold_up_the_other_transports(): void
+    {
+        $ext = new UnavailableTransport();
+        // The messages of the transport that is down are the oldest ones.
+        for ($i = 1; $i <= 5; ++$i) {
+            $this->store(new CreateTaskCommand('ext-'.$i, 'x'), 'ext');
         }
+        $this->store(new CreateTaskCommand('async-1', 'x'), 'async');
+        $this->store(new CreateTaskCommand('async-2', 'x'), 'async');
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(['ext' => $ext]), $this->locks));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Transport "ext" failed 3 times in a row', self::display($tester));
+        self::assertSame(3, $ext->sendAttempts);
+        self::assertSame(['async-1', 'async-2'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
+        self::assertCount(5, $this->storage->unpublishedIds());
+    }
+
+    public function test_messages_without_a_transport_name_share_one_breaker(): void
+    {
+        for ($i = 1; $i <= 4; ++$i) {
+            $this->store(new TaskCreatedEvent((string) $i));
+        }
+        $this->store(new CreateTaskCommand('1', 'x'), 'async');
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(['events' => new UnavailableTransport()]), $this->locks));
+        $tester->execute([]);
+
+        self::assertStringContainsString('Messages without a transport name failed to be sent 3 times in a row; the other ones wait for the next run.', self::display($tester));
+        self::assertCount(3, $this->storage->failures);
+        self::assertCount(1, $this->async->getSent());
+    }
+
+    public function test_a_sent_message_resets_the_consecutive_failures_of_its_transport(): void
+    {
+        foreach (['f1', 'f2', 'ok1', 'f3', 'f4', 'ok2'] as $id) {
+            $this->store(new CreateTaskCommand($id, 'x'), 'async');
+        }
+        $bus = new CallbackBus(static function (object $message): void {
+            if ($message instanceof CreateTaskCommand && str_starts_with($message->id, 'f')) {
+                throw new TransportException('Message rejected by the broker');
+            }
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertStringNotContainsString('times in a row', self::display($tester));
+        self::assertStringContainsString('Relayed 2 message(s).', self::display($tester));
+        self::assertCount(4, $this->storage->failures);
+    }
+
+    public function test_a_message_claimed_by_another_relay_is_skipped(): void
+    {
+        $taken = $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+        $this->storage->afterFetch = function () use ($taken): void {
+            // An overlapping relay claims the message between this relay's fetch and its claim.
+            $this->storage->afterFetch = null;
+            $this->storage->recordAttempt($taken->id, 1, OutboxRelayCommand::INTERRUPTED, new DateTimeImmutable('+1 minute'), 0);
+        };
+
+        $tester = $this->execute();
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Skipped 1 message(s) that another relay claimed first.', self::display($tester));
+        self::assertSame(['2'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
+    }
+
+    public function test_a_signal_stops_the_run_after_the_current_message(): void
+    {
+        for ($i = 1; $i <= 3; ++$i) {
+            $this->store(new CreateTaskCommand((string) $i, 'x'), 'async');
+        }
+        $relay = new class {
+            public ?OutboxRelayCommand $command = null;
+        };
+        $bus = new CallbackBus(static function () use ($relay): void {
+            // SIGTERM (15) arrives while the first message is sent.
+            self::assertNotNull($relay->command);
+            self::assertFalse($relay->command->handleSignal(15), 'The current message is finished first.');
+        });
+        $command = $relay->command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks);
+
+        $tester = new CommandTester($command);
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Stopped by signal 15 after 1 message(s); the remaining messages wait for the next run.', self::display($tester));
+        self::assertCount(2, $this->storage->unpublishedIds());
+        self::assertSame(0, $this->storage->attempts($this->storage->unpublishedIds()[0]));
+        self::assertTrue($this->locks->createLock('somework:cqrs:outbox:relay')->acquire(), 'The lock is released.');
+
+        self::assertFalse($command->handleSignal(15), 'Each run starts without a pending stop.');
+        self::assertSame(128 + 15, $command->handleSignal(15), 'A second signal stops right away.');
+    }
+
+    #[RequiresPhpExtension('pcntl')]
+    public function test_subscribes_to_the_termination_signals(): void
+    {
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks);
+
+        self::assertSame([SIGTERM, SIGINT], $command->getSubscribedSignals());
+    }
+
+    public function test_warns_when_a_message_was_neither_sent_nor_handled(): void
+    {
+        // e.g. Messenger's DeduplicateMiddleware dropped it: nothing more to do.
+        $message = $this->store(new CreateTaskCommand('1', 'a'), 'async');
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), new MessageBus([]), $this->locks));
+        $tester->execute([]);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('was neither sent to a transport nor handled', self::display($tester));
+        self::assertTrue($this->storage->isPublished($message->id));
     }
 
     public function test_stops_when_the_lock_is_lost(): void
@@ -471,11 +632,11 @@ final class OutboxRelayCommandTest extends TestCase
         return $outboxMessage;
     }
 
-    private function outboxMessage(string $id, object $message, int $attempts = 0): OutboxMessage
+    private function outboxMessage(string $id, object $message, int $attempts = 0, ?string $lastError = null): OutboxMessage
     {
         $encoded = OutboxMessage::fromEnvelope(new Envelope($message), new PhpSerializer(), 'async');
 
-        return new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async', $attempts);
+        return new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async', $attempts, $lastError);
     }
 
     /**
@@ -489,12 +650,16 @@ final class OutboxRelayCommandTest extends TestCase
         return $tester;
     }
 
-    private function bus(): MessageBus
+    /**
+     * @param array<string, SenderInterface> $transports Transports replacing or added to "async" and "events"
+     */
+    private function bus(array $transports = []): MessageBus
     {
-        $senders = new SendersLocator(
-            [TaskCreatedEvent::class => ['events']],
-            new ServiceLocator(['async' => fn (): InMemoryTransport => $this->async, 'events' => fn (): InMemoryTransport => $this->events]),
-        );
+        $factories = ['async' => fn (): SenderInterface => $this->async, 'events' => fn (): SenderInterface => $this->events];
+        foreach ($transports as $name => $transport) {
+            $factories[$name] = static fn (): SenderInterface => $transport;
+        }
+        $senders = new SendersLocator([TaskCreatedEvent::class => ['events']], new ServiceLocator($factories));
 
         return new MessageBus([
             new SendMessageMiddleware($senders),

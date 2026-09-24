@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\DriverManager;
 use Psr\Log\NullLogger;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
@@ -77,9 +77,9 @@ final class OutboxTestKernel extends Kernel
             ->autowire()
             ->autoconfigure();
 
+        // In-memory SQLite, or the database of CQRS_TEST_DATABASE_URL.
         $services->set('doctrine.dbal.default_connection', Connection::class)
-            ->factory([DriverManager::class, 'getConnection'])
-            ->args([['driver' => 'pdo_sqlite', 'memory' => true]])
+            ->factory([TestDatabase::class, 'connect'])
             ->public();
         $services->set(TaskRecorder::class)->public();
         $services->set(CreateTaskHandler::class);

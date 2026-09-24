@@ -8,9 +8,11 @@ use DateTimeImmutable;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
+use function array_map;
 use function array_slice;
 use function in_array;
 use function sprintf;
+use function usort;
 
 final class InMemoryOutboxStorage implements OutboxStorage
 {
@@ -35,12 +37,15 @@ final class InMemoryOutboxStorage implements OutboxStorage
     /** When false, failed messages are returned again right away (a storage ignoring the retry time). */
     public bool $postponeFailures = true;
 
+    /** @var (\Closure(list<OutboxMessage>): void)|null Called with every fetched batch, e.g. to let another relay claim a message */
+    public ?\Closure $afterFetch = null;
+
     public function store(OutboxMessage $message): void
     {
         $this->messages[$message->id] = $message;
     }
 
-    public function fetchUnpublished(int $limit): array
+    public function fetchUnpublished(int $limit, array $excludedTransports = []): array
     {
         if ($this->failFetching) {
             throw new \RuntimeException('Database is down.');
@@ -50,16 +55,25 @@ final class InMemoryOutboxStorage implements OutboxStorage
         $due = [];
         foreach ($this->messages as $id => $message) {
             $failure = $this->failures[$id] ?? null;
-            if (isset($this->published[$id])) {
+            if (isset($this->published[$id]) || in_array($message->transportName, $excludedTransports, true)) {
                 continue;
             }
             if (null !== $failure && $this->postponeFailures && (null === $failure['retryAt'] || $failure['retryAt'] > $now)) {
                 continue;
             }
-            $due[] = $message;
+            $due[] = [$failure['retryAt'] ?? $message->createdAt, $message];
         }
 
-        return array_slice($due, 0, $limit);
+        // Due since: the time a message was stored, or the retry time of its last attempt (a stable sort keeps the insertion order).
+        usort($due, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+
+        $batch = array_slice(array_map(static fn (array $entry): OutboxMessage => $entry[1], $due), 0, $limit);
+
+        if (null !== $this->afterFetch) {
+            ($this->afterFetch)($batch);
+        }
+
+        return $batch;
     }
 
     public function markPublished(string $id): void
@@ -72,7 +86,7 @@ final class InMemoryOutboxStorage implements OutboxStorage
         unset($this->failures[$id]);
     }
 
-    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool
     {
         if ($this->failRecordingAttempts) {
             throw new \RuntimeException('Database is down.');
@@ -82,13 +96,16 @@ final class InMemoryOutboxStorage implements OutboxStorage
             throw new \RuntimeException(sprintf('Unknown message "%s".', $id));
         }
 
-        if (isset($this->published[$id])) {
-            return;
+        $message = $this->messages[$id];
+
+        if (isset($this->published[$id]) || (null !== $previousAttempts && $previousAttempts !== $message->attempts)) {
+            return false;
         }
 
-        $message = $this->messages[$id];
-        $this->messages[$id] = new OutboxMessage($message->id, $message->body, $message->headers, $message->createdAt, $message->transportName, $attempts);
+        $this->messages[$id] = new OutboxMessage($message->id, $message->body, $message->headers, $message->createdAt, $message->transportName, $attempts, $error);
         $this->failures[$id] = ['error' => $error, 'retryAt' => $retryAt];
+
+        return true;
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -112,6 +129,11 @@ final class InMemoryOutboxStorage implements OutboxStorage
     public function attempts(string $id): int
     {
         return isset($this->messages[$id]) ? $this->messages[$id]->attempts : 0;
+    }
+
+    public function lastError(string $id): ?string
+    {
+        return $this->messages[$id]->lastError ?? null;
     }
 
     /**

@@ -13,14 +13,15 @@ use function intdiv;
 use function sprintf;
 
 /**
- * Reports whether the outbox relay keeps up: messages the relay gave up on, and due messages
- * that have waited longer than a relay run should take.
+ * Reports whether the outbox relay keeps up: messages the relay gave up on, messages that failed
+ * and still wait for another attempt, and due messages that have waited longer than a relay run
+ * should take.
  *
  * @internal
  */
 final class OutboxHealthChecker implements HealthChecker
 {
-    /** A due message older than this means that the relay does not run, or does not keep up. */
+    /** A due message older than this means that the relay does not run, or does not keep up; a failing one, that it cannot deliver. */
     private const MAX_WAIT_SECONDS = 600;
 
     public function __construct(
@@ -47,8 +48,17 @@ final class OutboxHealthChecker implements HealthChecker
             $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status['failed']));
         }
 
+        $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
+        $oldestRetrying = $status['oldest_retrying'];
+        $failingFor = null === $oldestRetrying ? 0 : $now - $oldestRetrying->getTimestamp();
+
+        // Postponed after failed attempts, so not due: an outage of their transport, or messages that cannot be sent.
+        if ($failingFor > self::MAX_WAIT_SECONDS) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', $status['retrying'], intdiv($failingFor, 60)));
+        }
+
         $oldestDue = $status['oldest_due'];
-        $waited = null === $oldestDue ? 0 : (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp() - $oldestDue->getTimestamp();
+        $waited = null === $oldestDue ? 0 : $now - $oldestDue->getTimestamp();
 
         if ($waited > self::MAX_WAIT_SECONDS) {
             $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): is "somework:cqrs:outbox:relay" running?', $status['due'], intdiv($waited, 60)));

@@ -39,6 +39,8 @@ final class OutboxMessage
         public readonly ?string $transportName = null,
         /** Attempts to publish the message so far (the relay counts an attempt when it starts). */
         public readonly int $attempts = 0,
+        /** Error of the last attempt, null when there was none or the message was requeued. */
+        public readonly ?string $lastError = null,
     ) {
         if ('' === $this->id) {
             throw new \InvalidArgumentException('Outbox message id cannot be empty.');

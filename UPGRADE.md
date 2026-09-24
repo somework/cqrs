@@ -219,12 +219,18 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   missing columns; `auto_setup: true` does the same outside a transaction), generate a Doctrine migration
   (with doctrine/orm the schema listener includes them), or add them by hand, see
   [Upgrading from 0.4](docs/outbox.md#upgrading-from-04).
-- `OutboxStorage` is now `@api` and changed: `fetchUnpublished(int $limit)` returns only due messages
-  (unpublished, not given up, retry time passed), and custom implementations must add
-  `recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void` (it stores the given
-  number of attempts; the relay calls it before every attempt and again when the attempt fails) and
-  `purgePublished(DateTimeImmutable $publishedBefore): int`. `OutboxMessage` has a new `attempts` property
-  (constructor argument `$attempts = 0`).
+- `OutboxStorage` is now `@api` and changed. Custom implementations must:
+  - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it
+    returns only due messages (unpublished, not given up, retry time passed), ordered by the time since which
+    they are due, and skips the messages of the excluded transports (`null` stands for messages without a
+    transport name);
+  - add `recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool`.
+    It stores the given number of attempts; the relay calls it before every attempt and again when the attempt
+    fails. With `$previousAttempts` it only records while the stored attempts still equal it, atomically, and
+    returns `false` when nothing was recorded (published, or claimed by another relay);
+  - add `purgePublished(DateTimeImmutable $publishedBefore): int`;
+  - return the stored `attempts` and `last_error` with each message: `OutboxMessage` has the new properties
+    `attempts` and `lastError` (constructor arguments `$attempts = 0` and `$lastError = null`).
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
   that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
   Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the
@@ -240,12 +246,15 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 - The relay sends each message to its stored transport and runs as a single instance when symfony/lock is
   installed. A row that fails is postponed (1 minute, doubling up to 1 hour) instead of being retried on every
   run, and given up after `outbox.max_attempts` attempts; list and requeue given-up rows with the new
-  `somework:cqrs:outbox:failed` command. Every attempt is counted before the message is sent, so a row that
-  crashes the relay process is not retried forever; transport failures (`TransportException`) of a run that could
-  not send any message do not count as attempts (broker outage). The relay stops after 5 consecutive send failures and exits with code 1 when any row
-  failed or the storage failed (monitor the exit code, or the new outbox check of `somework:cqrs:health`); an
-  invalid `--limit` now exits with 2 instead of 1. `--limit` counts processed rows, failed ones included. The
-  relay logs failures to the `logger` service.
+  `somework:cqrs:outbox:failed` command. Every attempt is claimed before the message is sent, so a row that
+  crashes the relay process is not retried forever and overlapping relays skip each other's rows. Rows whose
+  transport fails (`TransportException`) get three times `outbox.max_attempts`, and a transport that fails 3
+  times in a row is paused until the next run while the other transports are relayed. Rows are relayed in the
+  order they became due (a retried row queues up behind the rows stored before its retry time). The relay exits
+  with code 1 when any row failed, the storage failed or a signal (SIGTERM, SIGINT) stopped it after the current
+  row (monitor the exit code, or the new outbox check of `somework:cqrs:health`); an invalid `--limit` now exits
+  with 2 instead of 1. `--limit` counts processed rows, failed ones included. The relay logs failures to the
+  `logger` service.
 - The relay lock is named after `framework.cache.prefix_seed` when you set it (the project directory
   otherwise), the connection and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
   relays of two releases cannot run at the same time.

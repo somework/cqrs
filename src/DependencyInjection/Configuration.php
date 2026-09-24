@@ -311,7 +311,7 @@ final class Configuration implements ConfigurationInterface
             ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
         // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
         $outboxChildren->integerNode('max_attempts')->defaultValue(10)
-            ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1). Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
+            ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
         $outboxChildren->end();
         $outbox->end();
 

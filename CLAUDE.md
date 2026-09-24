@@ -29,9 +29,12 @@ vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes
 
 # Code style (dry-run check)
 vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --dry-run --diff
+
+# Outbox tests on a real database instead of in-memory SQLite (tables are dropped and recreated)
+CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
 ```
 
-CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a minimal install without optional packages, an example-app smoke test and `mkdocs build --strict`.
+CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
 
 Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.4.0, next release 0.5.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
@@ -41,7 +44,7 @@ Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (lates
 - `somework:cqrs:generate <type> <FQCN>` — scaffolds a message + attribute-based handler following the project's PSR-4 mapping (`--handler=`, `--dir=`, `--force`)
 - `somework:cqrs:debug-transports` — inspects Messenger transport routing for CQRS messages
 - `somework:cqrs:health` — instantiates every handler and Messenger transport; exit code 0/1/2
-- `somework:cqrs:outbox:relay|setup|failed|purge` — transactional outbox operations (registered when `outbox.enabled`); the relay retries failing rows with backoff and gives up after `outbox.max_attempts`
+- `somework:cqrs:outbox:relay|setup|failed|purge` — transactional outbox operations (registered when `outbox.enabled`); the relay claims each row before sending it, retries failing rows with backoff, gives up after `outbox.max_attempts` (3× for transport failures) and pauses a transport after 3 consecutive send failures
 
 ## Architecture
 

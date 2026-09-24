@@ -6,13 +6,14 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
-use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_map;
 use function date_default_timezone_get;
@@ -24,8 +25,10 @@ use function time;
 use const DATE_ATOM;
 
 /**
- * Runs the storage against a real (in-memory SQLite) database.
+ * Runs the storage against a real database: in-memory SQLite, or the one named by
+ * CQRS_TEST_DATABASE_URL (see TestDatabase).
  */
+#[Group('database')]
 #[CoversClass(DbalOutboxStorage::class)]
 final class DbalOutboxStorageTest extends TestCase
 {
@@ -33,11 +36,18 @@ final class DbalOutboxStorageTest extends TestCase
 
     private const ID_2 = '00000000-0000-7000-8000-000000000002';
 
+    private const UNKNOWN_ID = 'ffffffff-ffff-7fff-bfff-ffffffffffff';
+
     private Connection $connection;
 
     protected function setUp(): void
     {
-        $this->connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $this->connection = TestDatabase::connect();
+    }
+
+    protected function tearDown(): void
+    {
+        $this->connection->close();
     }
 
     public function test_stores_and_fetches_unpublished_messages_oldest_first(): void
@@ -88,6 +98,32 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $messages[0]->attempts);
     }
 
+    public function test_a_message_that_failed_queues_up_again_behind_the_messages_stored_before_its_retry_time(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+
+        $storage->recordAttempt(self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('2026-01-01 10:05:00+00:00'));
+
+        self::assertSame([self::ID_2, self::ID_1], self::ids($storage->fetchUnpublished(10)));
+        self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(1)));
+    }
+
+    public function test_messages_of_excluded_transports_are_skipped(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000002', '2026-01-01 10:01:00', 'async'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000003', '2026-01-01 10:02:00', 'ext'));
+
+        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, ['ext'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10, [null])));
+        self::assertSame(['00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, [null, 'ext'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000001'], self::ids($storage->fetchUnpublished(10, ['async', 'ext'])));
+        self::assertSame([], self::ids($storage->fetchUnpublished(10, ['async', null, 'ext'])));
+    }
+
     public function test_the_number_of_attempts_is_stored_as_given(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
@@ -124,30 +160,48 @@ final class DbalOutboxStorageTest extends TestCase
         $requeued = $storage->fetchUnpublished(10);
         self::assertSame([self::ID_2], self::ids($requeued));
         self::assertSame(0, $requeued[0]->attempts);
+        self::assertNull($requeued[0]->lastError);
 
         self::assertSame(1, $storage->requeueFailed());
         self::assertSame([self::ID_1, self::ID_2], self::ids($storage->fetchUnpublished(10)));
         self::assertSame([], $storage->fetchFailed(10));
     }
 
-    public function test_mark_failed_rejects_unknown_ids_and_ignores_published_messages(): void
+    public function test_record_attempt_rejects_unknown_ids_and_ignores_published_messages(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->markPublished(self::ID_1);
 
-        $storage->recordAttempt(self::ID_1, 1, 'late failure', null);
+        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'late failure', null));
         self::assertSame([], $storage->fetchFailed(10));
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Outbox message "missing" not found in table "somework_cqrs_outbox" — cannot record an attempt.');
+        $this->expectExceptionMessage('Outbox message "'.self::UNKNOWN_ID.'" not found in table "somework_cqrs_outbox" — cannot record an attempt.');
 
-        $storage->recordAttempt('missing', 1, 'error', null);
+        $storage->recordAttempt(self::UNKNOWN_ID, 1, 'error', null);
+    }
+
+    public function test_an_attempt_is_only_recorded_while_the_attempts_are_unchanged(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'claimed by relay A', new DateTimeImmutable('-1 minute'), 0));
+        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'claimed by relay B', new DateTimeImmutable('-1 minute'), 0), 'Relay B read the message before relay A claimed it.');
+        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'failed', new DateTimeImmutable('-1 minute'), 1));
+
+        $messages = $storage->fetchUnpublished(10);
+        self::assertSame(1, $messages[0]->attempts);
+        self::assertSame('failed', $messages[0]->lastError);
+
+        $storage->markPublished(self::ID_1);
+        self::assertFalse($storage->recordAttempt(self::ID_1, 2, 'late', null, 1));
     }
 
     public function test_setup_adds_the_failure_columns_to_a_table_of_an_earlier_version(): void
     {
-        $this->createTableOfVersion04();
+        TestDatabase::createTableOfVersion04($this->connection);
         $this->connection->insert('somework_cqrs_outbox', ['id' => self::ID_1, 'body' => 'body', 'headers' => '{}', 'created_at' => '2026-01-01 10:00:00']);
 
         (new DbalOutboxStorage($this->connection, autoSetup: false))->setup();
@@ -163,7 +217,7 @@ final class DbalOutboxStorageTest extends TestCase
 
     public function test_auto_setup_upgrades_a_table_of_an_earlier_version_on_first_use(): void
     {
-        $this->createTableOfVersion04();
+        TestDatabase::createTableOfVersion04($this->connection);
         $storage = new DbalOutboxStorage($this->connection);
 
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
@@ -174,7 +228,7 @@ final class DbalOutboxStorageTest extends TestCase
 
     public function test_a_table_of_an_earlier_version_accepts_messages_but_asks_for_an_upgrade(): void
     {
-        $this->createTableOfVersion04();
+        TestDatabase::createTableOfVersion04($this->connection);
         $storage = new DbalOutboxStorage($this->connection, autoSetup: false);
 
         // Storing works before the upgrade, so deploying the new version does not break writes.
@@ -188,7 +242,7 @@ final class DbalOutboxStorageTest extends TestCase
 
     public function test_the_upgrade_never_runs_inside_a_transaction(): void
     {
-        $this->createTableOfVersion04();
+        TestDatabase::createTableOfVersion04($this->connection);
         $storage = new DbalOutboxStorage($this->connection, autoSetup: false);
         $this->connection->beginTransaction();
 
@@ -243,9 +297,9 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Outbox message "missing" not found in table "somework_cqrs_outbox"');
+        $this->expectExceptionMessage('Outbox message "'.self::UNKNOWN_ID.'" not found in table "somework_cqrs_outbox"');
 
-        $storage->markPublished('missing');
+        $storage->markPublished(self::UNKNOWN_ID);
     }
 
     public function test_publishing_clears_the_failure_markers(): void
@@ -272,7 +326,26 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertSame(2, $status['due']);
         self::assertSame('2026-01-01T11:00:00+00:00', $status['oldest_due']?->format(DATE_ATOM));
+        self::assertSame(1, $status['retrying']);
+        self::assertSame('2026-01-01T10:00:00+00:00', $status['oldest_retrying']?->format(DATE_ATOM));
         self::assertSame(0, $status['failed']);
+    }
+
+    public function test_status_counts_messages_that_keep_failing_even_while_they_are_postponed(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 11:00:00'));
+        $storage->recordAttempt(self::ID_1, 3, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
+        $storage->recordAttempt(self::ID_2, 10, 'RuntimeException: boom', null);
+
+        $status = $storage->status();
+
+        self::assertSame(0, $status['due']);
+        self::assertNull($status['oldest_due']);
+        self::assertSame(1, $status['retrying']);
+        self::assertSame('2026-01-01T10:00:00+00:00', $status['oldest_retrying']?->format(DATE_ATOM));
+        self::assertSame(1, $status['failed']);
     }
 
     public function test_purge_deletes_only_old_published_messages(): void
@@ -413,15 +486,6 @@ final class DbalOutboxStorageTest extends TestCase
         $sql = implode(";\n", (new SQLitePlatform())->getCreateTableSQL(DbalOutboxStorage::addTableToSchema(new Schema(), $tableName)));
 
         self::assertMatchesRegularExpression('/CREATE INDEX (idx_[0-9a-f]{16}_published_created) ON/', $sql);
-    }
-
-    /**
-     * The table as created by 0.4.
-     */
-    private function createTableOfVersion04(): void
-    {
-        $this->connection->executeStatement('CREATE TABLE somework_cqrs_outbox (id CHAR(36) NOT NULL, body CLOB NOT NULL, headers CLOB NOT NULL, transport_name VARCHAR(190) DEFAULT NULL, created_at DATETIME NOT NULL, published_at DATETIME DEFAULT NULL, PRIMARY KEY(id))');
-        $this->connection->executeStatement('CREATE INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox (published_at, created_at)');
     }
 
     /**

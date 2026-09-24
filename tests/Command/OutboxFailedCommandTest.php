@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Command;
 
 use DateTimeImmutable;
-use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -19,6 +20,7 @@ use function array_map;
 use function preg_replace;
 use function strtoupper;
 
+#[Group('database')]
 #[CoversClass(OutboxFailedCommand::class)]
 final class OutboxFailedCommandTest extends TestCase
 {
@@ -30,7 +32,7 @@ final class OutboxFailedCommandTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->storage = new DbalOutboxStorage(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]));
+        $this->storage = new DbalOutboxStorage(TestDatabase::connect());
 
         foreach ([self::ID_1, self::ID_2] as $id) {
             $this->storage->store(new OutboxMessage($id, 'body', '{}', new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
@@ -110,7 +112,7 @@ final class OutboxFailedCommandTest extends TestCase
 
     public function test_a_failing_storage_exits_with_1(): void
     {
-        $storage = new DbalOutboxStorage(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]), autoSetup: false);
+        $storage = new DbalOutboxStorage(TestDatabase::connect(), autoSetup: false);
         $tester = new CommandTester(new OutboxFailedCommand($storage));
 
         self::assertSame(Command::FAILURE, $tester->execute([]));

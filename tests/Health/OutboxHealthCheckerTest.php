@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Health;
 
 use DateTimeImmutable;
-use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Health\CheckResult;
 use SomeWork\CqrsBundle\Health\CheckSeverity;
@@ -14,9 +14,11 @@ use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_map;
 
+#[Group('database')]
 #[CoversClass(OutboxHealthChecker::class)]
 final class OutboxHealthCheckerTest extends TestCase
 {
@@ -24,7 +26,7 @@ final class OutboxHealthCheckerTest extends TestCase
 
     protected function setUp(): void
     {
-        $this->storage = new DbalOutboxStorage(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]));
+        $this->storage = new DbalOutboxStorage(TestDatabase::connect());
     }
 
     public function test_a_relay_that_keeps_up_is_ok(): void
@@ -48,15 +50,28 @@ final class OutboxHealthCheckerTest extends TestCase
 
     public function test_a_message_that_became_due_after_its_retry_delay_is_not_reported_as_waiting(): void
     {
-        $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours')));
+        $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-5 minutes')));
         $this->storage->recordAttempt('00000000-0000-7000-8000-000000000001', 3, 'RuntimeException: boom', new DateTimeImmutable('-5 seconds'));
 
         self::assertSame([[CheckSeverity::OK, 'Outbox: 1 message(s) due, none waiting for long']], self::summary((new OutboxHealthChecker($this->storage))->check()));
     }
 
+    public function test_warns_about_messages_that_keep_failing_while_they_are_postponed(): void
+    {
+        // e.g. their transport is down: each run postpones them again, so they are never due for long.
+        $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 days')));
+        $this->storage->store(self::message('00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 hour')));
+        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000001', 20, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
+        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000002', 1, 'TransportException: Connection refused', new DateTimeImmutable('+1 minute'));
+
+        self::assertSame([
+            [CheckSeverity::WARNING, '2 outbox message(s) failed and wait for another attempt, the oldest was stored 2880 minute(s) ago; see the relay output or the "last_error" column'],
+        ], self::summary((new OutboxHealthChecker($this->storage))->check()));
+    }
+
     public function test_an_unreadable_storage_is_critical(): void
     {
-        $storage = new DbalOutboxStorage(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]), autoSetup: false);
+        $storage = new DbalOutboxStorage(TestDatabase::connect(), autoSetup: false);
 
         $results = (new OutboxHealthChecker($storage))->check();
 

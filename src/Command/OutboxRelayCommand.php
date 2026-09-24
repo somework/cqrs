@@ -15,17 +15,22 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Command\LockableTrait;
+use Symfony\Component\Console\Command\SignalableCommandInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\SignalRegistry\SignalRegistry;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Lock\Exception\ExceptionInterface as LockException;
 use Symfony\Component\Lock\Exception\LockReleasingException;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
@@ -33,17 +38,22 @@ use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function class_exists;
 use function count;
+use function defined;
 use function filter_var;
+use function in_array;
 use function json_decode;
 use function max;
 use function mb_scrub;
 use function mb_substr;
 use function min;
+use function register_shutdown_function;
 use function sprintf;
 
 use const DATE_ATOM;
 use const FILTER_VALIDATE_INT;
 use const JSON_THROW_ON_ERROR;
+use const SIGINT;
+use const SIGTERM;
 
 /**
  * Relays unpublished outbox messages to their transports (at-least-once delivery).
@@ -54,11 +64,15 @@ use const JSON_THROW_ON_ERROR;
     name: 'somework:cqrs:outbox:relay',
     description: 'Relay unpublished outbox messages to their transports.',
 )]
-final class OutboxRelayCommand extends Command
+final class OutboxRelayCommand extends Command implements SignalableCommandInterface
 {
     use LockableTrait;
 
-    private const MAX_CONSECUTIVE_SEND_FAILURES = 5;
+    /** Consecutive send failures after which the other messages of that transport wait for the next run. */
+    private const MAX_CONSECUTIVE_TRANSPORT_FAILURES = 3;
+
+    /** A message whose transport fails (unreachable, or rejecting it) gets this many times max_attempts. */
+    private const TRANSPORT_ATTEMPTS_FACTOR = 3;
 
     /** Delay before the second attempt; it doubles with every failure up to MAX_RETRY_DELAY. */
     private const RETRY_DELAY = 60;
@@ -71,11 +85,24 @@ final class OutboxRelayCommand extends Command
     private const BATCH_SIZE = 50;
 
     /** Stored before each attempt, so an attempt the process does not survive still counts. */
-    private const INTERRUPTED = 'The relay stopped during this attempt (e.g. a PHP fatal error, running out of memory or a killed process).';
+    public const INTERRUPTED = 'The relay did not finish this attempt (e.g. a PHP fatal error, running out of memory, a killed process or a lost database connection); the message may have been sent.';
+
+    private const RELAYED = 'relayed';
+
+    private const FAILED = 'failed';
+
+    private const TRANSPORT_FAILED = 'transport_failed';
+
+    private const CLAIMED_ELSEWHERE = 'claimed_elsewhere';
+
+    /** The signal that asked the run to stop after the current message. */
+    private ?int $stopSignal = null;
+
+    private bool $releasesLockOnShutdown = false;
 
     /**
      * @param ContainerInterface|null $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
-     * @param int                     $maxAttempts Attempts after which a failing message is given up
+     * @param int                     $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -94,6 +121,27 @@ final class OutboxRelayCommand extends Command
         parent::__construct();
 
         $this->lockFactory = $lockFactory;
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function getSubscribedSignals(): array
+    {
+        return defined('SIGTERM') && SignalRegistry::isSupported() ? [SIGTERM, SIGINT] : [];
+    }
+
+    public function handleSignal(int $signal, int|false $previousExitCode = 0): int|false
+    {
+        // A second signal stops right away, like a process without a handler.
+        if (null !== $this->stopSignal) {
+            return 128 + $signal;
+        }
+
+        // Finish the current message instead of leaving it half done, then stop (see relay()).
+        $this->stopSignal = $signal;
+
+        return false;
     }
 
     protected function configure(): void
@@ -123,12 +171,16 @@ final class OutboxRelayCommand extends Command
             return $this->stop($io, 'the relay lock could not be acquired', $exception);
         }
 
+        $this->releaseLockOnShutdown();
+
         try {
             return $this->relay($io, $limit);
         } catch (\Throwable $exception) {
             // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
             return $this->stop($io, 'the outbox storage failed', $exception);
         } finally {
+            $this->stopSignal = null;
+
             try {
                 $this->release();
             } catch (LockReleasingException $exception) {
@@ -143,73 +195,50 @@ final class OutboxRelayCommand extends Command
         $processed = 0;
         $relayed = 0;
         $failed = 0;
-        $consecutiveTransportFailures = 0;
+        $claimedElsewhere = 0;
         /** @var array<string, true> $seen */
         $seen = [];
-        // Whether a message reached a transport in this run: then the transport works.
-        $transportWorked = false;
-        /** @var list<array{OutboxMessage, int, string}> $transportFailures Decided at the end of the run */
-        $transportFailures = [];
-        $stoppedByOutage = false;
+        /** @var array<string, int> $consecutiveTransportFailures Keyed by transport name, "" for messages without one */
+        $consecutiveTransportFailures = [];
+        /** @var list<string|null> $pausedTransports Transports that failed too often in a row: their messages wait for the next run */
+        $pausedTransports = [];
 
-        while ($processed < $limit) {
+        while ($processed < $limit && null === $this->stopSignal) {
             $requested = min($limit - $processed, self::BATCH_SIZE);
-            // A failed message is postponed by recordAttempt(), so the next batch starts after it.
-            $batch = $this->outboxStorage->fetchUnpublished($requested);
+            // A message is postponed when its attempt is recorded, so the next batch starts after it.
+            $batch = $this->outboxStorage->fetchUnpublished($requested, $pausedTransports);
             $fresh = 0;
 
             foreach ($batch as $message) {
-                // A storage that does not postpone failed messages returns them again: each is tried once per run.
-                if (isset($seen[$message->id])) {
+                // A storage that does not postpone attempted messages returns them again: each is tried once per run.
+                if (isset($seen[$message->id]) || in_array($message->transportName, $pausedTransports, true)) {
                     continue;
                 }
                 $seen[$message->id] = true;
                 ++$fresh;
-                ++$processed;
 
-                if ($message->attempts >= $this->maxAttempts) {
-                    // The process died during the last attempt (fatal error, out of memory): do not try again.
-                    ++$failed;
-                    if (!$this->record($message, $message->attempts, self::INTERRUPTED, null, $io)) {
-                        return self::FAILURE;
-                    }
-                    $this->reportGivenUp($message, $message->attempts, self::INTERRUPTED, $io);
+                $outcome = $this->process($message, $io);
+                $key = $message->transportName ?? '';
+
+                if (self::CLAIMED_ELSEWHERE === $outcome) {
+                    ++$claimedElsewhere;
                 } else {
-                    $attempt = $message->attempts + 1;
+                    ++$processed;
+                }
 
-                    // Count the attempt before sending it: if the process dies during the attempt, the
-                    // next run must not start with the same message again.
-                    if (!$this->record($message, $attempt, self::INTERRUPTED, self::inSeconds($this->delayFor($attempt)), $io)) {
-                        return self::FAILURE;
-                    }
+                if (self::RELAYED === $outcome) {
+                    ++$relayed;
+                    $consecutiveTransportFailures[$key] = 0;
+                } elseif (self::FAILED === $outcome) {
+                    ++$failed;
+                } elseif (self::TRANSPORT_FAILED === $outcome) {
+                    ++$failed;
+                    $consecutiveTransportFailures[$key] = ($consecutiveTransportFailures[$key] ?? 0) + 1;
 
-                    [$sent, $failure] = $this->attempt($message, $io);
-                    $transportWorked = $transportWorked || $sent;
-
-                    if (null === $failure) {
-                        ++$relayed;
-                        $consecutiveTransportFailures = 0;
-                    } elseif (!$sent && self::isTransportFailure($failure)) {
-                        // The transport may be down: whether the attempt counts is decided at the end of the run.
-                        ++$failed;
-                        $error = self::describe($failure);
-                        $transportFailures[] = [$message, $attempt, $error];
-                        if (!$this->recordFailure($message, $attempt, $failure, self::inSeconds($this->delayFor($attempt)), $io)) {
-                            return self::FAILURE;
-                        }
-
-                        // An outage fails every message: stop instead of walking the backlog.
-                        if (++$consecutiveTransportFailures >= self::MAX_CONSECUTIVE_SEND_FAILURES) {
-                            $io->error(sprintf('Stopping after %d consecutive failures to send messages.', $consecutiveTransportFailures));
-                            $this->logger?->error('The outbox relay stopped after {count} consecutive failures to send messages.', ['count' => $consecutiveTransportFailures]);
-                            $stoppedByOutage = true;
-                        }
-                    } else {
-                        // The message itself is the problem (decoding, handler, serialization, routing).
-                        ++$failed;
-                        if (!$this->recordFailure($message, $attempt, $failure, $this->retryAt($attempt), $io)) {
-                            return self::FAILURE;
-                        }
+                    // The transport is probably down: do not walk its whole backlog, but keep relaying the other transports.
+                    if (self::MAX_CONSECUTIVE_TRANSPORT_FAILURES === $consecutiveTransportFailures[$key]) {
+                        $pausedTransports[] = $message->transportName;
+                        $this->reportPausedTransport($message->transportName, $io);
                     }
                 }
 
@@ -217,7 +246,7 @@ final class OutboxRelayCommand extends Command
                     return self::FAILURE;
                 }
 
-                if ($processed >= $limit || $stoppedByOutage) {
+                if ($processed >= $limit || null !== $this->stopSignal) {
                     break 2;
                 }
             }
@@ -227,99 +256,145 @@ final class OutboxRelayCommand extends Command
             }
         }
 
-        if (!$this->settleTransportFailures($transportFailures, $transportWorked, $io)) {
-            return self::FAILURE;
-        }
-
-        if (0 === $processed) {
-            $io->info('No outbox messages are due.');
-
-            return self::SUCCESS;
+        if ($claimedElsewhere > 0) {
+            $io->note(sprintf('Skipped %d message(s) that another relay claimed first.', $claimedElsewhere));
         }
 
         if ($relayed > 0) {
             $io->success(sprintf('Relayed %d message(s).', $relayed));
         }
 
+        if (null !== $this->stopSignal) {
+            $io->warning(sprintf('Stopped by signal %d after %d message(s); the remaining messages wait for the next run.', $this->stopSignal, $processed));
+            $this->logger?->warning('The outbox relay stopped on signal {signal} after {count} message(s).', ['signal' => $this->stopSignal, 'count' => $processed]);
+
+            return self::FAILURE;
+        }
+
+        if (0 === $processed) {
+            if (0 === $claimedElsewhere) {
+                $io->info('No outbox messages are due.');
+            }
+
+            return self::SUCCESS;
+        }
+
         return 0 === $failed ? self::SUCCESS : self::FAILURE;
     }
 
     /**
-     * @return array{bool, \Throwable|null} whether the message reached a transport or a handler, and the failure
+     * @return self::RELAYED|self::FAILED|self::TRANSPORT_FAILED|self::CLAIMED_ELSEWHERE
      */
-    private function attempt(OutboxMessage $message, SymfonyStyle $io): array
+    private function process(OutboxMessage $message, SymfonyStyle $io): string
     {
-        try {
-            $envelope = $this->decode($message);
-        } catch (\Throwable $exception) {
-            return [false, $exception];
+        if ($message->attempts >= $this->maxAttempts && self::INTERRUPTED === $message->lastError) {
+            // The process died during the last attempt (fatal error, out of memory, killed): do not
+            // try again, the message may be what kills it.
+            if (!$this->recordAttempt($message, $message->attempts, self::INTERRUPTED, null, $message->attempts)) {
+                return self::CLAIMED_ELSEWHERE;
+            }
+            $this->reportGivenUp($message, $message->attempts, self::INTERRUPTED, $io);
+
+            return self::FAILED;
+        }
+
+        $attempt = $message->attempts + 1;
+
+        // Claim the message and count the attempt before sending it: if the process dies during the
+        // attempt, the next run waits for the retry delay instead of starting with the same message.
+        if (!$this->recordAttempt($message, $attempt, self::INTERRUPTED, self::inSeconds($this->delayFor($attempt)), $message->attempts)) {
+            // Published, or claimed by a relay that overlaps this one (e.g. a lock store that is local to one host).
+            return self::CLAIMED_ELSEWHERE;
         }
 
         try {
-            $this->send($message, $envelope, $io);
+            $this->send($message, $this->decode($message), $io);
         } catch (\Throwable $exception) {
-            return [false, $exception];
+            return $this->fail($message, $attempt, $exception, $io);
         }
 
         try {
             $this->outboxStorage->markPublished($message->id);
         } catch (\Throwable $exception) {
-            // Sent, but it will be sent again (at-least-once).
-            return [true, $exception];
+            // The storage fails: stop the run. The claim stays, so the message is sent again later (at least once).
+            throw new \RuntimeException(sprintf('Message "%s" was sent but could not be marked as published, so it will be sent again: %s', $message->id, self::describe($exception)), 0, $exception);
         }
 
-        return [true, null];
+        return self::RELAYED;
     }
 
     /**
-     * Failures caused by an unreachable transport only count as attempts when the transport
-     * accepted another message in the same run; otherwise the attempts are given back, so an
-     * outage never uses up the attempts of the backlog.
+     * Records a failed attempt: the message is retried after a delay, or given up after its last attempt.
      *
-     * @param list<array{OutboxMessage, int, string}> $transportFailures
-     *
-     * @return bool false when the storage failed
+     * @return self::FAILED|self::TRANSPORT_FAILED
      */
-    private function settleTransportFailures(array $transportFailures, bool $transportWorked, SymfonyStyle $io): bool
+    private function fail(OutboxMessage $message, int $attempt, \Throwable $exception, SymfonyStyle $io): string
     {
-        if ([] === $transportFailures) {
-            return true;
+        $transportFailure = self::isTransportFailure($exception);
+        // A transport outage fails every message: give it about a day before giving up, instead of hours.
+        $maxAttempts = $transportFailure ? self::TRANSPORT_ATTEMPTS_FACTOR * $this->maxAttempts : $this->maxAttempts;
+        $retryAt = $attempt >= $maxAttempts ? null : self::inSeconds($this->delayFor($attempt));
+        $error = self::describe($exception);
+        $outcome = $transportFailure ? self::TRANSPORT_FAILED : self::FAILED;
+
+        if (!$this->recordAttempt($message, $attempt, $error, $retryAt, $attempt)) {
+            // Published or claimed by an overlapping relay in the meantime: its outcome counts.
+            return $outcome;
         }
 
-        if (!$transportWorked) {
-            foreach ($transportFailures as [$message, $attempt, $error]) {
-                if (!$this->record($message, $attempt - 1, $error, self::inSeconds($this->delayFor($attempt)), $io)) {
-                    return false;
-                }
-            }
-
-            $io->warning(sprintf('No message could be sent in this run: the transport seems unavailable, so the failed attempts of %d message(s) do not count.', count($transportFailures)));
-            $this->logger?->warning('No outbox message could be sent in this run: the failed attempts of {count} message(s) do not count.', ['count' => count($transportFailures)]);
-
-            return true;
+        if (null === $retryAt) {
+            $this->reportGivenUp($message, $attempt, $error, $io);
+        } else {
+            $io->error(sprintf('Failed to relay message "%s" (attempt %d of %d, next attempt after %s): %s', $message->id, $attempt, $maxAttempts, $retryAt->format(DATE_ATOM), $error));
+            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $maxAttempts, 'error' => $error, 'exception' => $exception]);
         }
 
-        foreach ($transportFailures as [$message, $attempt, $error]) {
-            if ($attempt >= $this->maxAttempts) {
-                if (!$this->record($message, $attempt, $error, null, $io)) {
-                    return false;
-                }
-                $this->reportGivenUp($message, $attempt, $error, $io);
-            }
-        }
-
-        return true;
+        return $outcome;
     }
 
+    /**
+     * @throws \RuntimeException when the storage fails, which stops the run
+     *
+     * @return bool false when the message is published or was claimed by another relay
+     */
+    private function recordAttempt(OutboxMessage $message, int $attempts, string $error, ?DateTimeImmutable $retryAt, int $previousAttempts): bool
+    {
+        try {
+            return $this->outboxStorage->recordAttempt($message->id, $attempts, $error, $retryAt, $previousAttempts);
+        } catch (\Throwable $exception) {
+            throw new \RuntimeException(sprintf('Could not record an attempt to relay message "%s": %s', $message->id, self::describe($exception)), 0, $exception);
+        }
+    }
+
+    /**
+     * Whether sending failed because of the transport (it cannot be reached, or it rejects the
+     * message). A handler that ran inline and failed is not a transport failure, even when it
+     * failed to send another message: its side effects happened.
+     */
     private static function isTransportFailure(\Throwable $exception): bool
     {
         for ($current = $exception; null !== $current; $current = $current->getPrevious()) {
+            if ($current instanceof HandlerFailedException || $current instanceof DelayedMessageHandlingException) {
+                return false;
+            }
+
             if ($current instanceof TransportException) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    private function reportPausedTransport(?string $transportName, SymfonyStyle $io): void
+    {
+        if (null === $transportName) {
+            $io->warning(sprintf('Messages without a transport name failed to be sent %d times in a row; the other ones wait for the next run.', self::MAX_CONSECUTIVE_TRANSPORT_FAILURES));
+        } else {
+            $io->warning(sprintf('Transport "%s" failed %d times in a row; its other messages wait for the next run.', $transportName, self::MAX_CONSECUTIVE_TRANSPORT_FAILURES));
+        }
+
+        $this->logger?->warning('The outbox relay paused transport {transport} for this run after {count} consecutive failures.', ['transport' => $transportName ?? '(routing)', 'count' => self::MAX_CONSECUTIVE_TRANSPORT_FAILURES]);
     }
 
     /**
@@ -330,62 +405,15 @@ final class OutboxRelayCommand extends Command
         return min(self::RETRY_DELAY * 2 ** min(max($attempt, 1) - 1, 30), self::MAX_RETRY_DELAY);
     }
 
-    /**
-     * When to try again after attempt number $attempt failed, or null to give up.
-     */
-    private function retryAt(int $attempt): ?DateTimeImmutable
-    {
-        return $attempt >= $this->maxAttempts ? null : self::inSeconds($this->delayFor($attempt));
-    }
-
     private static function inSeconds(int $seconds): DateTimeImmutable
     {
         return new DateTimeImmutable(sprintf('+%d seconds', $seconds));
-    }
-
-    /**
-     * Stores the failure: postponed until $retryAt, or given up when it is null.
-     *
-     * @return bool false when the failure could not be stored, which stops the run
-     */
-    private function recordFailure(OutboxMessage $message, int $attempt, \Throwable $exception, ?DateTimeImmutable $retryAt, SymfonyStyle $io): bool
-    {
-        $error = self::describe($exception);
-
-        if (!$this->record($message, $attempt, $error, $retryAt, $io)) {
-            return false;
-        }
-
-        if (null === $retryAt) {
-            $this->reportGivenUp($message, $attempt, $error, $io);
-        } else {
-            $io->error(sprintf('Failed to relay message "%s" (attempt %d of %d, next attempt after %s): %s', $message->id, $attempt, $this->maxAttempts, $retryAt->format(DATE_ATOM), $error));
-            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $this->maxAttempts, 'error' => $error, 'exception' => $exception]);
-        }
-
-        return true;
     }
 
     private function reportGivenUp(OutboxMessage $message, int $attempts, string $error, SymfonyStyle $io): void
     {
         $io->error(sprintf('Gave up on message "%s" after %d attempt(s): %s', $message->id, $attempts, $error));
         $this->logger?->error('Gave up on outbox message {id} after {attempts} attempt(s): {error}', ['id' => $message->id, 'attempts' => $attempts, 'error' => $error]);
-    }
-
-    /**
-     * @return bool false when the storage failed, which stops the run
-     */
-    private function record(OutboxMessage $message, int $attempt, string $error, ?DateTimeImmutable $retryAt, SymfonyStyle $io): bool
-    {
-        try {
-            $this->outboxStorage->recordAttempt($message->id, $attempt, $error, $retryAt);
-        } catch (\Throwable $storageException) {
-            $this->stop($io, sprintf('the attempt to relay message "%s" could not be recorded', $message->id), $storageException);
-
-            return false;
-        }
-
-        return true;
     }
 
     private function stop(SymfonyStyle $io, string $reason, \Throwable $exception): int
@@ -432,9 +460,16 @@ final class OutboxRelayCommand extends Command
         // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is kept).
         $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope);
 
-        if (null === $envelope->last(SentStamp::class)) {
-            $io->warning(sprintf('Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.', $message->id, $envelope->getMessage()::class));
+        if (null !== $envelope->last(SentStamp::class)) {
+            return;
         }
+
+        $warning = null !== $envelope->last(HandledStamp::class)
+            ? 'Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.'
+            : 'Message "%s" (%s) was neither sent to a transport nor handled (e.g. Messenger\'s deduplication dropped it as a duplicate, or it is an event without handlers); it is marked as published.';
+
+        $io->warning(sprintf($warning, $message->id, $envelope->getMessage()::class));
+        $this->logger?->warning(sprintf($warning, '{id}', '{class}'), ['id' => $message->id, 'class' => $envelope->getMessage()::class]);
     }
 
     private function busFor(object $message): MessageBusInterface
@@ -473,5 +508,26 @@ final class OutboxRelayCommand extends Command
         }
 
         return true;
+    }
+
+    /**
+     * A PHP fatal error (e.g. running out of memory) skips "finally" blocks and destructors, so a
+     * lock store with a TTL would keep the next runs out until the lock expires.
+     */
+    private function releaseLockOnShutdown(): void
+    {
+        if ($this->releasesLockOnShutdown) {
+            return;
+        }
+
+        $this->releasesLockOnShutdown = true;
+
+        register_shutdown_function(function (): void {
+            try {
+                $this->release();
+            } catch (\Throwable) {
+                // The lock expires on its own.
+            }
+        });
     }
 }

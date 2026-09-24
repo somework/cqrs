@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\OutboxTestKernel;
@@ -15,6 +16,7 @@ use function dirname;
 /**
  * Relays started with another APP_DEBUG (or APP_ENV) must share the lock, or they send the same rows.
  */
+#[Group('database')]
 #[CoversNothing]
 final class OutboxRelayLockNameTest extends TestCase
 {

@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Functional;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\Group;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
@@ -28,6 +29,7 @@ use function preg_replace;
  * Stores messages in the outbox inside a business transaction, relays them with the console
  * command and consumes them with a real worker; a poison row ends up with the given-up messages.
  */
+#[Group('database')]
 #[CoversNothing]
 final class OutboxRelayKernelTest extends KernelTestCase
 {

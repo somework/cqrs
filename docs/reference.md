@@ -658,7 +658,7 @@ somework_cqrs:
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
-| `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row |
+| `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
 
 Enabling the outbox requires doctrine/dbal (compilation fails otherwise) and
 registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
@@ -758,10 +758,11 @@ checks.
 
 * `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
   and adds the columns a table of an earlier version lacks.
-* `somework:cqrs:outbox:relay` sends due rows in the order they were stored and
+* `somework:cqrs:outbox:relay` sends due rows in the order they became due and
   marks them published. A row that fails is retried later (1 minute, doubling up
   to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
-  it is given up.
+  (three times as many for transport failures) it is given up. A transport that
+  fails 3 times in a row is paused until the next run.
 * `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
   `--requeue` hands all of them, or the given ids, back to the relay.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.

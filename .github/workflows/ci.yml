@@ -208,6 +208,63 @@ jobs:
       - name: PHPUnit (kernels that must work without optional packages)
         run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
 
+  databases:
+    name: Outbox on PostgreSQL and MySQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cqrs
+          POSTGRES_PASSWORD: cqrs
+          POSTGRES_DB: cqrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cqrs -d cqrs_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cqrs_test
+          MYSQL_USER: cqrs
+          MYSQL_PASSWORD: cqrs
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: mbstring, pdo_pgsql, pdo_mysql
+          tools: composer
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
+      # The outbox storage, relay and command tests, which use in-memory SQLite elsewhere.
+      - name: PHPUnit on PostgreSQL 16
+        run: vendor/bin/phpunit --group database
+        env:
+          CQRS_TEST_DATABASE_URL: 'pdo-pgsql://cqrs:cqrs@127.0.0.1:5432/cqrs_test?serverVersion=16'
+
+      - name: PHPUnit on MySQL 8.4
+        run: vendor/bin/phpunit --group database
+        env:
+          CQRS_TEST_DATABASE_URL: 'pdo-mysql://cqrs:cqrs@127.0.0.1:3306/cqrs_test?serverVersion=8.4.0&charset=utf8mb4'
+
   example-app:
     name: Example application
     runs-on: ubuntu-latest
