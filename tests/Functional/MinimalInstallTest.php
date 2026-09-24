@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\MinimalTestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
@@ -46,6 +47,12 @@ final class MinimalInstallTest extends KernelTestCase
         $this->commandBus()->dispatch(new CreateTaskCommand('task-1', 'Write docs'));
 
         self::assertSame('Write docs', $this->recorder()->task('task-1'));
+    }
+
+    public function test_handler_discovered_through_the_marker_interface_alone(): void
+    {
+        self::assertSame('report:r-1', $this->commandBus()->dispatchSync(new GenerateReportCommand('r-1')));
+        self::assertTrue($this->recorder()->hasReport('r-1'));
     }
 
     public function test_query_returns_the_handler_result(): void

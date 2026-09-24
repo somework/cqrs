@@ -13,6 +13,9 @@ use SomeWork\CqrsBundle\Contract\CommandHandler;
  */
 final class UntypedInterfaceHandler implements CommandHandler
 {
+    /**
+     * @param mixed $command deliberately untyped: the handled message cannot be inferred
+     */
     public function __invoke($command): mixed
     {
         return null;

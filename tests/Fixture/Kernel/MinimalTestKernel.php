@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
@@ -49,6 +50,7 @@ final class MinimalTestKernel extends Kernel
         $services->set(TaskRecorder::class)->public();
         $services->set(CreateTaskHandler::class);
         $services->set(ListTasksHandler::class);
+        $services->set(InterfaceOnlyCommandHandler::class);
         $services->set(TaskAuditTrailHandler::class);
         $services->set(TaskProjectionHandler::class);
     }
