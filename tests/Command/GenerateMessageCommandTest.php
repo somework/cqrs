@@ -144,6 +144,51 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertSame(['OK'], $output);
     }
 
+    public function test_names_that_clash_with_imports_still_compile(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'command', 'name' => 'App\\Messaging\\Command', '--handler' => 'App\\Handler\\AsCommandHandler'])->getStatusCode());
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'event', 'name' => 'App\\Messaging\\Event'])->getStatusCode());
+
+        self::assertStringContainsString('use SomeWork\\CqrsBundle\\Contract\\Command as CommandContract;', $this->read('src/Messaging/Command.php'));
+        self::assertStringContainsString('#[AsCommandHandlerAttribute(Command::class)]', $this->read('src/Handler/AsCommandHandler.php'));
+
+        $script = <<<'PHP'
+            require $argv[1];
+            foreach (['src/Messaging/Command.php', 'src/Messaging/Event.php', 'src/Handler/AsCommandHandler.php', 'src/Messaging/EventHandler.php'] as $file) {
+                require $argv[2].'/'.$file;
+            }
+            $attribute = (new ReflectionClass('App\Handler\AsCommandHandler'))->getAttributes()[0]->newInstance();
+            echo $attribute->command;
+            PHP;
+
+        $command = implode(' ', [PHP_BINARY, '-r', escapeshellarg($script), escapeshellarg(dirname(__DIR__, 2).'/vendor/autoload.php'), escapeshellarg($this->projectDir)]);
+        exec($command.' 2>&1', $output, $exitCode);
+
+        self::assertSame(0, $exitCode, implode("\n", $output));
+        self::assertSame(['App\\Messaging\\Command'], $output);
+    }
+
+    public function test_refuses_to_write_through_a_symlinked_file(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+        $outside = sys_get_temp_dir().'/cqrs_bundle_victim_'.uniqid().'.php';
+        file_put_contents($outside, 'original');
+        mkdir($this->projectDir.'/src/Command', 0o777, true);
+        (new Filesystem())->symlink($outside, $this->projectDir.'/src/Command/DoSomething.php');
+
+        try {
+            $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--force' => true]);
+
+            self::assertSame(SymfonyCommand::FAILURE, $tester->getStatusCode());
+            self::assertStringContainsString('is a symbolic link', self::display($tester));
+            self::assertSame('original', file_get_contents($outside));
+        } finally {
+            (new Filesystem())->remove($outside);
+        }
+    }
+
     public function test_aliases_the_message_when_its_short_name_clashes_with_the_handler(): void
     {
         $this->writeComposerJson(['App\\' => 'src/']);

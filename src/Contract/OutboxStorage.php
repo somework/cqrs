@@ -10,7 +10,7 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 /**
  * Persists messages in a transactional outbox for reliable async dispatch.
  *
- * @internal Promote to @api in a future minor release after real-world validation
+ * @api
  */
 interface OutboxStorage
 {

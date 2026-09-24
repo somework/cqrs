@@ -27,7 +27,7 @@ use const JSON_THROW_ON_ERROR;
  * Build it with {@see fromEnvelope()} so the body and headers use the same Messenger
  * serializer the relay decodes them with.
  *
- * @internal Promote to @api in a future minor release after real-world validation
+ * @api
  */
 final class OutboxMessage
 {

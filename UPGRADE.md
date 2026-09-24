@@ -151,8 +151,17 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   (default `messenger.default_serializer`) and `outbox.auto_setup` (default `true`).
 - Build rows with `OutboxMessage::fromEnvelope($envelope, $serializer, 'transport')`: ids are time-ordered UUIDv7;
   the constructor rejects empty ids and bodies.
+- The relay dispatches each message on the bus of its type (`buses.command_async`, else `buses.command`, for
+  commands; `buses.event_async`, else `buses.event`, for events; the default bus otherwise), so workers route it
+  to the bus that has its handlers. A `BusNameStamp` stored with the envelope is kept.
 - The relay sends each message to its stored transport, runs as a single instance when symfony/lock is
-  installed, skips rows that fail and exits with code 1 when any row failed (monitor the exit code).
+  installed, skips rows that fail, stops after 5 consecutive send failures and exits with code 1 when any row
+  failed (monitor the exit code).
+- Dates are now stored in UTC. Rows written by earlier versions keep the local time they were written in;
+  this only matters for the relay order and the purge cut-off of rows written in the last hours before the upgrade.
+- `OutboxMessage` and `OutboxStorage` are now `@api`.
+- `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores), and
+  `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - Tables created by earlier versions keep working. With very long table names the index is now named
   `idx_<hash>_published_created`; generated migrations may propose renaming it.

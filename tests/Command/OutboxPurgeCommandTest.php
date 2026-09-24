@@ -58,6 +58,9 @@ final class OutboxPurgeCommandTest extends TestCase
         yield 'empty' => [''];
         yield 'garbage' => ['whenever'];
         yield 'future' => ['-3 days'];
+        yield 'bare number (a time zone offset for DateTime)' => ['7'];
+        yield 'unknown unit' => ['7 fortnights'];
+        yield 'relative expression' => ['last monday'];
     }
 
     #[DataProvider('invalidAges')]
@@ -69,6 +72,6 @@ final class OutboxPurgeCommandTest extends TestCase
         $tester = new CommandTester(new OutboxPurgeCommand($storage));
 
         self::assertSame(Command::INVALID, $tester->execute(['--older-than' => $olderThan]));
-        self::assertStringContainsString('must be a positive relative date', $tester->getDisplay());
+        self::assertStringContainsString('must be a relative age', $tester->getDisplay());
     }
 }

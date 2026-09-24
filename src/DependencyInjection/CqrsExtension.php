@@ -134,7 +134,7 @@ final class CqrsExtension extends Extension
             if (!($this->classExists)(Connection::class)) {
                 throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
             }
-            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class));
+            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId);
         }
 
         $idempotencyConfig = $config['idempotency'];

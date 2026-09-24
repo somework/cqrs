@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
+use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
@@ -23,8 +24,9 @@ final class OutboxRegistrar
     /**
      * @param array{enabled: bool, table_name: string, connection?: string, serializer?: string, auto_setup?: bool} $config
      * @param bool                                                                                                  $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
+     * @param array<string, string|null>                                                                            $buses               The "somework_cqrs.buses" configuration
      */
-    public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false): void
+    public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus'): void
     {
         $connection = $config['connection'] ?? 'default';
 
@@ -43,8 +45,21 @@ final class OutboxRegistrar
         $relayDef = new Definition(OutboxRelayCommand::class);
         $relayDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
         $relayDef->setArgument('$serializer', $serializer);
-        $relayDef->setArgument('$messageBus', new Reference('messenger.default_bus'));
+        $relayDef->setArgument('$messageBus', new Reference($defaultBusId));
         $relayDef->setArgument('$lockFactory', new Reference('lock.factory', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        // Relayed messages go through the bus of their type, so workers route them to the right bus.
+        $relayDef->setArgument('$buses', ServiceLocatorTagPass::register($container, [
+            'command' => new Reference($buses['command_async'] ?? $buses['command'] ?? $defaultBusId),
+            'query' => new Reference($buses['query'] ?? $defaultBusId),
+            'event' => new Reference($buses['event_async'] ?? $buses['event'] ?? $defaultBusId),
+        ]));
+        // Scoped to the application and the table: relays of other projects on the same host must not block it.
+        $relayDef->setArgument('$lockName', sprintf(
+            'somework_cqrs.outbox.relay.%s.%s.%s',
+            $container->hasParameter('kernel.project_dir') ? '%kernel.project_dir%' : 'app',
+            $connection,
+            $config['table_name'],
+        ));
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);

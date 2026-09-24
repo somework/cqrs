@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Outbox;
 
 use DateTimeImmutable;
+use DateTimeZone;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\TableExistsException;
+use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
@@ -29,6 +31,9 @@ use function substr;
  * (PostgreSQL). Create the table up front with "somework:cqrs:outbox:setup" or a migration
  * (the Doctrine ORM schema listener adds it to generated migrations).
  *
+ * Dates are stored in UTC, so the order and the purge cut-off do not depend on the time zone
+ * of the process or on daylight saving time.
+ *
  * @internal Promote to @api in a future minor release after real-world validation
  */
 final class DbalOutboxStorage implements OutboxStorage
@@ -47,17 +52,21 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->ensureTableExists();
 
-        $this->connection->insert($this->tableName, [
-            'id' => $message->id,
-            'body' => $message->body,
-            'headers' => $message->headers,
-            'transport_name' => $message->transportName,
-            'created_at' => $message->createdAt,
-            'published_at' => null,
-        ], [
-            'created_at' => Types::DATETIME_IMMUTABLE,
-            'published_at' => Types::DATETIME_IMMUTABLE,
-        ]);
+        try {
+            $this->connection->insert($this->tableName, [
+                'id' => $message->id,
+                'body' => $message->body,
+                'headers' => $message->headers,
+                'transport_name' => $message->transportName,
+                'created_at' => self::utc($message->createdAt),
+                'published_at' => null,
+            ], [
+                'created_at' => Types::DATETIME_IMMUTABLE,
+                'published_at' => Types::DATETIME_IMMUTABLE,
+            ]);
+        } catch (TableNotFoundException $exception) {
+            throw new \LogicException(sprintf('The outbox table "%s" does not exist. Create it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration; it is never created inside an open transaction.', $this->tableName), 0, $exception);
+        }
     }
 
     /**
@@ -86,7 +95,7 @@ final class DbalOutboxStorage implements OutboxStorage
                 id: (string) $row['id'],
                 body: (string) $row['body'],
                 headers: (string) $row['headers'],
-                createdAt: $dateType->convertToPHPValue($row['created_at'], $platform),
+                createdAt: self::fromUtc($dateType->convertToPHPValue($row['created_at'], $platform)),
                 transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
             ),
             $rows,
@@ -102,7 +111,7 @@ final class DbalOutboxStorage implements OutboxStorage
             ->set('published_at', ':published_at')
             ->where('id = :id')
             ->andWhere('published_at IS NULL')
-            ->setParameter('published_at', new DateTimeImmutable(), Types::DATETIME_IMMUTABLE)
+            ->setParameter('published_at', new DateTimeImmutable('now', new DateTimeZone('UTC')), Types::DATETIME_IMMUTABLE)
             ->setParameter('id', $id)
             ->executeStatement();
 
@@ -132,7 +141,7 @@ final class DbalOutboxStorage implements OutboxStorage
             ->delete($this->tableName)
             ->where('published_at IS NOT NULL')
             ->andWhere('published_at < :before')
-            ->setParameter('before', $publishedBefore, Types::DATETIME_IMMUTABLE)
+            ->setParameter('before', self::utc($publishedBefore), Types::DATETIME_IMMUTABLE)
             ->executeStatement();
     }
 
@@ -178,11 +187,26 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function ensureTableExists(): void
     {
-        if ($this->setupDone || !$this->autoSetup) {
+        // Inside a transaction the table cannot be created; a missing table then fails the query itself.
+        // (The existence check is also unreliable there: schema filters and qualified names hide tables.)
+        if ($this->setupDone || !$this->autoSetup || $this->connection->isTransactionActive()) {
             return;
         }
 
         $this->setup();
+    }
+
+    private static function utc(DateTimeImmutable $date): DateTimeImmutable
+    {
+        return $date->setTimezone(new DateTimeZone('UTC'));
+    }
+
+    /**
+     * DBAL reads DATETIME values in the default time zone; the stored wall-clock time is UTC.
+     */
+    private static function fromUtc(DateTimeImmutable $date): DateTimeImmutable
+    {
+        return new DateTimeImmutable($date->format('Y-m-d H:i:s.u'), new DateTimeZone('UTC'));
     }
 
     private function tableExists(): bool

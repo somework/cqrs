@@ -13,6 +13,8 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -195,6 +197,73 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertStringContainsString('Another outbox relay is already running.', self::display($tester));
         self::assertSame([], $this->async->getSent());
+    }
+
+    public function test_the_lock_name_is_configurable(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $held = $this->locks->createLock('app-a:outbox');
+        $held->acquire();
+
+        $blocked = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, lockName: 'app-a:outbox'));
+        $blocked->execute([]);
+        self::assertStringContainsString('Another outbox relay is already running.', self::display($blocked));
+
+        $other = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, lockName: 'app-b:outbox'));
+        $other->execute([]);
+        self::assertCount(1, $this->async->getSent());
+    }
+
+    public function test_messages_are_dispatched_on_the_bus_of_their_type(): void
+    {
+        $this->store(new TaskCreatedEvent('1'), 'events');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+        $this->store(new \stdClass(), 'async');
+        $eventBus = new RecordingBus();
+        $commandBus = new RecordingBus();
+        $defaultBus = new RecordingBus();
+
+        $tester = new CommandTester(new OutboxRelayCommand(
+            $this->storage,
+            new PhpSerializer(),
+            $defaultBus,
+            $this->locks,
+            new ServiceLocator(['event' => static fn (): RecordingBus => $eventBus, 'command' => static fn (): RecordingBus => $commandBus]),
+        ));
+        $tester->execute([]);
+
+        self::assertSame([TaskCreatedEvent::class], $eventBus->messageClasses());
+        self::assertSame([CreateTaskCommand::class], $commandBus->messageClasses());
+        self::assertSame([\stdClass::class], $defaultBus->messageClasses());
+    }
+
+    public function test_stops_after_consecutive_send_failures(): void
+    {
+        for ($i = 1; $i <= 20; ++$i) {
+            $this->store(new CreateTaskCommand((string) $i, 'x'), 'async');
+        }
+        $bus = new RecordingBus(new \RuntimeException('Connection refused'));
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute(['--limit' => '100']);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Stopping after 5 consecutive failures to send messages.', self::display($tester));
+        self::assertCount(5, $bus->messageClasses());
+        self::assertCount(20, $this->storage->fetchUnpublished(100));
+    }
+
+    public function test_stops_when_the_lock_is_lost(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory(new LosingLockStore())));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('the relay lock was lost', self::display($tester));
+        self::assertCount(1, $this->async->getSent(), 'The run stops right after the lock could not be extended.');
     }
 
     private function store(object $message, ?string $transportName = null): OutboxMessage

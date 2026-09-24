@@ -7,9 +7,8 @@ database table **in the same transaction** as the business change. The
 `somework:cqrs:outbox:relay` command later sends the stored messages to Messenger.
 
 !!! note "Stability"
-    `OutboxStorage`, `OutboxMessage` and `DbalOutboxStorage` are marked `@internal` for now.
-    They may change in a 0.x minor release before they are promoted to `@api`. Use a
-    `^0.5` constraint, which only allows 0.5.x releases.
+    `OutboxStorage` and `OutboxMessage`, the types you write with, are part of the public API
+    (`@api`). `DbalOutboxStorage` is `@internal`: depend on the `OutboxStorage` interface.
 
 ## How it works
 
@@ -17,9 +16,9 @@ database table **in the same transaction** as the business change. The
    `OutboxStorage::store()` with an `OutboxMessage` built from a Messenger envelope.
 2. The transaction commits. The message row is saved only if the business change is.
 3. `somework:cqrs:outbox:relay` reads unpublished rows oldest first, decodes each one, and
-   dispatches it through Messenger's default bus. The message goes to the transport stored
-   with the row, or follows the Messenger routing when no transport was stored. Then the
-   relay marks the row as published.
+   dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
+   goes to the transport stored with the row, or follows the Messenger routing when no
+   transport was stored. Then the relay marks the row as published.
 
 Writing to the outbox is always explicit. The CQRS buses (`EventBus::dispatch()` and so on)
 never write to the outbox.
@@ -80,7 +79,6 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\Messenger\Envelope;
-use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 #[AsCommandHandler(command: PlaceOrder::class)]
@@ -104,7 +102,6 @@ final class PlaceOrderHandler
 
             $envelope = new Envelope(new OrderPlaced($command->orderId), [
                 MessageMetadataStamp::createWithRandomCorrelationId(),
-                new BusNameStamp('messenger.bus.events_async'),
             ]);
 
             $this->outbox->store(OutboxMessage::fromEnvelope($envelope, $this->serializer, 'async_events'));
@@ -131,11 +128,11 @@ The main points:
 - **Choose the transport.** The third argument is the transport name. The relay sends the
   message there with Messenger's `TransportNamesStamp`, which overrides the routing. With
   `null`, `framework.messenger.routing` decides.
-- **Choose the bus in multi-bus setups.** A worker dispatches a received message on the bus
-  named in its `BusNameStamp`. The relay dispatches through `messenger.default_bus`, which
-  stamps the default bus name when the envelope has none. If your handlers live on another
-  bus (for example the async event bus), add `new BusNameStamp('<bus id>')` as shown above,
-  or run the worker with `messenger:consume --bus=<bus id>`.
+- **The bus is chosen for you.** The relay dispatches commands on `buses.command_async`
+  (or `buses.command`), events on `buses.event_async` (or `buses.event`), queries on
+  `buses.query`, and anything else on the default bus. That bus adds its `BusNameStamp`, so
+  the worker hands the message to the bus where its handlers are registered. A
+  `BusNameStamp` you store yourself is kept.
 
 `fromEnvelope()` gives the row a time-ordered UUIDv7 id. Rows stored in the same
 millisecond by one process keep their order.
@@ -187,7 +184,9 @@ final class Version20260101000000 extends AbstractMigration
 whether the table exists and creates it if needed. It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
-a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. In practice,
+a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
+UTC, so neither the time zone of the writing process nor daylight saving time changes the
+relay order. In practice,
 `auto_setup` only creates the table when the relay or purge command runs first. Do not rely
 on it for the write path.
 
@@ -220,7 +219,9 @@ For each unpublished row, oldest first (`created_at`, then `id`), the relay:
 
 1. decodes the row with the outbox serializer;
 2. adds a `TransportNamesStamp` with the stored transport name, if one was stored;
-3. dispatches the envelope through `messenger.default_bus`;
+3. dispatches the envelope through the bus of the message type: `buses.command_async` (else
+   `buses.command`) for commands, `buses.event_async` (else `buses.event`) for events,
+   `buses.query` for queries, the default bus for anything else;
 4. marks the row as published.
 
 What happens in special cases:
@@ -229,12 +230,17 @@ What happens in special cases:
   fails, the relay prints `Failed to relay message "<id>": <reason>` and moves on. The row
   stays unpublished, so the next run tries it again. When any row failed, the command exits
   with code `1`.
+- **An outage stops the run.** After 5 consecutive rows could not be sent (or marked as
+  published), the relay prints `Stopping after 5 consecutive failures to send messages.` and
+  exits with `1` instead of walking the whole backlog. Rows that cannot be decoded do not
+  count towards this limit: they are skipped so they cannot block the queue.
 - **Messages handled inline trigger a warning.** If no transport received a message (no
   stored transport name and no routing), the default bus handles it synchronously inside the
-  relay process. The relay prints a warning and still marks the row as published. Store a
-  transport name or add routing to avoid this.
+  relay process on the bus of its type. The relay prints a warning and still marks the row as
+  published. Store a transport name or add routing to avoid this.
 - **Only one relay runs at a time.** When `symfony/lock` is installed, the command takes a
-  lock named after itself. The lock comes from the application's `lock.factory` service.
+  lock named after the project directory, the connection and the table, and extends it after
+  every row; if the lock is lost, the run stops with exit code `1`. The lock comes from the application's `lock.factory` service.
   FrameworkBundle registers that service when `framework.lock` is enabled, which is the
   default once `symfony/lock` is installed. Without that service, Symfony's
   `LockableTrait` creates a local semaphore or flock store. The default stores only guard
@@ -247,7 +253,7 @@ What happens in special cases:
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | All selected rows were relayed, there was nothing to relay, or another relay holds the lock |
-| `1` | At least one row failed |
+| `1` | At least one row failed, the transport looked unavailable, or the lock was lost |
 | `2` | Invalid `--limit` |
 
 The relay handles at most `--limit` rows per run and then exits. Run it on a schedule, for
@@ -270,8 +276,8 @@ bin/console somework:cqrs:outbox:purge                        # published more t
 bin/console somework:cqrs:outbox:purge --older-than="12 hours"
 ```
 
-`--older-than` takes a relative date such as `7 days`, `12 hours` or `1 month`. The default
-is `7 days`. Only rows whose `published_at` is older than that are deleted. Unpublished rows
+`--older-than` takes a number and a unit (`second`, `minute`, `hour`, `day`, `week`, `month` or
+`year`, singular or plural), such as `7 days`, `12 hours` or `1 month`. The default is `7 days`. Only rows whose `published_at` is older than that are deleted. Unpublished rows
 are never deleted. An invalid value exits with code `2`. Schedule the purge, for example
 daily.
 
@@ -362,8 +368,8 @@ three caveats:
 
 - `outbox.enabled: true` still requires `doctrine/dbal` to be installed.
 - `table_name`, `connection` and `auto_setup` only configure the DBAL storage.
-- `somework:cqrs:outbox:setup` only works with `DbalOutboxStorage` and fails with a type
-  error otherwise. Create your storage's schema yourself.
+- `somework:cqrs:outbox:setup` only works with `DbalOutboxStorage`; with another storage it
+  exits with `1` and asks you to create the schema yourself.
 
 ## Limitations
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Command;
 
 use DateTimeImmutable;
+use DateTimeZone;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -14,7 +15,9 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
 use function is_string;
+use function preg_match;
 use function sprintf;
+use function strtolower;
 
 use const DATE_ATOM;
 
@@ -42,17 +45,14 @@ final class OutboxPurgeCommand extends Command
         $io = new SymfonyStyle($input, $output);
         $olderThan = $input->getOption('older-than');
 
-        try {
-            $before = is_string($olderThan) && '' !== $olderThan ? new DateTimeImmutable('-'.$olderThan) : null;
-        } catch (\Exception) {
-            $before = null;
-        }
-
-        if (null === $before || $before > new DateTimeImmutable()) {
-            $io->error('"--older-than" must be a positive relative date such as "7 days" or "12 hours".');
+        // Only "<number> <unit>": a bare number would be parsed as a time zone offset by DateTime.
+        if (!is_string($olderThan) || 1 !== preg_match('/^\s*(\d+)\s*(second|minute|hour|day|week|month|year)s?\s*$/i', $olderThan, $matches)) {
+            $io->error('"--older-than" must be a relative age such as "7 days" or "12 hours".');
 
             return self::INVALID;
         }
+
+        $before = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->modify(sprintf('-%d %s', (int) $matches[1], strtolower($matches[2])));
 
         $deleted = $this->outboxStorage->purgePublished($before);
 

@@ -15,8 +15,12 @@ use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
 use function array_map;
+use function date_default_timezone_get;
+use function date_default_timezone_set;
 use function implode;
 use function str_repeat;
+
+use const DATE_ATOM;
 
 /**
  * Runs the storage against a real (in-memory SQLite) database.
@@ -114,7 +118,8 @@ final class DbalOutboxStorageTest extends TestCase
             $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
             self::fail('Expected the missing table to be reported.');
         } catch (\LogicException $exception) {
-            self::assertStringContainsString('cannot be created inside an open database transaction', $exception->getMessage());
+            self::assertStringContainsString('The outbox table "somework_cqrs_outbox" does not exist', $exception->getMessage());
+            self::assertStringContainsString('somework:cqrs:outbox:setup', $exception->getMessage());
         } finally {
             $this->connection->rollBack();
         }
@@ -132,6 +137,43 @@ final class DbalOutboxStorageTest extends TestCase
         $this->connection->rollBack();
 
         self::assertSame([], $storage->fetchUnpublished(10), 'The insert takes part in the caller transaction.');
+    }
+
+    public function test_store_inside_a_transaction_does_not_depend_on_the_schema_asset_filter(): void
+    {
+        (new DbalOutboxStorage($this->connection))->setup();
+        // e.g. a Doctrine "schema_filter" that hides the table from the schema manager.
+        $this->connection->getConfiguration()->setSchemaAssetsFilter(static fn (string $name): bool => false);
+        $storage = new DbalOutboxStorage($this->connection);
+
+        $this->connection->beginTransaction();
+        $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
+        $this->connection->commit();
+
+        self::assertCount(1, $storage->fetchUnpublished(10));
+    }
+
+    public function test_dates_are_stored_in_utc_whatever_the_default_time_zone(): void
+    {
+        $defaultTimeZone = date_default_timezone_get();
+        $storage = new DbalOutboxStorage($this->connection);
+
+        try {
+            // Written by a process running in Berlin during daylight saving time ...
+            date_default_timezone_set('Europe/Berlin');
+            $storage->store(new OutboxMessage('b0000000-0000-7000-8000-000000000002', 'body', '{}', new DateTimeImmutable('2026-10-25 02:30:00+02:00')));
+            // ... and by one running in UTC, 10 minutes later.
+            date_default_timezone_set('UTC');
+            $storage->store(new OutboxMessage('a0000000-0000-7000-8000-000000000001', 'body', '{}', new DateTimeImmutable('2026-10-25 00:40:00+00:00')));
+
+            date_default_timezone_set('America/New_York');
+            $messages = $storage->fetchUnpublished(10);
+        } finally {
+            date_default_timezone_set($defaultTimeZone);
+        }
+
+        self::assertSame(['b0000000-0000-7000-8000-000000000002', 'a0000000-0000-7000-8000-000000000001'], array_map(static fn (OutboxMessage $message): string => $message->id, $messages));
+        self::assertSame('2026-10-25T00:30:00+00:00', $messages[0]->createdAt->format(DATE_ATOM));
     }
 
     public function test_setup_is_idempotent(): void

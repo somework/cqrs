@@ -372,12 +372,12 @@ stores release the lock immediately, so duplicates go through. Use a shared
 store that keeps locks until their TTL expires, such as Redis or a database.
 See [Production: idempotency](production.md#idempotency).
 
-### Outbox table cannot be created inside a transaction
+### Outbox table does not exist
 
 **Symptom.**
 
 ```
-LogicException: The outbox table "somework_cqrs_outbox" does not exist and cannot be created inside an open database transaction. Create it beforehand with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.
+LogicException: The outbox table "somework_cqrs_outbox" does not exist. Create it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration; it is never created inside an open transaction.
 ```
 
 **Cause.** The first outbox message was stored inside your transaction before the

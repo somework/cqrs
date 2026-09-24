@@ -4,7 +4,11 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
+use Psr\Container\ContainerInterface;
+use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
+use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -13,7 +17,10 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\Lock\Exception\ExceptionInterface as LockException;
+use Symfony\Component\Lock\Exception\LockReleasingException;
 use Symfony\Component\Lock\LockFactory;
+use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
@@ -43,11 +50,18 @@ final class OutboxRelayCommand extends Command
 {
     use LockableTrait;
 
+    private const MAX_CONSECUTIVE_SEND_FAILURES = 5;
+
+    /**
+     * @param ContainerInterface|null $buses Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
         private readonly SerializerInterface $serializer,
         private readonly MessageBusInterface $messageBus,
         ?LockFactory $lockFactory = null,
+        private readonly ?ContainerInterface $buses = null,
+        private readonly string $lockName = 'somework:cqrs:outbox:relay',
     ) {
         parent::__construct();
 
@@ -71,7 +85,7 @@ final class OutboxRelayCommand extends Command
         }
 
         // Overlapping runs (cron) would publish the same rows twice.
-        if (class_exists(LockFactory::class) && !$this->lock()) {
+        if (class_exists(LockFactory::class) && !$this->lock($this->lockName)) {
             $io->note('Another outbox relay is already running.');
 
             return self::SUCCESS;
@@ -80,7 +94,12 @@ final class OutboxRelayCommand extends Command
         try {
             return $this->relay($io, $limit);
         } finally {
-            $this->release();
+            try {
+                $this->release();
+            } catch (LockReleasingException $exception) {
+                // The lock expires on its own; the outcome of the run matters more.
+                $io->warning(sprintf('Could not release the relay lock: %s', $exception->getMessage()));
+            }
         }
     }
 
@@ -88,6 +107,7 @@ final class OutboxRelayCommand extends Command
     {
         $relayed = 0;
         $failed = 0;
+        $consecutiveSendFailures = 0;
 
         while ($relayed < $limit) {
             $requested = $limit - $relayed;
@@ -96,11 +116,37 @@ final class OutboxRelayCommand extends Command
 
             foreach ($batch as $message) {
                 try {
-                    $this->relayMessage($message, $io);
+                    $envelope = $this->decode($message);
+                } catch (\Throwable $exception) {
+                    // Undecodable rows fail the same way on every run: skip them, they must not block the queue.
+                    ++$failed;
+                    $io->error(sprintf('Failed to relay message "%s": %s', $message->id, $exception->getMessage()));
+
+                    continue;
+                }
+
+                try {
+                    $this->send($message, $envelope, $io);
                     ++$relayed;
+                    $consecutiveSendFailures = 0;
                 } catch (\Throwable $exception) {
                     ++$failed;
                     $io->error(sprintf('Failed to relay message "%s": %s', $message->id, $exception->getMessage()));
+
+                    // A transport or database outage fails every message: stop instead of walking the backlog.
+                    if (++$consecutiveSendFailures >= self::MAX_CONSECUTIVE_SEND_FAILURES) {
+                        $io->error(sprintf('Stopping after %d consecutive failures to send messages.', $consecutiveSendFailures));
+
+                        return self::FAILURE;
+                    }
+                }
+
+                if (!$this->keepLock($io)) {
+                    return self::FAILURE;
+                }
+
+                if ($relayed >= $limit) {
+                    break 2;
                 }
             }
 
@@ -122,7 +168,7 @@ final class OutboxRelayCommand extends Command
         return 0 === $failed ? self::SUCCESS : self::FAILURE;
     }
 
-    private function relayMessage(OutboxMessage $message, SymfonyStyle $io): void
+    private function decode(OutboxMessage $message): Envelope
     {
         $envelope = $this->serializer->decode([
             'body' => $message->body,
@@ -142,12 +188,56 @@ final class OutboxRelayCommand extends Command
             $envelope = $envelope->with(new TransportNamesStamp([$message->transportName]));
         }
 
-        $envelope = $this->messageBus->dispatch($envelope);
+        return $envelope;
+    }
+
+    private function send(OutboxMessage $message, Envelope $envelope, SymfonyStyle $io): void
+    {
+        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is kept).
+        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope);
 
         if (null === $envelope->last(SentStamp::class)) {
             $io->warning(sprintf('Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.', $message->id, $envelope->getMessage()::class));
         }
 
         $this->outboxStorage->markPublished($message->id);
+    }
+
+    private function busFor(object $message): MessageBusInterface
+    {
+        $type = match (true) {
+            $message instanceof CommandMessage => 'command',
+            $message instanceof Query => 'query',
+            $message instanceof Event => 'event',
+            default => null,
+        };
+
+        if (null === $type || null === $this->buses || !$this->buses->has($type)) {
+            return $this->messageBus;
+        }
+
+        $bus = $this->buses->get($type);
+
+        return $bus instanceof MessageBusInterface ? $bus : $this->messageBus;
+    }
+
+    /**
+     * Extends the relay lock so it cannot expire during a long run and let a second relay in.
+     */
+    private function keepLock(SymfonyStyle $io): bool
+    {
+        if (null === $this->lock) {
+            return true;
+        }
+
+        try {
+            $this->lock->refresh();
+        } catch (LockException $exception) {
+            $io->error(sprintf('Stopping: the relay lock was lost (%s). Another relay may be running.', $exception->getMessage()));
+
+            return false;
+        }
+
+        return true;
     }
 }

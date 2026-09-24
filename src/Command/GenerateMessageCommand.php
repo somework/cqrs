@@ -23,6 +23,7 @@ use Symfony\Component\Filesystem\Path;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 use function array_pop;
+use function array_unshift;
 use function dirname;
 use function explode;
 use function file_exists;
@@ -32,6 +33,7 @@ use function implode;
 use function in_array;
 use function is_array;
 use function is_dir;
+use function is_link;
 use function is_string;
 use function json_decode;
 use function ltrim;
@@ -42,6 +44,7 @@ use function sprintf;
 use function str_contains;
 use function str_replace;
 use function str_starts_with;
+use function strcasecmp;
 use function strlen;
 use function strrpos;
 use function strtolower;
@@ -144,6 +147,11 @@ final class GenerateMessageCommand extends SymfonyCommand
         try {
             // Check every target first so a failure never leaves half of the skeleton behind.
             foreach ([$messagePath, $handlerPath] as $path) {
+                // A symlink could point outside the project; never write through one.
+                if (is_link($path)) {
+                    throw new RuntimeException(sprintf('File "%s" is a symbolic link; remove it first.', $this->relativePath($path)));
+                }
+
                 if (!$force && file_exists($path)) {
                     throw new RuntimeException(sprintf('File "%s" already exists. Use --force to overwrite.', $this->relativePath($path)));
                 }
@@ -271,6 +279,10 @@ final class GenerateMessageCommand extends SymfonyCommand
     private function generateMessage(string $type, string $messageClass): string
     {
         $interface = self::MESSAGE_INTERFACES[$type];
+        $messageShortName = self::shortName($messageClass);
+        // A message named like its marker interface ("App\Messaging\Command") needs an aliased import.
+        $interfaceAlias = 0 === strcasecmp($messageShortName, self::shortName($interface)) ? self::shortName($interface).'Contract' : self::shortName($interface);
+        $interfaceImport = $interfaceAlias === self::shortName($interface) ? $interface : sprintf('%s as %s', $interface, $interfaceAlias);
 
         return implode("\n", [
             '<?php',
@@ -279,9 +291,9 @@ final class GenerateMessageCommand extends SymfonyCommand
             '',
             sprintf('namespace %s;', self::namespaceOf($messageClass)),
             '',
-            sprintf('use %s;', $interface),
+            sprintf('use %s;', $interfaceImport),
             '',
-            sprintf('final class %s implements %s', self::shortName($messageClass), self::shortName($interface)),
+            sprintf('final class %s implements %s', $messageShortName, $interfaceAlias),
             '{',
             '    public function __construct(',
             '        public readonly string $id,',
@@ -300,16 +312,24 @@ final class GenerateMessageCommand extends SymfonyCommand
         $handlerShortName = self::shortName($handlerClass);
 
         // Import the message unless it lives in the handler's namespace; alias it when its short
-        // name clashes with the handler's.
+        // name clashes with the handler's. The attribute is aliased when it clashes with either.
         $messageAlias = self::shortName($messageClass);
-        $imports = [$attribute];
+        $imports = [];
         if (self::namespaceOf($messageClass) !== $handlerNamespace) {
-            if (strtolower($messageAlias) === strtolower($handlerShortName)) {
+            if (0 === strcasecmp($messageAlias, $handlerShortName)) {
                 $messageAlias .= 'Message';
                 $imports[] = sprintf('%s as %s', $messageClass, $messageAlias);
             } else {
                 $imports[] = $messageClass;
             }
+        }
+
+        $attributeAlias = self::shortName($attribute);
+        if (0 === strcasecmp($attributeAlias, $handlerShortName) || 0 === strcasecmp($attributeAlias, $messageAlias)) {
+            $attributeAlias .= 'Attribute';
+            array_unshift($imports, sprintf('%s as %s', $attribute, $attributeAlias));
+        } else {
+            array_unshift($imports, $attribute);
         }
 
         [$signature, $body] = match ($type) {
@@ -336,7 +356,7 @@ final class GenerateMessageCommand extends SymfonyCommand
         return implode("\n", [
             ...$lines,
             '',
-            sprintf('#[%s(%s::class)]', self::shortName($attribute), $messageAlias),
+            sprintf('#[%s(%s::class)]', $attributeAlias, $messageAlias),
             sprintf('final class %s', $handlerShortName),
             '{',
             '    public function __construct(',

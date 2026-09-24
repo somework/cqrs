@@ -252,16 +252,18 @@ the configured connection.
 `somework:cqrs:outbox:relay` sends up to `--limit` (default 100) unpublished rows,
 oldest first, and marks each one published after dispatching it.
 
-* Rows are dispatched on Messenger's default bus (`messenger.default_bus`) with
-  their stored transport name as `TransportNamesStamp`; rows without a transport
-  name follow `framework.messenger.routing`. A row that is not sent to any
-  transport is handled synchronously, and the command prints a warning.
+* Rows are dispatched on the Messenger bus of their type (the async command or
+  event bus when configured, otherwise the sync one; the default bus for other
+  messages) with their stored transport name as `TransportNamesStamp`; rows
+  without a transport name follow `framework.messenger.routing`. Workers then
+  hand each message to the bus where its handlers are registered. A row that is
+  not sent to any transport is handled synchronously, and the command prints a
+  warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
-  (for example a `MessageMetadataStamp`) to the envelope you store. A worker
-  dispatches a received message on the bus named by its `BusNameStamp`, which is
-  the default bus unless the stored envelope carries another one.
+  (for example a `MessageMetadataStamp`) to the envelope you store.
 * A row that fails is logged, skipped for the rest of the run, and makes the
-  command exit with `1`. It is retried on the next run.
+  command exit with `1`. It is retried on the next run. After 5 consecutive
+  send failures (broker or database down) the run stops early.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
 * When symfony/lock is installed, only one relay runs at a time; a second one

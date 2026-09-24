@@ -16,9 +16,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock.
 - Outbox: `OutboxMessage::fromEnvelope()` (time-ordered UUIDv7 ids), `OutboxStorage::purgePublished()`, an `$offset` for `fetchUnpublished()`,
   the `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:purge` commands, and the `outbox.connection`, `outbox.serializer` and `outbox.auto_setup` options.
-- The outbox relay runs as a single instance when symfony/lock is installed.
+- The outbox relay runs as a single instance when symfony/lock is installed (lock scoped to the project, connection and table, extended after every row) and stops after 5 consecutive send failures.
 - Configuration validation: service ids must be non-empty strings, and per-message map keys must be existing classes or interfaces (a leading `\` is allowed).
-- `HealthChecker`, `CheckResult` and `CheckSeverity` are part of the public API (`@api`).
+- `HealthChecker`, `CheckResult` and `CheckSeverity`, as well as `OutboxMessage` and `OutboxStorage`, are part of the public API (`@api`).
 - The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered).
 
 ### Changed
@@ -36,7 +36,8 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` no longer accept environment variables.
 - Rate limiting stays inactive until a limiter is mapped; mapping one without symfony/rate-limiter is a configuration error.
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services.
-- The outbox never creates its table inside an open transaction; the relay honours the stored transport name, continues past failing rows and exits with 1 when a row failed.
+- The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, skips undecodable rows and exits with 1 when a row failed.
+- `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>`; `outbox.table_name` must be a plain or schema-qualified identifier.
 - `somework:cqrs:health` instantiates every CQRS handler and every Messenger transport.
 - `somework:cqrs:generate` follows the PSR-4 mapping of the project's `composer.json`, resolves `--dir` against the project directory, validates class names, generates attribute-based handlers with a typed `__invoke()` and exits with 2 on invalid input.
 - `somework:cqrs:list` exits with 2 for an unknown `--type`.
@@ -56,10 +57,11 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The container could not be compiled when an OpenTelemetry tracer provider was registered; exceptions were recorded twice on spans.
 - The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch.
 - `CausationIdContext::pop()` threw on an empty stack.
-- The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion, generated index names longer than 63 characters and, on Symfony 8, marked undecodable rows as published.
+- The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion or time zone, generated index names longer than 63 characters and, on Symfony 8, marked undecodable rows as published.
+- Relayed events and commands were dispatched on the default bus, so workers of multi-bus setups found no handler for them.
 - The ORM schema listener added the outbox table to the schema of every connection.
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.
-- `somework:cqrs:generate` wrote files outside the PSR-4 layout, accepted `..` and invalid class names, could escape the project directory through a sibling path prefix and left half of a skeleton behind on failure.
+- `somework:cqrs:generate` wrote files outside the PSR-4 layout, accepted `..` and invalid class names, could escape the project directory through a sibling path prefix or a symlinked file, generated code that did not compile when a class name clashed with an import, and left half of a skeleton behind on failure.
 - `FakeQueryBus` ignored a configured `null` result; fake buses returned envelopes without the dispatched stamps.
 - `MessageTypeLocator` walked the class hierarchy again for every message without a match and was reset after every worker message.
 - `ContainerHelper` registered abstract classes as services; an exception message contained a line break.

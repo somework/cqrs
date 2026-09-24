@@ -20,6 +20,7 @@ use function class_exists;
 use function interface_exists;
 use function is_string;
 use function ltrim;
+use function preg_match;
 use function sprintf;
 use function str_ends_with;
 use function substr;
@@ -279,8 +280,13 @@ final class Configuration implements ConfigurationInterface
         $outboxChildren = $outbox->children();
         $outboxChildren->booleanNode('enabled')->defaultFalse()
             ->info('Enable transactional outbox. Requires doctrine/dbal.');
-        self::requireName($outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
-            ->info('Database table name for outbox messages.'));
+        $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
+            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
+        self::requireName($tableName);
+        $tableName->validate()
+            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $value))
+            ->thenInvalid('Invalid outbox table name %s: use letters, digits and underscores, optionally prefixed with a schema ("schema.table").')
+        ->end();
         self::requireName($outboxChildren->scalarNode('connection')->defaultValue('default')->cannotBeEmpty()
             ->info('Doctrine DBAL connection name (service "doctrine.dbal.<name>_connection") holding the outbox table; use the connection of your business data.'));
         self::requireName($outboxChildren->scalarNode('serializer')->defaultValue('messenger.default_serializer')->cannotBeEmpty()
