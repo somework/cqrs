@@ -176,3 +176,59 @@ jobs:
           files: artifacts/**/*.xml
           check_run: ${{ steps.reporting.outputs.check_run }}
           comment_mode: ${{ steps.reporting.outputs.comment_mode }}
+
+  minimal-install:
+    name: Minimal install (no optional packages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies without optional packages
+        run: |
+          composer remove --dev --no-update doctrine/dbal doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
+          composer update --prefer-dist --no-progress
+
+      - name: PHPUnit (kernels that must work without optional packages)
+        run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
+
+  example-app:
+    name: Example application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer
+
+      - name: Smoke test
+        working-directory: docs/example-app
+        run: bin/smoke-test.sh --no-progress
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+
+      - run: pip install mkdocs-material
+
+      - name: Build (strict)
+        run: mkdocs build --strict
