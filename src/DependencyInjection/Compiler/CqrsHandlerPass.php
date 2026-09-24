@@ -52,6 +52,9 @@ final class CqrsHandlerPass implements CompilerPassInterface
     public const INTERFACE_TAG = 'somework_cqrs.handler_interface';
     public const TYPE_ATTRIBUTE = 'somework_cqrs_type';
 
+    /** Handler routes of non-CQRS types, for ValidateHandlerCountPass (removed by it). */
+    public const OTHER_ROUTES_PARAMETER = 'somework_cqrs.other_handler_routes';
+
     private const BUS_KEYS = [
         'command' => ['command', 'command_async'],
         'query' => ['query'],
@@ -65,6 +68,8 @@ final class CqrsHandlerPass implements CompilerPassInterface
             'query' => [],
             'event' => [],
         ];
+        /** @var list<array{message: string, handler_class: string, service_id: string, bus: string|null}> $otherRoutes */
+        $otherRoutes = [];
 
         $this->convertInterfaceTags($container);
 
@@ -98,7 +103,9 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 $hasExplicitHandles = isset($attributes['handles']);
                 $routes = $this->resolveRoutes($handlerClass, $attributes, null !== $declaredType);
 
-                if ($hasExplicitHandles) {
+                // Only the bundle's attributes and interfaces: plain Messenger tags keep Messenger's rules
+                // (e.g. #[AsMessageHandler(handles: '*')]).
+                if ($hasExplicitHandles && null !== $declaredType) {
                     $this->assertMethodAcceptsMessages($serviceId, $handlerClass, $attributes, $routes);
                 }
 
@@ -164,6 +171,18 @@ final class CqrsHandlerPass implements CompilerPassInterface
                     }
                 }
 
+                // Handlers of other types (e.g. a plain Messenger handler of an interface, or "*") also
+                // run for the CQRS messages that inherit the type: ValidateHandlerCountPass counts them.
+                foreach ($routes as $messageClass) {
+                    if (isset($cqrsMessages[$messageClass])) {
+                        continue;
+                    }
+
+                    foreach ($buses as $bus) {
+                        $otherRoutes[] = ['message' => $messageClass, 'handler_class' => $handlerClass, 'service_id' => $serviceId, 'bus' => $bus];
+                    }
+                }
+
                 $handles = $hasExplicitHandles || [] === $cqrsMessages ? [null] : $routes;
 
                 foreach ($handles as $messageClass) {
@@ -195,6 +214,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         $container->setParameter('somework_cqrs.handler_metadata', $metadata);
+        $container->setParameter(self::OTHER_ROUTES_PARAMETER, $otherRoutes);
     }
 
     /**
@@ -377,7 +397,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         foreach ($messages as $messageClass) {
-            if (!self::accepts($type, $messageClass)) {
+            if ('*' !== $messageClass && !self::accepts($type, $messageClass)) {
                 throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered for %s, but %s::%s() only accepts %s. Fix the message class of the attribute or the parameter type.', $handlerClass, $serviceId, $messageClass, $handlerClass, $methodName, (string) $type));
             }
         }

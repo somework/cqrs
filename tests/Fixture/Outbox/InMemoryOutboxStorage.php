@@ -26,8 +26,8 @@ final class InMemoryOutboxStorage implements OutboxStorage
     /** @var list<string> */
     public array $failMarkingPublished = [];
 
-    /** Whether markFailed() fails, e.g. because the database is down. */
-    public bool $failMarkingFailed = false;
+    /** Whether recordAttempt() fails, e.g. because the database is down. */
+    public bool $failRecordingAttempts = false;
 
     /** Whether fetchUnpublished() fails, e.g. because the database is down. */
     public bool $failFetching = false;
@@ -69,11 +69,12 @@ final class InMemoryOutboxStorage implements OutboxStorage
         }
 
         $this->published[$id] = new DateTimeImmutable();
+        unset($this->failures[$id]);
     }
 
-    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
     {
-        if ($this->failMarkingFailed) {
+        if ($this->failRecordingAttempts) {
             throw new \RuntimeException('Database is down.');
         }
 

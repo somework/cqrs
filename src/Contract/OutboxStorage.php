@@ -48,7 +48,7 @@ interface OutboxStorage
      *
      * @throws \RuntimeException when the message does not exist
      */
-    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void;
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.

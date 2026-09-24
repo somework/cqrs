@@ -12,9 +12,7 @@ use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use Doctrine\DBAL\Exception\SyntaxErrorException;
-use Doctrine\DBAL\Exception\TableExistsException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
-use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Exception\TableDoesNotExist;
@@ -133,6 +131,9 @@ final class DbalOutboxStorage implements OutboxStorage
         $updated = $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
             ->update($this->tableName)
             ->set('published_at', ':published_at')
+            // The relay records every attempt before it runs: a published message has no failure left.
+            ->set('failed_at', 'NULL')
+            ->set('last_error', 'NULL')
             ->where('id = :id')
             ->andWhere('published_at IS NULL')
             ->setParameter('published_at', self::now(), Types::DATETIME_IMMUTABLE)
@@ -145,7 +146,7 @@ final class DbalOutboxStorage implements OutboxStorage
         }
     }
 
-    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
     {
         $this->ensureTableExists();
 
@@ -211,7 +212,8 @@ final class DbalOutboxStorage implements OutboxStorage
         $this->ensureTableExists();
 
         $due = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
-            ->select('COUNT(*) AS due', 'MIN(created_at) AS oldest_due')
+            // A postponed message waits since its retry time, not since it was stored.
+            ->select('COUNT(*) AS due', 'MIN(COALESCE(available_at, created_at)) AS oldest_due')
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NULL')
@@ -311,9 +313,9 @@ final class DbalOutboxStorage implements OutboxStorage
 
                 try {
                     $this->connection->createSchemaManager()->createTable(self::buildTableDefinition($this->tableName));
-                } catch (TableExistsException|UniqueConstraintViolationException $exception) {
-                    // Created concurrently by another process (PostgreSQL may report the clash on its
-                    // catalog as a unique constraint violation).
+                } catch (DbalException $exception) {
+                    // Created concurrently by another process? PostgreSQL may report the clash on its
+                    // catalog as a unique constraint violation or a duplicate type.
                     if (!$this->tableExists()) {
                         throw $exception;
                     }

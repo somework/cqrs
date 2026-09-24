@@ -119,12 +119,11 @@ At runtime, `ask()` and `dispatchSync()` can also throw
 **Cause.** Commands and queries must have exactly one handler per bus (events
 may have any number). The check counts distinct services per bus; one service on
 the sync and the async bus is fine. Messenger also runs the handlers registered
-for parent classes and interfaces of a message, so a catch-all handler such as
-`__invoke(Command $command)` counts for every command on its bus (the message
+for parent classes, interfaces and `*` of a message, so a catch-all handler such
+as `__invoke(Command $command)` counts for every command on its bus (the message
 then says `including handlers of ...`). The runtime error comes from what the
-check cannot see: handlers of two unrelated interfaces that one message
-implements, or handlers wired outside the bundle's discovery (a decorated
-handlers locator).
+check cannot see, such as handlers wired outside the bundle's discovery (a
+decorated handlers locator). When it is thrown, the handlers have already run.
 
 **Fix.** Keep one handler per command or query and bus: remove the extra
 handler, or register the handlers on different buses with the `bus` argument.
@@ -418,8 +417,9 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   `somework:cqrs:outbox:failed [--requeue]`. A reason of `The relay stopped
   during this attempt …` means that the row crashed the relay process (a PHP
   fatal error or running out of memory).
-* `… not given up because no message could be sent in this run …` Nothing could
-  be sent, so the transport is probably down; the row is retried an hour later.
+* `No message could be sent in this run: the transport seems unavailable, …` Every
+  send failed with a `TransportException`; those attempts do not count and the rows
+  are retried after their delay.
 * `Stopping after 5 consecutive failures to send messages.` The transport looks
   unavailable; the next run tries again.
 * `Stopping: the outbox storage failed (…)` The database cannot be reached, or the

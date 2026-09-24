@@ -17,6 +17,7 @@ use Symfony\Component\Console\Tester\CommandTester;
 
 use function array_map;
 use function preg_replace;
+use function strtoupper;
 
 #[CoversClass(OutboxFailedCommand::class)]
 final class OutboxFailedCommandTest extends TestCase
@@ -33,7 +34,7 @@ final class OutboxFailedCommandTest extends TestCase
 
         foreach ([self::ID_1, self::ID_2] as $id) {
             $this->storage->store(new OutboxMessage($id, 'body', '{}', new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
-            $this->storage->markFailed($id, 3, 'RuntimeException: Connection refused', null);
+            $this->storage->recordAttempt($id, 3, 'RuntimeException: Connection refused', null);
         }
     }
 
@@ -80,6 +81,14 @@ final class OutboxFailedCommandTest extends TestCase
 
         self::assertSame(Command::INVALID, $tester->execute(['--limit' => '0']));
         self::assertStringContainsString('Limit must be a positive integer.', self::display($tester));
+    }
+
+    public function test_ids_are_matched_case_insensitively(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['ids' => [strtoupper(self::ID_1)], '--requeue' => true]));
+        self::assertStringContainsString('Requeued 1 message(s)', self::display($tester));
     }
 
     public function test_rejects_ids_that_are_not_uuids(): void

@@ -115,7 +115,7 @@ rejected:
 
 **Environment variables.** Only options read at runtime accept `%env(...)%`:
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
-`outbox.table_name`, `outbox.max_attempts` and the
+`outbox.auto_setup`, `outbox.max_attempts` and the
 `async.dispatch_after_current_bus` flags. Every other option names services,
 buses, transports, dispatch modes or message classes that the container
 compilation needs, and rejects an environment variable:

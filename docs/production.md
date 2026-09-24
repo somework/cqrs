@@ -308,8 +308,8 @@ bin/console somework:cqrs:outbox:failed              # what the relay gave up on
 bin/console somework:cqrs:outbox:failed --requeue    # after fixing the cause
 ```
 
-A long broker outage can use up the attempts of the oldest rows; requeue them
-once the broker is back.
+A broker outage does not use up attempts: a run that could not send any message
+does not count its transport failures.
 
 ## Health checks
 

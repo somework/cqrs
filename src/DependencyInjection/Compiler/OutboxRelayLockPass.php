@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Exception\ParameterNotFoundException;
 
 use function is_string;
 use function sprintf;
@@ -44,11 +45,28 @@ final class OutboxRelayLockPass implements CompilerPassInterface
         $configuredSeed = $container->hasParameter('cache.prefix.seed') ? $container->getParameter('cache.prefix.seed') : null;
 
         $seed = match (true) {
-            null !== $configuredSeed && self::DEFAULT_PREFIX_SEED !== $configuredSeed => '%cache.prefix.seed%',
+            null !== $configuredSeed && !self::isDefaultSeed($container, $configuredSeed) => '%cache.prefix.seed%',
             $container->hasParameter('kernel.project_dir') => '%kernel.project_dir%',
             default => 'app',
         };
 
         $definition->setArgument('$lockName', sprintf('somework_cqrs.outbox.relay.%s.%s', $seed, $resource));
+    }
+
+    /**
+     * FrameworkBundle resolves the parameters of its configuration, so the default seed usually
+     * arrives resolved ("_/srv/app.App_KernelProdContainer").
+     */
+    private static function isDefaultSeed(ContainerBuilder $container, mixed $seed): bool
+    {
+        if (self::DEFAULT_PREFIX_SEED === $seed) {
+            return true;
+        }
+
+        try {
+            return $container->getParameterBag()->resolveValue(self::DEFAULT_PREFIX_SEED) === $seed;
+        } catch (ParameterNotFoundException) {
+            return false;
+        }
     }
 }

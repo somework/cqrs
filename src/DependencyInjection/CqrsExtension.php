@@ -189,7 +189,7 @@ final class CqrsExtension extends Extension
      * Options read only at runtime; every other option names services, buses, transports, dispatch
      * modes or message classes that must be known when the container is compiled.
      */
-    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.table_name', 'outbox.max_attempts', 'async.dispatch_after_current_bus'];
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'async.dispatch_after_current_bus'];
 
     /**
      * Without this check an environment variable in such an option fails later with Symfony's

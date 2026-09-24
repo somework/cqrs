@@ -269,15 +269,19 @@ What happens in special cases:
   and moves on, so a failing row never blocks the rows behind it. When any row failed, the
   command exits with code `1`. See [Failures](#failures) for what happens after the last
   attempt.
-- **An outage stops the run.** After 5 consecutive rows could not be sent (or marked as
-  published), the relay prints `Stopping after 5 consecutive failures to send messages.` and
-  exits with `1` instead of walking the whole backlog. Rows that cannot be decoded do not
-  count towards this limit. If the storage itself fails (the database is down), the run
+- **An outage does not use up attempts.** A send that fails with Messenger's
+  `TransportException` (the broker cannot be reached) only counts as an attempt if the
+  transport accepted another message in the same run. When nothing could be sent, the relay
+  gives those attempts back and prints `No message could be sent in this run: the transport
+  seems unavailable, so the failed attempts of <n> message(s) do not count.`; the rows are
+  tried again after their retry delay. Every other failure (the message cannot be decoded,
+  its handler throws, the transport rejects it) counts right away, so a row that always
+  fails is given up after `max_attempts` even when it is the oldest row. A row that fails
+  with a `TransportException` on every run while no other message can be sent is kept.
+- **An outage stops the run.** After 5 consecutive `TransportException` failures, the relay
+  prints `Stopping after 5 consecutive failures to send messages.` and exits with `1` instead
+  of walking the whole backlog. If the storage itself fails (the database is down), the run
   stops right away with `Stopping: …` and exit code `1`.
-- **An outage never gives up a row.** A send failure only gives up a row after its last
-  attempt if another message was sent in the same run. While nothing can be sent, the row is
-  kept and tried again an hour later. Rows that failed during an outage wait at most one
-  hour after it ends.
 - **Messages handled inline trigger a warning.** If no transport received a message (no
   stored transport name and no routing), the default bus handles it synchronously inside the
   relay process on the bus of its type. The relay prints a warning and still marks the row as
@@ -325,9 +329,10 @@ bin/console somework:cqrs:outbox:failed --requeue          # every given-up row
 bin/console somework:cqrs:outbox:failed --requeue <id> <id>
 ```
 
-Requeued rows start again with `attempts = 0`. A transport outage does not give rows up (see
-[Relaying](#relaying)); a row that crashed the relay process is given up after its last
-attempt with the error `The relay stopped during this attempt …`. `purge` never deletes given-up rows; delete them
+Requeued rows start again with `attempts = 0`. A transport outage does not use up attempts
+(see [Relaying](#relaying)); a row that crashed the relay process during its last attempt is
+given up on the next run, without another attempt, with the error `The relay stopped during
+this attempt …`. Publishing a row clears its `failed_at` and `last_error`. `purge` never deletes given-up rows; delete them
 with SQL (`DELETE FROM somework_cqrs_outbox WHERE failed_at IS NOT NULL`) if you do not want
 to relay them.
 
@@ -422,7 +427,7 @@ interface OutboxStorage
      *
      * @throws \RuntimeException when the message does not exist
      */
-    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void;
+    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.
@@ -437,7 +442,7 @@ An implementation must meet these rules:
   outbox guarantees nothing.
 - `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
   passed), in a stable oldest-first order.
-- `markFailed()` stores the given number of attempts, the error and the retry time as they
+- `recordAttempt()` stores the given number of attempts, the error and the retry time as they
   are; it is called before every attempt and again when the attempt fails. The relay decides
   when to give up (`$retryAt` null) from the `attempts` of the message, so return it.
 - Rebuild each message with

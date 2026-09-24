@@ -752,4 +752,30 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertIsArray($metadata);
         self::assertSame([CreateTaskCommand::class], array_values(array_unique(array_column($metadata['command'], 'message'))));
     }
+
+    public function test_plain_messenger_tags_are_not_checked_against_the_signature(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // #[AsMessageHandler(handles: '*')] on __invoke(ChargePaymentCommand) is valid for Messenger.
+        $container->register('handler.catch_all', ChargePaymentHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => '*']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame('*', $container->getDefinition('handler.catch_all')->getTag('messenger.message_handler')[0]['handles'] ?? null);
+    }
+
+    public function test_records_the_routes_of_handlers_for_other_types(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.plain', NonCqrsHandler::class)
+            ->addTag('messenger.message_handler');
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [['message' => \stdClass::class, 'handler_class' => NonCqrsHandler::class, 'service_id' => 'handler.plain', 'bus' => null]],
+            $container->getParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER),
+        );
+    }
 }

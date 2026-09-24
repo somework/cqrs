@@ -38,12 +38,20 @@ final class OutboxHealthCheckerTest extends TestCase
     {
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours')));
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 hour')));
-        $this->storage->markFailed('00000000-0000-7000-8000-000000000002', 10, 'RuntimeException: boom', null);
+        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000002', 10, 'RuntimeException: boom', null);
 
         self::assertSame([
             [CheckSeverity::WARNING, 'The relay gave up on 1 outbox message(s); see "somework:cqrs:outbox:failed"'],
             [CheckSeverity::WARNING, '1 outbox message(s) are due, the oldest for 120 minute(s): is "somework:cqrs:outbox:relay" running?'],
         ], self::summary((new OutboxHealthChecker($this->storage))->check()));
+    }
+
+    public function test_a_message_that_became_due_after_its_retry_delay_is_not_reported_as_waiting(): void
+    {
+        $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours')));
+        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000001', 3, 'RuntimeException: boom', new DateTimeImmutable('-5 seconds'));
+
+        self::assertSame([[CheckSeverity::OK, 'Outbox: 1 message(s) due, none waiting for long']], self::summary((new OutboxHealthChecker($this->storage))->check()));
     }
 
     public function test_an_unreadable_storage_is_critical(): void

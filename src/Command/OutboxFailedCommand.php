@@ -21,6 +21,7 @@ use function filter_var;
 use function is_array;
 use function preg_match;
 use function sprintf;
+use function strtolower;
 
 use const DATE_ATOM;
 use const FILTER_VALIDATE_INT;
@@ -61,7 +62,8 @@ final class OutboxFailedCommand extends Command
         }
 
         $ids = $input->getArgument('ids');
-        $ids = is_array($ids) ? array_values(array_map('strval', $ids)) : [];
+        // Stored lowercase (UUIDs are compared as text on some platforms).
+        $ids = is_array($ids) ? array_values(array_map(static fn (mixed $id): string => strtolower((string) $id), $ids)) : [];
 
         foreach ($ids as $id) {
             if (1 !== preg_match(self::UUID, $id)) {

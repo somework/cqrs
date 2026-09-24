@@ -49,7 +49,7 @@ It reports one of the following:
 - `Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.`
 - `Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").`
 - `Idempotency is enabled but the lock store "in-memory" only deduplicates within one process. …`
-- `Idempotency is enabled but the lock store "flock" only lives on one host: …`
+- `Idempotency is enabled but the lock store "flock" releases a key as soon as the dispatch returns and only lives on one host: …`
 - `Idempotency is enabled but the lock store "postgresql+advisory://…" ties its keys to one connection: …`
 
 ## Usage

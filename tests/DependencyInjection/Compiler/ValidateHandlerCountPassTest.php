@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
@@ -14,6 +15,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
@@ -173,13 +176,49 @@ final class ValidateHandlerCountPassTest extends TestCase
         ]);
     }
 
+    public function test_plain_messenger_handlers_of_an_interface_of_the_command_count_too(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.send, handler.audit (including handlers of %s).', SendNotificationCommand::class, RetryAwareMessage::class));
+
+        // e.g. #[AsMessageHandler] on __invoke(RetryAwareMessage $message): not a CQRS handler.
+        $this->process(
+            ['command' => [self::entry('command', SendNotificationCommand::class, CreateTaskHandler::class, 'handler.send', 'bus.commands')]],
+            [['message' => RetryAwareMessage::class, 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.audit', 'bus' => null]],
+        );
+    }
+
+    public function test_a_catch_all_handler_counts_for_every_command_of_its_bus(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('(including handlers of *)');
+
+        $this->process(
+            ['command' => [self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands')]],
+            [['message' => '*', 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.log_everything', 'bus' => 'bus.commands']],
+        );
+    }
+
+    public function test_other_handler_routes_do_not_stay_in_the_container(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['command' => [], 'query' => [], 'event' => []]);
+        $container->setParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER, []);
+
+        (new ValidateHandlerCountPass())->process($container);
+
+        self::assertFalse($container->hasParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER));
+    }
+
     /**
      * @param array<string, list<array<string, string|null>>> $metadata
+     * @param list<array<string, string|null>>                $otherRoutes
      */
-    private function process(array $metadata): void
+    private function process(array $metadata, array $otherRoutes = []): void
     {
         $container = new ContainerBuilder();
         $container->setParameter('somework_cqrs.handler_metadata', $metadata + ['command' => [], 'query' => [], 'event' => []]);
+        $container->setParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER, $otherRoutes);
 
         (new ValidateHandlerCountPass())->process($container);
     }

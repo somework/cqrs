@@ -37,7 +37,7 @@ final class OutboxMessage
         public readonly string $headers,
         public readonly DateTimeImmutable $createdAt,
         public readonly ?string $transportName = null,
-        /** Failed attempts to publish the message so far. */
+        /** Attempts to publish the message so far (the relay counts an attempt when it starts). */
         public readonly int $attempts = 0,
     ) {
         if ('' === $this->id) {

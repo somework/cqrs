@@ -45,41 +45,33 @@ final class ValidateHandlerCountPass implements CompilerPassInterface
         $violations = [];
         $knownBuses = self::knownBuses($container, $metadata);
 
+        $otherRoutes = $container->hasParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER) ? $container->getParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER) : [];
+        // Only needed here; keep it out of the compiled container.
+        $container->getParameterBag()->remove(CqrsHandlerPass::OTHER_ROUTES_PARAMETER);
+
         foreach (self::TYPE_LABELS as $type => $label) {
             $entries = $metadata[$type] ?? [];
             if (!is_array($entries)) {
                 continue;
             }
 
-            /** @var array<string, array<string, array<string, string>>> $handlers message => bus => service id => handler class */
-            $handlers = [];
-
             /** @var list<array{type: string, message: string, handler_class: string, service_id: string, bus: ?string}> $entries */
-            foreach ($entries as $entry) {
-                $handlers[$entry['message']][$entry['bus'] ?? ''][$entry['service_id']] = $entry['handler_class'];
-            }
+            $handlers = self::byMessageAndBus($entries, $knownBuses);
 
-            // A handler tag without bus (e.g. a plain #[AsMessageHandler]) is registered by Messenger
-            // on every bus, so it competes with the handlers of each bus.
-            foreach ($handlers as $messageClass => $byBus) {
-                if (!isset($byBus['']) || [] === $knownBuses) {
-                    continue;
-                }
-
-                foreach ($knownBuses as $bus) {
-                    $handlers[$messageClass][$bus] = ($byBus[$bus] ?? []) + $byBus[''];
-                }
-                unset($handlers[$messageClass]['']);
-            }
+            // Every handled type: Messenger also runs the handlers registered for parent classes,
+            // interfaces and "*" of a message (e.g. a catch-all handler for every command).
+            /** @var list<array{message: string, handler_class: string, service_id: string, bus: ?string}> $otherEntries */
+            $otherEntries = is_array($otherRoutes) ? $otherRoutes : [];
+            $handledTypes = self::byMessageAndBus([...$entries, ...$otherEntries], $knownBuses);
 
             foreach ($handlers as $messageClass => $byBus) {
+                $ancestors = self::ancestorsOf($container, $messageClass);
+
                 foreach ($byBus as $bus => $services) {
-                    // Messenger also runs the handlers registered for parent classes and interfaces of
-                    // the message (e.g. a catch-all handler for every command).
                     $inherited = [];
-                    foreach ($handlers as $ancestor => $ancestorByBus) {
-                        if ($ancestor !== $messageClass && isset($ancestorByBus[$bus]) && self::isSubtype($container, $messageClass, $ancestor)) {
-                            $services += $ancestorByBus[$bus];
+                    foreach ($ancestors as $ancestor) {
+                        if (isset($handledTypes[$ancestor][$bus])) {
+                            $services += $handledTypes[$ancestor][$bus];
                             $inherited[] = $ancestor;
                         }
                     }
@@ -106,11 +98,52 @@ final class ValidateHandlerCountPass implements CompilerPassInterface
         }
     }
 
-    private static function isSubtype(ContainerBuilder $container, string $class, string $ancestor): bool
+    /**
+     * @param list<array{message: string, handler_class: string, service_id: string, bus: ?string}> $entries
+     * @param list<string>                                                                          $knownBuses
+     *
+     * @return array<string, array<string, array<string, string>>> message => bus => service id => handler class
+     */
+    private static function byMessageAndBus(array $entries, array $knownBuses): array
+    {
+        $handlers = [];
+        foreach ($entries as $entry) {
+            $handlers[$entry['message']][$entry['bus'] ?? ''][$entry['service_id']] = $entry['handler_class'];
+        }
+
+        // A handler tag without bus (e.g. a plain #[AsMessageHandler]) is registered by Messenger
+        // on every bus, so it competes with the handlers of each bus.
+        foreach ($handlers as $messageClass => $byBus) {
+            if (!isset($byBus['']) || [] === $knownBuses) {
+                continue;
+            }
+
+            foreach ($knownBuses as $bus) {
+                $handlers[$messageClass][$bus] = ($byBus[$bus] ?? []) + $byBus[''];
+            }
+            unset($handlers[$messageClass]['']);
+        }
+
+        return $handlers;
+    }
+
+    /**
+     * @return list<string> Parent classes, interfaces and "*"
+     */
+    private static function ancestorsOf(ContainerBuilder $container, string $class): array
     {
         $reflection = $container->getReflectionClass($class, false);
+        if (null === $reflection) {
+            return ['*'];
+        }
 
-        return null !== $reflection && $reflection->isSubclassOf($ancestor);
+        $ancestors = $reflection->getInterfaceNames();
+        for ($parent = $reflection->getParentClass(); false !== $parent; $parent = $parent->getParentClass()) {
+            $ancestors[] = $parent->getName();
+        }
+        $ancestors[] = '*';
+
+        return $ancestors;
     }
 
     /**

@@ -476,7 +476,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 | Exception | Thrown when |
 |---|---|
 | `NoHandlerException` | No handler handled the message on the bus (Messenger's `NoHandlerForMessageException` is converted and kept as the previous exception). A missing handler of a message dispatched *inside* a handler is not converted. |
-| `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). |
+| `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry. |
 | `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |
