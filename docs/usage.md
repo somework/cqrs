@@ -627,11 +627,13 @@ The attribute has two effects when the message is dispatched with
   has an entry for this exact class), so the message goes to the asynchronous
   bus. An async bus must be configured (`buses.command_async` or
   `buses.event_async`).
-* The `AsynchronousStampDecider` adds a `TransportNamesStamp` with the
-  transport name. It only applies when the resolved mode is not `SYNC`, and it
-  yields to any transport already chosen: stamps passed by the caller and the
-  `transports.command_async` / `transports.event_async` configuration win over
-  the attribute.
+* On asynchronous dispatches it chooses the transport. A `TransportNamesStamp`
+  passed by the caller and an entry for exactly this class in
+  `transports.command_async.map` / `transports.event_async.map` win; next comes
+  the attribute's `transport`, then entries for parent classes or interfaces and
+  the section's `default`. A bare `#[Asynchronous]` (no `transport`) falls back
+  to the `async` transport only when nothing is configured and
+  `framework.messenger.routing` does not route the message.
 
 The default transport name is `async`. Pass a custom transport name when your
 infrastructure uses a different name:

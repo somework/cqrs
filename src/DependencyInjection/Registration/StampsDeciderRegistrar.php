@@ -7,7 +7,6 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
-use SomeWork\CqrsBundle\Support\AsynchronousStampDecider;
 use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
@@ -137,13 +136,6 @@ final class StampsDeciderRegistrar
                 'priority' => 125,
             ],
             [
-                'service_id_suffix' => 'asynchronous',
-                'class' => AsynchronousStampDecider::class,
-                'arguments' => [],
-                // After the transport decider: configured transports win over the attribute's default.
-                'priority' => 170,
-            ],
-            [
                 'service_id_suffix' => 'message_transport',
                 'class' => MessageTransportStampDecider::class,
                 'arguments' => [
@@ -162,6 +154,7 @@ final class StampsDeciderRegistrar
                         $this->helper->createOptionalTransportResolverReference('event_async', $buses),
                     ),
                 ],
+                // Also resolves the #[Asynchronous] transport; TransportRoutingPass adds $routedMessageTypes.
                 'priority' => 175,
             ],
         ];

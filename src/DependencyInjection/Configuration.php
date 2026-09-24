@@ -237,7 +237,8 @@ final class Configuration implements ConfigurationInterface
         $idempotency->addDefaultsIfNotSet()->info('Idempotency bridge configuration for DeduplicateStamp integration.');
         $idempotencyChildren = $idempotency->children();
         $idempotencyChildren->booleanNode('enabled')->defaultTrue()->info('Enable IdempotencyStamp to DeduplicateStamp bridge.');
-        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->min(1)->info('Default lock TTL in seconds for deduplication.');
+        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
+        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->info('Default lock TTL in seconds for deduplication (at least 1).');
         $idempotencyChildren->end();
         $idempotency->end();
 

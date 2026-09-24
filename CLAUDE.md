@@ -75,6 +75,7 @@ reports messages that were sent to a transport or deduplicated).
 - `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` — insert middleware via `MessengerMiddlewareInjector`
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
+- `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 
 **Stamp Pipeline** (`src/Support/`) — `StampsDecider` aggregates `StampDecider` implementations sorted by priority (see `.claude/rules/stamp-decider-pipeline.md`). Resolver-backed deciders walk class hierarchy + interfaces to find message-specific config (exact match → parent classes → interfaces → type default → global default).

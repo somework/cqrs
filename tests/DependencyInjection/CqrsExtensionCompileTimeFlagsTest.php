@@ -51,6 +51,17 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         self::assertFalse($container->getParameter('somework_cqrs.sequence.enabled'));
     }
 
+    public function test_idempotency_ttl_accepts_an_environment_variable(): void
+    {
+        $container = $this->container(['idempotency' => ['ttl' => '%env(int:CQRS_IDEMPOTENCY_TTL)%']]);
+
+        (new MergeExtensionConfigurationPass())->process($container);
+
+        $ttl = $container->getParameter('somework_cqrs.idempotency.ttl');
+        self::assertIsString($ttl);
+        self::assertSame('%env(int:CQRS_IDEMPOTENCY_TTL)%', $container->resolveEnvPlaceholders($ttl, '%%env(%s)%%'));
+    }
+
     /**
      * @param array<string, mixed> $config
      */

@@ -19,6 +19,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\MixedUnionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NonCqrsHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NoParamHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProcessManager;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnroutableIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UntypedInterfaceHandler;
@@ -673,8 +674,23 @@ final class CqrsHandlerPassTest extends TestCase
             ->addTag('messenger.message_handler', ['handles' => TaskCreatedEvent::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
 
         $this->expectException(\InvalidArgumentException::class);
-        $this->expectExceptionMessage(sprintf('is registered as a command handler, but %s is a event', TaskCreatedEvent::class));
+        $this->expectExceptionMessage(sprintf('is registered as a command handler, but %s is an event', TaskCreatedEvent::class));
 
         (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_a_union_handler_with_two_marker_interfaces_gets_each_member_on_its_buses(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.process_manager', TaskProcessManager::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command'])
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'event']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([CreateTaskCommand::class], array_values(array_unique(array_column($metadata['command'], 'message'))));
+        self::assertSame([TaskCreatedEvent::class], array_values(array_unique(array_column($metadata['event'], 'message'))));
     }
 }

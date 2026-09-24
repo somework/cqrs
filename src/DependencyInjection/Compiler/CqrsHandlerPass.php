@@ -19,7 +19,9 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_filter;
+use function array_key_first;
 use function array_keys;
+use function array_values;
 use function class_exists;
 use function implode;
 use function interface_exists;
@@ -90,11 +92,18 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 }
 
                 $cqrsMessages = [];
-                foreach ($routes as $messageClass) {
+                $mismatches = [];
+                foreach ($routes as $index => $messageClass) {
                     $messageType = $this->determineType($container, $messageClass);
 
                     if (null !== $declaredType && null !== $messageType && $messageType !== $declaredType) {
-                        throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered as a %s handler, but %s is a %s. Use #[As%sHandler] or the %sHandler interface instead.', $handlerClass, $serviceId, $declaredType, $messageClass, $messageType, ucfirst($messageType), ucfirst($messageType)));
+                        // A handler implementing several marker interfaces (e.g. CommandHandler and
+                        // EventHandler with __invoke(PlaceOrder|OrderPlaced)) gets one tag per interface:
+                        // each tag keeps the members of its own type.
+                        $mismatches[$messageClass] = $messageType;
+                        unset($routes[$index]);
+
+                        continue;
                     }
 
                     $type = $messageType ?? $declaredType;
@@ -103,6 +112,16 @@ final class CqrsHandlerPass implements CompilerPassInterface
                         $cqrsMessages[$messageClass] = $type;
                     }
                 }
+
+                // An explicit attribute, or an interface none of whose message types match, is a mistake.
+                if ([] !== $mismatches && ($hasExplicitHandles || [] === $cqrsMessages)) {
+                    $messageClass = array_key_first($mismatches);
+                    $messageType = $mismatches[$messageClass];
+
+                    throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered as %s handler, but %s is %s. Use #[As%sHandler] or the %sHandler interface instead.', $handlerClass, $serviceId, self::withArticle((string) $declaredType), $messageClass, self::withArticle($messageType), ucfirst($messageType), ucfirst($messageType)));
+                }
+
+                $routes = array_values($routes);
 
                 $buses = $this->resolveBuses($container, $attributes, $declaredType);
 
@@ -179,6 +198,11 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
             $definition->clearTag(self::INTERFACE_TAG);
         }
+    }
+
+    private static function withArticle(string $type): string
+    {
+        return ('event' === $type ? 'an ' : 'a ').$type;
     }
 
     private static function hasInvokeHandlerTag(Definition $definition): bool

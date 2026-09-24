@@ -176,7 +176,6 @@ events.
 | 225 | `RateLimitStampDecider` | per type | a limiter is mapped under `rate_limiting` | - |
 | 200 | `RetryPolicyStampDecider` | per type | always | - (stamps are appended) |
 | 175 | `MessageTransportStampDecider` | commands, queries, events | always | an existing `TransportNamesStamp` |
-| 170 | `AsynchronousStampDecider` | all messages | always | an existing `TransportNamesStamp` |
 | 150 | `MessageSerializerStampDecider` | per type | always | an existing `SerializerStamp` |
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
@@ -200,18 +199,20 @@ no stamps; transport-level retries are configured with `retry_strategy`.
 
 ### MessageTransportStampDecider (175)
 
-Adds a `TransportNamesStamp` with the transports configured under
-`transports.<command|command_async|query|event|event_async>` for the message and
-mode. When nothing is configured it adds nothing and Messenger's routing
-applies. See [`transports`](reference.md#transports).
+Adds a `TransportNamesStamp` with the transports chosen for the message and mode.
+A `TransportNamesStamp` passed by the caller wins; otherwise, in this order:
 
-### AsynchronousStampDecider (170)
+1. the transports configured for exactly the message class under
+   `transports.<command|command_async|query|event|event_async>.map`;
+2. on asynchronous dispatches, the transport named by
+   `#[Asynchronous(transport: '...')]`;
+3. the transports configured for a parent class or interface, then the section's
+   `default`;
+4. on asynchronous dispatches of a class with a bare `#[Asynchronous]`, the
+   `async` transport, unless `framework.messenger.routing` routes the message.
 
-For asynchronous dispatches of a message class carrying `#[Asynchronous]`, adds
-`TransportNamesStamp([<transport>])`, where the transport is the attribute's
-`transport` argument or `async`, unless a transport was already chosen: the
-`transports.*_async` configuration and stamps passed by the caller take
-precedence over the attribute. See
+When nothing applies it adds nothing and Messenger's routing decides. See
+[`transports`](reference.md#transports) and
 [Async routing with the #[Asynchronous] attribute](usage.md#async-routing-with-the-asynchronous-attribute).
 
 ### MessageSerializerStampDecider (150)
@@ -391,8 +392,8 @@ dispatched through the facades.
 Higher priorities run first. Pick a value relative to the built-in deciders:
 
 * **above 225**: before rate limiting, for example to reject a dispatch early;
-* **between 170 and 200**: after retry stamps, around transport routing (a
-  `TransportNamesStamp` added above 175 takes precedence over the `transports`
+* **between 175 and 200**: after retry stamps, before transport routing (a
+  `TransportNamesStamp` added here takes precedence over the `transports`
   configuration and `#[Asynchronous]`);
 * **between 125 and 150**: after serialization, before metadata;
 * **between 100 and 125**: after the metadata stamp exists, before the causation

@@ -14,7 +14,7 @@ paths:
 
 Choose the right interface:
 - **`MessageTypeAwareStampDecider`** — when the decider only applies to specific message types (Command, Query, Event). Implement `messageTypes()` returning the applicable contract classes. This is called once at construction, not per-dispatch. Most deciders use this.
-- **`StampDecider`** — when the decider applies to all messages regardless of type (`AsynchronousStampDecider`, `CausationIdStampDecider`, `IdempotencyStampDecider`, `DispatchAfterCurrentBusStampDecider`).
+- **`StampDecider`** — when the decider applies to all messages regardless of type (`CausationIdStampDecider`, `IdempotencyStampDecider`, `DispatchAfterCurrentBusStampDecider`).
 
 The `decide(object $message, DispatchMode $mode, array $stamps): array` method receives the current stamp list and MUST return the updated list. Four patterns exist in the codebase:
 
@@ -35,8 +35,7 @@ Deciders are sorted by priority via `TaggedIteratorArgument` (higher = earlier).
 |----------|---------|---------|
 | 225 | Rate limiting (fails fast) | `RateLimitStampDecider` |
 | 200 | Retry policies | `RetryPolicyStampDecider` |
-| 175 | Transport routing | `MessageTransportStampDecider` |
-| 170 | `#[Asynchronous]` (only when no transport was configured) | `AsynchronousStampDecider` |
+| 175 | Transport routing, including the `#[Asynchronous]` transport | `MessageTransportStampDecider` |
 | 150 | Serialization | `MessageSerializerStampDecider` |
 | 125 | Metadata | `MessageMetadataStampDecider` |
 | 110 | Event sequence | `SequenceStampDecider` |

@@ -458,9 +458,11 @@ message: Messenger sends it to exactly these transports.
 * The `*_async` sections are only used when the matching async bus is
   configured, and any entry in them without that bus fails the compilation (see
   [`buses`](#buses)).
-* A `TransportNamesStamp` passed by the caller wins. The transport of the
-  `#[Asynchronous]` attribute is only used when these sections configure no
-  transport for the message.
+* A `TransportNamesStamp` passed by the caller wins. On asynchronous dispatches,
+  `#[Asynchronous(transport: '...')]` beats parent/interface entries and the
+  `default`, but not an entry for exactly the message class; a bare
+  `#[Asynchronous]` only adds the `async` transport when nothing is configured
+  and `framework.messenger.routing` does not route the message.
 * Transports on the synchronous sections (`command`, `query`, `event`) send the
   message away instead of handling it in-process (unless the transport is
   `sync://`). `CommandBus::dispatchSync()` and `QueryBus::ask()` then throw

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
@@ -12,7 +13,14 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 /**
- * Adds transport name stamps to dispatched messages based on configuration.
+ * Adds a TransportNamesStamp to dispatched messages.
+ *
+ * Transports are chosen in this order (a TransportNamesStamp passed by the caller always wins):
+ *  1. the transports configured for exactly the message class;
+ *  2. the transport named by #[Asynchronous(transport: ...)] on asynchronous dispatches;
+ *  3. the transports configured for a parent class or interface, then the type default;
+ *  4. for a bare #[Asynchronous] on an asynchronous dispatch, the "async" transport, unless
+ *     framework.messenger.routing routes the message (then Messenger's routing applies).
  *
  * @internal
  */
@@ -34,8 +42,21 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
      */
     private array $stampTypes;
 
+    public const DEFAULT_ASYNC_TRANSPORT = 'async';
+
+    /**
+     * @var array<string, true>
+     */
+    private array $routedMessageTypes;
+
+    /**
+     * @var array<class-string, Asynchronous|false>
+     */
+    private array $asynchronousAttributes = [];
+
     /**
      * @param array<string, string> $stampTypes
+     * @param list<string>          $routedMessageTypes Classes, interfaces and "*" routed by framework.messenger.routing
      */
     public function __construct(
         private readonly MessageTransportStampFactory $stampFactory,
@@ -43,8 +64,10 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         private readonly TransportResolverMap $queryResolvers,
         private readonly TransportResolverMap $eventResolvers,
         array $stampTypes = self::DEFAULT_STAMP_TYPES,
+        array $routedMessageTypes = [],
     ) {
         $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
+        $this->routedMessageTypes = array_fill_keys($routedMessageTypes, true);
     }
 
     public function messageTypes(): array
@@ -66,12 +89,21 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         }
 
         $resolver = $this->resolverFor($message, $mode);
+        $attribute = DispatchMode::SYNC === $mode ? null : $this->asynchronousAttribute($message);
 
-        if (null === $resolver) {
-            return $stamps;
+        $transports = $resolver?->resolveExactFor($message);
+
+        if ((null === $transports || [] === $transports) && null !== $attribute?->transport) {
+            $transports = [$attribute->transport];
         }
 
-        $transports = $resolver->resolveFor($message);
+        if (null === $transports || [] === $transports) {
+            $transports = $resolver?->resolveFor($message);
+        }
+
+        if ((null === $transports || [] === $transports) && null !== $attribute && !$this->isRouted($message)) {
+            $transports = [self::DEFAULT_ASYNC_TRANSPORT];
+        }
 
         if (null === $transports || [] === $transports) {
             return $stamps;
@@ -112,5 +144,39 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         }
 
         return null;
+    }
+
+    private function asynchronousAttribute(object $message): ?Asynchronous
+    {
+        if (!isset($this->asynchronousAttributes[$message::class])) {
+            $attributes = (new \ReflectionClass($message))->getAttributes(Asynchronous::class);
+            $this->asynchronousAttributes[$message::class] = [] === $attributes ? false : $attributes[0]->newInstance();
+        }
+
+        $attribute = $this->asynchronousAttributes[$message::class];
+
+        return false === $attribute ? null : $attribute;
+    }
+
+    /**
+     * Whether framework.messenger.routing has an entry for the message, its parents or interfaces.
+     */
+    private function isRouted(object $message): bool
+    {
+        if ([] === $this->routedMessageTypes) {
+            return false;
+        }
+
+        if (isset($this->routedMessageTypes['*']) || isset($this->routedMessageTypes[$message::class])) {
+            return true;
+        }
+
+        foreach ([...class_parents($message), ...class_implements($message)] as $type) {
+            if (isset($this->routedMessageTypes[$type])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

@@ -49,6 +49,7 @@ use function array_filter;
 use function class_exists;
 use function is_array;
 use function is_bool;
+use function is_int;
 use function sprintf;
 
 /** @internal */
@@ -135,6 +136,10 @@ final class CqrsExtension extends Extension
                 throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
             }
             (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId);
+        }
+
+        if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
         }
 
         $idempotencyConfig = $config['idempotency'];

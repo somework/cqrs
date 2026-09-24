@@ -82,6 +82,8 @@ not already report.
 
 A handler attribute whose type contradicts the message, such as `#[AsCommandHandler(OrderPlaced::class)]` for an
 event, is now a compile error; before, the handler was registered on the command bus and never called.
+A handler that implements several handler interfaces and accepts a union (`CommandHandler` and `EventHandler`
+with `__invoke(CreateTask|TaskCreated $message)`) is registered for each message under the type that matches it.
 
 ### `#[Asynchronous]` is honoured for default dispatch
 
@@ -129,9 +131,12 @@ matched the previous span names.
 
 ### `#[Asynchronous]` and configured transports
 
-The attribute's transport (default `async`) is now only used when `transports.command_async` /
-`transports.event_async` configure no transport for the message; before, the attribute won over the
-configuration. Stamps passed by the caller still win over both.
+The transport of an asynchronous dispatch is now chosen in this order: a `TransportNamesStamp` passed by the
+caller, an entry for exactly the message class in `transports.command_async.map` / `transports.event_async.map`,
+the attribute's `transport`, entries for parent classes or interfaces, the section's `default`. A bare
+`#[Asynchronous]` only falls back to the `async` transport when nothing is configured and
+`framework.messenger.routing` does not route the message; before, it overrode both the configuration and
+Messenger's routing.
 
 ### Per-message configuration through interfaces
 

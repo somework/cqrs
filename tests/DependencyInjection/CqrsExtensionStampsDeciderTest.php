@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -69,8 +70,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
             'somework_cqrs.stamp_decider.event_serializer' => 150,
             'somework_cqrs.stamp_decider.event_metadata' => 125,
             'somework_cqrs.stamp_decider.message_transport' => 175,
-            // Runs after the transport decider, so configured transports win over #[Asynchronous].
-            'somework_cqrs.stamp_decider.asynchronous' => 170,
             'somework_cqrs.stamp_decider.event_sequence' => 110,
             'somework_cqrs.dispatch_after_current_bus_stamp_decider' => 0,
         ];
@@ -145,6 +144,14 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
 
         $definition = $container->getDefinition('somework_cqrs.stamp_decider.idempotency');
         self::assertSame(600, $definition->getArgument('$defaultTtl'));
+    }
+
+    public function test_idempotency_ttl_below_one_second_is_rejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.idempotency.ttl" must be at least 1 second, 0 given.');
+
+        $this->createContainer(['idempotency' => ['ttl' => 0]]);
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
