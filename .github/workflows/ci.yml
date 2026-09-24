@@ -33,6 +33,9 @@ jobs:
       - name: Validate composer.json
         run: composer validate --strict
 
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
+
       - name: Check for security advisories
         run: composer audit
 
@@ -173,7 +176,8 @@ jobs:
         if: steps.reporting.outputs.should_run == 'true'
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          files: artifacts/**/*.xml
+          # JUnit reports only (the coverage job also uploads clover.xml).
+          files: artifacts/**/phpunit-*.xml
           check_run: ${{ steps.reporting.outputs.check_run }}
           comment_mode: ${{ steps.reporting.outputs.comment_mode }}
 
