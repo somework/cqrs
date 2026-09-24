@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
 use OpenTelemetry\API\Trace\TracerProviderInterface;
+use Psr\Log\NullLogger;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\ChargePaymentHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\OpenTelemetry\RecordingTracerProvider;
@@ -33,6 +34,9 @@ final class ObservabilityTestKernel extends Kernel
 
     protected function configureContainer(ContainerConfigurator $container): void
     {
+        // Keep the test output free of the default stderr logger.
+        $container->services()->set('logger', NullLogger::class);
+
         $container->extension('framework', [
             'secret' => 'test-secret',
             'http_method_override' => false,

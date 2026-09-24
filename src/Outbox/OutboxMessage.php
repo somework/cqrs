@@ -4,8 +4,30 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Outbox;
 
+use DateTimeImmutable;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+
+use function bin2hex;
+use function chr;
+use function intdiv;
+use function json_encode;
+use function microtime;
+use function ord;
+use function random_bytes;
+use function random_int;
+use function sprintf;
+use function substr;
+
+use const JSON_THROW_ON_ERROR;
+
 /**
  * Immutable DTO representing a message persisted in the transactional outbox.
+ *
+ * Build it with {@see fromEnvelope()} so the body and headers use the same Messenger
+ * serializer the relay decodes them with.
+ *
+ * @internal Promote to @api in a future minor release after real-world validation
  */
 final class OutboxMessage
 {
@@ -13,8 +35,69 @@ final class OutboxMessage
         public readonly string $id,
         public readonly string $body,
         public readonly string $headers,
-        public readonly \DateTimeImmutable $createdAt,
+        public readonly DateTimeImmutable $createdAt,
         public readonly ?string $transportName = null,
     ) {
+        if ('' === $this->id) {
+            throw new \InvalidArgumentException('Outbox message id cannot be empty.');
+        }
+
+        if ('' === $this->body) {
+            throw new \InvalidArgumentException('Outbox message body cannot be empty.');
+        }
+    }
+
+    /**
+     * Encodes an envelope (message plus stamps) for the outbox.
+     *
+     * The id is a time-ordered UUIDv7, so messages stored within the same second are still
+     * relayed in the order they were stored.
+     *
+     * @param string|null $transportName Transport to send the message to; null uses the Messenger routing
+     */
+    public static function fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null): self
+    {
+        $encoded = $serializer->encode($envelope);
+
+        return new self(
+            id: self::generateUuidV7(),
+            body: $encoded['body'],
+            headers: json_encode($encoded['headers'] ?? [], JSON_THROW_ON_ERROR),
+            createdAt: $createdAt ?? new DateTimeImmutable(),
+            transportName: $transportName,
+        );
+    }
+
+    private static int $lastMilliseconds = 0;
+
+    private static int $sequence = 0;
+
+    /**
+     * UUIDv7 whose 12-bit "rand_a" field is a per-process counter, so ids created within the
+     * same millisecond by one process keep their creation order.
+     */
+    private static function generateUuidV7(): string
+    {
+        $milliseconds = (int) (microtime(true) * 1000);
+
+        if ($milliseconds > self::$lastMilliseconds) {
+            self::$lastMilliseconds = $milliseconds;
+            self::$sequence = random_int(0, 0x7FF);
+        } elseif (++self::$sequence > 0xFFF) {
+            ++self::$lastMilliseconds;
+            self::$sequence = 0;
+        }
+
+        $bytes = '';
+        for ($shift = 40; $shift >= 0; $shift -= 8) {
+            $bytes .= chr(intdiv(self::$lastMilliseconds, 2 ** $shift) & 0xFF);
+        }
+
+        $bytes .= chr(0x70 | (self::$sequence >> 8)).chr(self::$sequence & 0xFF); // version 7 + rand_a
+        $bytes .= chr((ord($tail = random_bytes(8)) & 0x3F) | 0x80).substr($tail, 1); // RFC 4122 variant + rand_b
+
+        $hex = bin2hex($bytes);
+
+        return sprintf('%s-%s-%s-%s-%s', substr($hex, 0, 8), substr($hex, 8, 4), substr($hex, 12, 4), substr($hex, 16, 4), substr($hex, 20, 12));
     }
 }

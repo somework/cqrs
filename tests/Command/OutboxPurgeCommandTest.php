@@ -1,0 +1,74 @@
+<?php
+
+declare(strict_types=1);
+
+namespace SomeWork\CqrsBundle\Tests\Command;
+
+use DateTimeImmutable;
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
+use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Tester\CommandTester;
+
+#[CoversClass(OutboxPurgeCommand::class)]
+final class OutboxPurgeCommandTest extends TestCase
+{
+    public function test_passes_the_cutoff_to_the_storage(): void
+    {
+        $storage = $this->createMock(OutboxStorage::class);
+        $storage->expects(self::once())
+            ->method('purgePublished')
+            ->with(self::callback(static function (DateTimeImmutable $before): bool {
+                $expected = new DateTimeImmutable('-12 hours');
+
+                return abs($expected->getTimestamp() - $before->getTimestamp()) < 5;
+            }))
+            ->willReturn(3);
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--older-than' => '12 hours']));
+        self::assertStringContainsString('Deleted 3 published message(s)', $tester->getDisplay());
+    }
+
+    public function test_deletes_published_messages_only(): void
+    {
+        $storage = new InMemoryOutboxStorage();
+        $storage->store(new OutboxMessage('published', 'body', '{}', new DateTimeImmutable()));
+        $storage->store(new OutboxMessage('pending', 'body', '{}', new DateTimeImmutable()));
+        $storage->markPublished('published');
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--older-than' => '0 seconds']));
+        self::assertSame(['pending'], array_map(static fn (OutboxMessage $message): string => $message->id, $storage->fetchUnpublished(10)));
+        self::assertFalse($storage->isPublished('published'));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidAges(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'garbage' => ['whenever'];
+        yield 'future' => ['-3 days'];
+    }
+
+    #[DataProvider('invalidAges')]
+    public function test_rejects_an_invalid_age(string $olderThan): void
+    {
+        $storage = $this->createMock(OutboxStorage::class);
+        $storage->expects(self::never())->method('purgePublished');
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::INVALID, $tester->execute(['--older-than' => $olderThan]));
+        self::assertStringContainsString('must be a positive relative date', $tester->getDisplay());
+    }
+}

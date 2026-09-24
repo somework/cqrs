@@ -269,8 +269,14 @@ final class Configuration implements ConfigurationInterface
         $outboxChildren = $outbox->children();
         $outboxChildren->booleanNode('enabled')->defaultFalse()
             ->info('Enable transactional outbox. Requires doctrine/dbal.');
-        $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')
+        $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
             ->info('Database table name for outbox messages.');
+        $outboxChildren->scalarNode('connection')->defaultValue('default')->cannotBeEmpty()
+            ->info('Doctrine DBAL connection name (service "doctrine.dbal.<name>_connection") holding the outbox table; use the connection of your business data.');
+        $outboxChildren->scalarNode('serializer')->defaultValue('messenger.default_serializer')->cannotBeEmpty()
+            ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.');
+        $outboxChildren->booleanNode('auto_setup')->defaultTrue()
+            ->info('Create the outbox table on first use (never inside an open transaction). Disable when the table is managed by migrations.');
         $outboxChildren->end();
         $outbox->end();
 
