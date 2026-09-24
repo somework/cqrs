@@ -63,8 +63,10 @@ argument:
 * With `bus: 'my.bus'`, the handler is registered on that Messenger bus only.
 
 Commands and queries must have exactly one handler. Two handlers for the same
-command or query on the same bus make the container compilation fail; a
-missing handler is reported when the message is dispatched. Events may have
+command or query on the same bus make the container compilation fail, and so
+does a handler registered for a parent class or interface of the message next
+to the message's own handler (Messenger would run both). A missing handler is
+reported when the message is dispatched. Events may have
 any number of handlers.
 
 ### Fire-and-forget events
@@ -200,9 +202,9 @@ The bundle registers these console commands:
 * `somework:cqrs:generate` -- scaffolds a message class and its handler.
 * `somework:cqrs:debug-transports` -- the transport configuration of the bundle.
 * `somework:cqrs:health` -- checks that handlers and transports can be built.
-* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup`, and
-  `somework:cqrs:outbox:purge` -- only when the transactional outbox is
-  enabled; see [Transactional Outbox](outbox.md).
+* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup`,
+  `somework:cqrs:outbox:failed` and `somework:cqrs:outbox:purge` -- only when
+  the transactional outbox is enabled; see [Transactional Outbox](outbox.md).
 
 ### Listing handlers
 
@@ -260,8 +262,8 @@ The **Message** column uses the configured naming strategy (`naming`); the
 default strategy shows the short class name.
 
 `SomeWork\CqrsBundle\Registry\HandlerRegistry` holds the metadata behind the
-command and offers `all()`, `byType()`, and `getDisplayName()`. It is an
-internal service and may change between releases.
+command and offers `all()`, `byType()`, and `getDisplayName()`. It is part of
+the public API; autowire it to inspect the registered handlers.
 
 ### Generating a message and its handler
 
@@ -474,7 +476,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 | Exception | Thrown when |
 |---|---|
 | `NoHandlerException` | No handler handled the message on the bus (Messenger's `NoHandlerForMessageException` is converted and kept as the previous exception). A missing handler of a message dispatched *inside* a handler is not converted. |
-| `MultipleHandlersException` | More than one handler handled the query (`ask()` only). |
+| `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). |
 | `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |

@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
@@ -58,6 +59,7 @@ final class OutboxRegistrar
         // relays of other projects sharing the lock store must not block it.
         $relayDef->setArgument('$lockName', sprintf('%s.%s', $connection, $config['table_name']));
         $relayDef->setArgument('$maxAttempts', $config['max_attempts'] ?? 10);
+        $relayDef->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
@@ -73,6 +75,12 @@ final class OutboxRegistrar
         $failedDef->addTag('console.command');
         $failedDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.failed_command', $failedDef);
+
+        $healthDef = new Definition(OutboxHealthChecker::class);
+        $healthDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $healthDef->addTag('somework_cqrs.health_checker');
+        $healthDef->setPublic(false);
+        $container->setDefinition('somework_cqrs.outbox.health_checker', $healthDef);
 
         $purgeDef = new Definition(OutboxPurgeCommand::class);
         $purgeDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));

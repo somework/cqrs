@@ -113,15 +113,17 @@ CQRS handler validation failed (commands and queries must have exactly one handl
 Command App\Application\Command\ShipOrder has 2 handlers on bus "messenger.bus.commands": App\Application\Command\ShipOrderHandler, App\Legacy\ShipOrderHandler.
 ```
 
-At runtime, `ask()` can also throw
+At runtime, `ask()` and `dispatchSync()` can also throw
 `MultipleHandlersException: Message "App\Application\Query\FindOrder" was handled by 2 handlers on the query bus. Exactly one handler is required.`
 
 **Cause.** Commands and queries must have exactly one handler per bus (events
 may have any number). The check counts distinct services per bus; one service on
-the sync and the async bus is fine. The check compares handlers of the same message
-class, so the runtime error typically comes from a handler registered for a
-parent class or an interface of the query (Messenger runs the handlers of all of
-them), or from handlers wired outside the bundle's discovery (a decorated
+the sync and the async bus is fine. Messenger also runs the handlers registered
+for parent classes and interfaces of a message, so a catch-all handler such as
+`__invoke(Command $command)` counts for every command on its bus (the message
+then says `including handlers of ...`). The runtime error comes from what the
+check cannot see: handlers of two unrelated interfaces that one message
+implements, or handlers wired outside the bundle's discovery (a decorated
 handlers locator).
 
 **Fix.** Keep one handler per command or query and bus: remove the extra
@@ -201,17 +203,22 @@ somework_cqrs:
         command_async: messenger.bus.commands_async
 ```
 
-### `#[Asynchronous]` fails with "Invalid senders configuration"
+### `#[Asynchronous]` message without a transport
 
-**Symptom.**
+**Symptom.** The container compilation fails:
 
 ```
-Symfony\Component\Messenger\Exception\RuntimeException: Invalid senders configuration: sender "async" is not in the senders locator.
+"App\Application\Command\SendWelcomeEmail" carries #[Asynchronous] without a transport, but there is no "async" transport, no "somework_cqrs.transports.command_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.
 ```
+
+(`#[Asynchronous(transport: 'x')]` with an unknown transport, or a missing
+`buses.command_async` / `buses.event_async`, fail the same way.) Messages
+without a handler in the application are not checked; dispatching them fails
+with `Invalid senders configuration: sender "async" is not in the senders locator.`
 
 **Cause.** `#[Asynchronous]` without an argument sends the message to a
-transport named `async`, and there is no such transport. Transport names from
-the attribute are not validated at compile time.
+transport named `async` when nothing else chooses a transport, and there is no
+such transport.
 
 **Fix.** Define an `async` transport, or name an existing one:
 `#[Asynchronous(transport: 'async_commands')]`.
@@ -306,15 +313,18 @@ A service id under `naming`, `retry_policies`, `serialization` or `metadata`
 does not exist. Define the service, or use the fully-qualified name of a
 concrete class: the bundle registers such classes as services automatically.
 
-### Environment variable in an `enabled` flag
+### Environment variable in the configuration
 
 ```
 "somework_cqrs.outbox.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.
+"somework_cqrs.transports.command_async.default" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.
 ```
 
-The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and
-`rate_limiting` choose which services exist. Use a literal `true`/`false`, per
-environment if needed (`when@prod:` in the configuration file).
+The `enabled` flags choose which services exist, and most other options name
+services, buses, transports or dispatch modes the container compilation needs.
+Use literal values, per environment if needed (`when@prod:` in the
+configuration file). The options that accept `%env(...)%` are listed in the
+[configuration reference](reference.md#rules-that-apply-to-every-section).
 
 ### Unknown transport name
 
@@ -400,8 +410,21 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `Message "..." (...) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.`
   The row has no transport name and no `framework.messenger.routing` entry
   matches it.
-* `Failed to relay message "...": ...` The row was skipped and stays unpublished;
-  the command exits with `1` and retries it on the next run.
+* `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
+  The row is postponed (1 minute, doubling up to 1 hour) and the rows behind it
+  are relayed; the command exits with `1`.
+* `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
+  `outbox.max_attempts` times. Fix the cause, then list and requeue it with
+  `somework:cqrs:outbox:failed [--requeue]`. A reason of `The relay stopped
+  during this attempt …` means that the row crashed the relay process (a PHP
+  fatal error or running out of memory).
+* `… not given up because no message could be sent in this run …` Nothing could
+  be sent, so the transport is probably down; the row is retried an hour later.
+* `Stopping after 5 consecutive failures to send messages.` The transport looks
+  unavailable; the next run tries again.
+* `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
+  table does not exist or lacks the columns of this version (run
+  `somework:cqrs:outbox:setup`).
 
 ## Health check failures
 
@@ -409,12 +432,15 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 
 * `Handler "..." cannot be instantiated: ...` A handler's constructor or one of
   its dependencies fails (often a missing environment variable).
+* `The outbox storage cannot be read: ...` The outbox database or table is not
+  usable.
 * `Transport "..." cannot be created: ...` The transport DSN or options are
   invalid.
 * `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.
 
 It exits with `1` for warnings, for example
-`No handlers registered — this may indicate a configuration issue`. Before 0.5.0
+`No handlers registered — this may indicate a configuration issue`, or given-up
+and long-waiting outbox rows. Before 0.5.0
 the command reported every handler and transport as `CRITICAL`; upgrade if you
 see that.
 

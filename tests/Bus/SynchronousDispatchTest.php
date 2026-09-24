@@ -8,7 +8,9 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
+use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
+use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
@@ -117,6 +119,34 @@ final class SynchronousDispatchTest extends TestCase
         $this->expectException(MessageSentToTransportException::class);
 
         $bus->ask(new FindTaskQuery('1'));
+    }
+
+    public function test_dispatch_sync_rejects_an_ambiguous_result(): void
+    {
+        // A catch-all handler for every command runs next to the command's own handler.
+        // (Distinct handler classes: Messenger runs a handler name only once per message.)
+        $bus = new CommandBus($this->bus([
+            CreateTaskCommand::class => [new class {
+                public function __invoke(CreateTaskCommand $command): string
+                {
+                    return 'task-1';
+                }
+            }],
+            Command::class => [new class {
+                public function __invoke(Command $command): null
+                {
+                    return null;
+                }
+            }],
+        ]));
+
+        try {
+            $bus->dispatchSync(new CreateTaskCommand('1', 'x'));
+            self::fail('Expected the ambiguous result to be reported.');
+        } catch (MultipleHandlersException $exception) {
+            self::assertSame(CreateTaskCommand::class, $exception->messageFqcn);
+            self::assertSame(2, $exception->handlerCount);
+        }
     }
 
     /**

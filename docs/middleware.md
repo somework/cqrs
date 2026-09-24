@@ -143,9 +143,11 @@ Creates one span each time a message passes through a CQRS bus:
 * The status is `OK`, or `ERROR` with the exception recorded when the rest of
   the stack throws.
 
-**Trace propagation.** On dispatch, the middleware adds a `TraceContextStamp`
-holding the W3C `traceparent`/`tracestate` headers of the dispatch span, unless
-the envelope already has one. The stamp travels with the message through the
+**Trace propagation.** On dispatch, the middleware sets a `TraceContextStamp`
+holding the W3C `traceparent`/`tracestate` headers of the dispatch span; a
+`TraceContextStamp` already on the envelope (for example one passed by the
+caller or captured for a deferred dispatch) becomes the parent of that span and
+is replaced. The stamp travels with the message through the
 transport, and the worker's `cqrs.consume` span uses it as its parent, so the
 consumer continues the producer's trace.
 

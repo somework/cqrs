@@ -20,7 +20,8 @@ with a lock from the Lock component.
   process. The keys of `flock`, `semaphore`, `postgresql+advisory` and `zookeeper` stores
   are tied to the process or connection and cannot be sent with async messages: an
   asynchronous dispatch with an `IdempotencyStamp` then fails with a `LogicException` that
-  names the problem. Point `framework.lock` at Redis, Memcached or a PDO/DBAL database; the
+  names the problem. PostgreSQL advisory locks and ZooKeeper also ignore the TTL: a key stays
+  locked as long as the connection that took it, which in a long-running worker can be forever. Point `framework.lock` at Redis, Memcached or a PDO/DBAL database; the
   container compilation log warns when the configured store is one of the others (for a DSN
   from an environment variable, with the value it had when the container was compiled):
 
@@ -47,7 +48,8 @@ It reports one of the following:
 
 - `Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.`
 - `Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").`
-- `Idempotency is enabled but the lock store "flock" only lives in one process or host: …`
+- `Idempotency is enabled but the lock store "in-memory" only deduplicates within one process. …`
+- `Idempotency is enabled but the lock store "flock" only lives on one host: …`
 - `Idempotency is enabled but the lock store "postgresql+advisory://…" ties its keys to one connection: …`
 
 ## Usage

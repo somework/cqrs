@@ -19,13 +19,16 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_filter;
+use function array_is_list;
 use function array_key_first;
 use function array_keys;
 use function array_values;
 use function class_exists;
 use function implode;
+use function in_array;
 use function interface_exists;
 use function is_a;
+use function is_array;
 use function is_iterable;
 use function is_string;
 use function sprintf;
@@ -94,6 +97,10 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 $declaredType = $attributes[self::TYPE_ATTRIBUTE] ?? null;
                 $hasExplicitHandles = isset($attributes['handles']);
                 $routes = $this->resolveRoutes($handlerClass, $attributes, null !== $declaredType);
+
+                if ($hasExplicitHandles) {
+                    $this->assertMethodAcceptsMessages($serviceId, $handlerClass, $attributes, $routes);
+                }
 
                 if ([] === $routes && null !== $declaredType && !$hasExplicitHandles) {
                     throw new InvalidArgumentException(sprintf('Cannot determine the message handled by "%s" (service "%s"). Type-hint the first parameter of %s::%s() with the message class or declare it explicitly, e.g. #[As%sHandler(%s: YourMessage::class)].', $handlerClass, $serviceId, $handlerClass, $attributes['method'] ?? '__invoke', ucfirst((string) $declaredType), (string) $declaredType));
@@ -338,6 +345,77 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         return array_keys($routes);
+    }
+
+    /**
+     * A declared message the handler method cannot accept would fail every dispatch with a TypeError
+     * (e.g. #[AsCommandHandler(ShipOrder::class)] copied onto a handler of PlaceOrder).
+     *
+     * @param array<string, mixed> $attributes
+     * @param list<string>         $messages
+     */
+    private function assertMethodAcceptsMessages(string $serviceId, string $handlerClass, array $attributes, array $messages): void
+    {
+        // Per-message options (e.g. ['Msg' => ['method' => 'onMsg']]) may route to different methods.
+        if (is_array($attributes['handles']) && !array_is_list($attributes['handles'])) {
+            return;
+        }
+
+        /** @var class-string $handlerClass */
+        $reflection = new ReflectionClass($handlerClass);
+        $methodName = is_string($attributes['method'] ?? null) ? $attributes['method'] : '__invoke';
+
+        if (!$reflection->hasMethod($methodName)) {
+            return;
+        }
+
+        $parameters = $reflection->getMethod($methodName)->getParameters();
+        $type = [] === $parameters ? null : $parameters[0]->getType();
+
+        if (null === $type) {
+            return;
+        }
+
+        foreach ($messages as $messageClass) {
+            if (!self::accepts($type, $messageClass)) {
+                throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered for %s, but %s::%s() only accepts %s. Fix the message class of the attribute or the parameter type.', $handlerClass, $serviceId, $messageClass, $handlerClass, $methodName, (string) $type));
+            }
+        }
+    }
+
+    private static function accepts(ReflectionType $type, string $messageClass): bool
+    {
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $member) {
+                if (self::accepts($member, $messageClass)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($type instanceof ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $member) {
+                if (!self::accepts($member, $messageClass)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (!$type instanceof ReflectionNamedType) {
+            return true;
+        }
+
+        $name = $type->getName();
+
+        if ($type->isBuiltin()) {
+            return 'object' === $name || 'mixed' === $name;
+        }
+
+        return in_array($name, ['self', 'static', 'parent'], true) || is_a($messageClass, $name, true);
     }
 
     /**

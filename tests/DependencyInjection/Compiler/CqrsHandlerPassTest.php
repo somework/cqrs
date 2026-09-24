@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ChargePaymentHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
@@ -23,6 +24,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProcessManager;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnroutableIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UntypedInterfaceHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ChargePaymentCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
@@ -723,5 +725,31 @@ final class CqrsHandlerPassTest extends TestCase
         foreach ($container->getDefinition('handler.process_manager')->getTag('messenger.message_handler') as $tag) {
             self::assertContains($tag['handles'] ?? null, [CreateTaskCommand::class, TaskCreatedEvent::class], 'No tag lets Messenger route every union member.');
         }
+    }
+
+    public function test_an_attribute_for_a_message_the_handler_cannot_accept_is_rejected(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // e.g. #[AsCommandHandler(CreateTaskCommand::class)] copied onto the handler of another command.
+        $container->register('handler.charge', ChargePaymentHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(sprintf('"%s" (service "handler.charge") is registered for %s, but %s::__invoke() only accepts %s.', ChargePaymentHandler::class, CreateTaskCommand::class, ChargePaymentHandler::class, ChargePaymentCommand::class));
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_a_declared_message_matching_a_union_member_is_accepted(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.process_manager', TaskProcessManager::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([CreateTaskCommand::class], array_values(array_unique(array_column($metadata['command'], 'message'))));
     }
 }

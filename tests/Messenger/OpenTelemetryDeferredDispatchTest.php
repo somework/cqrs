@@ -27,6 +27,7 @@ use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Worker;
 
 use function explode;
@@ -52,7 +53,8 @@ final class OpenTelemetryDeferredDispatchTest extends TestCase
     public function test_a_child_message_continues_the_trace_of_the_consuming_handler(bool $deferred): void
     {
         $tracer = new RecordingTracerProvider();
-        $transport = new InMemoryTransport();
+        // Serializing, like a real broker: the trace context must survive the round trip.
+        $transport = new InMemoryTransport(new PhpSerializer());
         $buses = new class {
             public ?CommandBus $command = null;
         };

@@ -91,11 +91,11 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
      */
     public static function lockStores(): iterable
     {
-        yield 'flock (FrameworkBundle default)' => ['flock', 'only lives in one process or host'];
-        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'only lives in one process or host'];
-        yield 'in-memory' => ['in-memory', 'only lives in one process or host'];
-        yield 'flock with a path' => ['flock:///var/lock', 'only lives in one process or host'];
-        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'ties its keys to one connection'];
+        yield 'flock (FrameworkBundle default)' => ['flock', 'only lives on one host'];
+        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'only lives on one host'];
+        yield 'in-memory' => ['in-memory', 'only deduplicates within one process'];
+        yield 'flock with a path' => ['flock:///var/lock', 'only lives on one host'];
+        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'a key stays locked while the connection lives, whatever the TTL'];
         yield 'ZooKeeper' => ['zookeeper://localhost:2181', 'ties its keys to one connection'];
         yield 'redis' => ['redis://localhost', null];
         yield 'dbal' => ['mysql://db/app', null];

@@ -35,15 +35,20 @@ interface OutboxStorage
     public function markPublished(string $id): void;
 
     /**
-     * Records a failed attempt to publish a message and increments its attempt counter.
+     * Records an attempt to publish a message: the number of attempts so far, its error, and when
+     * to try again.
      *
-     * A failed message must not be returned by {@see fetchUnpublished()} before $retryAt; with
-     * $retryAt null the message is given up and never returned again. Recording a failure for an
-     * already published message is a no-op.
+     * The relay records each attempt before it sends the message, with an error saying that the
+     * attempt did not finish, so an attempt that kills the process still counts; it records the
+     * actual error when the attempt fails. A message must not be returned by {@see fetchUnpublished()}
+     * before $retryAt; with $retryAt null it is given up and never returned again. Recording an
+     * attempt of an already published message is a no-op.
+     *
+     * @param int $attempts The number of attempts, including this one
      *
      * @throws \RuntimeException when the message does not exist
      */
-    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void;
+    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.

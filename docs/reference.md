@@ -113,6 +113,17 @@ rejected:
 "somework_cqrs.outbox.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.
 ```
 
+**Environment variables.** Only options read at runtime accept `%env(...)%`:
+`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
+`outbox.table_name`, `outbox.max_attempts` and the
+`async.dispatch_after_current_bus` flags. Every other option names services,
+buses, transports, dispatch modes or message classes that the container
+compilation needs, and rejects an environment variable:
+
+```
+"somework_cqrs.dispatch_modes.command.default" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.
+```
+
 ## Resolution order for per-message maps
 
 All `map` sections resolve a message the same way. For a dispatched message the
@@ -761,7 +772,8 @@ See [Production: outbox operations](production.md#outbox-operations).
 
 `SomeWork\CqrsBundle\Registry\HandlerRegistry` exposes the handler map compiled
 into the container (it backs `somework:cqrs:list` and the health check). It is
-marked `@internal`, so its API may change between minor releases.
+part of the public API (`@api`); get it from the container (autowire
+`HandlerRegistry`) rather than constructing it.
 
 * `all()` returns every handler as a list of `HandlerDescriptor` objects
   (`type`, `messageClass`, `handlerClass`, `serviceId`, `bus`). A handler

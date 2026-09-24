@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
@@ -144,6 +145,32 @@ final class ValidateHandlerCountPassTest extends TestCase
             self::assertStringContainsString('Command '.CreateTaskCommand::class, $exception->getMessage());
             self::assertStringContainsString('Query '.FindTaskQuery::class, $exception->getMessage());
         }
+    }
+
+    public function test_a_handler_for_an_interface_of_the_command_competes_with_its_handler(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.create_task, handler.audit (including handlers of %s).', CreateTaskCommand::class, Command::class));
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                // A catch-all handler: __invoke(Command $command).
+                self::entry('command', Command::class, ListTasksHandler::class, 'handler.audit', 'bus.commands'),
+            ],
+        ]);
+    }
+
+    public function test_handlers_of_an_interface_on_another_bus_do_not_count(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', Command::class, ListTasksHandler::class, 'handler.audit', 'bus.audit'),
+            ],
+        ]);
     }
 
     /**

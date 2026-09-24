@@ -14,8 +14,10 @@ use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use Doctrine\DBAL\Exception\SyntaxErrorException;
 use Doctrine\DBAL\Exception\TableExistsException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
+use Doctrine\DBAL\Exception\UniqueConstraintViolationException;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\Exception\TableDoesNotExist;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
@@ -26,6 +28,7 @@ use function array_filter;
 use function array_map;
 use function array_values;
 use function class_exists;
+use function count;
 use function explode;
 use function get_debug_type;
 use function implode;
@@ -35,6 +38,7 @@ use function sha1;
 use function sprintf;
 use function str_replace;
 use function strlen;
+use function strtolower;
 use function substr;
 
 /**
@@ -55,6 +59,8 @@ final class DbalOutboxStorage implements OutboxStorage
 {
     /** Columns added in 0.5.0: tables created by earlier versions lack them. */
     private const FAILURE_COLUMNS = ['attempts', 'available_at', 'failed_at', 'last_error'];
+
+    private const PURGE_BATCH_SIZE = 1000;
 
     /** Process-local cache of the "table is up to date" check. */
     private bool $setupDone = false;
@@ -139,18 +145,19 @@ final class DbalOutboxStorage implements OutboxStorage
         }
     }
 
-    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void
+    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
     {
         $this->ensureTableExists();
 
         $updated = $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
             ->update($this->tableName)
-            ->set('attempts', 'attempts + 1')
+            ->set('attempts', ':attempts')
             ->set('last_error', ':last_error')
             ->set('available_at', ':available_at')
             ->set('failed_at', ':failed_at')
             ->where('id = :id')
             ->andWhere('published_at IS NULL')
+            ->setParameter('attempts', $attempts, Types::INTEGER)
             ->setParameter('last_error', $error)
             ->setParameter('available_at', null === $retryAt ? null : self::utc($retryAt), Types::DATETIME_IMMUTABLE)
             ->setParameter('failed_at', null === $retryAt ? self::now() : null, Types::DATETIME_IMMUTABLE)
@@ -158,7 +165,7 @@ final class DbalOutboxStorage implements OutboxStorage
             ->executeStatement());
 
         if (0 === (int) $updated) {
-            $this->assertExists($id, 'record a failed attempt');
+            $this->assertExists($id, 'record an attempt');
         }
     }
 
@@ -166,12 +173,68 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->ensureTableExists();
 
-        return (int) $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
-            ->delete($this->tableName)
-            ->where('published_at IS NOT NULL')
-            ->andWhere('published_at < :before')
-            ->setParameter('before', self::utc($publishedBefore), Types::DATETIME_IMMUTABLE)
-            ->executeStatement());
+        $deleted = 0;
+
+        // In batches: a single DELETE of a large backlog holds its locks and grows the transaction log.
+        do {
+            $ids = $this->guard(fn (): array => $this->connection->createQueryBuilder()
+                ->select('id')
+                ->from($this->tableName)
+                ->where('published_at IS NOT NULL')
+                ->andWhere('published_at < :before')
+                ->setParameter('before', self::utc($publishedBefore), Types::DATETIME_IMMUTABLE)
+                ->setMaxResults(self::PURGE_BATCH_SIZE)
+                ->executeQuery()
+                ->fetchFirstColumn());
+
+            if ([] === $ids) {
+                break;
+            }
+
+            $deleted += (int) $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
+                ->delete($this->tableName)
+                ->where('id IN (:ids)')
+                ->setParameter('ids', $ids, ArrayParameterType::STRING)
+                ->executeStatement());
+        } while (self::PURGE_BATCH_SIZE === count($ids));
+
+        return $deleted;
+    }
+
+    /**
+     * Counts the due and the given-up messages, for monitoring.
+     *
+     * @return array{due: int, oldest_due: DateTimeImmutable|null, failed: int}
+     */
+    public function status(): array
+    {
+        $this->ensureTableExists();
+
+        $due = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
+            ->select('COUNT(*) AS due', 'MIN(created_at) AS oldest_due')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NULL')
+            ->andWhere('available_at IS NULL OR available_at <= :now')
+            ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
+            ->executeQuery()
+            ->fetchAssociative());
+
+        $failed = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
+            ->select('COUNT(*)')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NOT NULL')
+            ->executeQuery()
+            ->fetchOne());
+
+        $oldestDue = false === $due ? null : ($due['oldest_due'] ?? null);
+
+        return [
+            'due' => false === $due ? 0 : (int) $due['due'],
+            'oldest_due' => null === $oldestDue ? null : self::readUtc($oldestDue, $this->connection->getDatabasePlatform()),
+            'failed' => (int) $failed,
+        ];
     }
 
     /**
@@ -248,8 +311,12 @@ final class DbalOutboxStorage implements OutboxStorage
 
                 try {
                     $this->connection->createSchemaManager()->createTable(self::buildTableDefinition($this->tableName));
-                } catch (TableExistsException) {
-                    // Created concurrently by another process.
+                } catch (TableExistsException|UniqueConstraintViolationException $exception) {
+                    // Created concurrently by another process (PostgreSQL may report the clash on its
+                    // catalog as a unique constraint violation).
+                    if (!$this->tableExists()) {
+                        throw $exception;
+                    }
                 }
             }
 
@@ -332,7 +399,17 @@ final class DbalOutboxStorage implements OutboxStorage
             return $schemaManager->introspectTableByUnquotedName($table, $schema);
         }
 
-        return $schemaManager->introspectTable($this->tableName); // @phpstan-ignore method.deprecated
+        try {
+            return $schemaManager->introspectTable($this->tableName); // @phpstan-ignore method.deprecated
+        } catch (TableDoesNotExist $exception) {
+            // Before DBAL 4.3 the name is not folded like the database folds unquoted names
+            // (PostgreSQL stores "OutboxMessages" as "outboxmessages").
+            if (strtolower($this->tableName) === $this->tableName) {
+                throw $exception;
+            }
+
+            return $schemaManager->introspectTable(strtolower($this->tableName)); // @phpstan-ignore method.deprecated
+        }
     }
 
     private function assertNoTransaction(string $problem): void
@@ -433,7 +510,14 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function tableExists(): bool
     {
-        return $this->connection->createSchemaManager()->tablesExist([$this->tableName]);
+        // Not tablesExist(): it does not find "public.<table>" on PostgreSQL, and it applies the schema asset filter.
+        try {
+            $this->introspectTable($this->connection->createSchemaManager());
+        } catch (TableDoesNotExist) {
+            return false;
+        }
+
+        return true;
     }
 
     private static function buildTableDefinition(string $tableName): Table

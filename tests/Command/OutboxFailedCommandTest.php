@@ -33,7 +33,7 @@ final class OutboxFailedCommandTest extends TestCase
 
         foreach ([self::ID_1, self::ID_2] as $id) {
             $this->storage->store(new OutboxMessage($id, 'body', '{}', new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
-            $this->storage->markFailed($id, 'RuntimeException: Connection refused', null);
+            $this->storage->markFailed($id, 3, 'RuntimeException: Connection refused', null);
         }
     }
 
@@ -80,6 +80,32 @@ final class OutboxFailedCommandTest extends TestCase
 
         self::assertSame(Command::INVALID, $tester->execute(['--limit' => '0']));
         self::assertStringContainsString('Limit must be a positive integer.', self::display($tester));
+    }
+
+    public function test_rejects_ids_that_are_not_uuids(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::INVALID, $tester->execute(['ids' => ['42'], '--requeue' => true]));
+        self::assertStringContainsString('"42" is not an outbox message id (a UUID).', self::display($tester));
+    }
+
+    public function test_reports_ids_that_were_not_requeued(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['ids' => [self::ID_1, '00000000-0000-7000-8000-00000000abcd'], '--requeue' => true]));
+        self::assertStringContainsString('Requeued 1 message(s)', self::display($tester));
+        self::assertStringContainsString('1 of the 2 given message(s) were not requeued', self::display($tester));
+    }
+
+    public function test_a_failing_storage_exits_with_1(): void
+    {
+        $storage = new DbalOutboxStorage(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]), autoSetup: false);
+        $tester = new CommandTester(new OutboxFailedCommand($storage));
+
+        self::assertSame(Command::FAILURE, $tester->execute([]));
+        self::assertStringContainsString('The outbox storage failed: The outbox table "somework_cqrs_outbox" does not exist.', self::display($tester));
     }
 
     public function test_requires_the_dbal_storage(): void

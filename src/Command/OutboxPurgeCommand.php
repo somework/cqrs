@@ -59,7 +59,14 @@ final class OutboxPurgeCommand extends Command
         // Databases reject dates before year 1; nothing was published that long ago anyway.
         $before = max($before, new DateTimeImmutable('0001-01-01 00:00:00', new DateTimeZone('UTC')));
 
-        $deleted = $this->outboxStorage->purgePublished($before);
+        try {
+            $deleted = $this->outboxStorage->purgePublished($before);
+        } catch (\Throwable $exception) {
+            // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
+            $io->error(sprintf('The outbox storage failed: %s', $exception->getMessage()));
+
+            return self::FAILURE;
+        }
 
         $io->success(sprintf('Deleted %d published message(s) older than %s.', $deleted, $before->format(DATE_ATOM)));
 

@@ -52,6 +52,17 @@ final class OutboxPurgeCommandTest extends TestCase
         self::assertFalse($storage->isPublished('published'));
     }
 
+    public function test_a_failing_storage_exits_with_1(): void
+    {
+        $storage = self::createStub(OutboxStorage::class);
+        $storage->method('purgePublished')->willThrowException(new \RuntimeException('Connection refused'));
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::FAILURE, $tester->execute([]));
+        self::assertStringContainsString('The outbox storage failed: Connection refused', $tester->getDisplay());
+    }
+
     /**
      * @return iterable<string, array{string}>
      */

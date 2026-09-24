@@ -19,7 +19,7 @@ use function sprintf;
  */
 #[AsCommand(
     name: 'somework:cqrs:outbox:setup',
-    description: 'Create the outbox table if it does not exist.',
+    description: 'Create the outbox table, or add the columns a table of an earlier version lacks.',
 )]
 final class OutboxSetupCommand extends Command
 {
@@ -38,7 +38,14 @@ final class OutboxSetupCommand extends Command
             return self::FAILURE;
         }
 
-        $this->outboxStorage->setup();
+        try {
+            $this->outboxStorage->setup();
+        } catch (\Throwable $exception) {
+            // e.g. the database is down, or the table cannot be changed: exit with 1 and say why.
+            $io->error(sprintf('The outbox table could not be set up: %s', $exception->getMessage()));
+
+            return self::FAILURE;
+        }
 
         $io->success('The outbox table is ready.');
 

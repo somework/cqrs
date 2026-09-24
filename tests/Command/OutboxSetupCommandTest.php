@@ -26,4 +26,14 @@ final class OutboxSetupCommandTest extends TestCase
 
         self::assertSame(Command::SUCCESS, $tester->execute([]));
     }
+
+    public function test_a_table_that_cannot_be_created_exits_with_1(): void
+    {
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $connection->beginTransaction();
+        $tester = new CommandTester(new OutboxSetupCommand(new DbalOutboxStorage($connection, 'outbox', autoSetup: false)));
+
+        self::assertSame(Command::FAILURE, $tester->execute([]));
+        self::assertStringContainsString('cannot be changed inside an open database transaction', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+    }
 }

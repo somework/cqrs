@@ -16,8 +16,10 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 use function array_map;
 use function array_values;
+use function count;
 use function filter_var;
 use function is_array;
+use function preg_match;
 use function sprintf;
 
 use const DATE_ATOM;
@@ -32,6 +34,8 @@ use const FILTER_VALIDATE_INT;
 )]
 final class OutboxFailedCommand extends Command
 {
+    private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+
     public function __construct(private readonly OutboxStorage $outboxStorage)
     {
         parent::__construct();
@@ -49,8 +53,9 @@ final class OutboxFailedCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
 
-        if (!$this->outboxStorage instanceof DbalOutboxStorage) {
-            $io->error(sprintf('The outbox storage (%s) is not the DBAL storage; inspect its failed messages yourself.', $this->outboxStorage::class));
+        $storage = $this->outboxStorage;
+        if (!$storage instanceof DbalOutboxStorage) {
+            $io->error(sprintf('The outbox storage (%s) is not the DBAL storage; inspect its failed messages yourself.', $storage::class));
 
             return self::FAILURE;
         }
@@ -58,13 +63,46 @@ final class OutboxFailedCommand extends Command
         $ids = $input->getArgument('ids');
         $ids = is_array($ids) ? array_values(array_map('strval', $ids)) : [];
 
-        if (true === $input->getOption('requeue')) {
-            $requeued = $this->outboxStorage->requeueFailed($ids);
-            $io->success(sprintf('Requeued %d message(s); the next relay run sends them.', $requeued));
+        foreach ($ids as $id) {
+            if (1 !== preg_match(self::UUID, $id)) {
+                $io->error(sprintf('"%s" is not an outbox message id (a UUID).', $id));
 
-            return self::SUCCESS;
+                return self::INVALID;
+            }
         }
 
+        try {
+            return true === $input->getOption('requeue') ? $this->requeue($io, $storage, $ids) : $this->list($io, $input, $storage, $ids);
+        } catch (\Throwable $exception) {
+            // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
+            $io->error(sprintf('The outbox storage failed: %s', $exception->getMessage()));
+
+            return self::FAILURE;
+        }
+    }
+
+    /**
+     * @param list<string> $ids
+     */
+    private function requeue(SymfonyStyle $io, DbalOutboxStorage $storage, array $ids): int
+    {
+        $requeued = $storage->requeueFailed($ids);
+        $io->success(sprintf('Requeued %d message(s); the next relay run sends them.', $requeued));
+
+        if ([] !== $ids && $requeued < count($ids)) {
+            $io->warning(sprintf('%d of the %d given message(s) were not requeued: they do not exist, were published, or have not been given up.', count($ids) - $requeued, count($ids)));
+
+            return self::FAILURE;
+        }
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @param list<string> $ids
+     */
+    private function list(SymfonyStyle $io, InputInterface $input, DbalOutboxStorage $storage, array $ids): int
+    {
         if ([] !== $ids) {
             $io->error('Message ids are only accepted together with --requeue.');
 
@@ -78,7 +116,7 @@ final class OutboxFailedCommand extends Command
             return self::INVALID;
         }
 
-        $failed = $this->outboxStorage->fetchFailed($limit);
+        $failed = $storage->fetchFailed($limit);
         if ([] === $failed) {
             $io->success('The relay has not given up on any message.');
 

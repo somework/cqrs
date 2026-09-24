@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
@@ -66,7 +67,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = $this->execute();
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
-        self::assertStringContainsString('No unpublished messages found.', self::display($tester));
+        self::assertStringContainsString('No outbox messages are due.', self::display($tester));
     }
 
     public function test_relays_messages_in_order_to_their_stored_transport(): void
@@ -171,7 +172,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = $this->execute();
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
-        self::assertStringContainsString('No unpublished messages found.', self::display($tester));
+        self::assertStringContainsString('No outbox messages are due.', self::display($tester));
     }
 
     public function test_the_retry_delay_doubles_up_to_one_hour(): void
@@ -211,8 +212,70 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = $this->execute();
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Stopping: the failure could not be recorded (Database is down.)', self::display($tester));
+        self::assertStringContainsString('Stopping: the attempt to relay message "p1" could not be recorded (RuntimeException: Database is down.)', self::display($tester));
         self::assertSame([], $this->async->getSent());
+    }
+
+    public function test_each_attempt_is_counted_before_the_message_is_sent(): void
+    {
+        $message = $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $seenBeforeSending = null;
+        $bus = new CallbackBus(function () use ($message, &$seenBeforeSending): void {
+            // What a process that dies right now (fatal error, out of memory) leaves behind.
+            $seenBeforeSending = [$this->storage->attempts($message->id), $this->storage->failures[$message->id]['error'] ?? null, $this->storage->fetchUnpublished(10)];
+        });
+
+        (new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks)))->execute([]);
+
+        self::assertNotNull($seenBeforeSending);
+        self::assertSame(1, $seenBeforeSending[0]);
+        self::assertStringContainsString('The relay stopped during this attempt', (string) $seenBeforeSending[1]);
+        self::assertSame([], $seenBeforeSending[2], 'The next run does not start with the same message again.');
+        self::assertTrue($this->storage->isPublished($message->id));
+    }
+
+    public function test_a_run_that_sent_nothing_does_not_give_up_on_a_message(): void
+    {
+        // The last attempt fails while the transport is down: nothing could be sent in this run.
+        $this->storage->store($this->outboxMessage('m1', new CreateTaskCommand('1', 'a'), attempts: 9));
+        $bus = new RecordingBus(new \RuntimeException('Connection refused'));
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertStringContainsString('not given up because no message could be sent in this run', self::display($tester));
+        $retryAt = $this->storage->failures['m1']['retryAt'];
+        self::assertNotNull($retryAt);
+        self::assertEqualsWithDelta(time() + 3600, $retryAt->getTimestamp(), 5);
+        self::assertSame(10, $this->storage->attempts('m1'));
+    }
+
+    public function test_a_run_that_sent_other_messages_gives_up_after_the_last_attempt(): void
+    {
+        $this->storage->store($this->outboxMessage('good', new CreateTaskCommand('good', 'a')));
+        $this->storage->store($this->outboxMessage('bad', new CreateTaskCommand('bad', 'b'), attempts: 9));
+        $bus = new CallbackBus(static function (object $message): void {
+            if ($message instanceof CreateTaskCommand && 'bad' === $message->id) {
+                throw new \RuntimeException('Message too large');
+            }
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertStringContainsString('Gave up on message "bad" after 10 attempt(s): RuntimeException: Message too large', self::display($tester));
+        self::assertNull($this->storage->failures['bad']['retryAt']);
+    }
+
+    public function test_a_failing_storage_stops_the_run_with_exit_code_1(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->storage->failFetching = true;
+
+        $tester = $this->execute();
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Stopping: the outbox storage failed (RuntimeException: Database is down.)', self::display($tester));
     }
 
     public function test_a_storage_that_does_not_postpone_failures_still_terminates(): void
@@ -370,6 +433,13 @@ final class OutboxRelayCommandTest extends TestCase
         $this->storage->store($outboxMessage);
 
         return $outboxMessage;
+    }
+
+    private function outboxMessage(string $id, object $message, int $attempts = 0): OutboxMessage
+    {
+        $encoded = OutboxMessage::fromEnvelope(new Envelope($message), new PhpSerializer(), 'async');
+
+        return new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async', $attempts);
     }
 
     /**

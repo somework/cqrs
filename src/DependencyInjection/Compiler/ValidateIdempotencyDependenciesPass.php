@@ -64,10 +64,12 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
 
         $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $store) : sprintf('"%s"', $store);
 
-        if (1 === preg_match('/^(flock|semaphore|in-memory)(:|$)/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store %s only lives in one process or host: it does not deduplicate across servers, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+        if (1 === preg_match('/^in-memory$/', $store)) {
+            $container->log($this, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+        } elseif (1 === preg_match('/^(flock|semaphore)(:|$)/', $store)) {
+            $container->log($this, sprintf('Idempotency is enabled but the lock store %s only lives on one host: it does not deduplicate across servers, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages, so asynchronous dispatches with an IdempotencyStamp fail. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
+            $container->log($this, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages (asynchronous dispatches with an IdempotencyStamp fail), and a key stays locked while the connection lives, whatever the TTL. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
         }
     }
 

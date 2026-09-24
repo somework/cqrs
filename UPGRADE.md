@@ -89,7 +89,8 @@ the handler now lives only on that bus, as before; you can remove the `bus` argu
 command on the same bus fail the build; the same handler on the sync and the async bus is fine. A handler
 registered without a bus (for example a plain `#[AsMessageHandler]`, which Messenger puts on every bus) counts
 on every bus, so a leftover Messenger handler next to a bundle handler now fails the build instead of both
-running. The check for messages without any handler was removed: it could not detect anything the bus does
+running. Handlers registered for a parent class or an interface of a command or query (a catch-all
+`__invoke(Command $command)`) count for every command or query they receive on their bus. The check for messages without any handler was removed: it could not detect anything the bus does
 not already report.
 
 A handler attribute whose type contradicts the message, such as `#[AsCommandHandler(OrderPlaced::class)]` for an
@@ -122,6 +123,8 @@ the `DeduplicateStamp` it produces.
   message was routed to a transport instead of being handled.
 - `DuplicateMessageException` (new, `@api`) is thrown when idempotency deduplication dropped the message.
 - `DispatchAfterCurrentBusStamp` is ignored so the result is available immediately.
+- `dispatchSync()` throws `MultipleHandlersException` when more than one handler ran, like `ask()`; before, it
+  returned the result of the last handler.
 - A missing handler raises the bundle's `NoHandlerException` (with Messenger's `NoHandlerForMessageException` as
   previous exception) instead of Messenger's exception. Both extend `\LogicException`; update
   `catch (NoHandlerForMessageException $e)` blocks around these two methods.
@@ -151,6 +154,24 @@ the attribute's `transport`, entries for parent classes or interfaces, the secti
 `#[Asynchronous]` only falls back to the `async` transport when nothing is configured and
 `framework.messenger.routing` does not route the message; before, it overrode both the configuration and
 Messenger's routing.
+
+For messages with a handler in the application, the container compilation now checks the attribute: the async
+bus of the message type must be configured, a named transport must exist, and a bare attribute needs the `async`
+transport, a `transports.command_async` / `transports.event_async` entry or a `framework.messenger.routing`
+route. Before, these mistakes surfaced at the first dispatch.
+
+### Environment variables in the configuration
+
+Options the container compilation needs (dispatch modes, transport names, bus ids, service ids,
+`retry_strategy.transports`) reject `%env(...)%` with a clear message; before, they failed with
+"Incompatible use of dynamic environment variables" or an invalid enum value. Environment variables still work in
+`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.table_name`, `outbox.max_attempts`
+and the `async.dispatch_after_current_bus` flags.
+
+### Handler attributes must match the handler method
+
+`#[AsCommandHandler(ShipOrder::class)]` on a handler whose `__invoke()` accepts another message is now a compile
+error; before, every dispatch failed with a `TypeError`.
 
 ### Per-message configuration through interfaces
 
@@ -200,7 +221,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   [Upgrading from 0.4](docs/outbox.md#upgrading-from-04).
 - `OutboxStorage` is now `@api` and changed: `fetchUnpublished(int $limit)` returns only due messages
   (unpublished, not given up, retry time passed), and custom implementations must add
-  `markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void` and
+  `markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void` (it stores the given
+  number of attempts; the relay calls it before every attempt and again when the attempt fails) and
   `purgePublished(DateTimeImmutable $publishedBefore): int`. `OutboxMessage` has a new `attempts` property
   (constructor argument `$attempts = 0`).
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
@@ -218,16 +240,20 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 - The relay sends each message to its stored transport and runs as a single instance when symfony/lock is
   installed. A row that fails is postponed (1 minute, doubling up to 1 hour) instead of being retried on every
   run, and given up after `outbox.max_attempts` attempts; list and requeue given-up rows with the new
-  `somework:cqrs:outbox:failed` command. The relay stops after 5 consecutive send failures and exits with code 1
-  when any row failed (monitor the exit code); an invalid `--limit` now exits with 2 instead of 1. `--limit`
-  counts processed rows, failed ones included.
-- The relay lock is named after `framework.cache.prefix_seed` (default: the project directory), the connection
-  and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
+  `somework:cqrs:outbox:failed` command. Every attempt is counted before the message is sent, so a row that
+  crashes the relay process is not retried forever; a run that could not send any message never gives a row up
+  (transport outage). The relay stops after 5 consecutive send failures and exits with code 1 when any row
+  failed or the storage failed (monitor the exit code, or the new outbox check of `somework:cqrs:health`); an
+  invalid `--limit` now exits with 2 instead of 1. `--limit` counts processed rows, failed ones included. The
+  relay logs failures to the `logger` service.
+- The relay lock is named after `framework.cache.prefix_seed` when you set it (the project directory
+  otherwise), the connection and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
   relays of two releases cannot run at the same time.
 - Dates are now stored in UTC. Rows written by earlier versions keep the local time they were written in;
   this only matters for the relay order and the purge cut-off of rows written in the last hours before the upgrade.
 - `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage` are now `@api`.
-- `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores), and
+- `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores) and not a
+  word reserved in MySQL, MariaDB, PostgreSQL or SQLite (`order`, `user`, …), and
   `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - Tables created by earlier versions keep working. With very long table names the index is now named

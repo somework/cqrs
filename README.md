@@ -60,7 +60,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - `QueryBus::ask()` returns the result of the single handler
 - `EventBus` with zero-to-many handlers and fire-and-forget semantics
 - Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`); handler marker interfaces and abstract base handlers are optional alternatives
-- Compile-time check that every command and query has at most one handler per bus
+- Compile-time check that every command and query has at most one handler per bus, counting handlers of its parent classes and interfaces
 
 **Stamp pipeline**
 - Composable `StampDecider` system with priority ordering (`@api` -- extend it yourself)

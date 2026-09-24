@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
+use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
@@ -16,6 +17,8 @@ use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
+
+use function count;
 
 /**
  * Dispatches commands through configured Messenger buses.
@@ -51,6 +54,7 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
      * @throws NoHandlerException              when no handler handled the command
      * @throws MessageSentToTransportException when the routing sent the command to a transport
      * @throws DuplicateMessageException       when deduplication dropped the command
+     * @throws MultipleHandlersException       when more than one handler handled the command (the result would be ambiguous)
      */
     public function dispatchSync(Command $command, StampInterface ...$stamps): mixed
     {
@@ -64,7 +68,12 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
 
         $handledStamps = SynchronousResult::handledStamps($envelope, self::BUS_NAME);
 
-        return $handledStamps[array_key_last($handledStamps)]->getResult();
+        // Messenger also runs handlers registered for parent classes and interfaces of the command.
+        if (count($handledStamps) > 1) {
+            throw new MultipleHandlersException($command::class, self::BUS_NAME, count($handledStamps));
+        }
+
+        return $handledStamps[0]->getResult();
     }
 
     public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope

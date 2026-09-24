@@ -15,7 +15,8 @@ use function is_string;
 use function sprintf;
 
 /**
- * Validates at compile time that every command and query has at most one handler per bus.
+ * Validates at compile time that every command and query has at most one handler per bus,
+ * counting the handlers registered for its parent classes and interfaces.
  *
  * The same handler service registered on several buses (e.g. the sync and the async command
  * bus) counts once. Messages without any handler cannot be detected here because message
@@ -73,17 +74,28 @@ final class ValidateHandlerCountPass implements CompilerPassInterface
 
             foreach ($handlers as $messageClass => $byBus) {
                 foreach ($byBus as $bus => $services) {
+                    // Messenger also runs the handlers registered for parent classes and interfaces of
+                    // the message (e.g. a catch-all handler for every command).
+                    $inherited = [];
+                    foreach ($handlers as $ancestor => $ancestorByBus) {
+                        if ($ancestor !== $messageClass && isset($ancestorByBus[$bus]) && self::isSubtype($container, $messageClass, $ancestor)) {
+                            $services += $ancestorByBus[$bus];
+                            $inherited[] = $ancestor;
+                        }
+                    }
+
                     if (count($services) < 2) {
                         continue;
                     }
 
                     $violations[] = sprintf(
-                        '%s %s has %d handlers%s: %s.',
+                        '%s %s has %d handlers%s: %s%s.',
                         $label,
                         $messageClass,
                         count($services),
                         '' === $bus ? '' : sprintf(' on bus "%s"', $bus),
                         implode(', ', array_keys($services)),
+                        [] === $inherited ? '' : sprintf(' (including handlers of %s)', implode(', ', $inherited)),
                     );
                 }
             }
@@ -92,6 +104,13 @@ final class ValidateHandlerCountPass implements CompilerPassInterface
         if ([] !== $violations) {
             throw new \LogicException("CQRS handler validation failed (commands and queries must have exactly one handler):\n".implode("\n", $violations));
         }
+    }
+
+    private static function isSubtype(ContainerBuilder $container, string $class, string $ancestor): bool
+    {
+        $reflection = $container->getReflectionClass($class, false);
+
+        return null !== $reflection && $reflection->isSubclassOf($ancestor);
     }
 
     /**

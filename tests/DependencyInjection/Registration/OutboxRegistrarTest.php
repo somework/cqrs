@@ -94,6 +94,8 @@ final class OutboxRegistrarTest extends TestCase
         $container = $this->createContainerWithRegistrar();
 
         self::assertSame(OutboxFailedCommand::class, $container->getDefinition('somework_cqrs.outbox.failed_command')->getClass());
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.health_checker')->hasTag('somework_cqrs.health_checker'));
+        self::assertSame('logger', (string) $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$logger'));
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.failed_command')->hasTag('console.command'));
 
         self::assertSame(OutboxSetupCommand::class, $container->getDefinition('somework_cqrs.outbox.setup_command')->getClass());

@@ -1,0 +1,63 @@
+<?php
+
+declare(strict_types=1);
+
+namespace SomeWork\CqrsBundle\Health;
+
+use DateTimeImmutable;
+use DateTimeZone;
+use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+
+use function intdiv;
+use function sprintf;
+
+/**
+ * Reports whether the outbox relay keeps up: messages the relay gave up on, and due messages
+ * that have waited longer than a relay run should take.
+ *
+ * @internal
+ */
+final class OutboxHealthChecker implements HealthChecker
+{
+    /** A due message older than this means that the relay does not run, or does not keep up. */
+    private const MAX_WAIT_SECONDS = 600;
+
+    public function __construct(
+        private readonly OutboxStorage $outboxStorage,
+    ) {
+    }
+
+    /** @return list<CheckResult> */
+    public function check(): array
+    {
+        if (!$this->outboxStorage instanceof DbalOutboxStorage) {
+            return [new CheckResult(CheckSeverity::OK, 'outbox', sprintf('The outbox storage (%s) is not checked', $this->outboxStorage::class))];
+        }
+
+        try {
+            $status = $this->outboxStorage->status();
+        } catch (\Throwable $exception) {
+            return [new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('The outbox storage cannot be read: %s', $exception->getMessage()))];
+        }
+
+        $results = [];
+
+        if ($status['failed'] > 0) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status['failed']));
+        }
+
+        $oldestDue = $status['oldest_due'];
+        $waited = null === $oldestDue ? 0 : (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp() - $oldestDue->getTimestamp();
+
+        if ($waited > self::MAX_WAIT_SECONDS) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): is "somework:cqrs:outbox:relay" running?', $status['due'], intdiv($waited, 60)));
+        }
+
+        if ([] === $results) {
+            $results[] = new CheckResult(CheckSeverity::OK, 'outbox', sprintf('Outbox: %d message(s) due, none waiting for long', $status['due']));
+        }
+
+        return $results;
+    }
+}

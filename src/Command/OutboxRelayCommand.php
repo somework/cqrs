@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Command;
 
 use DateTimeImmutable;
 use Psr\Container\ContainerInterface;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
@@ -64,6 +65,12 @@ final class OutboxRelayCommand extends Command
 
     private const MAX_ERROR_LENGTH = 2000;
 
+    /** Rows fetched at once: bodies can be large. */
+    private const BATCH_SIZE = 50;
+
+    /** Stored before each attempt, so an attempt the process does not survive still counts. */
+    private const INTERRUPTED = 'The relay stopped during this attempt (e.g. a PHP fatal error, running out of memory or a killed process).';
+
     /**
      * @param ContainerInterface|null $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
      * @param int                     $maxAttempts Attempts after which a failing message is given up
@@ -76,6 +83,7 @@ final class OutboxRelayCommand extends Command
         private readonly ?ContainerInterface $buses = null,
         private readonly string $lockName = 'somework:cqrs:outbox:relay',
         private readonly int $maxAttempts = 10,
+        private readonly ?LoggerInterface $logger = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -103,14 +111,21 @@ final class OutboxRelayCommand extends Command
         }
 
         // Overlapping runs (cron) would publish the same rows twice.
-        if (class_exists(LockFactory::class) && !$this->lock($this->lockName)) {
-            $io->note('Another outbox relay is already running.');
+        try {
+            if (class_exists(LockFactory::class) && !$this->lock($this->lockName)) {
+                $io->note('Another outbox relay is already running.');
 
-            return self::SUCCESS;
+                return self::SUCCESS;
+            }
+        } catch (LockException $exception) {
+            return $this->stop($io, 'the relay lock could not be acquired', $exception);
         }
 
         try {
             return $this->relay($io, $limit);
+        } catch (\Throwable $exception) {
+            // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
+            return $this->stop($io, 'the outbox storage failed', $exception);
         } finally {
             try {
                 $this->release();
@@ -131,7 +146,7 @@ final class OutboxRelayCommand extends Command
         $seen = [];
 
         while ($processed < $limit) {
-            $requested = $limit - $processed;
+            $requested = min($limit - $processed, self::BATCH_SIZE);
             // A failed message is postponed by markFailed(), so the next batch starts after it.
             $batch = $this->outboxStorage->fetchUnpublished($requested);
             $fresh = 0;
@@ -144,6 +159,14 @@ final class OutboxRelayCommand extends Command
                 $seen[$message->id] = true;
                 ++$fresh;
                 ++$processed;
+
+                $attempt = $message->attempts + 1;
+
+                // Count the attempt before sending it: if the process dies during the attempt, the
+                // next run must not start with the same message again.
+                if (!$this->record($message, $attempt, self::INTERRUPTED, $this->retryAt($attempt), $io)) {
+                    return self::FAILURE;
+                }
 
                 $envelope = null;
                 $failure = null;
@@ -169,13 +192,14 @@ final class OutboxRelayCommand extends Command
 
                 if (null !== $failure) {
                     ++$failed;
-                    if (!$this->recordFailure($message, $failure, $io)) {
+                    if (!$this->recordFailure($message, $attempt, $failure, $sendFailed && 0 === $relayed, $io)) {
                         return self::FAILURE;
                     }
 
                     // A transport or database outage fails every message: stop instead of walking the backlog.
                     if ($sendFailed && ++$consecutiveSendFailures >= self::MAX_CONSECUTIVE_SEND_FAILURES) {
                         $io->error(sprintf('Stopping after %d consecutive failures to send messages.', $consecutiveSendFailures));
+                        $this->logger?->error('The outbox relay stopped after {count} consecutive failures to send messages.', ['count' => $consecutiveSendFailures]);
 
                         return self::FAILURE;
                     }
@@ -196,7 +220,7 @@ final class OutboxRelayCommand extends Command
         }
 
         if (0 === $processed) {
-            $io->info('No unpublished messages found.');
+            $io->info('No outbox messages are due.');
 
             return self::SUCCESS;
         }
@@ -209,41 +233,90 @@ final class OutboxRelayCommand extends Command
     }
 
     /**
+     * When to try again after attempt number $attempt fails, or null to give up.
+     */
+    private function retryAt(int $attempt): ?DateTimeImmutable
+    {
+        if ($attempt >= $this->maxAttempts) {
+            return null;
+        }
+
+        return self::inSeconds(min(self::RETRY_DELAY * 2 ** min($attempt - 1, 30), self::MAX_RETRY_DELAY));
+    }
+
+    private static function inSeconds(int $seconds): DateTimeImmutable
+    {
+        return new DateTimeImmutable(sprintf('+%d seconds', $seconds));
+    }
+
+    /**
      * Postpones the message with an exponential backoff, or gives up after the last attempt.
+     *
+     * @param bool $nothingSent Whether no message could be sent in this run so far: then the transport may be
+     *                          down, and the relay does not give up on the message yet
      *
      * @return bool false when the failure could not be stored, which stops the run
      */
-    private function recordFailure(OutboxMessage $message, \Throwable $exception, SymfonyStyle $io): bool
+    private function recordFailure(OutboxMessage $message, int $attempt, \Throwable $exception, bool $nothingSent, SymfonyStyle $io): bool
     {
-        $attempts = $message->attempts + 1;
         $error = self::describe($exception);
-        $retryAt = null;
+        $retryAt = $this->retryAt($attempt);
+        $keptDespiteLastAttempt = null === $retryAt && $nothingSent;
 
-        if ($attempts < $this->maxAttempts) {
-            $delay = min(self::RETRY_DELAY * 2 ** min($attempts - 1, 30), self::MAX_RETRY_DELAY);
-            $retryAt = new DateTimeImmutable(sprintf('+%d seconds', $delay));
+        if ($keptDespiteLastAttempt) {
+            $retryAt = self::inSeconds(self::MAX_RETRY_DELAY);
         }
 
-        try {
-            $this->outboxStorage->markFailed($message->id, $error, $retryAt);
-        } catch (\Throwable $storageException) {
-            $io->error(sprintf('Failed to relay message "%s": %s', $message->id, $error));
-            $io->error(sprintf('Stopping: the failure could not be recorded (%s).', $storageException->getMessage()));
-
+        if (!$this->record($message, $attempt, $error, $retryAt, $io)) {
             return false;
         }
 
-        $io->error(null === $retryAt
-            ? sprintf('Gave up on message "%s" after %d attempt(s): %s', $message->id, $attempts, $error)
-            : sprintf('Failed to relay message "%s" (attempt %d of %d, next attempt after %s): %s', $message->id, $attempts, $this->maxAttempts, $retryAt->format(DATE_ATOM), $error));
+        $context = ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $this->maxAttempts, 'error' => $error, 'exception' => $exception];
+
+        if (null === $retryAt) {
+            $io->error(sprintf('Gave up on message "%s" after %d attempt(s): %s', $message->id, $attempt, $error));
+            $this->logger?->error('Gave up on outbox message {id} after {attempt} attempt(s): {error}', $context);
+        } elseif ($keptDespiteLastAttempt) {
+            $io->error(sprintf('Failed to relay message "%s" (attempt %d of %d; not given up because no message could be sent in this run, next attempt after %s): %s', $message->id, $attempt, $this->maxAttempts, $retryAt->format(DATE_ATOM), $error));
+            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}; not given up while no message can be sent): {error}', $context);
+        } else {
+            $io->error(sprintf('Failed to relay message "%s" (attempt %d of %d, next attempt after %s): %s', $message->id, $attempt, $this->maxAttempts, $retryAt->format(DATE_ATOM), $error));
+            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', $context);
+        }
 
         return true;
     }
 
+    /**
+     * @return bool false when the storage failed, which stops the run
+     */
+    private function record(OutboxMessage $message, int $attempt, string $error, ?DateTimeImmutable $retryAt, SymfonyStyle $io): bool
+    {
+        try {
+            $this->outboxStorage->markFailed($message->id, $attempt, $error, $retryAt);
+        } catch (\Throwable $storageException) {
+            $this->stop($io, sprintf('the attempt to relay message "%s" could not be recorded', $message->id), $storageException);
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private function stop(SymfonyStyle $io, string $reason, \Throwable $exception): int
+    {
+        $io->error(sprintf('Stopping: %s (%s).', $reason, self::describe($exception)));
+        $this->logger?->error('The outbox relay stopped: {reason}.', ['reason' => $reason, 'exception' => $exception]);
+
+        return self::FAILURE;
+    }
+
     private static function describe(\Throwable $exception): string
     {
+        $description = '' === $exception->getMessage() ? $exception::class : sprintf('%s: %s', $exception::class, $exception->getMessage());
+
         // Stored in a text column: keep it valid UTF-8 and bounded.
-        return mb_substr(mb_scrub(sprintf('%s: %s', $exception::class, $exception->getMessage()), 'UTF-8'), 0, self::MAX_ERROR_LENGTH, 'UTF-8');
+        return mb_substr(mb_scrub($description, 'UTF-8'), 0, self::MAX_ERROR_LENGTH, 'UTF-8');
     }
 
     private function decode(OutboxMessage $message): Envelope
@@ -311,7 +384,7 @@ final class OutboxRelayCommand extends Command
         try {
             $this->lock->refresh();
         } catch (LockException $exception) {
-            $io->error(sprintf('Stopping: the relay lock was lost (%s). Another relay may be running.', $exception->getMessage()));
+            $this->stop($io, 'the relay lock was lost, another relay may be running', $exception);
 
             return false;
         }

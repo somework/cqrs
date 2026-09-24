@@ -37,7 +37,7 @@ When mode is `DEFAULT`, the decider resolves to SYNC or ASYNC by checking (first
 
 **QueryBus**: `ask()` validates exactly one `HandledStamp` exists and returns its result. Zero handlers throw `NoHandlerException`, several `MultipleHandlersException`. Queries always return data.
 
-**Synchronous results** (`dispatchSync()`, `ask()`) go through `SynchronousResult`: it strips `DispatchAfterCurrentBusStamp`, throws `MessageSentToTransportException` when the message was sent to a transport, `DuplicateMessageException` when deduplication dropped it, and rethrows the single cause of a `HandlerFailedException`.
+**Synchronous results** (`dispatchSync()`, `ask()`) go through `SynchronousResult`: it strips `DispatchAfterCurrentBusStamp`, throws `MessageSentToTransportException` when the message was sent to a transport, `DuplicateMessageException` when deduplication dropped it, and rethrows the single cause of a `HandlerFailedException`. Both `dispatchSync()` and `ask()` throw `MultipleHandlersException` when more than one handler ran (the result would be ambiguous).
 
 **EventBus**: All methods return `Envelope`. Never extract handler results from events — they are fire-and-forget notifications.
 

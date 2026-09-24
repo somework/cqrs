@@ -77,24 +77,26 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
 
-        $storage->markFailed(self::ID_1, 'RuntimeException: boom', new DateTimeImmutable('+1 hour'));
+        $storage->markFailed(self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('+1 hour'));
 
         self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(10)), 'The failed message is skipped until its retry time.');
 
-        $storage->markFailed(self::ID_2, 'RuntimeException: boom', new DateTimeImmutable('-1 second'));
+        $storage->markFailed(self::ID_2, 1, 'RuntimeException: boom', new DateTimeImmutable('-1 second'));
         $messages = $storage->fetchUnpublished(10);
 
         self::assertSame([self::ID_2], self::ids($messages));
         self::assertSame(1, $messages[0]->attempts);
     }
 
-    public function test_attempts_are_counted_per_failure(): void
+    public function test_the_number_of_attempts_is_stored_as_given(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
 
-        $storage->markFailed(self::ID_1, 'first', new DateTimeImmutable('-1 minute'));
-        $storage->markFailed(self::ID_1, 'second', new DateTimeImmutable('-1 minute'));
+        // The relay records an attempt before sending it, and again with the error when it fails.
+        $storage->markFailed(self::ID_1, 1, 'interrupted', new DateTimeImmutable('-1 minute'));
+        $storage->markFailed(self::ID_1, 1, 'first', new DateTimeImmutable('-1 minute'));
+        $storage->markFailed(self::ID_1, 2, 'second', new DateTimeImmutable('-1 minute'));
 
         self::assertSame(2, $storage->fetchUnpublished(1)[0]->attempts);
     }
@@ -104,9 +106,9 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
-        $storage->markFailed(self::ID_1, 'first failure', new DateTimeImmutable('-1 minute'));
-        $storage->markFailed(self::ID_1, 'MessageDecodingFailedException: gone', null);
-        $storage->markFailed(self::ID_2, 'RuntimeException: boom', null);
+        $storage->markFailed(self::ID_1, 1, 'first failure', new DateTimeImmutable('-1 minute'));
+        $storage->markFailed(self::ID_1, 2, 'MessageDecodingFailedException: gone', null);
+        $storage->markFailed(self::ID_2, 1, 'RuntimeException: boom', null);
 
         self::assertSame([], self::ids($storage->fetchUnpublished(10)), 'Given-up messages are no longer due.');
 
@@ -134,13 +136,13 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->markPublished(self::ID_1);
 
-        $storage->markFailed(self::ID_1, 'late failure', null);
+        $storage->markFailed(self::ID_1, 1, 'late failure', null);
         self::assertSame([], $storage->fetchFailed(10));
 
         $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Outbox message "missing" not found in table "somework_cqrs_outbox" — cannot record a failed attempt.');
+        $this->expectExceptionMessage('Outbox message "missing" not found in table "somework_cqrs_outbox" — cannot record an attempt.');
 
-        $storage->markFailed('missing', 'error', null);
+        $storage->markFailed('missing', 1, 'error', null);
     }
 
     public function test_setup_adds_the_failure_columns_to_a_table_of_an_earlier_version(): void
@@ -165,7 +167,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
 
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        $storage->markFailed(self::ID_1, 'boom', null);
+        $storage->markFailed(self::ID_1, 1, 'boom', null);
 
         self::assertSame(1, $storage->fetchFailed(10)[0]['attempts']);
     }

@@ -50,7 +50,9 @@ use function class_exists;
 use function is_array;
 use function is_bool;
 use function is_int;
+use function is_string;
 use function sprintf;
+use function str_starts_with;
 
 /** @internal */
 final class CqrsExtension extends Extension
@@ -73,6 +75,7 @@ final class CqrsExtension extends Extension
         $config = $this->processConfiguration($configuration, $configs);
 
         self::assertCompileTimeFlags($config);
+        self::assertNoEnvironmentVariables($container, $config);
 
         /** @var string $defaultBusId */
         $defaultBusId = $config['default_bus'] ?? 'messenger.default_bus';
@@ -180,6 +183,49 @@ final class CqrsExtension extends Extension
     public function getAlias(): string
     {
         return 'somework_cqrs';
+    }
+
+    /**
+     * Options read only at runtime; every other option names services, buses, transports, dispatch
+     * modes or message classes that must be known when the container is compiled.
+     */
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.table_name', 'outbox.max_attempts', 'async.dispatch_after_current_bus'];
+
+    /**
+     * Without this check an environment variable in such an option fails later with Symfony's
+     * "Incompatible use of dynamic environment variables" or an invalid enum value.
+     *
+     * @param array<array-key, mixed> $config
+     */
+    private static function assertNoEnvironmentVariables(ContainerBuilder $container, array $config, string $path = ''): void
+    {
+        foreach ($config as $key => $value) {
+            $keyPath = '' === $path ? (string) $key : $path.'.'.$key;
+
+            foreach (self::RUNTIME_OPTIONS as $runtimeOption) {
+                if ($keyPath === $runtimeOption || str_starts_with($keyPath, $runtimeOption.'.')) {
+                    continue 2;
+                }
+            }
+
+            if (self::usesEnvironmentVariable($container, (string) $key) || (is_string($value) && self::usesEnvironmentVariable($container, $value))) {
+                // A map key or a list entry is reported with the option that holds it.
+                $option = is_int($key) || self::usesEnvironmentVariable($container, $key) ? $path : $keyPath;
+
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.', $option));
+            }
+
+            if (is_array($value)) {
+                self::assertNoEnvironmentVariables($container, $value, $keyPath);
+            }
+        }
+    }
+
+    private static function usesEnvironmentVariable(ContainerBuilder $container, string $value): bool
+    {
+        $container->resolveEnvPlaceholders($value, null, $usedEnvs);
+
+        return [] !== ($usedEnvs ?? []);
     }
 
     /**

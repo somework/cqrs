@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Outbox\ReservedTableNames;
 use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\NullRetryPolicy;
@@ -17,6 +18,7 @@ use Symfony\Component\Config\Definition\ConfigurationInterface;
 
 use function array_keys;
 use function class_exists;
+use function explode;
 use function interface_exists;
 use function is_string;
 use function ltrim;
@@ -282,11 +284,24 @@ final class Configuration implements ConfigurationInterface
         $outboxChildren->booleanNode('enabled')->defaultFalse()
             ->info('Enable transactional outbox. Requires doctrine/dbal.');
         $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
-            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; avoid reserved SQL words).');
+            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
         self::requireName($tableName);
         $tableName->validate()
             ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $value))
             ->thenInvalid('Invalid outbox table name %s: use letters, digits and underscores, optionally prefixed with a schema ("schema.table").')
+        ->end();
+        // The outbox queries do not quote the name, so a reserved word breaks them (e.g. "order", or "user" on PostgreSQL).
+        $tableName->validate()
+            ->ifTrue(static function (mixed $value): bool {
+                foreach (is_string($value) ? explode('.', $value) : [] as $part) {
+                    if (ReservedTableNames::isReserved($part)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->thenInvalid('Invalid outbox table name %s: it is a reserved SQL word in MySQL, MariaDB, PostgreSQL or SQLite. Choose another name, e.g. "somework_cqrs_outbox".')
         ->end();
         self::requireName($outboxChildren->scalarNode('connection')->defaultValue('default')->cannotBeEmpty()
             ->info('Doctrine DBAL connection name (service "doctrine.dbal.<name>_connection") holding the outbox table; use the connection of your business data.'));

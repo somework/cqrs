@@ -11,17 +11,23 @@ use function is_string;
 use function sprintf;
 
 /**
- * Scopes the outbox relay lock to the application with "framework.cache.prefix_seed".
+ * Scopes the outbox relay lock to the application: "framework.cache.prefix_seed" when the
+ * application sets it, the project directory otherwise.
  *
- * The seed defaults to the project directory; applications deployed to a new directory per
- * release set it to a stable value, so the relays of the old and the new release share the lock.
- * It is only known once FrameworkBundle's configuration is merged, hence this pass.
+ * Symfony's default seed also contains the container class, which differs between environments
+ * and debug modes: relays started with another APP_ENV or APP_DEBUG must still share the lock.
+ * Applications deployed to a new directory per release set prefix_seed to a stable value, so the
+ * relays of the old and the new release share it too. FrameworkBundle's parameter is only known
+ * once its configuration is merged, hence this pass.
  *
  * @internal
  */
 final class OutboxRelayLockPass implements CompilerPassInterface
 {
     public const RELAY_ID = 'somework_cqrs.outbox.relay_command';
+
+    /** FrameworkBundle's default for framework.cache.prefix_seed. */
+    private const DEFAULT_PREFIX_SEED = '_%kernel.project_dir%.%kernel.container_class%';
 
     public function process(ContainerBuilder $container): void
     {
@@ -35,8 +41,10 @@ final class OutboxRelayLockPass implements CompilerPassInterface
             return;
         }
 
+        $configuredSeed = $container->hasParameter('cache.prefix.seed') ? $container->getParameter('cache.prefix.seed') : null;
+
         $seed = match (true) {
-            $container->hasParameter('cache.prefix.seed') => '%cache.prefix.seed%',
+            null !== $configuredSeed && self::DEFAULT_PREFIX_SEED !== $configuredSeed => '%cache.prefix.seed%',
             $container->hasParameter('kernel.project_dir') => '%kernel.project_dir%',
             default => 'app',
         };

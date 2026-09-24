@@ -40,6 +40,22 @@ final class OutboxRelayLockPassTest extends TestCase
         );
     }
 
+    public function test_symfony_default_seed_is_replaced_by_the_project_directory(): void
+    {
+        // The default seed contains the container class, which differs per APP_ENV and APP_DEBUG.
+        $container = $this->container();
+        $container->setParameter('kernel.project_dir', '/srv/app');
+        $container->setParameter('kernel.container_class', 'App_KernelProdContainer');
+        $container->setParameter('cache.prefix.seed', '_%kernel.project_dir%.%kernel.container_class%');
+
+        (new OutboxRelayLockPass())->process($container);
+
+        self::assertSame(
+            'somework_cqrs.outbox.relay./srv/app.default.somework_cqrs_outbox',
+            $container->getParameterBag()->resolveValue($container->getDefinition(OutboxRelayLockPass::RELAY_ID)->getArgument('$lockName')),
+        );
+    }
+
     public function test_does_nothing_without_the_outbox(): void
     {
         $container = new ContainerBuilder();

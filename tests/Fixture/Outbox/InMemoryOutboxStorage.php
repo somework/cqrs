@@ -29,6 +29,9 @@ final class InMemoryOutboxStorage implements OutboxStorage
     /** Whether markFailed() fails, e.g. because the database is down. */
     public bool $failMarkingFailed = false;
 
+    /** Whether fetchUnpublished() fails, e.g. because the database is down. */
+    public bool $failFetching = false;
+
     /** When false, failed messages are returned again right away (a storage ignoring the retry time). */
     public bool $postponeFailures = true;
 
@@ -39,6 +42,10 @@ final class InMemoryOutboxStorage implements OutboxStorage
 
     public function fetchUnpublished(int $limit): array
     {
+        if ($this->failFetching) {
+            throw new \RuntimeException('Database is down.');
+        }
+
         $now = new DateTimeImmutable();
         $due = [];
         foreach ($this->messages as $id => $message) {
@@ -64,7 +71,7 @@ final class InMemoryOutboxStorage implements OutboxStorage
         $this->published[$id] = new DateTimeImmutable();
     }
 
-    public function markFailed(string $id, string $error, ?DateTimeImmutable $retryAt): void
+    public function markFailed(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt): void
     {
         if ($this->failMarkingFailed) {
             throw new \RuntimeException('Database is down.');
@@ -79,7 +86,7 @@ final class InMemoryOutboxStorage implements OutboxStorage
         }
 
         $message = $this->messages[$id];
-        $this->messages[$id] = new OutboxMessage($message->id, $message->body, $message->headers, $message->createdAt, $message->transportName, $message->attempts + 1);
+        $this->messages[$id] = new OutboxMessage($message->id, $message->body, $message->headers, $message->createdAt, $message->transportName, $attempts);
         $this->failures[$id] = ['error' => $error, 'retryAt' => $retryAt];
     }
 
