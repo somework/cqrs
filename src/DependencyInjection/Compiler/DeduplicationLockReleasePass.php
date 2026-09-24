@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 use SomeWork\CqrsBundle\Messenger\DeduplicationLockReleaseMiddleware;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
@@ -27,7 +28,7 @@ final class DeduplicationLockReleasePass implements CompilerPassInterface
         }
 
         $container->setDefinition(self::MIDDLEWARE_ID, (new Definition(DeduplicationLockReleaseMiddleware::class))
-            ->setArguments([new Reference('lock.factory')])
+            ->setArguments([new Reference('lock.factory'), new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE)])
             ->setPublic(false));
 
         foreach (CqrsBusIds::resolve($container) as $busId) {

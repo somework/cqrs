@@ -23,8 +23,9 @@ use function substr;
 /**
  * Produces one OpenTelemetry span per pass of a message through a bus.
  *
- * - "cqrs.dispatch {ShortClassName}" (PRODUCER) when a message is dispatched. The current
- *   trace context is attached as a TraceContextStamp so it travels with the message.
+ * - "cqrs.dispatch {ShortClassName}" (PRODUCER) when a message is dispatched, child of the context
+ *   captured at dispatch time (TraceContextCaptureMiddleware) or of the current one. Its own context
+ *   replaces the TraceContextStamp, so it travels with the message.
  * - "cqrs.consume {ShortClassName}" (CONSUMER) when a worker handles a received message,
  *   continuing the trace carried by the TraceContextStamp.
  *
@@ -49,8 +50,10 @@ final class OpenTelemetryMiddleware implements MiddlewareInterface
             ->setAttribute('cqrs.message.class', $message::class)
             ->setAttribute('cqrs.message.type', self::messageType($message));
 
+        // Received: the trace of the producer. Dispatched: the context captured when the message was
+        // dispatched (it may run later, deferred until the current handler finished).
         $traceContext = $envelope->last(TraceContextStamp::class);
-        if ($received && $traceContext instanceof TraceContextStamp) {
+        if ($traceContext instanceof TraceContextStamp) {
             $spanBuilder->setParent(TraceContextPropagator::getInstance()->extract($traceContext->headers));
         }
 
@@ -58,12 +61,13 @@ final class OpenTelemetryMiddleware implements MiddlewareInterface
         $scope = $span->activate();
 
         try {
-            if (!$received && null === $traceContext) {
+            if (!$received) {
+                // The consumer continues from this dispatch span.
                 $headers = [];
                 TraceContextPropagator::getInstance()->inject($headers);
 
                 if ([] !== $headers) {
-                    $envelope = $envelope->with(new TraceContextStamp($headers));
+                    $envelope = $envelope->withoutAll(TraceContextStamp::class)->with(new TraceContextStamp($headers));
                 }
             }
 

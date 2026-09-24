@@ -9,15 +9,19 @@ problems appear when a message is dispatched or handled.
 
 ### No handler for a message
 
-**Symptom.** Dispatching or handling a message fails with Messenger's error:
+**Symptom.** `CommandBus::dispatchSync()` and `QueryBus::ask()` throw
+
+```
+SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus.
+```
+
+(the previous exception is Messenger's `NoHandlerForMessageException`). Other
+dispatches, and a worker handling a received message, fail with Messenger's error:
 
 ```
 Symfony\Component\Messenger\Exception\NoHandlerForMessageException: No handler for message "App\Application\Command\CreateTask".
 ```
 
-On a bus with `default_middleware.allow_no_handlers: true`, `dispatchSync()`
-and `ask()` report the same problem as
-`NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus.`
 Missing handlers are not detected at compile time; only duplicate handlers are.
 Events without handlers are not an error.
 

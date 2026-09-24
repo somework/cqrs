@@ -100,6 +100,11 @@ the `DeduplicateStamp` it produces.
   message was routed to a transport instead of being handled.
 - `DuplicateMessageException` (new, `@api`) is thrown when idempotency deduplication dropped the message.
 - `DispatchAfterCurrentBusStamp` is ignored so the result is available immediately.
+- A missing handler raises the bundle's `NoHandlerException` (with Messenger's `NoHandlerForMessageException` as
+  previous exception) instead of Messenger's exception. Both extend `\LogicException`; update
+  `catch (NoHandlerForMessageException $e)` blocks around these two methods.
+- The async bus is checked before the stamp pipeline runs, so a dispatch failing with
+  `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
 
 ### Middleware order and OpenTelemetry
 
@@ -109,7 +114,26 @@ so messages deferred until the current bus finishes pass through it too.
 
 OpenTelemetry now creates one span per pass: `cqrs.dispatch <Message>` (kind PRODUCER) when dispatching and
 `cqrs.consume <Message>` (kind CONSUMER) when a worker handles a received message, linked through the new
-`TraceContextStamp`. Update dashboards or alerts that matched the previous span names.
+`TraceContextStamp`. A small middleware at the top of each bus captures the trace context at dispatch time, so
+messages deferred until the current handler finishes stay in its trace. Update dashboards or alerts that
+matched the previous span names.
+
+### `#[Asynchronous]` and configured transports
+
+The attribute's transport (default `async`) is now only used when `transports.command_async` /
+`transports.event_async` configure no transport for the message; before, the attribute won over the
+configuration. Stamps passed by the caller still win over both.
+
+### Per-message configuration through interfaces
+
+When a message implements several interfaces that have map entries (retry policies, serializers, metadata,
+transports, dispatch-after-current-bus, rate limiters), the most specific interface wins, whatever the order
+in which the class declares them, the same rule the dispatch mode already used.
+
+### Retry policy stamps
+
+Stamps returned by a `RetryPolicy` no longer override a stamp of the same class passed by the caller
+(for example a `DelayStamp`).
 
 ### Retry strategy
 

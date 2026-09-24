@@ -9,10 +9,12 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
+use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\DispatchAfterCurrentBusMiddleware;
@@ -51,6 +53,35 @@ final class SynchronousDispatchTest extends TestCase
         $this->expectException(\OutOfBoundsException::class);
 
         $bus->ask(new FindTaskQuery('1'));
+    }
+
+    public function test_a_message_without_handler_raises_no_handler_exception(): void
+    {
+        try {
+            (new CommandBus($this->bus([])))->dispatchSync(new CreateTaskCommand('1', 'x'));
+            self::fail('Expected a NoHandlerException.');
+        } catch (NoHandlerException $exception) {
+            self::assertSame(CreateTaskCommand::class, $exception->messageFqcn);
+            self::assertInstanceOf(NoHandlerForMessageException::class, $exception->getPrevious());
+        }
+
+        $this->expectException(NoHandlerException::class);
+        (new QueryBus($this->bus([]), StampsDecider::withoutDecorators()))->ask(new FindTaskQuery('1'));
+    }
+
+    public function test_a_missing_handler_of_a_nested_dispatch_is_not_reported_as_the_outer_one(): void
+    {
+        $messengerBus = null;
+        $messengerBus = new MessageBus([new HandleMessageMiddleware(new HandlersLocator([
+            CreateTaskCommand::class => [static function () use (&$messengerBus): void {
+                self::assertInstanceOf(MessageBus::class, $messengerBus);
+                $messengerBus->dispatch(new \stdClass());
+            }],
+        ]))]);
+
+        $this->expectException(NoHandlerForMessageException::class);
+
+        (new CommandBus($messengerBus))->dispatchSync(new CreateTaskCommand('1', 'x'));
     }
 
     public function test_dispatch_sync_ignores_deferral_stamps(): void

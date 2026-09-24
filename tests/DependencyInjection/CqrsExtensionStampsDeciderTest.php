@@ -69,6 +69,8 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
             'somework_cqrs.stamp_decider.event_serializer' => 150,
             'somework_cqrs.stamp_decider.event_metadata' => 125,
             'somework_cqrs.stamp_decider.message_transport' => 175,
+            // Runs after the transport decider, so configured transports win over #[Asynchronous].
+            'somework_cqrs.stamp_decider.asynchronous' => 170,
             'somework_cqrs.stamp_decider.event_sequence' => 110,
             'somework_cqrs.dispatch_after_current_bus_stamp_decider' => 0,
         ];

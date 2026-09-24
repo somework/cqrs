@@ -110,7 +110,7 @@ final class QueryBusTest extends TestCase
     public function test_ask_merges_supplied_stamps_with_default_pipeline(): void
     {
         $query = new FindTaskQuery('123');
-        $userStamp = new DummyStamp('user');
+        $userStamp = new TransportNamesStamp(['sync']);
         $retryStamp = new DummyStamp('retry');
         $serializerStamp = new SerializerStamp(['format' => 'json']);
         $metadataStamp = new MessageMetadataStamp('correlation-id');

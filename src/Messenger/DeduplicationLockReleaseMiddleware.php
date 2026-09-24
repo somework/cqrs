@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Messenger;
 
+use Psr\Log\LoggerInterface;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
@@ -24,8 +25,10 @@ use Symfony\Component\Messenger\Stamp\ReceivedStamp;
  */
 final class DeduplicationLockReleaseMiddleware implements MiddlewareInterface
 {
-    public function __construct(private readonly LockFactory $lockFactory)
-    {
+    public function __construct(
+        private readonly LockFactory $lockFactory,
+        private readonly ?LoggerInterface $logger = null,
+    ) {
     }
 
     public function handle(Envelope $envelope, StackInterface $stack): Envelope
@@ -36,7 +39,16 @@ final class DeduplicationLockReleaseMiddleware implements MiddlewareInterface
             $stamp = $envelope->last(DeduplicateStamp::class);
 
             if ($stamp instanceof DeduplicateStamp && null === $envelope->last(ReceivedStamp::class)) {
-                $this->lockFactory->createLockFromKey($stamp->getKey())->release();
+                try {
+                    $this->lockFactory->createLockFromKey($stamp->getKey())->release();
+                } catch (\Throwable $releaseFailure) {
+                    // The caller must see why the dispatch failed; the lock expires with its TTL.
+                    $this->logger?->warning('Could not release the deduplication lock of a failed dispatch', [
+                        'message' => $envelope->getMessage()::class,
+                        'key' => (string) $stamp->getKey(),
+                        'exception' => $releaseFailure,
+                    ]);
+                }
             }
 
             throw $exception;

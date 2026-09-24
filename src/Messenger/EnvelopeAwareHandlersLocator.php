@@ -31,6 +31,13 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
      */
     private WeakMap $envelopeAwareHandlers;
 
+    /**
+     * Envelope each handler object is currently handling, shared by the locators of all buses.
+     *
+     * @var WeakMap<EnvelopeAware, Envelope>|null
+     */
+    private static ?WeakMap $currentEnvelopes = null;
+
     public function __construct(private readonly HandlersLocatorInterface $decorated)
     {
         $this->envelopeAwareHandlers = new WeakMap();
@@ -38,10 +45,33 @@ final class EnvelopeAwareHandlersLocator implements HandlersLocatorInterface
 
     public function getHandlers(Envelope $envelope): iterable
     {
-        foreach ($this->decorated->getHandlers($envelope) as $descriptor) {
-            $this->envelopeAwareHandler($descriptor)?->setEnvelope($envelope);
+        $currentEnvelopes = self::$currentEnvelopes ??= new WeakMap();
 
-            yield $descriptor;
+        foreach ($this->decorated->getHandlers($envelope) as $descriptor) {
+            $handler = $this->envelopeAwareHandler($descriptor);
+
+            if (null === $handler) {
+                yield $descriptor;
+
+                continue;
+            }
+
+            // A nested dispatch handled by the same (shared) handler service must not leave the
+            // outer invocation with the inner envelope: restore it once the handler returned.
+            $previous = $currentEnvelopes[$handler] ?? null;
+            $handler->setEnvelope($envelope);
+            $currentEnvelopes[$handler] = $envelope;
+
+            try {
+                yield $descriptor;
+            } finally {
+                if (null !== $previous) {
+                    $handler->setEnvelope($previous);
+                    $currentEnvelopes[$handler] = $previous;
+                } else {
+                    unset($currentEnvelopes[$handler]);
+                }
+            }
         }
     }
 

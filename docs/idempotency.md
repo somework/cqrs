@@ -14,9 +14,12 @@ with a lock from the Lock component.
 - **`framework.lock` enabled.** FrameworkBundle adds Messenger's `deduplicate_middleware`
   to buses that use the default middleware only when the lock component is enabled. It is
   enabled automatically once `symfony/lock` is installed, unless you turned it off.
-- **A lock store shared by all dispatching processes.** The default store (semaphore or
-  flock) only coordinates processes on one host. When you dispatch from several servers,
-  point `framework.lock` at a shared store:
+- **A shared lock store that keeps keys until their TTL.** The default stores do not work:
+  `flock` and `semaphore` release a key as soon as the dispatch returns, so a second
+  dispatch with the same key goes through, and their keys cannot be sent to async transports
+  (`UnserializableKeyException`). `in-memory` only deduplicates within one process. Point
+  `framework.lock` at Redis, Memcached or a database; the container compilation log warns
+  when the configured store is one of the local ones:
 
 ```yaml
 # config/packages/lock.yaml
@@ -186,9 +189,9 @@ somework_cqrs:
   again either.
 - **Time-bounded.** Deduplication lasts as long as the lock (see [Lock lifetime](#lock-lifetime)).
   It is not a permanent record of processed operations.
-- **Only as reliable as the lock store.** An in-memory, semaphore or flock store does not
-  deduplicate across servers, and a store that loses its data (for example, a Redis
-  restart) forgets the locks.
+- **Only as reliable as the lock store.** The local stores (flock, semaphore, in-memory) do
+  not deduplicate reliably (see [Requirements](#requirements)), and a store that loses its
+  data (for example, a Redis restart) forgets the locks.
 
 For guarantees that do not expire, check on the consuming side as well. For example, record
 processed keys in a table with a unique constraint. An `EnvelopeAware` handler, such as any

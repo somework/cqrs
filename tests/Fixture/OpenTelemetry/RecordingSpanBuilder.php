@@ -11,6 +11,7 @@ use OpenTelemetry\API\Trace\SpanContextInterface;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\TraceFlags;
+use OpenTelemetry\Context\Context;
 use OpenTelemetry\Context\ContextInterface;
 
 use function bin2hex;
@@ -81,7 +82,9 @@ final class RecordingSpanBuilder implements SpanBuilderInterface
 
     public function startSpan(): SpanInterface
     {
-        $traceId = null !== $this->parent && $this->parent->isValid() ? $this->parent->getTraceId() : bin2hex(random_bytes(16));
+        // Like the SDK: without an explicit parent, the current context is the parent.
+        $parent = $this->parent ?? Span::fromContext(Context::getCurrent())->getContext();
+        $traceId = $parent->isValid() ? $parent->getTraceId() : bin2hex(random_bytes(16));
 
         return $this->span = new RecordingSpan(SpanContext::create($traceId, bin2hex(random_bytes(8)), TraceFlags::SAMPLED));
     }

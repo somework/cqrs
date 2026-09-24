@@ -35,8 +35,8 @@ Deciders are sorted by priority via `TaggedIteratorArgument` (higher = earlier).
 |----------|---------|---------|
 | 225 | Rate limiting (fails fast) | `RateLimitStampDecider` |
 | 200 | Retry policies | `RetryPolicyStampDecider` |
-| 180 | `#[Asynchronous]` | `AsynchronousStampDecider` |
 | 175 | Transport routing | `MessageTransportStampDecider` |
+| 170 | `#[Asynchronous]` (only when no transport was configured) | `AsynchronousStampDecider` |
 | 150 | Serialization | `MessageSerializerStampDecider` |
 | 125 | Metadata | `MessageMetadataStampDecider` |
 | 110 | Event sequence | `SequenceStampDecider` |

@@ -11,7 +11,7 @@ paths:
 
 1. Exact message class match
 2. Parent classes (walking up via `get_parent_class()`)
-3. Interfaces on the concrete class, then interfaces on parents (depth-first, deduplicated via `$seen`)
+3. Interfaces of the class (including inherited ones), most specific first: sorted by interface depth, ties keep declaration order — the same order `DispatchModeDecider` uses
 4. Type default / global default (handled in `resolveFallback()`)
 
 ## Creating a New Resolver

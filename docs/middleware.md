@@ -175,8 +175,8 @@ events.
 |----------|---------|------------|-----------------|--------------|
 | 225 | `RateLimitStampDecider` | per type | a limiter is mapped under `rate_limiting` | - |
 | 200 | `RetryPolicyStampDecider` | per type | always | - (stamps are appended) |
-| 180 | `AsynchronousStampDecider` | all messages | always | an existing `TransportNamesStamp` |
 | 175 | `MessageTransportStampDecider` | commands, queries, events | always | an existing `TransportNamesStamp` |
+| 170 | `AsynchronousStampDecider` | all messages | always | an existing `TransportNamesStamp` |
 | 150 | `MessageSerializerStampDecider` | per type | always | an existing `SerializerStamp` |
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
@@ -198,21 +198,21 @@ Appends the stamps returned by the `RetryPolicy` resolved for the message (exact
 class, parent classes, interfaces, type default). The built-in policies return
 no stamps; transport-level retries are configured with `retry_strategy`.
 
-### AsynchronousStampDecider (180)
-
-For asynchronous dispatches of a message class carrying `#[Asynchronous]`, adds
-`TransportNamesStamp([<transport>])`, where the transport is the attribute's
-`transport` argument or `async`. Because it runs before
-`MessageTransportStampDecider`, the attribute's transport takes precedence over
-`transports.*_async` entries. See
-[Async routing with the #[Asynchronous] attribute](usage.md#async-routing-with-the-asynchronous-attribute).
-
 ### MessageTransportStampDecider (175)
 
 Adds a `TransportNamesStamp` with the transports configured under
 `transports.<command|command_async|query|event|event_async>` for the message and
 mode. When nothing is configured it adds nothing and Messenger's routing
 applies. See [`transports`](reference.md#transports).
+
+### AsynchronousStampDecider (170)
+
+For asynchronous dispatches of a message class carrying `#[Asynchronous]`, adds
+`TransportNamesStamp([<transport>])`, where the transport is the attribute's
+`transport` argument or `async`, unless a transport was already chosen: the
+`transports.*_async` configuration and stamps passed by the caller take
+precedence over the attribute. See
+[Async routing with the #[Asynchronous] attribute](usage.md#async-routing-with-the-asynchronous-attribute).
 
 ### MessageSerializerStampDecider (150)
 
@@ -391,9 +391,9 @@ dispatched through the facades.
 Higher priorities run first. Pick a value relative to the built-in deciders:
 
 * **above 225**: before rate limiting, for example to reject a dispatch early;
-* **between 175 and 200**: after retry stamps, around transport routing (a
-  `TransportNamesStamp` added above 180 takes precedence over `#[Asynchronous]`
-  and the `transports` configuration);
+* **between 170 and 200**: after retry stamps, around transport routing (a
+  `TransportNamesStamp` added above 175 takes precedence over the `transports`
+  configuration and `#[Asynchronous]`);
 * **between 125 and 150**: after serialization, before metadata;
 * **between 100 and 125**: after the metadata stamp exists, before the causation
   id is added;

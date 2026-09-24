@@ -50,6 +50,20 @@ final class MessageTypeLocatorTest extends TestCase
         self::assertSame($expected, $match->service);
     }
 
+    public function test_the_more_specific_interface_wins_whatever_the_declaration_order(): void
+    {
+        $locator = new ServiceLocator([
+            MessageTypeLocatorInterface::class => static fn (): string => 'base',
+            MessageTypeLocatorExtendedInterface::class => static fn (): string => 'specific',
+        ]);
+
+        // Declares the base interface before the one extending it.
+        $match = MessageTypeLocator::match($locator, new MessageTypeLocatorDeclaresBaseFirst());
+
+        self::assertNotNull($match);
+        self::assertSame(MessageTypeLocatorExtendedInterface::class, $match->type);
+    }
+
     public function test_prefers_more_specific_interface(): void
     {
         $childService = new \stdClass();
@@ -204,5 +218,9 @@ interface MessageTypeLocatorExtendedInterface extends MessageTypeLocatorInterfac
 }
 
 class MessageTypeLocatorImplementsInterface implements MessageTypeLocatorExtendedInterface
+{
+}
+
+class MessageTypeLocatorDeclaresBaseFirst implements MessageTypeLocatorInterface, MessageTypeLocatorExtendedInterface
 {
 }

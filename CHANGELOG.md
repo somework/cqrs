@@ -27,9 +27,12 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Resolution order: exact `dispatch_modes` map entry, then the attribute, then parent class/interface map entries, then the default.
 - Stamps passed by the caller take precedence over the stamp pipeline: `MessageMetadataStamp`, `SerializerStamp`, `AggregateSequenceStamp`, `DeduplicateStamp` and `DispatchAfterCurrentBusStamp` are no longer replaced or duplicated. The causation id is added to the last metadata stamp and an explicit causation id is kept.
 - `IdempotencyStamp` stays on the envelope next to the `DeduplicateStamp` it produces.
-- `dispatchSync()` and `ask()` rethrow the exception of the single failing handler instead of `HandlerFailedException`, and ignore `DispatchAfterCurrentBusStamp`.
+- `dispatchSync()` and `ask()` rethrow the exception of the single failing handler instead of `HandlerFailedException`, raise `NoHandlerException` instead of Messenger's `NoHandlerForMessageException`, and ignore `DispatchAfterCurrentBusStamp`.
+- `#[Asynchronous]` only chooses a transport when the configuration chooses none.
+- Per-message maps resolve interfaces most specific first, independent of the declaration order.
+- Retry policy stamps no longer override stamps passed by the caller.
 - The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware, so deferred messages pass through it too.
-- OpenTelemetry: one span per pass, `cqrs.dispatch <Message>` (PRODUCER) when dispatching and `cqrs.consume <Message>` (CONSUMER) in the worker.
+- OpenTelemetry: one span per pass, `cqrs.dispatch <Message>` (PRODUCER) when dispatching and `cqrs.consume <Message>` (CONSUMER) in the worker; deferred messages keep the trace they were dispatched in.
 - `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever; delays are capped before and after jitter.
 - `retry_strategy.transports` keys are kept as written and must name existing transports.
 - `causation_id.buses` entries must name existing buses.
@@ -55,7 +58,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - Union types dropped non-CQRS members; unroutable intersection types and interface handlers without a resolvable message now fail with a clear message.
 - `dispatchSync()` and `ask()` reported a misleading `NoHandlerException` when the message was sent to a transport or deduplicated.
 - The container could not be compiled when an OpenTelemetry tracer provider was registered; exceptions were recorded twice on spans.
-- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch.
+- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch; a failing lock release no longer hides the handler's exception. The compilation log warns when the lock store (flock, semaphore, in-memory) cannot deduplicate.
+- A nested dispatch handled by the same envelope-aware handler service left the outer invocation with the inner envelope.
+- A failed async dispatch without an async bus consumed a rate-limiter token.
 - `CausationIdContext::pop()` threw on an empty stack.
 - The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion or time zone, generated index names longer than 63 characters and, on Symfony 8, marked undecodable rows as published.
 - Relayed events and commands were dispatched on the default bus, so workers of multi-bus setups found no handler for them.

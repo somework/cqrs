@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -57,6 +58,8 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
             $envelope = $this->dispatchMessageSync($command, ...SynchronousResult::withoutDeferral($stamps));
         } catch (HandlerFailedException $exception) {
             throw SynchronousResult::unwrap($exception);
+        } catch (NoHandlerForMessageException $exception) {
+            throw new NoHandlerException($command::class, self::BUS_NAME, $exception);
         }
 
         $handledStamps = SynchronousResult::handledStamps($envelope, self::BUS_NAME);

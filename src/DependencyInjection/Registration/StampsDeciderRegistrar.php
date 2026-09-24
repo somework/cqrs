@@ -140,7 +140,8 @@ final class StampsDeciderRegistrar
                 'service_id_suffix' => 'asynchronous',
                 'class' => AsynchronousStampDecider::class,
                 'arguments' => [],
-                'priority' => 180,
+                // After the transport decider: configured transports win over the attribute's default.
+                'priority' => 170,
             ],
             [
                 'service_id_suffix' => 'message_transport',

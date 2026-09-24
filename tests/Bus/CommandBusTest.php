@@ -25,6 +25,7 @@ use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
+use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
@@ -301,6 +302,29 @@ final class CommandBusTest extends TestCase
         $this->expectExceptionMessageMatches('/CreateTaskCommand/');
 
         $bus->dispatch($command, DispatchMode::ASYNC);
+    }
+
+    public function test_the_stamp_pipeline_does_not_run_when_the_async_bus_is_missing(): void
+    {
+        $decider = new class implements StampDecider {
+            public int $calls = 0;
+
+            public function decide(object $message, DispatchMode $mode, array $stamps): array
+            {
+                ++$this->calls;
+
+                return $stamps;
+            }
+        };
+        $bus = new CommandBus(self::createStub(MessageBusInterface::class), stampsDecider: new StampsDecider([$decider]));
+
+        try {
+            $bus->dispatchAsync(new CreateTaskCommand('123', 'Test'));
+            self::fail('Expected an AsyncBusNotConfiguredException.');
+        } catch (AsyncBusNotConfiguredException) {
+        }
+
+        self::assertSame(0, $decider->calls, 'Deciders with side effects (rate limiting) must not run.');
     }
 
     public function test_dispatch_async_helper_without_bus_throws_exception(): void

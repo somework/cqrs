@@ -470,7 +470,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 
 | Exception | Thrown when |
 |---|---|
-| `NoHandlerException` | The envelope came back without a handler result, for example from a bus that allows messages without handlers. On a bus with Messenger's default middleware, a missing handler raises Messenger's `NoHandlerForMessageException` instead. |
+| `NoHandlerException` | No handler handled the message on the bus (Messenger's `NoHandlerForMessageException` is converted and kept as the previous exception). A missing handler of a message dispatched *inside* a handler is not converted. |
 | `MultipleHandlersException` | More than one handler handled the query (`ask()` only). |
 | `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
@@ -629,7 +629,9 @@ The attribute has two effects when the message is dispatched with
   `buses.event_async`).
 * The `AsynchronousStampDecider` adds a `TransportNamesStamp` with the
   transport name. It only applies when the resolved mode is not `SYNC`, and it
-  yields to any `TransportNamesStamp` already present in the stamps.
+  yields to any transport already chosen: stamps passed by the caller and the
+  `transports.command_async` / `transports.event_async` configuration win over
+  the attribute.
 
 The default transport name is `async`. Pass a custom transport name when your
 infrastructure uses a different name:

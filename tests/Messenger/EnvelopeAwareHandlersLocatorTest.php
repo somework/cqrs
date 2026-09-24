@@ -7,7 +7,11 @@ namespace SomeWork\CqrsBundle\Tests\Messenger;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
 use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlerDescriptor;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
@@ -88,6 +92,47 @@ final class EnvelopeAwareHandlersLocatorTest extends TestCase
             [SpyEnvelopeAwareHandler::class.'::__invoke', OtherSpyEnvelopeAwareHandler::class.'::__invoke'],
             array_map(static fn (HandledStamp $stamp): string => $stamp->getHandlerName(), $envelope->all(HandledStamp::class)),
         );
+    }
+
+    public function test_a_nested_dispatch_to_the_same_handler_restores_the_outer_envelope(): void
+    {
+        $handler = new class implements EnvelopeAware {
+            use EnvelopeAwareTrait;
+
+            /** @var list<string> */
+            public array $seen = [];
+
+            public ?\Closure $whileHandlingCreate = null;
+
+            public function __invoke(object $message): void
+            {
+                $this->seen[] = $message::class.'@'.$this->correlationId();
+
+                if ($message instanceof CreateTaskCommand && null !== $this->whileHandlingCreate) {
+                    ($this->whileHandlingCreate)();
+                    $this->seen[] = $message::class.'@'.$this->correlationId();
+                }
+            }
+
+            private function correlationId(): string
+            {
+                return $this->getEnvelope()->last(MessageMetadataStamp::class)?->getCorrelationId() ?? '';
+            }
+        };
+        $descriptor = new HandlerDescriptor($handler);
+        $bus = new MessageBus([new HandleMessageMiddleware(new EnvelopeAwareHandlersLocator(new HandlersLocator([
+            CreateTaskCommand::class => [$descriptor],
+            GenerateReportCommand::class => [$descriptor],
+        ])))]);
+        $handler->whileHandlingCreate = static fn () => $bus->dispatch(new GenerateReportCommand('r-1'), [new MessageMetadataStamp('inner')]);
+
+        $bus->dispatch(new CreateTaskCommand('1', 'x'), [new MessageMetadataStamp('outer')]);
+
+        self::assertSame([
+            CreateTaskCommand::class.'@outer',
+            GenerateReportCommand::class.'@inner',
+            CreateTaskCommand::class.'@outer',
+        ], $handler->seen);
     }
 }
 

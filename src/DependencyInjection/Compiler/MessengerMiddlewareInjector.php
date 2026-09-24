@@ -11,6 +11,7 @@ use Symfony\Component\DependencyInjection\Reference;
 
 use function array_key_exists;
 use function array_splice;
+use function array_unshift;
 use function array_values;
 use function str_ends_with;
 
@@ -71,6 +72,33 @@ final class MessengerMiddlewareInjector
         $middlewares = array_values($middlewares);
         array_splice($middlewares, $position ?? 0, 0, [new Reference($middlewareId)]);
 
+        $definition->replaceArgument(0, new IteratorArgument($middlewares));
+
+        return true;
+    }
+
+    /**
+     * Inserts middleware at the top of the bus stack, before Messenger's own middleware.
+     *
+     * @return bool whether the middleware is (now) part of the bus
+     */
+    public static function prepend(ContainerBuilder $container, string $busId, string $middlewareId): bool
+    {
+        $definition = self::findBusDefinition($container, $busId);
+        $argument = $definition?->getArgument(0);
+
+        if (!$argument instanceof IteratorArgument) {
+            return false;
+        }
+
+        $middlewares = array_values($argument->getValues());
+        foreach ($middlewares as $middleware) {
+            if ((string) $middleware === $middlewareId) {
+                return true;
+            }
+        }
+
+        array_unshift($middlewares, new Reference($middlewareId));
         $definition->replaceArgument(0, new IteratorArgument($middlewares));
 
         return true;
