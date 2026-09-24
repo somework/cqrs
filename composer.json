@@ -17,14 +17,16 @@
     },
     "require": {
         "php": "^8.2",
-        "symfony/config": "^7.2",
-        "symfony/console": "^7.2",
-        "symfony/dependency-injection": "^7.2",
+        "psr/container": "^1.1 || ^2.0",
+        "psr/log": "^3.0",
+        "symfony/config": "^7.2 || ^8.0",
+        "symfony/console": "^7.2 || ^8.0",
+        "symfony/dependency-injection": "^7.2 || ^8.0",
         "symfony/filesystem": "^7.2 || ^8.0",
-        "symfony/framework-bundle": "^7.2",
-        "symfony/http-kernel": "^7.2",
-        "symfony/messenger": "^7.2",
-        "psr/log": "^3.0"
+        "symfony/framework-bundle": "^7.2 || ^8.0",
+        "symfony/http-kernel": "^7.2 || ^8.0",
+        "symfony/messenger": "^7.2 || ^8.0",
+        "symfony/service-contracts": "^3.5"
     },
     "require-dev": {
         "doctrine/dbal": "^4.0",
@@ -38,8 +40,8 @@
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/phpstan-symfony": "^2.0",
         "phpunit/phpunit": "^11.5",
-        "symfony/lock": "^7.2",
-        "symfony/rate-limiter": "^7.2"
+        "symfony/lock": "^7.2 || ^8.0",
+        "symfony/rate-limiter": "^7.2 || ^8.0"
     },
     "conflict": {
         "doctrine/dbal": "<4.0",
@@ -48,10 +50,13 @@
         "symfony/rate-limiter": "<7.2"
     },
     "suggest": {
-        "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
         "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",
-        "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)",
-        "open-telemetry/api": "Required for OpenTelemetry tracing bridge (^1.8)"
+        "doctrine/doctrine-bundle": "Provides the \"doctrine.dbal.<name>_connection\" services used by the transactional outbox",
+        "doctrine/orm": "Adds the outbox table to schema generation and Doctrine migrations (OutboxSchemaSubscriber)",
+        "open-telemetry/api": "Required for OpenTelemetry tracing bridge (^1.8)",
+        "phpunit/phpunit": "Required by the testing helpers in SomeWork\\CqrsBundle\\Testing (CqrsTestCase, CqrsAssertionsTrait)",
+        "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
+        "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)"
     },
     "autoload": {
         "psr-4": {
@@ -65,7 +70,7 @@
     },
     "extra": {
         "branch-alias": {
-            "dev-main": "0.4.x-dev"
+            "dev-main": "0.5.x-dev"
         }
     },
     "scripts": {

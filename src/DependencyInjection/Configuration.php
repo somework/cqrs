@@ -266,7 +266,7 @@ final class Configuration implements ConfigurationInterface
         $rateLimitChildren
             ->booleanNode('enabled')
             ->defaultTrue()
-            ->info('Enable rate limiting. No-op when symfony/rate-limiter is not installed.');
+            ->info('Enable rate limiting. Inactive while no limiter is mapped; mapping a limiter requires symfony/rate-limiter.');
 
         $this->configureRateLimitSection($rateLimitChildren, 'command');
         $this->configureRateLimitSection($rateLimitChildren, 'query');

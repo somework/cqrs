@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Command;
 
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
@@ -18,13 +19,16 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
+use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_map;
 use function preg_replace;
@@ -106,6 +110,33 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(['broken'], array_map(static fn (OutboxMessage $message): string => $message->id, $this->storage->fetchUnpublished(10)));
     }
 
+    /**
+     * Symfony 8 serializers return decoding failures inside the envelope instead of throwing.
+     *
+     * @return iterable<string, array{Envelope}>
+     */
+    public static function envelopesReportingADecodingFailure(): iterable
+    {
+        yield 'wrapped exception' => [new Envelope(new MessageDecodingFailedException('Could not decode Envelope.'))];
+        yield 'decoding failed stamp' => [new Envelope(new \stdClass(), [new MessageDecodingFailedStamp()])];
+    }
+
+    #[DataProvider('envelopesReportingADecodingFailure')]
+    public function test_a_decoding_failure_reported_in_the_envelope_is_a_failure(Envelope $decoded): void
+    {
+        $this->storage->store(new OutboxMessage('undecodable', 'body', '{}', new DateTimeImmutable()));
+        $serializer = self::createStub(SerializerInterface::class);
+        $serializer->method('decode')->willReturn($decoded);
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, $serializer, $this->bus(), $this->locks));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Failed to relay message "undecodable"', self::display($tester));
+        self::assertFalse($this->storage->isPublished('undecodable'));
+        self::assertSame([], $this->handledInline);
+    }
+
     public function test_failing_messages_at_the_head_do_not_block_the_queue(): void
     {
         foreach (['p1', 'p2', 'p3'] as $id) {
@@ -179,21 +210,25 @@ final class OutboxRelayCommandTest extends TestCase
      */
     private function execute(array $input = []): CommandTester
     {
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks));
+        $tester->execute($input);
+
+        return $tester;
+    }
+
+    private function bus(): MessageBus
+    {
         $senders = new SendersLocator(
             [TaskCreatedEvent::class => ['events']],
             new ServiceLocator(['async' => fn (): InMemoryTransport => $this->async, 'events' => fn (): InMemoryTransport => $this->events]),
         );
-        $bus = new MessageBus([
+
+        return new MessageBus([
             new SendMessageMiddleware($senders),
             new HandleMessageMiddleware(new HandlersLocator([\stdClass::class => [function (object $message): void {
                 $this->handledInline[] = $message;
             }]]), true),
         ]);
-
-        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
-        $tester->execute($input);
-
-        return $tester;
     }
 
     /**

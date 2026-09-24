@@ -14,7 +14,9 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Lock\LockFactory;
+use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
@@ -126,6 +128,15 @@ final class OutboxRelayCommand extends Command
             'body' => $message->body,
             'headers' => json_decode($message->headers, true, 512, JSON_THROW_ON_ERROR),
         ]);
+
+        // Since Symfony 8, serializers report decoding failures inside the envelope instead of throwing.
+        $decoded = $envelope->getMessage();
+        if ($decoded instanceof MessageDecodingFailedException) {
+            throw $decoded;
+        }
+        if (null !== $envelope->last(MessageDecodingFailedStamp::class)) {
+            throw new MessageDecodingFailedException(sprintf('The class of the message (%s) cannot be loaded.', $decoded::class));
+        }
 
         if (null !== $message->transportName) {
             $envelope = $envelope->with(new TransportNamesStamp([$message->transportName]));
