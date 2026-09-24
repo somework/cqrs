@@ -4,263 +4,146 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Messenger;
 
-use OpenTelemetry\API\Trace\SpanBuilderInterface;
-use OpenTelemetry\API\Trace\SpanInterface;
+use OpenTelemetry\API\Trace\Span;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
-use OpenTelemetry\API\Trace\TracerInterface;
-use OpenTelemetry\API\Trace\TracerProviderInterface;
-use OpenTelemetry\Context\ScopeInterface;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\MockObject\MockObject;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Messenger\OpenTelemetryMiddleware;
+use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\OpenTelemetry\RecordingTracerProvider;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
 use Symfony\Component\Messenger\Middleware\StackInterface;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
 
 #[CoversClass(OpenTelemetryMiddleware::class)]
+#[CoversClass(TraceContextStamp::class)]
 final class OpenTelemetryMiddlewareTest extends TestCase
 {
-    private TracerProviderInterface&MockObject $tracerProvider;
-
-    private TracerInterface&MockObject $tracer;
+    private RecordingTracerProvider $tracerProvider;
 
     protected function setUp(): void
     {
-        parent::setUp();
-
-        if (!interface_exists(TracerProviderInterface::class)) {
-            self::markTestSkipped('open-telemetry/api is not installed.');
-        }
-
-        $this->tracerProvider = $this->createMock(TracerProviderInterface::class);
-        $this->tracer = $this->createMock(TracerInterface::class);
-
-        $this->tracerProvider
-            ->method('getTracer')
-            ->with('somework.cqrs')
-            ->willReturn($this->tracer);
+        $this->tracerProvider = new RecordingTracerProvider();
     }
 
-    public function test_creates_dispatch_and_handle_spans_on_success(): void
+    public function test_dispatch_creates_a_single_producer_span(): void
     {
-        $message = new class implements Command {};
-        $envelope = new Envelope($message);
-        $expectedEnvelope = new Envelope($message);
+        $this->dispatch(new Envelope(new CreateTaskCommand('1', 'x')));
 
-        $dispatchSpan = $this->createMock(SpanInterface::class);
-        $dispatchScope = $this->createMock(ScopeInterface::class);
-        $handleSpan = $this->createMock(SpanInterface::class);
-        $handleScope = $this->createMock(ScopeInterface::class);
+        self::assertCount(1, $this->tracerProvider->builders);
+        $builder = $this->tracerProvider->builders[0];
 
-        $dispatchSpanBuilder = $this->createSpanBuilder($dispatchSpan, SpanKind::KIND_PRODUCER);
-        $handleSpanBuilder = $this->createSpanBuilder($handleSpan, SpanKind::KIND_INTERNAL);
+        self::assertSame('cqrs.dispatch CreateTaskCommand', $builder->name);
+        self::assertSame(SpanKind::KIND_PRODUCER, $builder->kind);
+        self::assertSame(CreateTaskCommand::class, $builder->attributes['cqrs.message.class']);
+        self::assertSame('command', $builder->attributes['cqrs.message.type']);
 
-        $this->tracer
-            ->expects(self::exactly(2))
-            ->method('spanBuilder')
-            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
-                    ? $dispatchSpanBuilder
-                    : $handleSpanBuilder);
-
-        $dispatchSpan->expects(self::once())->method('activate')->willReturn($dispatchScope);
-        $handleSpan->expects(self::once())->method('activate')->willReturn($handleScope);
-
-        $dispatchSpan->expects(self::once())->method('setStatus')->with(StatusCode::STATUS_OK);
-        $handleSpan->expects(self::once())->method('setStatus')->with(StatusCode::STATUS_OK);
-
-        $dispatchSpan->expects(self::once())->method('end');
-        $handleSpan->expects(self::once())->method('end');
-
-        $dispatchScope->expects(self::once())->method('detach');
-        $handleScope->expects(self::once())->method('detach');
-
-        $stack = $this->createStackReturning($expectedEnvelope);
-
-        $middleware = new OpenTelemetryMiddleware($this->tracerProvider);
-        $result = $middleware->handle($envelope, $stack);
-
-        self::assertSame($expectedEnvelope, $result);
+        $span = $this->tracerProvider->lastSpan();
+        self::assertSame(StatusCode::STATUS_OK, $span->statusCode);
+        self::assertTrue($span->ended);
     }
 
-    public function test_records_exception_and_sets_error_status(): void
+    public function test_dispatch_attaches_the_trace_context_to_the_envelope(): void
     {
-        $message = new class implements Command {};
-        $envelope = new Envelope($message);
-        $exception = new \RuntimeException('Handler failed');
+        $envelope = $this->dispatch(new Envelope(new CreateTaskCommand('1', 'x')));
 
-        $dispatchSpan = $this->createMock(SpanInterface::class);
-        $dispatchScope = $this->createMock(ScopeInterface::class);
-        $handleSpan = $this->createMock(SpanInterface::class);
-        $handleScope = $this->createMock(ScopeInterface::class);
+        $stamp = $envelope->last(TraceContextStamp::class);
+        self::assertInstanceOf(TraceContextStamp::class, $stamp);
 
-        $dispatchSpanBuilder = $this->createSpanBuilder($dispatchSpan, SpanKind::KIND_PRODUCER);
-        $handleSpanBuilder = $this->createSpanBuilder($handleSpan, SpanKind::KIND_INTERNAL);
-
-        $this->tracer
-            ->method('spanBuilder')
-            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
-                    ? $dispatchSpanBuilder
-                    : $handleSpanBuilder);
-
-        $dispatchSpan->method('activate')->willReturn($dispatchScope);
-        $handleSpan->method('activate')->willReturn($handleScope);
-
-        $handleSpan->expects(self::once())->method('setStatus')->with(StatusCode::STATUS_ERROR, 'Handler failed');
-        $handleSpan->expects(self::once())->method('recordException')->with($exception);
-        $handleSpan->expects(self::once())->method('end');
-        $handleScope->expects(self::once())->method('detach');
-
-        $dispatchSpan->expects(self::once())->method('setStatus')->with(StatusCode::STATUS_ERROR, 'Handler failed');
-        $dispatchSpan->expects(self::once())->method('recordException')->with($exception);
-        $dispatchSpan->expects(self::once())->method('end');
-        $dispatchScope->expects(self::once())->method('detach');
-
-        $stack = $this->createThrowingStack($exception);
-
-        $middleware = new OpenTelemetryMiddleware($this->tracerProvider);
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Handler failed');
-
-        $middleware->handle($envelope, $stack);
+        $spanContext = $this->tracerProvider->lastSpan()->getContext();
+        self::assertSame(
+            '00-'.$spanContext->getTraceId().'-'.$spanContext->getSpanId().'-01',
+            $stamp->headers['traceparent'] ?? null,
+        );
     }
 
-    public function test_detects_command_message_type(): void
+    public function test_consumed_message_continues_the_propagated_trace(): void
     {
-        $this->assertMessageType(new class implements Command {}, 'command');
+        $dispatched = $this->dispatch(new Envelope(new CreateTaskCommand('1', 'x')));
+        $producerContext = $this->tracerProvider->lastSpan()->getContext();
+
+        $this->dispatch($dispatched->with(new ReceivedStamp('async')));
+
+        $consumer = $this->tracerProvider->builders[1];
+        self::assertSame('cqrs.consume CreateTaskCommand', $consumer->name);
+        self::assertSame(SpanKind::KIND_CONSUMER, $consumer->kind);
+        self::assertNotNull($consumer->parent);
+        self::assertSame($producerContext->getTraceId(), $consumer->parent->getTraceId());
+        self::assertSame($producerContext->getSpanId(), $consumer->parent->getSpanId());
     }
 
-    public function test_detects_query_message_type(): void
+    public function test_failure_is_recorded_once_and_the_span_is_closed(): void
     {
-        $this->assertMessageType(new class implements Query {}, 'query');
-    }
-
-    public function test_detects_event_message_type(): void
-    {
-        $this->assertMessageType(new class implements Event {}, 'event');
-    }
-
-    public function test_detects_unknown_message_type(): void
-    {
-        $this->assertMessageType(new \stdClass(), 'unknown');
-    }
-
-    public function test_scope_detached_even_on_exception(): void
-    {
-        $message = new class implements Command {};
-        $envelope = new Envelope($message);
-
-        $dispatchSpan = $this->createMock(SpanInterface::class);
-        $dispatchScope = $this->createMock(ScopeInterface::class);
-        $handleSpan = $this->createMock(SpanInterface::class);
-        $handleScope = $this->createMock(ScopeInterface::class);
-
-        $dispatchSpanBuilder = $this->createSpanBuilder($dispatchSpan, SpanKind::KIND_PRODUCER);
-        $handleSpanBuilder = $this->createSpanBuilder($handleSpan, SpanKind::KIND_INTERNAL);
-
-        $this->tracer
-            ->method('spanBuilder')
-            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
-                    ? $dispatchSpanBuilder
-                    : $handleSpanBuilder);
-
-        $dispatchSpan->method('activate')->willReturn($dispatchScope);
-        $handleSpan->method('activate')->willReturn($handleScope);
-        $dispatchSpan->method('setStatus');
-        $dispatchSpan->method('recordException');
-        $handleSpan->method('setStatus');
-        $handleSpan->method('recordException');
-
-        // These are the critical assertions: scopes MUST be detached
-        $handleScope->expects(self::once())->method('detach');
-        $dispatchScope->expects(self::once())->method('detach');
-
-        $stack = $this->createThrowingStack(new \RuntimeException('fail'));
-
-        $middleware = new OpenTelemetryMiddleware($this->tracerProvider);
+        $failure = new \RuntimeException('Handler failed');
 
         try {
-            $middleware->handle($envelope, $stack);
-        } catch (\RuntimeException) {
-            // Expected
+            (new OpenTelemetryMiddleware($this->tracerProvider))->handle(new Envelope(new CreateTaskCommand('1', 'x')), $this->failingStack($failure));
+            self::fail('Expected the handler exception.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame($failure, $exception);
         }
+
+        $span = $this->tracerProvider->lastSpan();
+        self::assertSame([$failure], $span->exceptions);
+        self::assertSame(StatusCode::STATUS_ERROR, $span->statusCode);
+        self::assertSame('Handler failed', $span->statusDescription);
+        self::assertTrue($span->ended);
+        self::assertFalse(Span::getCurrent()->getContext()->isValid(), 'The span scope must be detached.');
     }
 
-    private function assertMessageType(object $message, string $expectedType): void
+    /**
+     * @return iterable<string, array{object, string}>
+     */
+    public static function messageTypes(): iterable
     {
-        $envelope = new Envelope($message);
-
-        $dispatchSpan = $this->createMock(SpanInterface::class);
-        $dispatchScope = $this->createMock(ScopeInterface::class);
-        $handleSpan = $this->createMock(SpanInterface::class);
-        $handleScope = $this->createMock(ScopeInterface::class);
-
-        $dispatchSpanBuilder = $this->createSpanBuilder($dispatchSpan, SpanKind::KIND_PRODUCER);
-        $handleSpanBuilder = $this->createSpanBuilder($handleSpan, SpanKind::KIND_INTERNAL);
-
-        $capturedAttributes = [];
-
-        $dispatchSpanBuilder
-            ->method('setAttribute')
-            ->willReturnCallback(static function (string $key, mixed $value) use ($dispatchSpanBuilder, &$capturedAttributes): SpanBuilderInterface {
-                $capturedAttributes[$key] = $value;
-
-                return $dispatchSpanBuilder;
-            });
-
-        $this->tracer
-            ->method('spanBuilder')
-            ->willReturnCallback(static fn (string $name): SpanBuilderInterface => str_starts_with($name, 'cqrs.dispatch')
-                    ? $dispatchSpanBuilder
-                    : $handleSpanBuilder);
-
-        $dispatchSpan->method('activate')->willReturn($dispatchScope);
-        $handleSpan->method('activate')->willReturn($handleScope);
-        $dispatchSpan->method('setStatus');
-        $handleSpan->method('setStatus');
-
-        $stack = $this->createStackReturning($envelope);
-
-        $middleware = new OpenTelemetryMiddleware($this->tracerProvider);
-        $middleware->handle($envelope, $stack);
-
-        self::assertSame($expectedType, $capturedAttributes['cqrs.message.type'] ?? null);
+        yield 'command' => [new CreateTaskCommand('1', 'x'), 'command'];
+        yield 'query' => [new FindTaskQuery('1'), 'query'];
+        yield 'event' => [new TaskCreatedEvent('1'), 'event'];
+        yield 'other' => [new \stdClass(), 'unknown'];
     }
 
-    private function createSpanBuilder(SpanInterface $span, int $spanKind): SpanBuilderInterface&MockObject
+    #[DataProvider('messageTypes')]
+    public function test_message_type_attribute(object $message, string $type): void
     {
-        $builder = $this->createMock(SpanBuilderInterface::class);
-        $builder->method('setSpanKind')->with($spanKind)->willReturnSelf();
-        $builder->method('setAttribute')->willReturnSelf();
-        $builder->method('startSpan')->willReturn($span);
+        $this->dispatch(new Envelope($message));
 
-        return $builder;
+        self::assertSame($type, $this->tracerProvider->builders[0]->attributes['cqrs.message.type']);
     }
 
-    private function createStackReturning(Envelope $envelope): StackInterface
+    private function dispatch(Envelope $envelope): Envelope
     {
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
-        $nextMiddleware->method('handle')->willReturn($envelope);
-
-        $stack = $this->createMock(StackInterface::class);
-        $stack->method('next')->willReturn($nextMiddleware);
-
-        return $stack;
+        return (new MessageBus([new OpenTelemetryMiddleware($this->tracerProvider)]))->dispatch($envelope);
     }
 
-    private function createThrowingStack(\Throwable $exception): StackInterface
+    private function failingStack(\Throwable $failure): StackInterface
     {
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
-        $nextMiddleware->method('handle')->willThrowException($exception);
+        $middleware = new class($failure) implements MiddlewareInterface {
+            public function __construct(private readonly \Throwable $failure)
+            {
+            }
 
-        $stack = $this->createMock(StackInterface::class);
-        $stack->method('next')->willReturn($nextMiddleware);
+            public function handle(Envelope $envelope, StackInterface $stack): Envelope
+            {
+                throw $this->failure;
+            }
+        };
 
-        return $stack;
+        return new class($middleware) implements StackInterface {
+            public function __construct(private readonly MiddlewareInterface $middleware)
+            {
+            }
+
+            public function next(): MiddlewareInterface
+            {
+                return $this->middleware;
+            }
+        };
     }
 }

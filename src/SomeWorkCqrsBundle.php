@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\AllowNoHandlerMiddlewarePas
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CausationIdMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\DeduplicationLockReleasePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
@@ -30,9 +31,14 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
         // After MessengerPass: decorates the handlers locators it registers.
         $container->addCompilerPass(new EnvelopeAwareHandlersLocatorPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
-        $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
-        $container->addCompilerPass(new CausationIdMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
-        $container->addCompilerPass(new OpenTelemetryMiddlewarePass(), PassConfig::TYPE_OPTIMIZE);
+        // Middleware passes run after MessengerPass has built the bus middleware lists, and before
+        // the optimization passes so references to aliases (tracer provider, lock factory) resolve.
+        // Each inserts right after "dispatch_after_current_bus", so the resulting order is:
+        // OpenTelemetry, CausationId, AllowNoHandler, then Messenger's own middleware.
+        $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
+        $container->addCompilerPass(new CausationIdMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
+        $container->addCompilerPass(new OpenTelemetryMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
+        $container->addCompilerPass(new DeduplicationLockReleasePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CqrsRetryStrategyPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
         $container->addCompilerPass(new ValidateTransportNamesPass());

@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
-use LogicException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
@@ -43,14 +42,13 @@ final class CausationIdContextTest extends TestCase
         self::assertNull($context->current());
     }
 
-    public function test_pop_on_empty_stack_throws_logic_exception(): void
+    public function test_pop_on_empty_stack_is_a_no_op(): void
     {
         $context = new CausationIdContext();
 
-        $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('Cannot pop from empty causation ID stack.');
-
         $context->pop();
+
+        self::assertNull($context->current());
     }
 
     public function test_reset_clears_entire_stack(): void
@@ -96,16 +94,16 @@ final class CausationIdContextTest extends TestCase
         self::assertNull($context->current());
     }
 
-    public function test_reset_then_pop_throws_logic_exception(): void
+    public function test_pop_after_reset_does_not_throw(): void
     {
         $context = new CausationIdContext();
         $context->push('a');
-        $context->push('b');
         $context->reset();
 
-        $this->expectException(LogicException::class);
-
+        // The stack can be reset while a handler runs; the middleware still pops afterwards.
         $context->pop();
+
+        self::assertNull($context->current());
     }
 
     public function test_push_after_reset_works_correctly(): void

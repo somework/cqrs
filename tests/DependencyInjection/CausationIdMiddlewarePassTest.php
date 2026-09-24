@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CausationIdMiddlewarePass;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -273,24 +274,17 @@ final class CausationIdMiddlewarePassTest extends TestCase
         }
     }
 
-    public function test_skips_gracefully_when_scoped_bus_not_in_container(): void
+    public function test_rejects_scoped_bus_that_is_not_a_messenger_bus(): void
     {
         $container = $this->createContainerWithBuses(['messenger.default_bus']);
 
         $container->setParameter('somework_cqrs.causation_id.enabled', true);
         $container->setParameter('somework_cqrs.causation_id.buses', ['nonexistent.bus']);
 
-        $pass = new CausationIdMiddlewarePass();
-        $pass->process($container);
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.causation_id.buses" contains "nonexistent.bus"');
 
-        // default_bus should NOT have the middleware (it's not in the allowed list)
-        $busDefinition = $container->getDefinition('messenger.default_bus');
-        /** @var IteratorArgument $middlewareArg */
-        $middlewareArg = $busDefinition->getArgument(0);
-        $middlewares = $middlewareArg->getValues();
-
-        self::assertCount(1, $middlewares);
-        self::assertSame('messenger.middleware.some_existing', (string) $middlewares[0]);
+        (new CausationIdMiddlewarePass())->process($container);
     }
 
     public function test_skips_when_enabled_false_even_with_buses_configured(): void
