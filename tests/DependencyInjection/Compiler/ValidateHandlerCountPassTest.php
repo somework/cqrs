@@ -100,6 +100,32 @@ final class ValidateHandlerCountPassTest extends TestCase
         ]);
     }
 
+    public function test_a_handler_without_bus_competes_with_the_handlers_of_every_bus(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.create_task, handler.plain_messenger.', CreateTaskCommand::class));
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                // e.g. #[AsMessageHandler] on __invoke(CreateTaskCommand): Messenger puts it on every bus.
+                self::entry('command', CreateTaskCommand::class, ListTasksHandler::class, 'handler.plain_messenger', null),
+            ],
+        ]);
+    }
+
+    public function test_the_same_service_with_and_without_bus_counts_once(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', null),
+            ],
+        ]);
+    }
+
     public function test_reports_all_violations_at_once(): void
     {
         try {

@@ -26,7 +26,6 @@ use function interface_exists;
 use function is_a;
 use function is_iterable;
 use function is_string;
-use function is_subclass_of;
 use function sprintf;
 use function ucfirst;
 
@@ -65,6 +64,13 @@ final class CqrsHandlerPass implements CompilerPassInterface
         $this->convertInterfaceTags($container);
 
         foreach ($container->findTaggedServiceIds('messenger.message_handler') as $serviceId => $tags) {
+            // Same rule as Messenger's MessengerPass: an option-less tag comes from autoconfiguration
+            // (e.g. BatchHandlerInterface) and is ignored when the service has configured tags.
+            $configuredTags = array_filter($tags, static fn (array $attributes): bool => [] !== $attributes);
+            if ([] !== $configuredTags) {
+                $tags = $configuredTags;
+            }
+
             $definition = $container->findDefinition($serviceId);
             $handlerClass = $this->resolveClassName($definition, $container);
 
@@ -85,7 +91,13 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
                 $cqrsMessages = [];
                 foreach ($routes as $messageClass) {
-                    $type = $this->determineType($messageClass) ?? $declaredType;
+                    $messageType = $this->determineType($container, $messageClass);
+
+                    if (null !== $declaredType && null !== $messageType && $messageType !== $declaredType) {
+                        throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered as a %s handler, but %s is a %s. Use #[As%sHandler] or the %sHandler interface instead.', $handlerClass, $serviceId, $declaredType, $messageClass, $messageType, ucfirst($messageType), ucfirst($messageType)));
+                    }
+
+                    $type = $messageType ?? $declaredType;
 
                     if (null !== $type && isset($metadata[$type])) {
                         $cqrsMessages[$messageClass] = $type;
@@ -111,6 +123,8 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 foreach ($handles as $messageClass) {
                     foreach ($buses as $bus) {
                         $tag = $attributes;
+                        // Internal marker, not a Messenger handler option.
+                        unset($tag[self::TYPE_ATTRIBUTE]);
 
                         if (null !== $messageClass) {
                             $tag['handles'] = $messageClass;
@@ -146,7 +160,15 @@ final class CqrsHandlerPass implements CompilerPassInterface
         foreach ($container->findTaggedServiceIds(self::INTERFACE_TAG) as $serviceId => $tags) {
             $definition = $container->getDefinition($serviceId);
 
-            if (!$definition->hasTag('messenger.message_handler')) {
+            // An abstract parent service is not a handler; its concrete children are tagged themselves.
+            if ($definition->isAbstract()) {
+                $definition->clearTag(self::INTERFACE_TAG);
+
+                continue;
+            }
+
+            // Tags for other methods (a method-level #[AsMessageHandler]) do not cover __invoke().
+            if (!self::hasInvokeHandlerTag($definition)) {
                 foreach ($tags as $attributes) {
                     $definition->addTag('messenger.message_handler', array_filter([
                         'method' => $attributes['method'] ?? '__invoke',
@@ -157,6 +179,17 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
             $definition->clearTag(self::INTERFACE_TAG);
         }
+    }
+
+    private static function hasInvokeHandlerTag(Definition $definition): bool
+    {
+        foreach ($definition->getTag('messenger.message_handler') as $attributes) {
+            if ([] !== $attributes && '__invoke' === ($attributes['method'] ?? '__invoke')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -345,12 +378,16 @@ final class CqrsHandlerPass implements CompilerPassInterface
         throw new InvalidArgumentException(sprintf('Handler "%s" type-hints the intersection "%s", which cannot be routed by Symfony Messenger. Declare the handled message explicitly (for example with the "handles"/attribute message argument).', $handlerClass, implode('&', $members)));
     }
 
-    private function determineType(string $messageClass): ?string
+    private function determineType(ContainerBuilder $container, string $messageClass): ?string
     {
+        // Through the container so a change of the message's marker interface rebuilds it in debug mode.
+        $reflection = $container->getReflectionClass($messageClass, false);
+
         return match (true) {
-            is_subclass_of($messageClass, Command::class) => 'command',
-            is_subclass_of($messageClass, Query::class) => 'query',
-            is_subclass_of($messageClass, Event::class) => 'event',
+            null === $reflection => null,
+            $reflection->implementsInterface(Command::class) => 'command',
+            $reflection->implementsInterface(Query::class) => 'query',
+            $reflection->implementsInterface(Event::class) => 'event',
             default => null,
         };
     }

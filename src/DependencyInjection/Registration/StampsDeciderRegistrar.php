@@ -207,7 +207,8 @@ final class StampsDeciderRegistrar
                 'service_id_suffix' => 'idempotency',
                 'class' => IdempotencyStampDecider::class,
                 'arguments' => [
-                    '$defaultTtl' => (float) $idempotencyConfig['ttl'],
+                    // Not cast: an %env()% placeholder is resolved at runtime (an int is a valid float).
+                    '$defaultTtl' => $idempotencyConfig['ttl'],
                     '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],
                 'priority' => 50,

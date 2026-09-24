@@ -9,6 +9,8 @@ use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_keys;
+use function array_unique;
 use function sprintf;
 
 /**
@@ -23,7 +25,10 @@ final class EnvelopeAwareHandlersLocatorPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
     {
-        foreach (CqrsBusIds::resolve($container) as $busId) {
+        // Every Messenger bus: handler attributes may name any bus, not only the CQRS ones.
+        $busIds = array_unique([...CqrsBusIds::resolve($container), ...array_keys($container->findTaggedServiceIds('messenger.bus'))]);
+
+        foreach ($busIds as $busId) {
             $locatorId = sprintf('%s.messenger.handlers_locator', $busId);
 
             if (!$container->hasDefinition($locatorId)) {

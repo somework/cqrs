@@ -74,8 +74,14 @@ the handler now lives only on that bus, as before; you can remove the `bus` argu
 ### Compile-time handler validation per bus
 
 `ValidateHandlerCountPass` checks commands and queries per bus: two different services handling the same
-command on the same bus fail the build; the same handler on the sync and the async bus is fine. The check for
-messages without any handler was removed: it could not detect anything the bus does not already report.
+command on the same bus fail the build; the same handler on the sync and the async bus is fine. A handler
+registered without a bus (for example a plain `#[AsMessageHandler]`, which Messenger puts on every bus) counts
+on every bus, so a leftover Messenger handler next to a bundle handler now fails the build instead of both
+running. The check for messages without any handler was removed: it could not detect anything the bus does
+not already report.
+
+A handler attribute whose type contradicts the message, such as `#[AsCommandHandler(OrderPlaced::class)]` for an
+event, is now a compile error; before, the handler was registered on the command bus and never called.
 
 ### `#[Asynchronous]` is honoured for default dispatch
 
@@ -107,6 +113,9 @@ the `DeduplicateStamp` it produces.
   `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
 
 ### Middleware order and OpenTelemetry
+
+When `buses.command`, `buses.query` and `buses.event` are all configured, the Messenger default bus is no longer
+treated as a CQRS bus: it gets none of the bundle middleware (useful when it serves the mailer or notifier).
 
 The bundle middleware (causation id, OpenTelemetry, allow-no-handler for events, deduplication lock release)
 is inserted right after Messenger's `dispatch_after_current_bus` middleware instead of at the top of the stack,

@@ -36,6 +36,34 @@ final class EnvelopeAwareHandlersLocatorPassTest extends TestCase
         }
     }
 
+    public function test_also_decorates_buses_that_are_not_cqrs_buses(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        // Handler attributes may name any bus, e.g. #[AsCommandHandler(X::class, bus: 'legacy.bus')].
+        $container->register('legacy.bus')->addTag('messenger.bus');
+        $container->register('legacy.bus.messenger.handlers_locator', HandlersLocator::class);
+
+        (new EnvelopeAwareHandlersLocatorPass())->process($container);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.legacy.bus'));
+    }
+
+    public function test_the_default_bus_is_only_a_cqrs_bus_when_a_facade_falls_back_to_it(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        foreach (['command' => 'command.bus', 'query' => 'query.bus', 'event' => 'event.bus'] as $key => $busId) {
+            $container->setParameter('somework_cqrs.bus.'.$key, $busId);
+        }
+
+        self::assertSame(['command.bus', 'query.bus', 'event.bus'], CqrsBusIds::resolve($container));
+
+        $container->getParameterBag()->remove('somework_cqrs.bus.query');
+
+        self::assertSame(['messenger.bus.default', 'command.bus', 'event.bus'], CqrsBusIds::resolve($container));
+    }
+
     public function test_skips_buses_without_a_handlers_locator(): void
     {
         $container = new ContainerBuilder();

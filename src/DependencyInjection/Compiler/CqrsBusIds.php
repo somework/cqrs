@@ -8,7 +8,9 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_keys;
+use function array_unshift;
 use function implode;
+use function in_array;
 use function is_string;
 use function sprintf;
 
@@ -24,6 +26,9 @@ final class CqrsBusIds
 {
     public const BUS_KEYS = ['command', 'command_async', 'query', 'event', 'event_async'];
 
+    /** Buses that fall back to the default bus when they are not configured. */
+    private const DEFAULT_BUS_FALLBACK_KEYS = ['command', 'query', 'event'];
+
     /**
      * @return list<string> Unique, alias-resolved bus service ids
      */
@@ -34,11 +39,7 @@ final class CqrsBusIds
         }
 
         $candidates = [];
-
-        $defaultBus = $container->getParameter('somework_cqrs.default_bus');
-        if (is_string($defaultBus) && '' !== $defaultBus) {
-            $candidates[] = $defaultBus;
-        }
+        $usesDefaultBus = false;
 
         foreach (self::BUS_KEYS as $key) {
             $parameter = 'somework_cqrs.bus.'.$key;
@@ -46,7 +47,16 @@ final class CqrsBusIds
 
             if (is_string($busId) && '' !== $busId) {
                 $candidates[] = $busId;
+            } elseif (in_array($key, self::DEFAULT_BUS_FALLBACK_KEYS, true)) {
+                $usesDefaultBus = true;
             }
+        }
+
+        // The default bus is only a CQRS bus when a facade falls back to it; otherwise it may be an
+        // unrelated bus (mailer, notifier) that must not get the bundle's middleware.
+        $defaultBus = $container->getParameter('somework_cqrs.default_bus');
+        if ($usesDefaultBus && is_string($defaultBus) && '' !== $defaultBus) {
+            array_unshift($candidates, $defaultBus);
         }
 
         $resolved = [];

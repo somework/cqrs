@@ -38,7 +38,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `causation_id.buses` entries must name existing buses.
 - The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` no longer accept environment variables.
 - Rate limiting stays inactive until a limiter is mapped; mapping one without symfony/rate-limiter is a configuration error.
-- `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services.
+- `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services; a handler registered without a bus (e.g. a plain `#[AsMessageHandler]`) counts on every bus.
+- A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error.
+- The bundle middleware is only added to the default bus when a facade falls back to it.
 - The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, skips undecodable rows and exits with 1 when a row failed.
 - `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>`; `outbox.table_name` must be a plain or schema-qualified identifier.
 - `somework:cqrs:health` instantiates every CQRS handler and every Messenger transport.
@@ -56,6 +58,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - Stamp deciders were registered twice; `idempotency.enabled: false` had no effect.
 - Handlers implementing a handler interface with a typed `__invoke()` caused a PHP fatal error.
 - Union types dropped non-CQRS members; unroutable intersection types and interface handlers without a resolvable message now fail with a clear message.
+- Option-less handler tags (e.g. from `BatchHandlerInterface` autoconfiguration) were turned into unrestricted registrations; a method-level `#[AsMessageHandler]` hid the marker-interface registration of `__invoke()`; abstract services implementing a handler interface broke the build.
+- Envelope-aware handlers failed on buses that are not configured as CQRS buses; `idempotency.ttl` from an environment variable became 0; on Symfony 8.1 the bundle middleware ran before Messenger decoded failed messages.
+- The internal handler type marker leaked into Messenger's handler options (`debug:messenger`).
 - `dispatchSync()` and `ask()` reported a misleading `NoHandlerException` when the message was sent to a transport or deduplicated.
 - The container could not be compiled when an OpenTelemetry tracer provider was registered; exceptions were recorded twice on spans.
 - The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch; a failing lock release no longer hides the handler's exception. The compilation log warns when the lock store (flock, semaphore, in-memory) cannot deduplicate.

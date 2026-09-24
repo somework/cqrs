@@ -144,7 +144,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         ]);
 
         $definition = $container->getDefinition('somework_cqrs.stamp_decider.idempotency');
-        self::assertSame(600.0, $definition->getArgument('$defaultTtl'));
+        self::assertSame(600, $definition->getArgument('$defaultTtl'));
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
@@ -245,7 +245,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         $container = $this->createContainer();
 
         $definition = $container->getDefinition('somework_cqrs.stamp_decider.idempotency');
-        self::assertSame(300.0, $definition->getArgument('$defaultTtl'));
+        self::assertSame(300, $definition->getArgument('$defaultTtl'));
     }
 
     public function test_both_idempotency_and_causation_id_disabled(): void

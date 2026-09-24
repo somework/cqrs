@@ -31,6 +31,29 @@ final class MessengerMiddlewareInjectorTest extends TestCase
         );
     }
 
+    public function test_goes_after_the_decode_failed_middleware_of_symfony_8_1(): void
+    {
+        $container = $this->containerWithBus(['messenger.middleware.dispatch_after_current_bus', 'messenger.middleware.decode_failed_message_middleware', 'messenger.middleware.failed_message_processing_middleware', 'messenger.bus.default.middleware.handle_message']);
+
+        MessengerMiddlewareInjector::inject($container, 'messenger.bus.default', 'app.middleware');
+
+        self::assertSame(
+            ['messenger.middleware.dispatch_after_current_bus', 'messenger.middleware.decode_failed_message_middleware', 'app.middleware', 'messenger.middleware.failed_message_processing_middleware', 'messenger.bus.default.middleware.handle_message'],
+            $this->middlewareIds($container, 'messenger.bus.default'),
+        );
+    }
+
+    public function test_prepend_puts_middleware_first_once(): void
+    {
+        $container = $this->containerWithBus(['messenger.middleware.dispatch_after_current_bus', 'messenger.bus.default.middleware.handle_message']);
+
+        self::assertTrue(MessengerMiddlewareInjector::prepend($container, 'messenger.bus.default', 'app.first'));
+        self::assertTrue(MessengerMiddlewareInjector::prepend($container, 'messenger.bus.default', 'app.first'));
+        self::assertFalse(MessengerMiddlewareInjector::prepend($container, 'unknown.bus', 'app.first'));
+
+        self::assertSame(['app.first', 'messenger.middleware.dispatch_after_current_bus', 'messenger.bus.default.middleware.handle_message'], $this->middlewareIds($container, 'messenger.bus.default'));
+    }
+
     public function test_inserts_first_when_the_anchor_is_missing(): void
     {
         $container = $this->containerWithBus(['messenger.bus.default.middleware.handle_message']);

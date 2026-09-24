@@ -12,26 +12,31 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\MethodAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\MixedUnionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NonCqrsHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NoParamHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnroutableIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UntypedInterfaceHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryableImportLegacyDataCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_column;
+use function sprintf;
 
 #[CoversClass(CqrsHandlerPass::class)]
 final class CqrsHandlerPassTest extends TestCase
@@ -501,8 +506,9 @@ final class CqrsHandlerPassTest extends TestCase
 
         self::assertSame(
             [
-                ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command', 'bus' => 'messenger.bus.commands'],
-                ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command', 'bus' => 'messenger.bus.commands_async'],
+                // The internal type marker is not passed on to Messenger.
+                ['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.commands'],
+                ['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.commands_async'],
             ],
             $container->getDefinition('handler.create_task')->getTag('messenger.message_handler'),
         );
@@ -615,5 +621,60 @@ final class CqrsHandlerPassTest extends TestCase
         $container->setParameter('somework_cqrs.bus.command_async', 'messenger.bus.commands_async');
 
         return $container;
+    }
+
+    public function test_an_option_less_tag_is_ignored_next_to_configured_ones(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // FrameworkBundle autoconfigures BatchHandlerInterface with an option-less tag.
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler')
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.commands_async']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.commands_async']],
+            $container->getDefinition('handler.create_task')->getTag('messenger.message_handler'),
+        );
+    }
+
+    public function test_a_method_level_handler_does_not_hide_the_interface_registration(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.interface', InterfaceOnlyCommandHandler::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command'])
+            ->addTag('messenger.message_handler', ['method' => 'onSomethingElse', 'handles' => \stdClass::class]);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $handled = array_map(static fn (array $tag): ?string => $tag['handles'] ?? null, $container->getDefinition('handler.interface')->getTag('messenger.message_handler'));
+        self::assertContains(\stdClass::class, $handled);
+        self::assertContains(GenerateReportCommand::class, $handled);
+    }
+
+    public function test_abstract_services_implementing_a_handler_interface_are_skipped(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.base', InterfaceOnlyCommandHandler::class)
+            ->setAbstract(true)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertFalse($container->getDefinition('handler.base')->hasTag('messenger.message_handler'));
+        self::assertFalse($container->getDefinition('handler.base')->hasTag(CqrsHandlerPass::INTERFACE_TAG));
+    }
+
+    public function test_an_attribute_of_the_wrong_type_is_rejected(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.wrong', TaskNotificationHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => TaskCreatedEvent::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(sprintf('is registered as a command handler, but %s is a event', TaskCreatedEvent::class));
+
+        (new CqrsHandlerPass())->process($container);
     }
 }

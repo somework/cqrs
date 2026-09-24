@@ -50,8 +50,11 @@ final class MessengerMiddlewareInjector
             return false;
         }
 
-        $middlewares = $argument->getValues();
+        $middlewares = array_values($argument->getValues());
         $position = null;
+        // Symfony 8.1 adds decode_failed_message_middleware right after dispatch_after_current_bus; bundle
+        // middleware must see the decoded message, so it goes after whichever of the two comes last.
+        $anchors = self::AFTER_DISPATCH_AFTER_CURRENT_BUS === $after ? [$after, 'decode_failed_message_middleware'] : [$after];
 
         foreach ($middlewares as $index => $middleware) {
             $id = (string) $middleware;
@@ -60,8 +63,10 @@ final class MessengerMiddlewareInjector
                 return true;
             }
 
-            if (null === $position && str_ends_with($id, $after)) {
-                $position = $index + 1;
+            foreach ($anchors as $anchor) {
+                if (str_ends_with($id, $anchor)) {
+                    $position = $index + 1;
+                }
             }
         }
 
@@ -69,7 +74,6 @@ final class MessengerMiddlewareInjector
             return false;
         }
 
-        $middlewares = array_values($middlewares);
         array_splice($middlewares, $position ?? 0, 0, [new Reference($middlewareId)]);
 
         $definition->replaceArgument(0, new IteratorArgument($middlewares));
