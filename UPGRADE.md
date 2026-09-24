@@ -2,310 +2,237 @@
 
 ## Backward Compatibility Promise
 
-This bundle follows [Semantic Versioning](https://semver.org/). The BC promise
-applies only to classes, interfaces, traits, and enums annotated with `@api` in
+This bundle follows [Semantic Versioning](https://semver.org/). While the major version is 0,
+a minor release (0.4 → 0.5) may contain breaking changes; patch releases never do. Every
+breaking change is listed in this guide and in the [changelog](CHANGELOG.md).
+
+The promise applies only to classes, interfaces, traits and enums annotated with `@api` in
 their class-level PHPDoc block.
 
-- **`@api` types** follow semver: no breaking changes in minor or patch releases.
-  You can safely depend on their public methods, constructor signatures, and
-  return types.
+- **`@api` types**: public methods, constructor signatures and return types only change in a
+  release that documents the change here.
+- **`@internal` types** may change in any release. Do not extend, implement or instantiate them
+  in application code. If you depend on one, open an issue so it can be promoted to the public API.
 
-- **`@internal` types** may change without notice in any release (including
-  minor and patch). Do not extend, implement, or instantiate them directly in
-  your application code. If you find yourself depending on an internal type,
-  open an issue so we can evaluate promoting it to the public API.
-
-## What Counts as a Breaking Change for `@api` Types
-
-The following changes are considered breaking and will only occur in major releases:
+### What counts as a breaking change for `@api` types
 
 - Removing a public method or changing its signature
-- Removing a class, interface, or trait
-- Adding required constructor parameters (without defaults)
-- Changing return types to incompatible types
-- Removing interface methods
+- Removing a class, interface or trait
+- Adding required constructor parameters
+- Changing a return type to an incompatible type
+- Adding or removing interface methods
 
-## What is NOT a Breaking Change
-
-The following changes may happen in any minor or patch release:
+### What is not a breaking change
 
 - Adding optional parameters with default values
-- Adding new methods to classes
-- Adding new classes or interfaces
-- Bug fixes that change incorrect behavior
-- Adding new `@api` or `@internal` annotations
+- Adding methods to classes, adding classes or interfaces
+- Bug fixes that change incorrect behaviour (they are still listed below when you may notice them)
+- Adding `@api` or `@internal` annotations
 
-## v0.4.0
+## Upgrading from 0.4.0 to 0.5.0
 
-### Bus Interfaces (DX-01)
+### Requirements
 
-Three new interfaces are available for type-hinting bus dependencies:
+- Symfony 7.2 or newer, including Symfony 8.
+- `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are now direct dependencies
+  (they were already installed through Symfony).
 
-- `CommandBusInterface` (implemented by `CommandBus` and `FakeCommandBus`)
-- `QueryBusInterface` (implemented by `QueryBus` and `FakeQueryBus`)
-- `EventBusInterface` (implemented by `EventBus` and `FakeEventBus`)
+### Handler interfaces are marker interfaces
 
-**Recommended migration:** Replace concrete bus type-hints with interfaces:
+`CommandHandler`, `QueryHandler` and `EventHandler` no longer declare `__invoke()`. PHP does not let an
+implementation narrow a parameter type, so the untyped declaration forced handlers to accept any
+message, and a typed `__invoke(CreateTask $command)` was a fatal error.
+
+Type-hint the concrete message; the bundle routes the handler by that type:
+
+```php
+#[AsCommandHandler(CreateTask::class)]
+final class CreateTaskHandler implements CommandHandler
+{
+    public function __invoke(CreateTask $command): mixed
+    {
+        // ...
+        return null;
+    }
+}
+```
+
+Action needed only if your code calls `__invoke()` through the interface type (`CommandHandler $handler; $handler($command)`):
+type against the concrete handler or a callable instead. A handler that implements an interface but has no
+typed first parameter and no attribute now fails at compile time with
+`Cannot determine the message handled by "..."`: add the type or the attribute.
+
+### Handlers are registered on the async buses
+
+Handlers without an explicit `bus` are registered on the sync bus of their type **and** on the async bus of
+their type (`buses.command_async`, `buses.event_async`) when one is configured. Before, they were only on the
+sync bus, so a worker consuming messages sent through the async bus failed with "No handler for message".
+
+If you worked around this by declaring the async bus explicitly (`#[AsCommandHandler(CreateTask::class, bus: 'command.async_bus')]`),
+the handler now lives only on that bus, as before; you can remove the `bus` argument to register it on both.
+
+### Compile-time handler validation per bus
+
+`ValidateHandlerCountPass` checks commands and queries per bus: two different services handling the same
+command on the same bus fail the build; the same handler on the sync and the async bus is fine. The check for
+messages without any handler was removed: it could not detect anything the bus does not already report.
+
+### `#[Asynchronous]` is honoured for default dispatch
+
+A message class carrying `#[Asynchronous]` now goes to the async bus when dispatched with
+`DispatchMode::DEFAULT` (the default). Resolution order: an exact entry in `dispatch_modes.<type>.map`, then
+the attribute, then entries for parent classes or interfaces in the map, then `dispatch_modes.<type>.default`.
+An explicit `DispatchMode::SYNC` still dispatches synchronously.
+
+### Stamps passed by the caller win
+
+The stamp pipeline no longer replaces or duplicates stamps you pass to `dispatch()`/`ask()`:
+`MessageMetadataStamp`, `SerializerStamp`, `AggregateSequenceStamp`, `DeduplicateStamp` and
+`DispatchAfterCurrentBusStamp` are kept as given. The causation id is written into the last
+`MessageMetadataStamp` and an explicit causation id is kept. `IdempotencyStamp` stays on the envelope next to
+the `DeduplicateStamp` it produces.
+
+### `dispatchSync()` and `ask()` errors
+
+- When exactly one handler fails, its exception is rethrown as is instead of Messenger's
+  `HandlerFailedException`. Update `catch (HandlerFailedException $e)` blocks around these two methods.
+- `MessageSentToTransportException` (new, `@api`) replaces the misleading `NoHandlerException` when the
+  message was routed to a transport instead of being handled.
+- `DuplicateMessageException` (new, `@api`) is thrown when idempotency deduplication dropped the message.
+- `DispatchAfterCurrentBusStamp` is ignored so the result is available immediately.
+
+### Middleware order and OpenTelemetry
+
+The bundle middleware (causation id, OpenTelemetry, allow-no-handler for events, deduplication lock release)
+is inserted right after Messenger's `dispatch_after_current_bus` middleware instead of at the top of the stack,
+so messages deferred until the current bus finishes pass through it too.
+
+OpenTelemetry now creates one span per pass: `cqrs.dispatch <Message>` (kind PRODUCER) when dispatching and
+`cqrs.consume <Message>` (kind CONSUMER) when a worker handles a received message, linked through the new
+`TraceContextStamp`. Update dashboards or alerts that matched the previous span names.
+
+### Retry strategy
+
+- Without a transport-level fallback strategy, `CqrsRetryStrategy` now uses Messenger's
+  `MultiplierRetryStrategy` defaults (3 retries, 1 s delay, multiplier 2) for messages without a
+  `RetryConfiguration` policy. Before, such messages were retried forever without delay.
+- Delays are capped by `max_delay` before and after jitter.
+- `retry_strategy.transports` keys are no longer normalised (`my-transport` stays `my-transport`) and must be
+  existing Messenger transports.
+
+### Configuration validation
+
+The container build now fails for configuration that used to be silently ignored or to fail later:
+
+- Service ids (policies, providers, serializers, naming strategies, buses) must be non-empty strings.
+- Keys of every per-message `map` must be existing classes or interfaces. A leading backslash is removed.
+  Remove entries for classes that no longer exist.
+- `causation_id.buses` entries must be existing bus services (aliases are resolved).
+- The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` decide which
+  services are registered and can no longer use `%env()%`.
+- Rate limiting is inactive while no limiter is mapped; mapping a limiter without symfony/rate-limiter
+  installed is an error instead of a silent no-op.
+
+### Idempotency
+
+Deduplication needs symfony/messenger 7.3+, symfony/lock and the lock component enabled (`framework.lock`) so
+Messenger registers its deduplicate middleware. The container compilation log now says which piece is missing.
+A failed synchronous dispatch releases the idempotency lock, so the message can be retried before the TTL expires.
+
+### Transactional outbox
+
+- `OutboxStorage` (still `@internal`) gained `fetchUnpublished(int $limit, int $offset = 0)` and
+  `purgePublished(DateTimeImmutable $publishedBefore): int`. Custom implementations must add them.
+- The table is never created inside an open database transaction; `store()` then throws a `LogicException`
+  that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
+  Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the
+  configured connection), or set `outbox.auto_setup: false` when migrations own the table.
+- New options: `outbox.connection` (DBAL connection name, default `default`), `outbox.serializer`
+  (default `messenger.default_serializer`) and `outbox.auto_setup` (default `true`).
+- Build rows with `OutboxMessage::fromEnvelope($envelope, $serializer, 'transport')`: ids are time-ordered UUIDv7;
+  the constructor rejects empty ids and bodies.
+- The relay sends each message to its stored transport, runs as a single instance when symfony/lock is
+  installed, skips rows that fail and exits with code 1 when any row failed (monitor the exit code).
+- Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
+- Tables created by earlier versions keep working. With very long table names the index is now named
+  `idx_<hash>_published_created`; generated migrations may propose renaming it.
+
+### Console commands
+
+- `somework:cqrs:health` checks all handlers and every Messenger transport by instantiating them. Before, it
+  reported every handler and transport as CRITICAL and always exited with 2; probes that relied on that
+  now pass.
+- `somework:cqrs:generate` places files according to the PSR-4 mapping of your `composer.json`
+  (`App\Command\ShipOrder` → `src/Command/ShipOrder.php`, previously `src/App/Command/ShipOrder.php`). `--dir`
+  is resolved against the project directory and replaces the directory mapped to the namespace prefix.
+  Handlers are generated with the attribute and a typed `__invoke()`. Invalid input exits with code 2.
+- `somework:cqrs:list --type=<unknown>` exits with code 2.
+
+### Testing helpers
+
+`FakeQueryBus` returns a configured `null` result instead of falling back, and the fake buses return envelopes
+carrying the stamps passed to them.
+
+## Upgrading from 0.3.0 to 0.4.0
+
+### Bus interfaces
+
+`CommandBusInterface`, `QueryBusInterface` and `EventBusInterface` (`SomeWork\CqrsBundle\Contract`) are autowired
+to the real buses and implemented by the fakes. Type-hint them instead of the concrete buses:
 
 ```diff
 - public function __construct(private readonly CommandBus $commandBus) {}
 + public function __construct(private readonly CommandBusInterface $commandBus) {}
 ```
 
-The interfaces are autowired to the real bus implementations. For testing, override
-in `services_test.yaml`:
+Replace them with the fakes in the test environment:
 
 ```yaml
-services:
-    SomeWork\CqrsBundle\Contract\CommandBusInterface:
-        class: SomeWork\CqrsBundle\Testing\FakeCommandBus
+when@test:
+    services:
+        SomeWork\CqrsBundle\Contract\CommandBusInterface:
+            class: SomeWork\CqrsBundle\Testing\FakeCommandBus
+            public: true
 ```
 
-### Handler __invoke Signature Change (DX-04)
+### Handler `__invoke()` signature
 
-The `CommandHandler`, `QueryHandler`, and `EventHandler` interfaces no longer
-declare a PHP type on the `__invoke()` parameter. This allows concrete handlers
-to use specific message types without union type workarounds:
+The handler interfaces stopped typing the `__invoke()` parameter in 0.4.0. In 0.5.0 they declare no method at
+all; see [above](#handler-interfaces-are-marker-interfaces).
 
-```diff
-- public function __invoke(CreateTaskCommand|Command $command): mixed
-+ public function __invoke(CreateTaskCommand $command): mixed
-```
+### New in 0.4.0
 
-**Impact:** This is backward compatible at runtime (removing a type widens
-acceptance). However, if your handler explicitly typed the parameter as `Command`,
-`Query`, or `Event` to match the old interface signature, you may now use the
-specific message type instead. No action is required -- existing handlers continue
-to work.
+Attribute-only handlers, the `#[Asynchronous]` attribute, the OpenTelemetry bridge and the Symfony Flex recipe
+are additive and need no migration.
 
-Static analysis (PHPStan) continues to enforce type safety via `@template`
-annotations.
+## Upgrading from 0.2.x to 0.3.0
 
-## Upgrading from 1.x to 2.0
+0.3.0 was a large feature release (earlier revisions of this file described it as versions "1.0" to "3.0",
+which were never tagged).
 
 ### Requirements
 
-- **Dropped Symfony 6.4 support** -- requires Symfony 7.x.
+- Symfony 7.2 or newer; Symfony 6.4 is no longer supported.
 
-### Exception Handling
+### Exceptions
 
-Custom exceptions replace generic `RuntimeException` throws:
+Dedicated exceptions replace generic `RuntimeException`s: `NoHandlerException` (no handler for a command or
+query), `MultipleHandlersException` (more than one handler for a query) and `AsyncBusNotConfiguredException`
+(async dispatch without an async bus). They are `@api` and expose `$messageFqcn`, `$busName` and, where
+relevant, `$handlerCount`.
 
-- `NoHandlerException` -- thrown when a command or query has no handler.
-- `MultipleHandlersException` -- thrown when a query has more than one handler.
-- `AsyncBusNotConfiguredException` -- thrown when dispatching async without a
-  configured async bus.
+### Compile-time validation
 
-All three are `@api` types with `public readonly` properties for programmatic
-access (`$messageFqcn`, `$busName`, `$handlerCount`).
+Commands and queries must have exactly one handler per bus; violations fail the container build.
 
-### Testing Namespace
+### New features
 
-The new `src/Testing/` namespace provides test doubles and PHPUnit assertions:
+Opt-in or inert by default, no migration needed: testing helpers (`SomeWork\CqrsBundle\Testing`),
+`CausationIdMiddleware` (`causation_id`), `IdempotencyStamp` (`idempotency`), per-message retry through
+`CqrsRetryStrategy` (`retry_strategy`), `somework:cqrs:health`, event ordering via `SequenceAware`
+(`sequence`), rate limiting (`rate_limiting`) and the transactional outbox (`outbox`). See the
+[documentation](https://somework.github.io/cqrs/) for each feature.
 
-- `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` -- bus doubles that record
-  dispatches without Messenger infrastructure.
-- `CqrsTestCase` -- abstract PHPUnit test case with CQRS assertion helpers.
-- `CqrsAssertionsTrait` -- trait with `assertDispatched()` and
-  `assertNotDispatched()` for use in any test case class.
-- `DispatchedMessage` -- PHPUnit constraint for custom assertions.
-
-### Compile-Time Validation
-
-`ValidateHandlerCountPass` now enforces exactly-one-handler for commands and
-queries at container compile time. Messages with zero handlers or multiple
-handlers will cause a compile error instead of a runtime exception.
-
-### New Stamps
-
-- `IdempotencyStamp` -- carries an idempotency key for message deduplication.
-- `MessageMetadataStamp` -- now supports causation ID propagation via
-  `CausationIdMiddleware` and `CausationIdContext`.
-
-### New Retry Policy
-
-`ExponentialBackoffRetryPolicy` is available as a named DI service
-(`somework_cqrs.exponential_backoff_retry_policy`). It adds a `DelayStamp` at
-dispatch time; configure Symfony's transport-level `MultiplierRetryStrategy`
-for full exponential backoff across retries.
-
-## Upgrading from 2.0 to 2.1
-
-### ExponentialBackoffRetryPolicy behavior change
-
-`ExponentialBackoffRetryPolicy::getStamps()` now returns an empty array. In 2.0,
-it added a `DelayStamp` at dispatch time, which incorrectly delayed ALL async
-messages (including first dispatch, not just retries).
-
-In 2.1, retry delays are handled exclusively at the transport level via
-`CqrsRetryStrategy`. This is a behavioral change for applications that relied
-on the dispatch-time delay.
-
-**Migration:**
-
-1. If you used `ExponentialBackoffRetryPolicy` and want transport-level retry:
-   - Add `retry_strategy.transports` config mapping your transports to message types
-   - The bundle's `CqrsRetryStrategy` will read retry parameters from your policy
-     and compute correct exponential backoff at the transport level
-
-2. If you relied on the `DelayStamp` being added at dispatch for non-retry purposes:
-   - Add a custom `RetryPolicy` implementation that returns
-     `[new DelayStamp($ms)]` from `getStamps()`
-
-### New retry strategy bridge
-
-Configure `CqrsRetryStrategy` for your Messenger transports to enable per-message
-retry policies at the transport level:
-
-```yaml
-somework_cqrs:
-    retry_strategy:
-        transports:
-            async: command
-        jitter: 0.1
-        max_delay: 60000
-```
-
-See `docs/retry.md` for full documentation.
-
-### New idempotency bridge
-
-`IdempotencyStamp` is now automatically converted to Symfony's `DeduplicateStamp`
-for dispatch-side deduplication:
-
-```yaml
-somework_cqrs:
-    idempotency:
-        enabled: true
-        ttl: 300
-```
-
-Requires `symfony/lock`. See `docs/idempotency.md` for full documentation and
-known limitations.
-
-### CausationIdMiddleware configurability
-
-`CausationIdMiddleware` and `CausationIdStampDecider` can now be disabled or
-scoped to specific buses:
-
-```yaml
-somework_cqrs:
-    causation_id:
-        enabled: true
-        buses:
-            - somework_cqrs.bus.command
-```
-
-Setting `enabled: false` disables both the middleware and the paired stamp decider.
-The `buses` list limits middleware injection to specific bus service IDs (empty
-array means all buses, which is the default and matches 2.0 behavior).
-
-No migration needed if you want the default behavior (enabled on all buses).
-
-## Upgrading from 2.1 to 3.0
-
-### Health check command
-
-A new console command verifies CQRS infrastructure health:
-
-```bash
-php bin/console somework:cqrs:health
-```
-
-The command checks handler resolvability and transport validity. Exit codes:
-
-- `0` -- all checks passed
-- `1` -- warnings found (e.g., no handlers registered)
-- `2` -- critical failures (e.g., handler not resolvable, transport not found)
-
-Usable as a Kubernetes exec probe or CI pipeline gate. See the command output for
-detailed check results.
-
-### Event ordering
-
-Events can now carry per-aggregate ordering metadata via the `SequenceAware`
-interface and `AggregateSequenceStamp`:
-
-```yaml
-somework_cqrs:
-    sequence:
-        enabled: true  # default
-```
-
-Implement `SequenceAware` on your events to automatically receive an
-`AggregateSequenceStamp` with `aggregateId`, `sequenceNumber`, and `aggregateType`.
-See `docs/event-ordering.md` for full documentation.
-
-Note: ordering is vocabulary only -- the stamp carries metadata but does not enforce
-processing order.
-
-### Rate limiting
-
-Per-message-type dispatch throttling bridges to Symfony's rate limiter:
-
-```yaml
-somework_cqrs:
-    rate_limiting:
-        command:
-            map:
-                App\Application\Command\SendNotification: send_notification
-```
-
-Requires `symfony/rate-limiter`:
-
-```bash
-composer require symfony/rate-limiter
-```
-
-When not installed, rate limiting is a no-op. See `docs/rate-limiting.md` for full
-documentation.
-
-### Transactional outbox
-
-The transactional outbox pattern persists async messages in the same database
-transaction as business logic:
-
-```yaml
-somework_cqrs:
-    outbox:
-        enabled: true
-        table_name: somework_cqrs_outbox
-```
-
-Requires `doctrine/dbal`:
-
-```bash
-composer require doctrine/dbal
-```
-
-Relay unpublished messages with:
-
-```bash
-php bin/console somework:cqrs:outbox:relay
-```
-
-When not installed, outbox services are not registered. See `docs/outbox.md` for
-full documentation.
-
-### New optional dependencies
-
-v3.0 adds two new optional (`suggest`) dependencies:
-
-| Package | Required for | Install |
-|---------|-------------|---------|
-| `symfony/rate-limiter` | Rate limiting | `composer require symfony/rate-limiter` |
-| `doctrine/dbal` | Transactional outbox | `composer require doctrine/dbal` |
-
-Both features are no-ops when their packages are not installed. No changes are
-required for existing applications that do not use these features.
-
-### No breaking changes
-
-v3.0 introduces no breaking changes to existing `@api` types. All new features are
-additive:
-
-- New config keys (`sequence`, `rate_limiting`, `outbox`) have sensible defaults
-- Event ordering is enabled by default (but only affects events implementing
-  `SequenceAware`)
-- Rate limiting and outbox are disabled or opt-in by default
-- Existing configuration continues to work without modification
+`ExponentialBackoffRetryPolicy` does not add a `DelayStamp` at dispatch time: retry delays are applied by
+`CqrsRetryStrategy` when a transport retries a failed message. If you need a delay on the first dispatch,
+pass a `DelayStamp` yourself or implement a `RetryPolicy` that returns one from `getStamps()`.

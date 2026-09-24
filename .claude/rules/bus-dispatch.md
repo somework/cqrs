@@ -18,30 +18,36 @@ paths:
 
 - **`DEFAULT`** — Let `DispatchModeDecider` decide based on message class, hierarchy, and per-type defaults. This is the standard path.
 - **`SYNC`** — Execute handler in the current process. Use when the caller needs the result immediately.
-- **`ASYNC`** — Route to the async bus. Requires `command_async` or `event_async` bus to be configured — throws `LogicException` if not. No handler result available to the caller.
+- **`ASYNC`** — Route to the async bus. Requires `command_async` or `event_async` bus to be configured — throws `AsyncBusNotConfiguredException` if not. No handler result available to the caller.
 
 Explicit mode (`SYNC`/`ASYNC`) bypasses the decider entirely. Use `DEFAULT` unless you have a specific reason to override.
 
 ## DispatchModeDecider Resolution Order
 
 When mode is `DEFAULT`, the decider resolves to SYNC or ASYNC by checking (first match wins):
-1. Exact message class in the map
-2. Parent classes (walking up inheritance)
-3. Interfaces (sorted by depth — more specific wins)
-4. Per-type default (`commandDefault` / `eventDefault`)
+1. Exact message class entry in the `dispatch_modes.<type>.map`
+2. `#[Asynchronous]` attribute on the message class
+3. Map entries for parent classes (walking up inheritance), then interfaces
+4. Per-type default (`dispatch_modes.<type>.default`)
 5. Fallback: `SYNC` for unrecognized message types
 
 ## Return Values
 
 **CommandBus**: `dispatchSync()` extracts the result from `HandledStamp`. Prefer void in handlers; returning server-generated metadata (IDs, timestamps) is acceptable. `dispatch()` returns the raw `Envelope` — use this when you don't need the result or when dispatching async.
 
-**QueryBus**: `ask()` validates exactly one `HandledStamp` exists and returns its result. Zero handlers or multiple handlers both throw `LogicException`. Queries always return data.
+**QueryBus**: `ask()` validates exactly one `HandledStamp` exists and returns its result. Zero handlers throw `NoHandlerException`, several `MultipleHandlersException`. Queries always return data.
+
+**Synchronous results** (`dispatchSync()`, `ask()`) go through `SynchronousResult`: it strips `DispatchAfterCurrentBusStamp`, throws `MessageSentToTransportException` when the message was sent to a transport, `DuplicateMessageException` when deduplication dropped it, and rethrows the single cause of a `HandlerFailedException`.
 
 **EventBus**: All methods return `Envelope`. Never extract handler results from events — they are fire-and-forget notifications.
 
 ## Error Propagation
 
-- **CommandBus/QueryBus** — Exceptions propagate immediately to the caller. Failed commands mean the operation failed; failed queries mean data couldn't be retrieved.
+- **CommandBus/QueryBus** — Exceptions propagate immediately to the caller (the handler's own exception when exactly one handler failed). Failed commands mean the operation failed; failed queries mean data couldn't be retrieved.
+
+## Caller Stamps
+
+Stamps passed to `dispatch()`/`ask()` win over the stamp pipeline: deciders never replace or duplicate a stamp the caller supplied (metadata, serializer, sequence, deduplicate, dispatch-after-current-bus).
 - **EventBus** — Handler failures in async mode are handled by retry/dead-letter mechanisms, not propagated to the caller. For sync events, `AllowNoHandlerMiddleware` suppresses `NoHandlerForMessageException` specifically for `Event` instances.
 
 ## Architectural Note

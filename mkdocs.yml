@@ -4,6 +4,11 @@ site_description: CQRS helpers for Symfony Messenger
 repo_url: https://github.com/somework/cqrs
 repo_name: somework/cqrs
 
+# Not documentation pages: the example application and the Flex recipe sources.
+exclude_docs: |
+  example-app/
+  flex-recipe/
+
 theme:
   name: material
   features:

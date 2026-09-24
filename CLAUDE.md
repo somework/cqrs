@@ -31,53 +31,67 @@ vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes
 vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --dry-run --diff
 ```
 
-CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, and 8.4.
+CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3 and 8.4 with the highest dependencies (Symfony 8 on PHP 8.4, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a minimal install without optional packages, an example-app smoke test and `mkdocs build --strict`.
+
+Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.4.0, next release 0.5.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
 ### Console Commands
 
-- `somework:cqrs:list` — shows registered commands, queries, and events with handler metadata
-- `somework:cqrs:generate` — scaffolds a message + handler skeleton (`--type=command|query|event`, `--dir=`, `--force`)
+- `somework:cqrs:list` — shows registered commands, queries, and events with handler metadata (`--type=`, `--details`)
+- `somework:cqrs:generate <type> <FQCN>` — scaffolds a message + attribute-based handler following the project's PSR-4 mapping (`--handler=`, `--dir=`, `--force`)
 - `somework:cqrs:debug-transports` — inspects Messenger transport routing for CQRS messages
+- `somework:cqrs:health` — instantiates every handler and Messenger transport; exit code 0/1/2
+- `somework:cqrs:outbox:relay|setup|purge` — transactional outbox operations (registered when `outbox.enabled`)
 
 ## Architecture
 
 ### Message Flow
 
 ```
-Bus::dispatch(message, mode)
-  → DispatchModeDecider resolves sync/async
-  → StampsDecider runs stamp pipeline (retry, transport, serializer, metadata, dispatch-after-current-bus)
-  → Symfony Messenger MessageBusInterface::dispatch()
+Bus::dispatch(message, mode, ...stamps)
+  → DispatchModeDecider resolves sync/async (exact map entry → #[Asynchronous] → parent/interface map entry → default)
+  → StampsDecider runs the stamp pipeline (rate limit, retry, transport, serializer, metadata, sequence,
+    causation id, idempotency, dispatch-after-current-bus); caller stamps always win
+  → Symfony Messenger MessageBusInterface::dispatch() on the sync or async bus
+  → bundle middleware right after dispatch_after_current_bus (OpenTelemetry, causation id,
+    allow-no-handler for events, deduplication lock release), then Messenger's handlers/senders
 ```
+`dispatchSync()` and `ask()` read the result through `SynchronousResult` (unwraps a single handler exception,
+reports messages that were sent to a transport or deduplicated).
 
 ### Key Layers
 
-**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `MessageSerializer`, `MessageMetadataProvider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
+**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `OutboxStorage`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
 
-**Buses** (`src/Bus/`) — `CommandBus`, `QueryBus`, `EventBus` extend `AbstractMessengerBus`. CommandBus and EventBus support sync/async dispatch via `DispatchMode` enum. QueryBus is sync-only and validates exactly one handler result.
+**Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
 
 **Attributes** (`src/Attribute/`) — `#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]` — repeatable PHP attributes that accept message FQCN and optional bus name. Registered for autoconfiguration in `CqrsExtension`.
 
-**Console Commands** (`src/Command/`) — Three Symfony console commands for diagnostics and scaffolding. See Console Commands section above.
+**Console Commands** (`src/Command/`) — diagnostics, scaffolding, health and outbox commands. See Console Commands section above.
 
-**DI / Compiler Passes** (`src/DependencyInjection/`) — `CqrsExtension` loads services and runs 11 registrars that wire bus facades, stamp deciders, and resolvers from bundle config. Three compiler passes:
-- `CqrsHandlerPass` — discovers handlers, infers message types from `__invoke()` parameter type, builds handler metadata
-- `AllowNoHandlerMiddlewarePass` — adds middleware to suppress `NoHandlerForMessageException` for events
-- `ValidateTransportNamesPass` — validates configured transport references
+**DI / Compiler Passes** (`src/DependencyInjection/`) — `CqrsExtension` loads `config/services.php` (fixed services only) and runs the registrars in `Registration/` that wire resolvers, stamp deciders, outbox and rate limiting from bundle config. Compiler passes (see `.claude/rules/di-registrar-pattern.md` for phases):
+- `CqrsHandlerPass` — normalises handler tags: infers messages from `__invoke()` types, assigns sync + async buses, resolves bus aliases, records `somework_cqrs.handler_metadata`
+- `EnvelopeAwareHandlersLocatorPass` — decorates each bus handlers locator for `EnvelopeAware` handlers
+- `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` — insert middleware via `MessengerMiddlewareInjector`
+- `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
+- `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
+- `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 
-**Stamp Pipeline** (`src/Support/`) — `StampsDecider` aggregates `StampDecider` implementations. Five built-in deciders add stamps for retry, transport, serializer, metadata, and dispatch-after-current-bus. Each is backed by a resolver that walks class hierarchy + interfaces to find message-specific config (exact match → parent classes → interfaces → type default → global default).
+**Stamp Pipeline** (`src/Support/`) — `StampsDecider` aggregates `StampDecider` implementations sorted by priority (see `.claude/rules/stamp-decider-pipeline.md`). Resolver-backed deciders walk class hierarchy + interfaces to find message-specific config (exact match → parent classes → interfaces → type default → global default).
 
 **Registry** (`src/Registry/`) — `HandlerRegistry` provides read-only access to compiled handler metadata (`HandlerDescriptor` DTOs). Used by the `somework:cqrs:list` console command.
 
-**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. `AllowNoHandlerMiddleware` silences missing-handler errors for events.
+**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`.
+
+**Outbox / Health / Retry / Testing** — `src/Outbox/` (DBAL storage, `OutboxMessage::fromEnvelope()`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 
-All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Per-type sections (`command`, `query`, `event`) support `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, and dispatch modes.
+All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Per-type sections (`command`, `query`, `event`) support `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, dispatch modes, dispatch-after-current-bus and rate limiters. Map keys must be existing classes/interfaces and service ids non-empty strings (validated in the tree); `enabled` flags that decide which services exist reject env placeholders.
 
 ### Test Structure
 
-Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, and kernel setups for functional tests. `tests/Functional/` tests the full container compilation and dispatch flow.
+Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, and kernel setups for functional tests. `tests/Functional/` tests the full container compilation and dispatch flow, including a real async round trip (`AsyncTransportRoundTripTest`) and the minimal install without bundle configuration (`MinimalInstallTest`).
 
 ### Detailed Rules
 

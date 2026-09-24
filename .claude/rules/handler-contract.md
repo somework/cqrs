@@ -8,11 +8,11 @@ paths:
 
 # Handler Implementation Contract
 
-## Two Implementation Paths
+## Implementation Paths
 
 **Extend the abstract base class** (preferred) — `AbstractCommandHandler`, `AbstractQueryHandler`, `AbstractEventHandler`. These provide `EnvelopeAware` support automatically via trait inclusion and enforce the setup flow via `final __invoke()`. Use this path unless the handler already extends another base class.
 
-**Implement the interface directly** — `CommandHandler`, `QueryHandler`, `EventHandler`. Use this when the handler must extend a different base class. You must manually implement `__invoke()` with the correct parameter type-hint, and optionally implement `EnvelopeAware` + use `EnvelopeAwareTrait` if envelope access is needed.
+**Plain class with a typed `__invoke()`** — registered by the attribute alone, or by implementing the marker interface `CommandHandler` / `QueryHandler` / `EventHandler`. The interfaces declare NO methods on purpose: PHP forbids narrowing a parameter type, so a declared `__invoke(Command $command)` would make `__invoke(CreateTask $command)` a fatal error. Never add `__invoke()` to these interfaces. Optionally implement `EnvelopeAware` + use `EnvelopeAwareTrait` if envelope access is needed.
 
 ## Method Names
 
@@ -25,20 +25,20 @@ These names are intentional — they describe the handler's relationship to the 
 
 ## Attribute Declaration
 
-Every handler needs a `#[AsCommandHandler]`, `#[AsQueryHandler]`, or `#[AsEventHandler]` attribute with the `command`/`query`/`event` parameter specifying the concrete message class. The `bus` parameter is optional — defaults come from bundle config.
+Handlers declare their message with `#[AsCommandHandler]`, `#[AsQueryHandler]` or `#[AsEventHandler]` (the `command`/`query`/`event` parameter names the concrete message class), or implement the marker interface and let the message be inferred from the type of the first `__invoke()` parameter. The `bus` parameter is optional: without it the handler is registered on the sync bus of its type AND on the async bus of its type when one is configured (workers consume async messages on the async bus).
 
 Attributes are repeatable: a single class can handle multiple message types by stacking attributes. Each attribute results in a separate `messenger.message_handler` tag.
 
 ## Discovery Requirements
 
 `CqrsHandlerPass` infers the message type from the `__invoke()` parameter's type-hint via reflection. For discovery to work:
-- The `__invoke()` method MUST exist with a type-hinted first parameter that implements `Command`, `Query`, or `Event`
+- Without an explicit message in the attribute, the `__invoke()` method MUST have a type-hinted first parameter; otherwise compilation fails with "Cannot determine the message handled by ...". Union members are routed individually; an intersection type is only accepted when one member implies all others
 - The `handles` attribute on the handler attribute must reference a class that matches the parameter type or is a subclass of it
 - Handlers discovered via marker interfaces (`CommandHandler`, `QueryHandler`, `EventHandler`) get the `somework_cqrs.handler_interface` tag, which `CqrsHandlerPass` converts to `messenger.message_handler` before Messenger's own pass runs
 
 ## EnvelopeAware Access
 
-When extending abstract handlers, use `$this->getEnvelope()` (inherited from trait) to access stamps, metadata, or correlation IDs. The envelope is injected by `EnvelopeAwareHandlersLocator` before `__invoke()` runs — no null checks needed inside `handle()`/`fetch()`/`on()`.
+When extending abstract handlers, use `$this->getEnvelope()` (inherited from trait) to access stamps, metadata, or correlation IDs. `EnvelopeAwareHandlersLocator` (one decorator per bus, registered by `EnvelopeAwareHandlersLocatorPass`) calls `setEnvelope()` right before yielding the original handler descriptor — no null checks needed inside `handle()`/`fetch()`/`on()`. Never wrap handlers in closures there: Messenger identifies handlers by descriptor name, and identical names make it skip the second handler of a message.
 
 When implementing the interface directly and needing envelope access: implement `EnvelopeAware`, use `EnvelopeAwareTrait`, and call `$this->getEnvelope()` in your `__invoke()` method.
 

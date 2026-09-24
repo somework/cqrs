@@ -14,7 +14,8 @@ When adding a new registrar:
 2. Add the call in `CqrsExtension::load()` respecting dependency order — registrars that produce resolver references (Retry, Serializer, Metadata, Transport) MUST run before `StampsDeciderRegistrar` which consumes them
 3. Use `ContainerHelper` for shared operations (`ensureServiceExists()`, `registerServiceAlias()`, `registerBooleanLocator()`)
 4. Use `ServiceLocatorTagPass::register($container, $serviceMap)` to create lazy service locators — never inject raw `Reference` arrays for multi-variant lookups
-5. Wrap locator entries in `ServiceClosureArgument` for lazy loading
+5. Pass plain `Reference` values to `ServiceLocatorTagPass::register()`: it wraps them in `ServiceClosureArgument` itself. Wrapping them again makes the locator return closures instead of services
+6. Registrars only see the bundle's own configuration: services and aliases of other bundles (e.g. `messenger.default_bus`) do not exist yet. Anything that needs them belongs in a compiler pass
 
 ## Service ID Conventions
 
@@ -26,15 +27,19 @@ All registrars that support message-specific config follow a 3-level resolution:
 
 ## Compiler Passes
 
-Three passes registered in `SomeWorkCqrsBundle::build()` at different phases because each needs different container state:
+Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the container state each pass needs:
 
-| Pass | Phase | Priority | Why this phase |
-|------|-------|----------|----------------|
-| `CqrsHandlerPass` | BEFORE_OPTIMIZATION | 1 | Must normalize handler tags before Messenger's pass (priority 0) processes them |
-| `AllowNoHandlerMiddlewarePass` | OPTIMIZE | 0 | Needs resolved bus definitions to inject middleware |
-| `ValidateTransportNamesPass` | AFTER_REMOVING | 0 | Final validation after unused services are removed |
+| Pass | Phase / priority | Why |
+|------|------------------|-----|
+| `CqrsHandlerPass` | BEFORE_OPTIMIZATION, 1 | Normalises handler tags (message, buses) before Messenger's `MessengerPass` (priority 0) consumes them |
+| `CqrsRetryStrategyPass` | BEFORE_OPTIMIZATION, 0 | Validates `retry_strategy.transports` and wires `CqrsRetryStrategy` into `messenger.retry_strategy_locator` (wrapping the transport's own strategy as fallback) |
+| `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |
+| `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` | BEFORE_OPTIMIZATION, -8 | Run after `MessengerPass` built the handler locators and bus middleware lists, and before optimization so references to aliases still resolve |
+| `ValidateTransportNamesPass`, `ValidateHandlerCountPass` | BEFORE_OPTIMIZATION, 0 (default) | Validation of the collected metadata |
 
-When adding a new compiler pass, choose the phase based on what container state it needs — never use BEFORE_OPTIMIZATION for validation that depends on resolved definitions.
+Middleware is inserted with `MessengerMiddlewareInjector`, right after Messenger's `dispatch_after_current_bus` middleware (deferred messages continue with the stack after it). Resolve bus ids with `CqrsBusIds` (aliases such as `messenger.default_bus` are only known in compiler passes).
+
+Never register passes at TYPE_OPTIMIZE or later when they add references to aliases: alias resolution has already run and the references would dangle.
 
 ## Configuration Tree Builder
 
@@ -56,3 +61,4 @@ The resulting config array structure (`$config[$section][$type]['default']` and 
 - Never call `$container->get()` in a compiler pass or registrar — only work with definitions and references
 - Guard with `$container->has()` / `$container->hasDefinition()` before accessing services that may not exist
 - Store cross-phase data in container parameters (e.g., `somework_cqrs.handler_metadata`, `somework_cqrs.transport_names`)
+- Validate configuration in `Configuration` (service ids with `requireName()`, per-message maps with `messageKeyedMap()`), and structural `enabled` flags in `CqrsExtension::assertCompileTimeFlags()`
