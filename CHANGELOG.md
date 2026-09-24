@@ -19,7 +19,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The outbox relay retries failing rows with an exponential backoff (1 minute up to 1 hour) and gives up after `outbox.max_attempts` attempts; the table stores `attempts`, `available_at`, `failed_at` and `last_error`, and `setup` adds them to existing tables.
 - The outbox relay runs as a single instance when symfony/lock is installed (lock scoped to `framework.cache.prefix_seed`, the connection and the table, extended after every row) and stops after 5 consecutive send failures.
 - Configuration validation: service ids must be non-empty strings, and per-message map keys must be existing classes or interfaces (a leading `\` is allowed).
-- `HealthChecker`, `CheckResult` and `CheckSeverity`, as well as `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage`, are part of the public API (`@api`).
+- Part of the public API (`@api`): `HealthChecker`, `CheckResult` and `CheckSeverity`; `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage`; `HandlerRegistry` and `HandlerDescriptor`; the default implementations named in the configuration (`NullRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NullMessageSerializer`, `RandomCorrelationMetadataProvider`, `ClassNameMessageNamingStrategy`); and `SomeWorkCqrsBundle`.
 - The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered).
 
 ### Changed
@@ -32,6 +32,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `#[Asynchronous]` transports follow the configuration precedence (exact-class entry, attribute, parent/interface entries, default); a bare attribute no longer overrides Messenger's routing (including `*` and namespace wildcards such as `App\Message\*`).
 - Per-message maps resolve interfaces most specific first, independent of the declaration order.
 - Retry policy stamps no longer override stamps passed by the caller.
+- `DispatchAfterCurrentBusStampDecider` runs at priority -10, so custom deciders with the default priority 0 always run before it.
 - The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware, so deferred messages pass through it too.
 - OpenTelemetry: one span per pass, `cqrs.dispatch <Message>` (PRODUCER) when dispatching and `cqrs.consume <Message>` (CONSUMER) in the worker; deferred messages keep the trace they were dispatched in.
 - `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever; delays are capped before and after jitter.
@@ -48,7 +49,8 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `somework:cqrs:generate` follows the PSR-4 mapping of the project's `composer.json`, resolves `--dir` against the project directory, validates class names, generates attribute-based handlers with a typed `__invoke()` and exits with 2 on invalid input.
 - `somework:cqrs:list` exits with 2 for an unknown `--type`.
 - `RateLimitResolver` accepts any `RateLimiterFactoryInterface`, including compound limiters.
-- `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies.
+- `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies; `doctrine/dbal` < 4.0, `open-telemetry/api` < 1.8, `symfony/lock` < 7.2 and `symfony/rate-limiter` < 7.2 are declared as conflicts.
+- The bundle registers only its own services (facades, registry, commands, health checkers, default policies) instead of every class under `src/`; the testing fakes are no longer services.
 
 ### Fixed
 - The default installation (no bundle configuration, no symfony/rate-limiter) failed to compile.

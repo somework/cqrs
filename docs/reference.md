@@ -263,7 +263,8 @@ interface RetryPolicy
 }
 ```
 
-The returned stamps are appended to every dispatch of a matching message. When
+The returned stamps are added to every dispatch of a matching message, except
+stamps of a class the caller already passed. When
 the policy also implements `SomeWork\CqrsBundle\Contract\RetryConfiguration`
 (`getMaxRetries()`, `getInitialDelay()`, `getMultiplier()`), transports listed
 under [`retry_strategy`](#retry_strategy) use these values to retry failed

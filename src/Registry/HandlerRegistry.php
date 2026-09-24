@@ -11,7 +11,7 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 /**
  * Provides read access to the CQRS handler map that is compiled at container build time.
  *
- * @internal
+ * @api
  */
 final class HandlerRegistry
 {
@@ -21,6 +21,8 @@ final class HandlerRegistry
     private array $namingCache = [];
 
     /**
+     * @internal Get the registry from the container; the constructor is not covered by the BC promise
+     *
      * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
      * @param ServiceLocator<MessageNamingStrategy>                                                                                              $namingStrategies
      */

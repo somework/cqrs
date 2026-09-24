@@ -41,9 +41,10 @@ Deciders are sorted by priority via `TaggedIteratorArgument` (higher = earlier).
 | 110 | Event sequence | `SequenceStampDecider` |
 | 100 | Causation id (needs the metadata stamp) | `CausationIdStampDecider` |
 | 50 | Idempotency | `IdempotencyStampDecider` |
-| 0 | Cross-cutting (runs last) | `DispatchAfterCurrentBusStampDecider` |
+| 0 | Default priority of custom (autoconfigured) deciders | — |
+| -10 | Cross-cutting (runs last) | `DispatchAfterCurrentBusStampDecider` |
 
-Place new deciders in the appropriate band. If a decider depends on stamps from an earlier stage, give it a lower priority. Cross-cutting deciders that should always run last use priority 0.
+Place new deciders in the appropriate band. If a decider depends on stamps from an earlier stage, give it a lower priority. Cross-cutting deciders that must run after custom deciders use a negative priority (`DispatchAfterCurrentBusStampDecider` uses -10).
 
 ## Registration
 

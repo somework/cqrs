@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Registry;
 
 /**
- * @internal
+ * @api
  */
 final class HandlerDescriptor
 {

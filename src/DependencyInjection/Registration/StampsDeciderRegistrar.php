@@ -214,7 +214,8 @@ final class StampsDeciderRegistrar
             'arguments' => [
                 '$decider' => new Reference('somework_cqrs.dispatch_after_current_bus_decider'),
             ],
-            'priority' => 0,
+            // Below the default priority (0) of custom deciders: runs last, deterministically.
+            'priority' => -10,
         ];
 
         foreach ($deciderConfigurations as $configuration) {

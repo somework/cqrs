@@ -54,7 +54,7 @@ Things to know about the pipeline:
   `MessageMetadataStamp`, `SerializerStamp`, `TransportNamesStamp`,
   `AggregateSequenceStamp`, `DeduplicateStamp` or `DispatchAfterCurrentBusStamp`
   passed by the caller, and an explicit causation id is kept. Retry policy
-  stamps are always appended.
+  stamps are added only for stamp classes the caller did not pass.
 
 ## Middleware classes
 
@@ -174,14 +174,14 @@ events.
 | Priority | Decider | Applies to | Registered when | Leaves alone |
 |----------|---------|------------|-----------------|--------------|
 | 225 | `RateLimitStampDecider` | per type | a limiter is mapped under `rate_limiting` | - |
-| 200 | `RetryPolicyStampDecider` | per type | always | - (stamps are appended) |
+| 200 | `RetryPolicyStampDecider` | per type | always | policy stamps of a class the caller passed |
 | 175 | `MessageTransportStampDecider` | commands, queries, events | always | an existing `TransportNamesStamp` |
 | 150 | `MessageSerializerStampDecider` | per type | always | an existing `SerializerStamp` |
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
 | 100 | `CausationIdStampDecider` | all messages | `causation_id.enabled` (default `true`) | an explicit causation id |
 | 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`), symfony/messenger 7.3+ and symfony/lock installed | an existing `DeduplicateStamp` |
-| 0 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
+| -10 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
 
 ### RateLimitStampDecider (225)
 
@@ -245,7 +245,7 @@ Turns an `IdempotencyStamp` into Messenger's `DeduplicateStamp`, with the key
 `<message class>::<idempotency key>` and the TTL from `idempotency.ttl`. The
 `IdempotencyStamp` stays on the envelope. See [Idempotency](idempotency.md).
 
-### DispatchAfterCurrentBusStampDecider (0)
+### DispatchAfterCurrentBusStampDecider (-10)
 
 For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
 `async.dispatch_after_current_bus` disables it for the message. See
@@ -314,9 +314,12 @@ keep stamps passed by the caller unless you have a reason not to.
 ### 2. Register it
 
 With autoconfiguration, implementing `StampDecider` adds the
-`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`. Set
-the priority explicitly to control where the decider runs, either in the service
-definition:
+`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`: the
+decider runs after every built-in decider except
+`DispatchAfterCurrentBusStampDecider` (-10), so it can add its own
+`DispatchAfterCurrentBusStamp`. Use a priority below -10 to see the final
+stamps. Set the priority explicitly to control where the decider runs, either in
+the service definition:
 
 ```yaml
 services:

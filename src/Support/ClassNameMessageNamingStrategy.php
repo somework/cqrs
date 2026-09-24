@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 /**
  * Uses the short class name as the human readable message name.
  *
- * @internal
+ * @api
  */
 final class ClassNameMessageNamingStrategy implements MessageNamingStrategy
 {

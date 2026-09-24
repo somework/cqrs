@@ -11,7 +11,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Retry policy that applies no additional stamps.
  *
- * @internal
+ * @api
  */
 final class NullRetryPolicy implements RetryPolicy
 {

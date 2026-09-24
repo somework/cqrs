@@ -32,7 +32,7 @@ flowchart LR
     H --> F
 ```
 
-The stamp pipeline runs the built-in deciders for rate limiting, retry policies, the `#[Asynchronous]` attribute, transport names, serializers, metadata, event sequence numbers, causation IDs, idempotency, and `DispatchAfterCurrentBusStamp`, followed by any decider you register. Queries skip the dispatch-mode step; they are always handled synchronously.
+The stamp pipeline runs the built-in deciders for rate limiting, retry policies, the `#[Asynchronous]` attribute, transport names, serializers, metadata, event sequence numbers, causation IDs, idempotency, and `DispatchAfterCurrentBusStamp`; deciders you register run by their priority (by default after the built-in ones and before the `DispatchAfterCurrentBusStamp` decider). Queries skip the dispatch-mode step; they are always handled synchronously.
 
 ### How does it compare with plain Messenger?
 

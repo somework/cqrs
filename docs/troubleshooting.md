@@ -118,10 +118,11 @@ At runtime, `ask()` can also throw
 
 **Cause.** Commands and queries must have exactly one handler per bus (events
 may have any number). The check counts distinct services per bus; one service on
-the sync and the async bus is fine. The runtime error typically comes from a
-second handler the check does not attribute to that bus, such as a Messenger
-`#[AsMessageHandler]` handler without a bus, which Messenger registers on every
-bus.
+the sync and the async bus is fine. The check compares handlers of the same message
+class, so the runtime error typically comes from a handler registered for a
+parent class or an interface of the query (Messenger runs the handlers of all of
+them), or from handlers wired outside the bundle's discovery (a decorated
+handlers locator).
 
 **Fix.** Keep one handler per command or query and bus: remove the extra
 handler, or register the handlers on different buses with the `bus` argument.

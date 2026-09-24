@@ -11,7 +11,7 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 /**
  * Generates random correlation identifiers for dispatched messages.
  *
- * @internal
+ * @api
  */
 final class RandomCorrelationMetadataProvider implements MessageMetadataProvider
 {

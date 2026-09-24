@@ -17,7 +17,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  * Returns no stamps at dispatch time -- retry delays are handled
  * exclusively at the transport level.
  *
- * @internal
+ * @api
  */
 final class ExponentialBackoffRetryPolicy implements RetryPolicy, RetryConfiguration
 {

@@ -24,7 +24,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Extension\ExtensionInterface;
 use Symfony\Component\HttpKernel\Bundle\Bundle;
 
-/** @internal */
+/** @api The bundle class registered in config/bundles.php. */
 final class SomeWorkCqrsBundle extends Bundle
 {
     public function build(ContainerBuilder $container): void

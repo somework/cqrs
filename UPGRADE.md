@@ -36,6 +36,18 @@ their class-level PHPDoc block.
 - Symfony 7.2 or newer, including Symfony 8.
 - `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are now direct dependencies
   (they were already installed through Symfony).
+- Optional packages have minimum versions, declared as Composer conflicts: `doctrine/dbal` 4.0,
+  `open-telemetry/api` 1.8, `symfony/lock` 7.2 and `symfony/rate-limiter` 7.2. A project with an older version
+  installed (for example DBAL 3) must upgrade it first, or Composer refuses the update.
+
+### Bundle services
+
+The bundle no longer registers every class under `src/` as a service (0.4 loaded the whole directory, including
+DTOs, exceptions and the testing fakes). Only the facades, their interface aliases, the registry, the console
+commands, the health checkers and the default policies are services. If you aliased or fetched another bundle
+class from the container, for example `SomeWork\CqrsBundle\Testing\FakeCommandBus` in a `when@test` block,
+define that service yourself, as shown in
+[Testing](docs/testing.md#swapping-the-buses-for-fakes-in-the-test-container).
 
 ### Handler interfaces are marker interfaces
 
