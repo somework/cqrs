@@ -19,6 +19,8 @@ use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 
+use function Symfony\Component\DependencyInjection\Loader\Configurator\abstract_arg;
+
 /*
  * Services with a fixed definition. Everything that depends on the bundle configuration
  * (resolvers, stamp deciders, middleware, outbox, rate limiting) is registered by the
@@ -42,8 +44,11 @@ return static function (ContainerConfigurator $configurator): void {
     $services->set(DebugTransportsCommand::class);
     $services->set(HealthCheckCommand::class);
 
-    $services->set(HandlerResolvabilityChecker::class);
-    $services->set(TransportValidityChecker::class);
+    // The service locators are set by HealthCheckerLocatorPass.
+    $services->set(HandlerResolvabilityChecker::class)
+        ->arg('$handlers', abstract_arg('handler services'));
+    $services->set(TransportValidityChecker::class)
+        ->arg('$transports', abstract_arg('transport services'));
 
     // Default policies referenced by class name from the configuration defaults.
     $services->set(ClassNameMessageNamingStrategy::class);

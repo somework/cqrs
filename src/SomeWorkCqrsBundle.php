@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\DeduplicationLockReleasePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
@@ -31,6 +32,8 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new CqrsHandlerPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 1);
         // After MessengerPass: decorates the handlers locators it registers.
         $container->addCompilerPass(new EnvelopeAwareHandlersLocatorPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
+        // After CqrsHandlerPass: gives the health checkers access to the private handler and transport services.
+        $container->addCompilerPass(new HealthCheckerLocatorPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         // Middleware passes run after MessengerPass has built the bus middleware lists, and before
         // the optimization passes so references to aliases (tracer provider, lock factory) resolve.
         // Each inserts right after "dispatch_after_current_bus", so the resulting order is:

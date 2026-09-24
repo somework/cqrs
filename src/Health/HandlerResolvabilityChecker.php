@@ -5,18 +5,25 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Health;
 
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
-use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Contracts\Service\ServiceProviderInterface;
 
+use function array_values;
 use function sprintf;
 
-/** @internal */
+/**
+ * Instantiates every CQRS handler service to verify that it can be built at runtime
+ * (missing environment variables, failing constructors, ...).
+ *
+ * @internal
+ */
 final class HandlerResolvabilityChecker implements HealthChecker
 {
+    /**
+     * @param ServiceProviderInterface<object> $handlers handler services keyed by service id
+     */
     public function __construct(
         private readonly HandlerRegistry $handlerRegistry,
-        #[Autowire(service: 'service_container')]
-        private readonly ContainerInterface $container,
+        private readonly ServiceProviderInterface $handlers,
     ) {
     }
 
@@ -35,11 +42,31 @@ final class HandlerResolvabilityChecker implements HealthChecker
 
         $results = [];
         foreach ($descriptors as $descriptor) {
-            $results[] = $this->container->has($descriptor->serviceId)
-                ? new CheckResult(CheckSeverity::OK, 'handler', sprintf('Handler "%s" is resolvable', $descriptor->serviceId))
-                : new CheckResult(CheckSeverity::CRITICAL, 'handler', sprintf('Handler "%s" is not resolvable — service not found in container', $descriptor->serviceId));
+            $serviceId = $descriptor->serviceId;
+
+            // A handler registered on several buses is checked once.
+            if (isset($results[$serviceId])) {
+                continue;
+            }
+
+            $results[$serviceId] = $this->checkService($serviceId);
         }
 
-        return $results;
+        return array_values($results);
+    }
+
+    private function checkService(string $serviceId): CheckResult
+    {
+        if (!$this->handlers->has($serviceId)) {
+            return new CheckResult(CheckSeverity::CRITICAL, 'handler', sprintf('Handler "%s" is not resolvable — service not found in container', $serviceId));
+        }
+
+        try {
+            $this->handlers->get($serviceId);
+        } catch (\Throwable $exception) {
+            return new CheckResult(CheckSeverity::CRITICAL, 'handler', sprintf('Handler "%s" cannot be instantiated: %s', $serviceId, $exception->getMessage()));
+        }
+
+        return new CheckResult(CheckSeverity::OK, 'handler', sprintf('Handler "%s" is resolvable', $serviceId));
     }
 }
