@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
@@ -13,9 +14,12 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\MethodAttributeHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\MixedUnionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NonCqrsHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\NoParamHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnroutableIntersectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\UntypedInterfaceHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
@@ -25,9 +29,11 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryableImportLegacyDataCommand;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_column;
 
+#[CoversClass(CqrsHandlerPass::class)]
 final class CqrsHandlerPassTest extends TestCase
 {
     public function test_it_collects_metadata_for_union_and_intersection_types(): void
@@ -483,5 +489,131 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertSame([], $metadata['command']);
         self::assertSame([], $metadata['query']);
         self::assertSame([], $metadata['event']);
+    }
+
+    public function test_handler_without_explicit_bus_is_registered_on_sync_and_async_bus(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [
+                ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command', 'bus' => 'messenger.bus.commands'],
+                ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command', 'bus' => 'messenger.bus.commands_async'],
+            ],
+            $container->getDefinition('handler.create_task')->getTag('messenger.message_handler'),
+        );
+    }
+
+    public function test_bus_aliases_are_resolved_to_real_bus_ids(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.default_bus');
+        $container->register('messenger.bus.default');
+        $container->setAlias('messenger.default_bus', 'messenger.bus.default');
+        $container->setAlias('app.query_bus', 'messenger.default_bus');
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command']);
+        $container->register('handler.find_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => FindTaskQuery::class, 'somework_cqrs_type' => 'query', 'bus' => 'app.query_bus']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame('messenger.bus.default', $container->getDefinition('handler.create_task')->getTag('messenger.message_handler')[0]['bus']);
+        self::assertSame('messenger.bus.default', $container->getDefinition('handler.find_task')->getTag('messenger.message_handler')[0]['bus']);
+    }
+
+    public function test_explicit_bus_is_kept_as_the_only_bus(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command', 'bus' => 'messenger.bus.commands_async']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $tags = $container->getDefinition('handler.create_task')->getTag('messenger.message_handler');
+        self::assertCount(1, $tags);
+        self::assertSame('messenger.bus.commands_async', $tags[0]['bus']);
+    }
+
+    public function test_foreign_handler_tags_keep_messenger_default_buses(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.method', MethodAttributeHandler::class)
+            ->addTag('messenger.message_handler', ['method' => 'handle']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $tags = $container->getDefinition('handler.method')->getTag('messenger.message_handler');
+        self::assertCount(1, $tags);
+        self::assertArrayNotHasKey('bus', $tags[0]);
+        self::assertSame(CreateTaskCommand::class, $tags[0]['handles']);
+    }
+
+    public function test_union_types_keep_routes_for_non_cqrs_members(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('handler.mixed', MixedUnionHandler::class)
+            ->addTag('messenger.message_handler');
+
+        (new CqrsHandlerPass())->process($container);
+
+        $handles = array_column($container->getDefinition('handler.mixed')->getTag('messenger.message_handler'), 'handles');
+        self::assertSame([CreateTaskCommand::class, \stdClass::class], $handles);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([CreateTaskCommand::class], array_column($metadata['command'], 'message'));
+    }
+
+    public function test_unroutable_intersection_type_fails_with_a_clear_message(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('handler.intersection', UnroutableIntersectionHandler::class)
+            ->addTag('messenger.message_handler');
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('cannot be routed by Symfony Messenger');
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_interface_handler_without_resolvable_message_fails_with_a_clear_message(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('handler.untyped', UntypedInterfaceHandler::class)
+            ->addTag('somework_cqrs.handler_interface', ['method' => '__invoke', 'type' => 'command']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Cannot determine the message handled by');
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_interface_tag_is_ignored_when_an_explicit_handler_tag_exists(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('handler.untyped', UntypedInterfaceHandler::class)
+            ->addTag('somework_cqrs.handler_interface', ['method' => '__invoke', 'type' => 'command'])
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $definition = $container->getDefinition('handler.untyped');
+        self::assertFalse($definition->hasTag('somework_cqrs.handler_interface'));
+        self::assertCount(1, $definition->getTag('messenger.message_handler'));
+    }
+
+    private function createContainerWithBuses(): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.commands');
+        $container->setParameter('somework_cqrs.bus.command', 'messenger.bus.commands');
+        $container->setParameter('somework_cqrs.bus.command_async', 'messenger.bus.commands_async');
+
+        return $container;
     }
 }

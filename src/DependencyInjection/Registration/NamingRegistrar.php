@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -27,10 +26,10 @@ final class NamingRegistrar
         $eventId = $this->helper->ensureServiceExists($container, $config['event'] ?? $defaultId);
 
         $serviceMap = [
-            'default' => new ServiceClosureArgument(new Reference($defaultId)),
-            'command' => new ServiceClosureArgument(new Reference($commandId)),
-            'query' => new ServiceClosureArgument(new Reference($queryId)),
-            'event' => new ServiceClosureArgument(new Reference($eventId)),
+            'default' => new Reference($defaultId),
+            'command' => new Reference($commandId),
+            'query' => new Reference($queryId),
+            'event' => new Reference($eventId),
         ];
 
         $locatorId = ServiceLocatorTagPass::register($container, $serviceMap);

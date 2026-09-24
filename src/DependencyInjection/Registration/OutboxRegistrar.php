@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
-use Doctrine\ORM\Tools\ToolEvents;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
@@ -18,8 +17,9 @@ final class OutboxRegistrar
 {
     /**
      * @param array{enabled: bool, table_name: string} $config
+     * @param bool                                     $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
      */
-    public function register(ContainerBuilder $container, array $config): void
+    public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false): void
     {
         $storageDef = new Definition(DbalOutboxStorage::class);
         $storageDef->setArgument('$connection', new Reference('doctrine.dbal.default_connection'));
@@ -36,7 +36,7 @@ final class OutboxRegistrar
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
 
-        if (class_exists(ToolEvents::class)) {
+        if ($schemaToolAvailable) {
             $subscriberDef = new Definition(OutboxSchemaSubscriber::class);
             $subscriberDef->setArgument('$tableName', $config['table_name']);
             $subscriberDef->addTag('doctrine.event_listener', ['event' => 'postGenerateSchema']);

@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -43,13 +42,13 @@ final class SerializerRegistrar
             }
 
             $serviceMap = [
-                MessageSerializerResolver::GLOBAL_DEFAULT_KEY => new ServiceClosureArgument(new Reference($defaultId)),
-                MessageSerializerResolver::TYPE_DEFAULT_KEY => new ServiceClosureArgument(new Reference($resolvedTypeDefaultId)),
+                MessageSerializerResolver::GLOBAL_DEFAULT_KEY => new Reference($defaultId),
+                MessageSerializerResolver::TYPE_DEFAULT_KEY => new Reference($resolvedTypeDefaultId),
             ];
 
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
                 $resolvedId = $this->helper->ensureServiceExists($container, $serviceId);
-                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+                $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 
             $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

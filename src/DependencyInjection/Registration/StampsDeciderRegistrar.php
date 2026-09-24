@@ -25,8 +25,6 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
-use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function sprintf;
 
@@ -177,7 +175,7 @@ final class StampsDeciderRegistrar
             ],
         ];
 
-        if ($causationIdConfig['enabled']) {
+        if (true === $causationIdConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'causation_id',
                 'class' => CausationIdStampDecider::class,
@@ -189,7 +187,7 @@ final class StampsDeciderRegistrar
             ];
         }
 
-        if ($sequenceConfig['enabled']) {
+        if (true === $sequenceConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'event_sequence',
                 'class' => SequenceStampDecider::class,
@@ -199,7 +197,7 @@ final class StampsDeciderRegistrar
             ];
         }
 
-        if ($rateLimitConfig['enabled'] && class_exists(RateLimiterFactory::class)) {
+        if (true === $rateLimitConfig['enabled']) {
             foreach (['command' => Command::class, 'query' => Query::class, 'event' => Event::class] as $type => $contract) {
                 $deciderConfigurations[] = [
                     'service_id_suffix' => sprintf('%s_rate_limit', $type),
@@ -215,7 +213,7 @@ final class StampsDeciderRegistrar
             }
         }
 
-        if ($idempotencyConfig['enabled'] && class_exists(DeduplicateStamp::class)) {
+        if (true === $idempotencyConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'idempotency',
                 'class' => IdempotencyStampDecider::class,

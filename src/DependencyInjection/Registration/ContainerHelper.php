@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -54,7 +53,7 @@ final class ContainerHelper
             $definition->setPublic(false);
 
             $container->setDefinition($serviceId, $definition);
-            $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+            $serviceMap[$messageClass] = new Reference($serviceId);
         }
 
         $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

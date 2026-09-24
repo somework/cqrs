@@ -52,11 +52,6 @@ final class OutboxRegistrarTest extends TestCase
 
     public function test_registers_schema_subscriber_when_orm_available(): void
     {
-        // ToolEvents class exists in test environment (doctrine/orm is available)
-        if (!class_exists(\Doctrine\ORM\Tools\ToolEvents::class)) {
-            self::markTestSkipped('doctrine/orm not installed');
-        }
-
         $container = $this->createContainerWithRegistrar();
 
         self::assertTrue($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
@@ -95,10 +90,6 @@ final class OutboxRegistrarTest extends TestCase
 
     public function test_schema_subscriber_uses_configured_table_name(): void
     {
-        if (!class_exists(\Doctrine\ORM\Tools\ToolEvents::class)) {
-            self::markTestSkipped('doctrine/orm not installed');
-        }
-
         $container = $this->createContainerWithRegistrar(['table_name' => 'my_custom_outbox']);
 
         $definition = $container->getDefinition('somework_cqrs.outbox.schema_subscriber');
@@ -130,10 +121,18 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame(OutboxRelayCommand::class, $definition->getClass());
     }
 
+    public function test_skips_schema_subscriber_without_schema_tool(): void
+    {
+        $container = $this->createContainerWithRegistrar(schemaToolAvailable: false);
+
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+    }
+
     /**
      * @param array{enabled?: bool, table_name?: string} $config
      */
-    private function createContainerWithRegistrar(array $config = []): ContainerBuilder
+    private function createContainerWithRegistrar(array $config = [], bool $schemaToolAvailable = true): ContainerBuilder
     {
         $container = new ContainerBuilder();
 
@@ -141,7 +140,7 @@ final class OutboxRegistrarTest extends TestCase
         $registrar->register($container, [
             'enabled' => $config['enabled'] ?? true,
             'table_name' => $config['table_name'] ?? 'somework_cqrs_outbox',
-        ]);
+        ], $schemaToolAvailable);
 
         return $container;
     }

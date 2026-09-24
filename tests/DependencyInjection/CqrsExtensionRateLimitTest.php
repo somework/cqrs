@@ -15,8 +15,14 @@ use SomeWork\CqrsBundle\DependencyInjection\Registration\RateLimitRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\StampsDeciderRegistrar;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
 use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
-use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function sprintf;
 
@@ -26,121 +32,75 @@ use function sprintf;
 #[CoversClass(StampsDeciderRegistrar::class)]
 final class CqrsExtensionRateLimitTest extends TestCase
 {
-    public function test_config_processes_with_empty_maps(): void
+    private const ALL_TYPES_CONFIG = [
+        'rate_limiting' => [
+            'command' => ['map' => [CreateTaskCommand::class => 'order_limiter']],
+            'query' => ['map' => [FindTaskQuery::class => 'search_limiter']],
+            'event' => ['map' => [TaskCreatedEvent::class => 'notification_limiter']],
+        ],
+    ];
+
+    public function test_default_config_registers_no_rate_limiting_services(): void
     {
         $container = $this->createContainer();
 
         foreach (['command', 'query', 'event'] as $type) {
-            self::assertTrue(
-                $container->hasDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)),
-                sprintf('RateLimitResolver should be registered for %s type with empty map', $type),
-            );
+            self::assertFalse($container->hasDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)));
+            self::assertFalse($container->hasDefinition(sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type)));
+        }
+    }
 
+    public function test_default_config_does_not_require_the_rate_limiter_component(): void
+    {
+        $container = $this->createContainer([], static fn (string $class): bool => RateLimiterFactory::class !== $class && class_exists($class));
+
+        self::assertFalse($container->hasDefinition('somework_cqrs.stamp_decider.command_rate_limit'));
+    }
+
+    public function test_mappings_without_the_rate_limiter_component_fail_with_a_clear_message(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('symfony/rate-limiter is not installed');
+
+        $this->createContainer(self::ALL_TYPES_CONFIG, static fn (string $class): bool => RateLimiterFactory::class !== $class && class_exists($class));
+    }
+
+    public function test_mappings_register_resolvers_for_every_type(): void
+    {
+        $container = $this->createContainer(self::ALL_TYPES_CONFIG);
+
+        foreach (['command', 'query', 'event'] as $type) {
             $definition = $container->getDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type));
+
             self::assertSame(RateLimitResolver::class, $definition->getClass());
-        }
-    }
-
-    public function test_config_processes_with_one_command_mapping(): void
-    {
-        $container = $this->createContainer([
-            'rate_limiting' => [
-                'command' => [
-                    'map' => [
-                        'App\\Message\\CreateOrder' => 'order_limiter',
-                    ],
-                ],
-            ],
-        ]);
-
-        self::assertTrue(
-            $container->hasDefinition('somework_cqrs.rate_limit.command_resolver'),
-            'RateLimitResolver should be registered for command type with one mapping',
-        );
-
-        $definition = $container->getDefinition('somework_cqrs.rate_limit.command_resolver');
-        self::assertSame(RateLimitResolver::class, $definition->getClass());
-    }
-
-    public function test_config_processes_with_mappings_across_all_types(): void
-    {
-        $container = $this->createContainer([
-            'rate_limiting' => [
-                'command' => [
-                    'map' => [
-                        'App\\Message\\CreateOrder' => 'order_limiter',
-                    ],
-                ],
-                'query' => [
-                    'map' => [
-                        'App\\Query\\SearchProducts' => 'search_limiter',
-                    ],
-                ],
-                'event' => [
-                    'map' => [
-                        'App\\Event\\NotificationSent' => 'notification_limiter',
-                    ],
-                ],
-            ],
-        ]);
-
-        foreach (['command', 'query', 'event'] as $type) {
-            self::assertTrue(
-                $container->hasDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)),
-                sprintf('RateLimitResolver should be registered for %s type', $type),
-            );
-        }
-    }
-
-    public function test_rate_limiting_disabled_skips_registration(): void
-    {
-        $container = $this->createContainer([
-            'rate_limiting' => [
-                'enabled' => false,
-            ],
-        ]);
-
-        foreach (['command', 'query', 'event'] as $type) {
-            self::assertFalse(
-                $container->hasDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)),
-                sprintf('RateLimitResolver should NOT be registered for %s when rate_limiting.enabled=false', $type),
-            );
-        }
-    }
-
-    public function test_rate_limiting_enabled_parameter_set_to_true_by_default(): void
-    {
-        $container = $this->createContainer();
-
-        self::assertTrue($container->hasParameter('somework_cqrs.rate_limiting.enabled'));
-        self::assertTrue($container->getParameter('somework_cqrs.rate_limiting.enabled'));
-    }
-
-    public function test_rate_limiting_enabled_parameter_set_to_false_when_disabled(): void
-    {
-        $container = $this->createContainer([
-            'rate_limiting' => [
-                'enabled' => false,
-            ],
-        ]);
-
-        self::assertTrue($container->hasParameter('somework_cqrs.rate_limiting.enabled'));
-        self::assertFalse($container->getParameter('somework_cqrs.rate_limiting.enabled'));
-    }
-
-    public function test_resolver_definition_is_not_public(): void
-    {
-        $container = $this->createContainer();
-
-        foreach (['command', 'query', 'event'] as $type) {
-            $definition = $container->getDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type));
             self::assertFalse($definition->isPublic());
+            self::assertInstanceOf(Reference::class, $definition->getArgument('$logger'));
         }
+    }
+
+    public function test_limiters_are_referenced_by_their_framework_service_id(): void
+    {
+        $container = $this->createContainer(self::ALL_TYPES_CONFIG);
+
+        $locatorReference = $container->getDefinition('somework_cqrs.rate_limit.command_resolver')->getArgument('$limiters');
+        self::assertInstanceOf(Reference::class, $locatorReference);
+
+        $services = $container->getDefinition((string) $locatorReference)->getArgument(0);
+        self::assertIsArray($services);
+        self::assertArrayHasKey(CreateTaskCommand::class, $services);
+
+        // Exactly one closure level: the locator must return the limiter itself, not a closure.
+        $closure = $services[CreateTaskCommand::class];
+        self::assertInstanceOf(ServiceClosureArgument::class, $closure);
+        $values = $closure->getValues();
+        self::assertCount(1, $values);
+        self::assertInstanceOf(Reference::class, $values[0]);
+        self::assertSame('limiter.order_limiter', (string) $values[0]);
     }
 
     public function test_stamp_deciders_registered_with_priority_225(): void
     {
-        $container = $this->createContainer();
+        $container = $this->createContainer(self::ALL_TYPES_CONFIG);
 
         $expected = [
             'command' => Command::class,
@@ -149,114 +109,45 @@ final class CqrsExtensionRateLimitTest extends TestCase
         ];
 
         foreach ($expected as $type => $contract) {
-            $serviceId = sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type);
+            $definition = $container->getDefinition(sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type));
 
-            self::assertTrue(
-                $container->hasDefinition($serviceId),
-                sprintf('Rate limit stamp decider should be registered for %s', $type),
-            );
-
-            $definition = $container->getDefinition($serviceId);
             self::assertSame(RateLimitStampDecider::class, $definition->getClass());
+            self::assertSame($contract, $definition->getArgument('$messageType'));
 
             $tags = $definition->getTag('somework_cqrs.dispatch_stamp_decider');
             self::assertCount(1, $tags);
             self::assertSame(225, $tags[0]['priority']);
-            self::assertSame([$contract], $tags[0]['message_types']);
         }
     }
 
-    public function test_stamp_deciders_not_registered_when_disabled(): void
+    public function test_rate_limiting_disabled_skips_registration_even_with_mappings(): void
     {
-        $container = $this->createContainer([
-            'rate_limiting' => [
-                'enabled' => false,
-            ],
-        ]);
+        $config = self::ALL_TYPES_CONFIG;
+        $config['rate_limiting']['enabled'] = false;
+
+        $container = $this->createContainer($config);
 
         foreach (['command', 'query', 'event'] as $type) {
-            self::assertFalse(
-                $container->hasDefinition(sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type)),
-                sprintf('Rate limit stamp decider should NOT be registered for %s when disabled', $type),
-            );
+            self::assertFalse($container->hasDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type)));
+            self::assertFalse($container->hasDefinition(sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type)));
         }
     }
 
-    public function test_stamp_decider_service_ids_follow_naming_pattern(): void
+    public function test_rate_limiting_enabled_parameter_reflects_the_configuration(): void
     {
-        $container = $this->createContainer();
-
-        foreach (['command', 'query', 'event'] as $type) {
-            self::assertTrue(
-                $container->hasDefinition(sprintf('somework_cqrs.stamp_decider.%s_rate_limit', $type)),
-                sprintf('Service ID should follow pattern somework_cqrs.stamp_decider.%s_rate_limit', $type),
-            );
-        }
-    }
-
-    public function test_class_exists_guard_present_in_extension(): void
-    {
-        $reflector = new \ReflectionClass(CqrsExtension::class);
-        $source = file_get_contents((string) $reflector->getFileName());
-        self::assertIsString($source);
-
-        self::assertStringContainsString(
-            'class_exists(RateLimiterFactory::class)',
-            $source,
-            'CqrsExtension must guard RateLimitRegistrar with class_exists(RateLimiterFactory::class)',
-        );
-    }
-
-    public function test_limiter_service_references_use_limiter_prefix(): void
-    {
-        $reflector = new \ReflectionClass(RateLimitRegistrar::class);
-        $source = file_get_contents((string) $reflector->getFileName());
-        self::assertIsString($source);
-
-        self::assertStringContainsString(
-            "sprintf('limiter.%s', \$limiterName)",
-            $source,
-            'RateLimitRegistrar must reference limiter services using the limiter.{name} prefix',
-        );
-    }
-
-    public function test_resolver_receives_logger_argument(): void
-    {
-        $container = $this->createContainer();
-
-        $definition = $container->getDefinition('somework_cqrs.rate_limit.command_resolver');
-        $loggerArg = $definition->getArgument('$logger');
-
-        self::assertInstanceOf(\Symfony\Component\DependencyInjection\Reference::class, $loggerArg);
-    }
-
-    public function test_class_exists_guard_present_in_stamps_decider_registrar(): void
-    {
-        $reflector = new \ReflectionClass(StampsDeciderRegistrar::class);
-        $source = file_get_contents((string) $reflector->getFileName());
-        self::assertIsString($source);
-
-        self::assertStringContainsString(
-            'class_exists(RateLimiterFactory::class)',
-            $source,
-            'StampsDeciderRegistrar must guard rate limit decider registration with class_exists(RateLimiterFactory::class)',
-        );
+        self::assertTrue($this->createContainer()->getParameter('somework_cqrs.rate_limiting.enabled'));
+        self::assertFalse($this->createContainer(['rate_limiting' => ['enabled' => false]])->getParameter('somework_cqrs.rate_limiting.enabled'));
     }
 
     /**
-     * @param array<string, mixed> $config
+     * @param array<string, mixed>          $config
+     * @param (\Closure(string): bool)|null $classExists
      */
-    private function createContainer(array $config = []): ContainerBuilder
+    private function createContainer(array $config = [], ?\Closure $classExists = null): ContainerBuilder
     {
-        $extension = new CqrsExtension();
         $container = new ContainerBuilder();
 
-        $container->register('messenger.default_bus', \stdClass::class)->setPublic(true);
-        $container->register('messenger.default_bus.messenger.handlers_locator', ServiceLocator::class)
-            ->setArguments([[]])
-            ->setPublic(true);
-
-        $extension->load([] === $config ? [] : [$config], $container);
+        (new CqrsExtension($classExists))->load([] === $config ? [] : [$config], $container);
 
         return $container;
     }
