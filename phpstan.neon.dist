@@ -3,6 +3,4 @@ parameters:
     paths:
         - src
         - tests
-    excludePaths:
-        - src/Outbox/OutboxSchemaSubscriber.php
     tmpDir: var/cache/phpstan

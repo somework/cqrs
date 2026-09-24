@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
@@ -22,6 +23,7 @@ use SomeWork\CqrsBundle\Support\SequenceStampDecider;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 #[CoversClass(CqrsExtension::class)]
 #[CoversClass(StampsDeciderRegistrar::class)]
@@ -116,6 +118,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(300, $container->getParameter('somework_cqrs.idempotency.ttl'));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_registered_when_enabled(): void
     {
         $container = $this->createContainer();
@@ -141,6 +144,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         );
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_has_priority_50(): void
     {
         $container = $this->createContainer();
@@ -152,6 +156,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(50, $tags[0]['priority']);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_has_no_message_types(): void
     {
         $container = $this->createContainer();
@@ -162,6 +167,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertArrayNotHasKey('message_types', $tags[0]);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_ttl_from_config(): void
     {
         $container = $this->createContainer([
@@ -172,6 +178,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(600.0, $definition->getArgument('$defaultTtl'));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_logger(): void
     {
         $container = $this->createContainer();
@@ -273,6 +280,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame([], $container->getParameter('somework_cqrs.causation_id.buses'));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_uses_default_ttl_when_not_configured(): void
     {
         $container = $this->createContainer();

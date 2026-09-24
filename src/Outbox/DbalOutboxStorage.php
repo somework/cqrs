@@ -166,11 +166,18 @@ final class DbalOutboxStorage implements OutboxStorage
         $table->addColumn('published_at', Types::DATETIME_IMMUTABLE)
             ->setNotnull(false);
 
-        $table->addPrimaryKeyConstraint(
-            PrimaryKeyConstraint::editor()
-                ->setUnquotedColumnNames('id')
-                ->create(),
-        );
+        // PrimaryKeyConstraint and Table::addPrimaryKeyConstraint() exist since DBAL 4.3;
+        // Table::setPrimaryKey() is the only option on 4.0-4.2 (deprecated from 4.3).
+        if (class_exists(PrimaryKeyConstraint::class)) {
+            $table->addPrimaryKeyConstraint(
+                PrimaryKeyConstraint::editor()
+                    ->setUnquotedColumnNames('id')
+                    ->create(),
+            );
+        } else {
+            // Only reached on DBAL < 4.3, where setPrimaryKey() is not deprecated.
+            $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
+        }
     }
 
     private static function configureTableIndexes(Table $table, string $tableName): void

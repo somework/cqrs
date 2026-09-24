@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
@@ -12,9 +12,7 @@ use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 
-#[CoversClass(CommandHandler::class)]
-#[CoversClass(QueryHandler::class)]
-#[CoversClass(EventHandler::class)]
+#[CoversNothing]
 final class HandlerContractTest extends TestCase
 {
     #[Test]

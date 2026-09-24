@@ -158,7 +158,15 @@ final class ListHandlersCommand extends Command
 
         /** @var array<int, string>|string|null $requestedTypes */
         $requestedTypes = $input->getOption('type');
-        $types = $this->normaliseTypes($requestedTypes);
+
+        try {
+            $types = $this->normaliseTypes($requestedTypes);
+        } catch (\InvalidArgumentException $exception) {
+            $io->error($exception->getMessage());
+
+            return self::INVALID;
+        }
+
         $showDetails = (bool) $input->getOption('details');
 
         $rowsByType = [];
@@ -185,14 +193,14 @@ final class ListHandlersCommand extends Command
             return self::SUCCESS;
         }
 
-        $typesToDisplay = array_keys($rowsByType);
+        $remaining = count($rowsByType);
 
-        foreach ($typesToDisplay as $index => $type) {
+        foreach ($rowsByType as $type => $rows) {
             $io->section(self::SECTION_TITLES[$type]);
 
-            $this->renderTable($output, $rowsByType[$type], $showDetails);
+            $this->renderTable($output, $rows, $showDetails);
 
-            if ($index < count($typesToDisplay) - 1) {
+            if (--$remaining > 0) {
                 $io->newLine();
             }
         }
@@ -220,9 +228,11 @@ final class ListHandlersCommand extends Command
         $types = [];
         foreach ($requested as $type) {
             $type = strtolower($type);
-            if (in_array($type, $available, true)) {
-                $types[] = $type;
+            if (!in_array($type, $available, true)) {
+                throw new \InvalidArgumentException(sprintf('Unknown message type "%s". Expected one of: %s.', $type, implode(', ', $available)));
             }
+
+            $types[] = $type;
         }
 
         return array_values(array_unique($types));

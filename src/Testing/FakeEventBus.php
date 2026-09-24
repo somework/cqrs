@@ -22,37 +22,22 @@ final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
 
     public function dispatch(Event $event, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
-        $this->dispatched[] = [
-            'message' => $event,
-            'mode' => $mode,
-            'stamps' => array_values($stamps),
-        ];
-
-        return new Envelope($event);
+        return $this->record($event, $mode, $stamps);
     }
 
     public function dispatchSync(Event $event, StampInterface ...$stamps): Envelope
     {
-        $this->dispatched[] = [
-            'message' => $event,
-            'mode' => DispatchMode::SYNC,
-            'stamps' => array_values($stamps),
-        ];
-
-        return new Envelope($event);
+        return $this->record($event, DispatchMode::SYNC, $stamps);
     }
 
     public function dispatchAsync(Event $event, StampInterface ...$stamps): Envelope
     {
-        $this->dispatched[] = [
-            'message' => $event,
-            'mode' => DispatchMode::ASYNC,
-            'stamps' => array_values($stamps),
-        ];
-
-        return new Envelope($event);
+        return $this->record($event, DispatchMode::ASYNC, $stamps);
     }
 
+    /**
+     * @return list<array{message: Event, mode: DispatchMode, stamps: list<StampInterface>}>
+     */
     public function getDispatched(): array
     {
         return $this->dispatched;
@@ -61,5 +46,21 @@ final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
     public function reset(): void
     {
         $this->dispatched = [];
+    }
+
+    /**
+     * @param array<int|string, StampInterface> $stamps
+     */
+    private function record(Event $event, DispatchMode $mode, array $stamps): Envelope
+    {
+        $stamps = array_values($stamps);
+
+        $this->dispatched[] = [
+            'message' => $event,
+            'mode' => $mode,
+            'stamps' => $stamps,
+        ];
+
+        return new Envelope($event, $stamps);
     }
 }

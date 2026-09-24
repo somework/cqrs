@@ -52,7 +52,8 @@ final class IdempotencyStampDecider implements StampDecider
             return $stamps;
         }
 
-        if (!class_exists(Key::class)) {
+        // DeduplicateStamp exists since symfony/messenger 7.3 and requires symfony/lock.
+        if (!class_exists(DeduplicateStamp::class) || !class_exists(Key::class)) {
             return $stamps;
         }
 

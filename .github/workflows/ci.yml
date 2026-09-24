@@ -88,14 +88,12 @@ jobs:
       fail-fast: false
       matrix:
         php: ['8.2', '8.3', '8.4']
-        coverage: [false]
         dependency-versions: ['highest']
         include:
+          # Adds coverage to the existing 8.4/highest combination (no extra job).
           - php: '8.4'
             coverage: true
-            dependency-versions: 'highest'
           - php: '8.2'
-            coverage: false
             dependency-versions: 'lowest'
     steps:
       - name: Checkout
@@ -123,7 +121,7 @@ jobs:
       - name: PHPUnit
         run: >
           vendor/bin/phpunit
-          --log-junit build/logs/phpunit-${{ matrix.php }}.xml
+          --log-junit build/logs/phpunit-${{ matrix.php }}-${{ matrix.dependency-versions }}.xml
           ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
 
       - name: Upload coverage to Codecov

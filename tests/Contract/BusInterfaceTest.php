@@ -28,9 +28,12 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function sprintf;
 
-#[CoversClass(CommandBusInterface::class)]
-#[CoversClass(QueryBusInterface::class)]
-#[CoversClass(EventBusInterface::class)]
+#[CoversClass(CommandBus::class)]
+#[CoversClass(QueryBus::class)]
+#[CoversClass(EventBus::class)]
+#[CoversClass(FakeCommandBus::class)]
+#[CoversClass(FakeQueryBus::class)]
+#[CoversClass(FakeEventBus::class)]
 final class BusInterfaceTest extends TestCase
 {
     /**

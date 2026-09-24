@@ -24,42 +24,32 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
 
     public function dispatch(Command $command, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
     {
-        $this->dispatched[] = [
-            'message' => $command,
-            'mode' => $mode,
-            'stamps' => array_values($stamps),
-        ];
-
-        return new Envelope($command);
+        return $this->record($command, $mode, $stamps);
     }
 
     public function dispatchSync(Command $command, StampInterface ...$stamps): mixed
     {
-        $this->dispatched[] = [
-            'message' => $command,
-            'mode' => DispatchMode::SYNC,
-            'stamps' => array_values($stamps),
-        ];
+        $this->record($command, DispatchMode::SYNC, $stamps);
 
         return $this->syncResult;
     }
 
     public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope
     {
-        $this->dispatched[] = [
-            'message' => $command,
-            'mode' => DispatchMode::ASYNC,
-            'stamps' => array_values($stamps),
-        ];
-
-        return new Envelope($command);
+        return $this->record($command, DispatchMode::ASYNC, $stamps);
     }
 
+    /**
+     * Configures the value returned by {@see dispatchSync()}.
+     */
     public function willReturn(mixed $result): void
     {
         $this->syncResult = $result;
     }
 
+    /**
+     * @return list<array{message: Command, mode: DispatchMode, stamps: list<StampInterface>}>
+     */
     public function getDispatched(): array
     {
         return $this->dispatched;
@@ -69,5 +59,21 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
     {
         $this->dispatched = [];
         $this->syncResult = null;
+    }
+
+    /**
+     * @param array<int|string, StampInterface> $stamps
+     */
+    private function record(Command $command, DispatchMode $mode, array $stamps): Envelope
+    {
+        $stamps = array_values($stamps);
+
+        $this->dispatched[] = [
+            'message' => $command,
+            'mode' => $mode,
+            'stamps' => $stamps,
+        ];
+
+        return new Envelope($command, $stamps);
     }
 }

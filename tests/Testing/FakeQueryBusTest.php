@@ -33,7 +33,6 @@ final class FakeQueryBusTest extends TestCase
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
         self::assertSame($query, $dispatched[0]['message']);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame([$stamp], $dispatched[0]['stamps']);
     }
 
@@ -152,7 +151,6 @@ final class FakeQueryBusTest extends TestCase
         $bus->ask($query);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame([], $dispatched[0]['stamps']);
     }
 
@@ -166,11 +164,8 @@ final class FakeQueryBusTest extends TestCase
         $bus->ask($query, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertCount(2, $dispatched[0]['stamps']);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
     }
 

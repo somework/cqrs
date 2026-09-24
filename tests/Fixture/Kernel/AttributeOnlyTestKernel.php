@@ -18,6 +18,8 @@ use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigura
 use Symfony\Component\HttpKernel\Kernel;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
+use function dirname;
+
 /**
  * Test kernel that registers both interface-based and attribute-only handlers.
  * Used to verify attribute-only handler discovery in a full container compilation.
@@ -82,11 +84,11 @@ final class AttributeOnlyTestKernel extends Kernel
 
     public function getCacheDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle_attr_only/cache/'.$this->environment;
+        return dirname(__DIR__, 3).'/var/cache/attribute_only_kernel/'.$this->environment;
     }
 
     public function getLogDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle_attr_only/log';
+        return dirname(__DIR__, 3).'/var/log/attribute_only_kernel';
     }
 }

@@ -18,6 +18,8 @@ use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigura
 use Symfony\Component\HttpKernel\Kernel;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
+use function dirname;
+
 final class TestKernel extends Kernel
 {
     use MicroKernelTrait;
@@ -82,11 +84,11 @@ final class TestKernel extends Kernel
 
     public function getCacheDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle/cache/'.$this->environment;
+        return dirname(__DIR__, 3).'/var/cache/test_kernel/'.$this->environment;
     }
 
     public function getLogDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle/log';
+        return dirname(__DIR__, 3).'/var/log/test_kernel';
     }
 }

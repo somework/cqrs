@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Testing;
 
 use PHPUnit\Framework\AssertionFailedError;
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
@@ -14,7 +14,7 @@ use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
 
-#[CoversClass(CqrsAssertionsTrait::class)]
+#[CoversTrait(CqrsAssertionsTrait::class)]
 final class CqrsAssertionsTraitTest extends TestCase
 {
     use CqrsAssertionsTrait;

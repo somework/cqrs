@@ -8,6 +8,8 @@ use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+use function array_key_exists;
+
 /**
  * Test double for QueryBus that records all asks and returns configurable results.
  *
@@ -30,9 +32,16 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
             'stamps' => array_values($stamps),
         ];
 
-        return $this->resultMap[$query::class] ?? $this->defaultResult;
+        if (array_key_exists($query::class, $this->resultMap)) {
+            return $this->resultMap[$query::class];
+        }
+
+        return $this->defaultResult;
     }
 
+    /**
+     * Configures the result returned for queries without a class-specific result.
+     */
     public function willReturn(mixed $result): void
     {
         $this->defaultResult = $result;
@@ -46,6 +55,9 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
         $this->resultMap[$queryClass] = $result;
     }
 
+    /**
+     * @return list<array{message: Query, stamps: list<StampInterface>}>
+     */
     public function getDispatched(): array
     {
         return $this->dispatched;

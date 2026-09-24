@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -13,6 +14,7 @@ use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use SomeWork\CqrsBundle\Support\StampDecider;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -52,6 +54,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame([], $result);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_converts_idempotency_stamp_to_deduplicate_stamp_with_namespaced_key(): void
     {
         $message = new class implements Command {};
@@ -64,7 +67,7 @@ final class IdempotencyStampDeciderTest extends TestCase
 
         $deduplicateStamps = array_filter(
             $result,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
         self::assertCount(1, $deduplicateStamps);
 
@@ -72,6 +75,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame($message::class.'::order-123', (string) $deduplicateStamp->getKey());
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_uses_configured_default_ttl(): void
     {
         $decider = new IdempotencyStampDecider(600.0);
@@ -82,13 +86,14 @@ final class IdempotencyStampDeciderTest extends TestCase
 
         $deduplicateStamps = array_filter(
             $result,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
         $deduplicateStamp = reset($deduplicateStamps);
         /* @phpstan-ignore method.nonObject */
         self::assertSame(600.0, $deduplicateStamp->getTtl());
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_passes_only_deduplicate_in_queue_false(): void
     {
         $message = new class implements Command {};
@@ -98,13 +103,14 @@ final class IdempotencyStampDeciderTest extends TestCase
 
         $deduplicateStamps = array_filter(
             $result,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
         $deduplicateStamp = reset($deduplicateStamps);
         /* @phpstan-ignore method.nonObject */
         self::assertFalse($deduplicateStamp->onlyDeduplicateInQueue());
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_preserves_all_other_stamps(): void
     {
         $message = new class implements Command {};
@@ -118,6 +124,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertInstanceOf(DelayStamp::class, $result[0]);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_different_message_types_same_key_produce_different_deduplicate_keys(): void
     {
         $commandMessage = new class implements Command {};
@@ -129,11 +136,11 @@ final class IdempotencyStampDeciderTest extends TestCase
 
         $commandDedup = array_filter(
             $commandResult,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
         $eventDedup = array_filter(
             $eventResult,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
 
         /* @phpstan-ignore method.nonObject */
@@ -146,6 +153,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertStringContainsString($eventMessage::class, $eventKey);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_removes_idempotency_stamp_from_output(): void
     {
         $message = new class implements Command {};
@@ -160,6 +168,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertCount(0, $idempotencyStamps);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_logs_debug_message_when_converting(): void
     {
         $logger = $this->createMock(LoggerInterface::class);
@@ -181,6 +190,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         $decider->decide($message, DispatchMode::DEFAULT, [new IdempotencyStamp('key-1')]);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_default_ttl_is_300(): void
     {
         $message = new class implements Command {};
@@ -190,7 +200,7 @@ final class IdempotencyStampDeciderTest extends TestCase
 
         $deduplicateStamps = array_filter(
             $result,
-            static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
         );
         $deduplicateStamp = reset($deduplicateStamps);
         /* @phpstan-ignore method.nonObject */
@@ -208,6 +218,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         $decider->decide($message, DispatchMode::DEFAULT, [new DelayStamp(1000)]);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_works_with_all_dispatch_modes(): void
     {
         $message = new class implements Command {};
@@ -217,12 +228,13 @@ final class IdempotencyStampDeciderTest extends TestCase
 
             $deduplicateStamps = array_filter(
                 $result,
-                static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+                static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
             );
             self::assertCount(1, $deduplicateStamps, 'DeduplicateStamp should be produced for mode '.$mode->value);
         }
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_reindexes_stamps_array_after_removal(): void
     {
         $message = new class implements Command {};
@@ -236,6 +248,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame([0, 1], array_keys($result));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_handles_idempotency_stamp_at_different_positions(): void
     {
         $message = new class implements Command {};
@@ -259,7 +272,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         $extractKey = static function (array $stamps): string {
             $dedup = array_filter(
                 $stamps,
-                static fn (StampInterface $s): bool => $s instanceof \Symfony\Component\Messenger\Stamp\DeduplicateStamp,
+                static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
             );
 
             /* @phpstan-ignore method.nonObject */

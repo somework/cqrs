@@ -39,7 +39,6 @@ final class FakeEventBusTest extends TestCase
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
         self::assertSame($event, $dispatched[0]['message']);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
         self::assertSame([$stamp], $dispatched[0]['stamps']);
     }
@@ -52,7 +51,6 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
     }
 
@@ -68,7 +66,6 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame(DispatchMode::SYNC, $dispatched[0]['mode']);
     }
 
@@ -85,7 +82,6 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
         self::assertSame([$stamp], $dispatched[0]['stamps']);
     }
@@ -132,7 +128,6 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(3, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
         self::assertSame(DispatchMode::SYNC, $dispatched[1]['mode']);
         self::assertSame(DispatchMode::ASYNC, $dispatched[2]['mode']);
@@ -148,11 +143,8 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatchSync($event, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertCount(2, $dispatched[0]['stamps']);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
     }
 
@@ -164,7 +156,6 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
         self::assertSame([], $dispatched[0]['stamps']);
     }
 

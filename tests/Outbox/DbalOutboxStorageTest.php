@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception\TableExistsException;
+use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Result;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
@@ -174,7 +175,7 @@ final class DbalOutboxStorageTest extends TestCase
         $schemaManager->expects(self::once())
             ->method('createTable')
             ->with(self::callback(static function (Table $table): bool {
-                self::assertSame('somework_cqrs_outbox', $table->getObjectName()->toString());
+                self::assertStringContainsString('CREATE TABLE somework_cqrs_outbox ', self::createTableSql($table));
                 self::assertTrue($table->hasColumn('id'));
                 self::assertTrue($table->hasColumn('body'));
                 self::assertTrue($table->hasColumn('headers'));
@@ -355,9 +356,7 @@ final class DbalOutboxStorageTest extends TestCase
 
         $table = DbalOutboxStorage::addTableToSchema($schema);
 
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertInstanceOf(Table::class, $table);
-        self::assertSame('somework_cqrs_outbox', $table->getObjectName()->toString());
+        self::assertSame($schema->getTable('somework_cqrs_outbox'), $table);
     }
 
     public function test_table_has_primary_key_on_id(): void
@@ -365,11 +364,9 @@ final class DbalOutboxStorageTest extends TestCase
         $schema = new Schema();
         DbalOutboxStorage::addTableToSchema($schema);
 
-        $table = $schema->getTable('somework_cqrs_outbox');
-        $primaryKey = $table->getPrimaryKeyConstraint();
+        $sql = self::createTableSql($schema->getTable('somework_cqrs_outbox'));
 
-        self::assertNotNull($primaryKey);
-        self::assertSame('id', $primaryKey->getColumnNames()[0]->toString());
+        self::assertMatchesRegularExpression('/PRIMARY KEY\s*\(\s*id\s*\)/i', $sql);
     }
 
     public function test_table_column_types(): void
@@ -639,15 +636,13 @@ final class DbalOutboxStorageTest extends TestCase
         $schema = new Schema();
         DbalOutboxStorage::addTableToSchema($schema);
 
-        $table = $schema->getTable('somework_cqrs_outbox');
-        $index = $table->getIndex('idx_somework_cqrs_outbox_published_created');
+        $sql = self::createTableSql($schema->getTable('somework_cqrs_outbox'));
 
-        self::assertSame(
-            ['published_at', 'created_at'],
-            array_map(
-                static fn (\Doctrine\DBAL\Schema\Index\IndexedColumn $col): string => $col->getColumnName()->toString(),
-                $index->getIndexedColumns(),
-            ),
-        );
+        self::assertMatchesRegularExpression('/CREATE INDEX \w+ ON somework_cqrs_outbox \(published_at, created_at\)/i', $sql);
+    }
+
+    private static function createTableSql(Table $table): string
+    {
+        return implode(";\n", (new SQLitePlatform())->getCreateTableSQL($table));
     }
 }
