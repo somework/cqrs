@@ -5,11 +5,16 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Bus;
 
 use ReflectionClass;
+use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 
 /**
- * Resolves the effective dispatch mode for a message based on configuration.
+ * Resolves the effective dispatch mode for a message requested with DispatchMode::DEFAULT.
+ *
+ * Resolution order for commands and events: exact class entry in the configured map,
+ * the #[Asynchronous] attribute on the message class, parent classes, interfaces (most
+ * specific first), the per-type default. Queries are always synchronous.
  *
  * @internal
  */
@@ -75,6 +80,16 @@ final class DispatchModeDecider
      */
     private function resolveFor(object $message, array $map, DispatchMode $default): DispatchMode
     {
+        // An explicit configuration entry for the exact class wins over the class attribute...
+        if (isset($map[$message::class])) {
+            return $map[$message::class];
+        }
+
+        // ...and the #[Asynchronous] attribute wins over mappings of parents and interfaces.
+        if ([] !== (new ReflectionClass($message))->getAttributes(Asynchronous::class)) {
+            return DispatchMode::ASYNC;
+        }
+
         foreach ($this->getClassHierarchy($message) as $class) {
             if (isset($map[$class])) {
                 return $map[$class];

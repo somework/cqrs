@@ -72,4 +72,15 @@ final class MessageMetadataStampDeciderTest extends TestCase
 
         self::assertSame([$existing], $stamps);
     }
+
+    public function test_keeps_metadata_supplied_by_the_caller(): void
+    {
+        $provider = $this->createMock(MessageMetadataProvider::class);
+        $provider->expects(self::never())->method('getStamp');
+        $decider = new MessageMetadataStampDecider(MessageMetadataProviderResolver::withoutOverrides($provider), Command::class);
+
+        $callerStamp = new MessageMetadataStamp('propagated-correlation-id');
+
+        self::assertSame([$callerStamp], $decider->decide(new CreateTaskCommand('1', 'x'), DispatchMode::SYNC, [$callerStamp]));
+    }
 }

@@ -7,11 +7,13 @@ namespace SomeWork\CqrsBundle\Bus;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
+use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\MessageBusInterface;
-use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -38,17 +40,28 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
         return $this->dispatchMessage($command, $mode, ...$stamps);
     }
 
+    /**
+     * Handles the command synchronously and returns the handler result.
+     *
+     * A DispatchAfterCurrentBusStamp is ignored because the result is needed immediately.
+     * When the only handler throws, its exception is rethrown as is (not wrapped in
+     * Messenger's HandlerFailedException).
+     *
+     * @throws NoHandlerException              when no handler handled the command
+     * @throws MessageSentToTransportException when the routing sent the command to a transport
+     * @throws DuplicateMessageException       when deduplication dropped the command
+     */
     public function dispatchSync(Command $command, StampInterface ...$stamps): mixed
     {
-        $envelope = $this->dispatchMessageSync($command, ...$stamps);
-
-        $handledStamp = $envelope->last(HandledStamp::class);
-
-        if (!$handledStamp instanceof HandledStamp) {
-            throw new NoHandlerException($command::class, self::BUS_NAME);
+        try {
+            $envelope = $this->dispatchMessageSync($command, ...SynchronousResult::withoutDeferral($stamps));
+        } catch (HandlerFailedException $exception) {
+            throw SynchronousResult::unwrap($exception);
         }
 
-        return $handledStamp->getResult();
+        $handledStamps = SynchronousResult::handledStamps($envelope, self::BUS_NAME);
+
+        return $handledStamps[array_key_last($handledStamps)]->getResult();
     }
 
     public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope

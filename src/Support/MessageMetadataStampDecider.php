@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
- * Adds metadata stamps for supported messages.
+ * Adds metadata stamps for supported messages unless the caller already passed one.
  *
  * @internal
  */
@@ -37,6 +38,13 @@ final class MessageMetadataStampDecider implements MessageTypeAwareStampDecider
     {
         if (!$message instanceof $this->messageType) {
             return $stamps;
+        }
+
+        // Metadata supplied by the caller (e.g. a propagated correlation id) wins.
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof MessageMetadataStamp) {
+                return $stamps;
+            }
         }
 
         $provider = $this->providers->resolveFor($message);

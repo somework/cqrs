@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
@@ -13,275 +14,134 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+use function array_values;
+
 #[CoversClass(IdempotencyStampDecider::class)]
 final class IdempotencyStampDeciderTest extends TestCase
 {
-    private IdempotencyStampDecider $decider;
-
-    protected function setUp(): void
+    public function test_returns_stamps_unchanged_without_idempotency_stamp(): void
     {
-        $this->decider = new IdempotencyStampDecider();
+        $stamps = [new DelayStamp(1000)];
+
+        self::assertSame($stamps, (new IdempotencyStampDecider())->decide(new class implements Command {}, DispatchMode::DEFAULT, $stamps));
+        self::assertSame([], (new IdempotencyStampDecider())->decide(new class implements Command {}, DispatchMode::DEFAULT, []));
     }
 
-    public function test_implements_stamp_decider_interface(): void
-    {
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertInstanceOf(StampDecider::class, $this->decider);
-    }
-
-    public function test_returns_stamps_unchanged_when_no_idempotency_stamp(): void
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_adds_a_namespaced_deduplicate_stamp_and_keeps_the_other_stamps(): void
     {
         $message = new class implements Command {};
         $delay = new DelayStamp(1000);
-        $stamps = [$delay];
-
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        self::assertSame($stamps, $result);
-    }
-
-    public function test_returns_stamps_unchanged_when_stamps_empty(): void
-    {
-        $message = new class implements Command {};
-
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, []);
-
-        self::assertSame([], $result);
-    }
-
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_converts_idempotency_stamp_to_deduplicate_stamp_with_namespaced_key(): void
-    {
-        $message = new class implements Command {};
         $idempotencyStamp = new IdempotencyStamp('order-123');
-        $stamps = [$idempotencyStamp];
 
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
+        $result = (new IdempotencyStampDecider())->decide($message, DispatchMode::DEFAULT, [$delay, $idempotencyStamp]);
 
-        self::assertCount(1, $result);
+        self::assertCount(3, $result);
+        self::assertSame($delay, $result[0]);
+        self::assertSame($idempotencyStamp, $result[1]);
 
-        $deduplicateStamps = array_filter(
-            $result,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-        self::assertCount(1, $deduplicateStamps);
-
-        $deduplicateStamp = reset($deduplicateStamps);
+        $deduplicateStamp = $result[2];
+        self::assertInstanceOf(DeduplicateStamp::class, $deduplicateStamp);
         self::assertSame($message::class.'::order-123', (string) $deduplicateStamp->getKey());
-    }
-
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_uses_configured_default_ttl(): void
-    {
-        $decider = new IdempotencyStampDecider(600.0);
-        $message = new class implements Command {};
-        $stamps = [new IdempotencyStamp('key-1')];
-
-        $result = $decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        $deduplicateStamps = array_filter(
-            $result,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-        $deduplicateStamp = reset($deduplicateStamps);
-        /* @phpstan-ignore method.nonObject */
-        self::assertSame(600.0, $deduplicateStamp->getTtl());
-    }
-
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_passes_only_deduplicate_in_queue_false(): void
-    {
-        $message = new class implements Command {};
-        $stamps = [new IdempotencyStamp('key-1')];
-
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        $deduplicateStamps = array_filter(
-            $result,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-        $deduplicateStamp = reset($deduplicateStamps);
-        /* @phpstan-ignore method.nonObject */
+        self::assertSame(300.0, $deduplicateStamp->getTtl());
         self::assertFalse($deduplicateStamp->onlyDeduplicateInQueue());
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_preserves_all_other_stamps(): void
+    public function test_uses_the_configured_ttl(): void
     {
-        $message = new class implements Command {};
-        $delay = new DelayStamp(1000);
-        $idempotencyStamp = new IdempotencyStamp('key-1');
-        $stamps = [$delay, $idempotencyStamp];
+        $result = (new IdempotencyStampDecider(60.0))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new IdempotencyStamp('key')]);
 
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        self::assertCount(2, $result);
-        self::assertInstanceOf(DelayStamp::class, $result[0]);
+        self::assertSame(60.0, self::deduplicateStamp($result)->getTtl());
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_different_message_types_same_key_produce_different_deduplicate_keys(): void
+    public function test_keys_are_namespaced_per_message_class(): void
     {
-        $commandMessage = new class implements Command {};
-        $eventMessage = new class implements Event {};
-        $key = 'same-key';
+        $decider = new IdempotencyStampDecider();
+        $command = new class implements Command {};
+        $event = new class implements Event {};
 
-        $commandResult = $this->decider->decide($commandMessage, DispatchMode::DEFAULT, [new IdempotencyStamp($key)]);
-        $eventResult = $this->decider->decide($eventMessage, DispatchMode::DEFAULT, [new IdempotencyStamp($key)]);
-
-        $commandDedup = array_filter(
-            $commandResult,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-        $eventDedup = array_filter(
-            $eventResult,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-
-        /* @phpstan-ignore method.nonObject */
-        $commandKey = (string) reset($commandDedup)->getKey();
-        /* @phpstan-ignore method.nonObject */
-        $eventKey = (string) reset($eventDedup)->getKey();
+        $commandKey = (string) self::deduplicateStamp($decider->decide($command, DispatchMode::DEFAULT, [new IdempotencyStamp('same')]))->getKey();
+        $eventKey = (string) self::deduplicateStamp($decider->decide($event, DispatchMode::DEFAULT, [new IdempotencyStamp('same')]))->getKey();
 
         self::assertNotSame($commandKey, $eventKey);
-        self::assertStringContainsString($commandMessage::class, $commandKey);
-        self::assertStringContainsString($eventMessage::class, $eventKey);
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_removes_idempotency_stamp_from_output(): void
+    public function test_a_deduplicate_stamp_from_the_caller_wins(): void
+    {
+        $callerStamp = new DeduplicateStamp('custom-key');
+        $stamps = [new IdempotencyStamp('key'), $callerStamp];
+
+        self::assertSame($stamps, (new IdempotencyStampDecider())->decide(new class implements Command {}, DispatchMode::DEFAULT, $stamps));
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_the_last_idempotency_stamp_defines_the_key(): void
     {
         $message = new class implements Command {};
-        $stamps = [new IdempotencyStamp('key-1')];
 
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
+        $result = (new IdempotencyStampDecider())->decide($message, DispatchMode::DEFAULT, [new IdempotencyStamp('first'), new IdempotencyStamp('last')]);
 
-        $idempotencyStamps = array_filter(
-            $result,
-            static fn (StampInterface $s): bool => $s instanceof IdempotencyStamp,
-        );
-        self::assertCount(0, $idempotencyStamps);
+        self::assertSame($message::class.'::last', (string) self::deduplicateStamp($result)->getKey());
+    }
+
+    /**
+     * @return iterable<string, array{DispatchMode}>
+     */
+    public static function dispatchModes(): iterable
+    {
+        foreach (DispatchMode::cases() as $mode) {
+            yield $mode->value => [$mode];
+        }
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_logs_debug_message_when_converting(): void
+    #[DataProvider('dispatchModes')]
+    public function test_works_for_every_dispatch_mode(DispatchMode $mode): void
+    {
+        $message = new class implements Command {};
+
+        $result = (new IdempotencyStampDecider())->decide($message, $mode, [new IdempotencyStamp('key')]);
+
+        self::assertSame($message::class.'::key', (string) self::deduplicateStamp($result)->getKey());
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_logs_the_conversion(): void
     {
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::once())
             ->method('debug')
             ->with(
                 self::stringContains('IdempotencyStampDecider'),
-                self::callback(static function (array $context): bool {
-                    self::assertArrayHasKey('message', $context);
-                    self::assertArrayHasKey('key', $context);
-
-                    return true;
-                }),
+                self::callback(static fn (array $context): bool => isset($context['message'], $context['key'])),
             );
 
-        $decider = new IdempotencyStampDecider(300.0, $logger);
-        $message = new class implements Command {};
-
-        $decider->decide($message, DispatchMode::DEFAULT, [new IdempotencyStamp('key-1')]);
+        (new IdempotencyStampDecider(300.0, $logger))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new IdempotencyStamp('key')]);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_default_ttl_is_300(): void
-    {
-        $message = new class implements Command {};
-        $stamps = [new IdempotencyStamp('key-1')];
-
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        $deduplicateStamps = array_filter(
-            $result,
-            static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-        );
-        $deduplicateStamp = reset($deduplicateStamps);
-        /* @phpstan-ignore method.nonObject */
-        self::assertSame(300.0, $deduplicateStamp->getTtl());
-    }
-
-    public function test_does_not_log_when_no_idempotency_stamp_present(): void
+    public function test_does_not_log_without_idempotency_stamp(): void
     {
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::never())->method('debug');
 
-        $decider = new IdempotencyStampDecider(300.0, $logger);
-        $message = new class implements Command {};
-
-        $decider->decide($message, DispatchMode::DEFAULT, [new DelayStamp(1000)]);
+        (new IdempotencyStampDecider(300.0, $logger))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new DelayStamp(1)]);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_works_with_all_dispatch_modes(): void
+    /**
+     * @param array<int, StampInterface> $stamps
+     */
+    private static function deduplicateStamp(array $stamps): DeduplicateStamp
     {
-        $message = new class implements Command {};
+        $found = array_values(array_filter($stamps, static fn (StampInterface $stamp): bool => $stamp instanceof DeduplicateStamp));
+        self::assertCount(1, $found);
 
-        foreach ([DispatchMode::SYNC, DispatchMode::ASYNC, DispatchMode::DEFAULT] as $mode) {
-            $result = $this->decider->decide($message, $mode, [new IdempotencyStamp('key-1')]);
-
-            $deduplicateStamps = array_filter(
-                $result,
-                static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-            );
-            self::assertCount(1, $deduplicateStamps, 'DeduplicateStamp should be produced for mode '.$mode->value);
-        }
-    }
-
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_reindexes_stamps_array_after_removal(): void
-    {
-        $message = new class implements Command {};
-        $delay = new DelayStamp(1000);
-        $idempotencyStamp = new IdempotencyStamp('key-1');
-        $stamps = [$delay, $idempotencyStamp];
-
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
-
-        // Keys must be sequential 0-based after array_values()
-        self::assertSame([0, 1], array_keys($result));
-    }
-
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
-    public function test_handles_idempotency_stamp_at_different_positions(): void
-    {
-        $message = new class implements Command {};
-        $delay1 = new DelayStamp(100);
-        $delay2 = new DelayStamp(200);
-        $idempotencyStamp = new IdempotencyStamp('pos-key');
-
-        // IdempotencyStamp at position 0
-        $result0 = $this->decider->decide($message, DispatchMode::DEFAULT, [$idempotencyStamp, $delay1, $delay2]);
-        self::assertCount(3, $result0);
-
-        // IdempotencyStamp at position 1
-        $result1 = $this->decider->decide($message, DispatchMode::DEFAULT, [$delay1, $idempotencyStamp, $delay2]);
-        self::assertCount(3, $result1);
-
-        // IdempotencyStamp at position 2
-        $result2 = $this->decider->decide($message, DispatchMode::DEFAULT, [$delay1, $delay2, $idempotencyStamp]);
-        self::assertCount(3, $result2);
-
-        // All three results should produce the same namespaced key
-        $extractKey = static function (array $stamps): string {
-            $dedup = array_filter(
-                $stamps,
-                static fn (StampInterface $s): bool => $s instanceof DeduplicateStamp,
-            );
-
-            /* @phpstan-ignore method.nonObject */
-            return (string) reset($dedup)->getKey();
-        };
-
-        $expectedKey = $message::class.'::pos-key';
-        self::assertSame($expectedKey, $extractKey($result0));
-        self::assertSame($expectedKey, $extractKey($result1));
-        self::assertSame($expectedKey, $extractKey($result2));
+        return $found[0];
     }
 }

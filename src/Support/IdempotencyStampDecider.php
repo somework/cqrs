@@ -12,10 +12,11 @@ use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
- * Converts IdempotencyStamp to Symfony DeduplicateStamp with FQCN-namespaced key.
+ * Adds a Symfony DeduplicateStamp (FQCN-namespaced key) next to every IdempotencyStamp.
  *
- * Bridges the bundle's idempotency convention to Symfony's native
- * DeduplicateMiddleware for dispatch-side deduplication.
+ * Bridges the bundle's idempotency convention to Symfony's native DeduplicateMiddleware
+ * for dispatch-side deduplication. The IdempotencyStamp is kept so handlers and
+ * middleware can still read the key; a DeduplicateStamp passed by the caller wins.
  *
  * Runs for all message types (does NOT implement MessageTypeAwareStampDecider).
  * No-op when symfony/lock is not installed (DeduplicateStamp requires it).
@@ -37,14 +38,11 @@ final class IdempotencyStampDecider implements StampDecider
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        $foundIndex = null;
         $idempotencyStamp = null;
 
-        foreach ($stamps as $index => $stamp) {
+        foreach ($stamps as $stamp) {
             if ($stamp instanceof IdempotencyStamp) {
-                $foundIndex = $index;
                 $idempotencyStamp = $stamp;
-                break;
             }
         }
 
@@ -57,17 +55,20 @@ final class IdempotencyStampDecider implements StampDecider
             return $stamps;
         }
 
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof DeduplicateStamp) {
+                return $stamps;
+            }
+        }
+
         $namespacedKey = $message::class.'::'.$idempotencyStamp->getKey();
+        $stamps[] = new DeduplicateStamp($namespacedKey, $this->defaultTtl, false);
 
-        $newStamps = $stamps;
-        unset($newStamps[$foundIndex]);
-        $newStamps[] = new DeduplicateStamp($namespacedKey, $this->defaultTtl, false);
-
-        $this->logger?->debug('IdempotencyStampDecider: converted IdempotencyStamp to DeduplicateStamp', [
+        $this->logger?->debug('IdempotencyStampDecider: added DeduplicateStamp for IdempotencyStamp', [
             'message' => $message::class,
             'key' => $namespacedKey,
         ]);
 
-        return array_values($newStamps);
+        return $stamps;
     }
 }

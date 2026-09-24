@@ -72,4 +72,15 @@ final class MessageSerializerStampDeciderTest extends TestCase
 
         self::assertSame([$existing], $stamps);
     }
+
+    public function test_keeps_a_serializer_stamp_supplied_by_the_caller(): void
+    {
+        $serializer = $this->createMock(MessageSerializer::class);
+        $serializer->expects(self::never())->method('getStamp');
+        $decider = new MessageSerializerStampDecider(MessageSerializerResolver::withoutOverrides($serializer), Command::class);
+
+        $callerStamp = new SerializerStamp(['groups' => ['caller']]);
+
+        self::assertSame([$callerStamp], $decider->decide(new CreateTaskCommand('1', 'x'), DispatchMode::SYNC, [$callerStamp]));
+    }
 }
