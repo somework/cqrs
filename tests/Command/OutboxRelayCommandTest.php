@@ -11,7 +11,7 @@ use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\ConsoleRelayReporter;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;

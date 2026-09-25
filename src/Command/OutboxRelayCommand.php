@@ -7,7 +7,7 @@ namespace SomeWork\CqrsBundle\Command;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Console\Attribute\AsCommand;

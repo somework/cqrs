@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Command;
 
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;

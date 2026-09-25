@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Fixture\Outbox;
 
 use DateTimeImmutable;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
 use function array_map;

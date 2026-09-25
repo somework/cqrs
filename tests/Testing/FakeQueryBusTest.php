@@ -224,4 +224,14 @@ final class FakeQueryBusTest extends TestCase
         self::assertCount(2, $bus->getDispatched());
         self::assertNull($bus->getDispatched()[1]->mode, 'Queries have no dispatch mode.');
     }
+
+    public function test_an_interface_is_rejected_because_messages_match_by_exact_class(): void
+    {
+        $bus = new FakeQueryBus();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('the fake bus matches messages by their exact class');
+
+        $bus->willReturnFor(Query::class, 1);
+    }
 }

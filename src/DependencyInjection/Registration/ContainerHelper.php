@@ -23,20 +23,26 @@ final class ContainerHelper
      * Remembers that the option at $path (below "somework_cqrs.") names the service $serviceId, so
      * a missing service is reported with that option instead of an internal service id.
      */
-    public function recordConfiguredService(ContainerBuilder $container, string $path, string $serviceId): void
+    /**
+     * @param class-string|null $interface What the service must implement
+     */
+    public function recordConfiguredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): void
     {
-        /** @var list<array{string, string}> $services */
+        /** @var list<array{string, string, class-string|null}> $services */
         $services = $container->hasParameter(self::CONFIGURED_SERVICES) ? $container->getParameter(self::CONFIGURED_SERVICES) : [];
-        $services[] = [$path, $serviceId];
+        $services[] = [$path, $serviceId, $interface];
         $container->setParameter(self::CONFIGURED_SERVICES, $services);
     }
 
     /**
      * {@see ensureServiceExists()} for a service the option at $path names.
      */
-    public function configuredService(ContainerBuilder $container, string $path, string $serviceId): string
+    /**
+     * @param class-string|null $interface What the service must implement
+     */
+    public function configuredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): string
     {
-        $this->recordConfiguredService($container, $path, $serviceId);
+        $this->recordConfiguredService($container, $path, $serviceId, $interface);
 
         return $this->ensureServiceExists($container, $serviceId);
     }

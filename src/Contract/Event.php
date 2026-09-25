@@ -7,8 +7,8 @@ namespace SomeWork\CqrsBundle\Contract;
 /**
  * Marker interface for event messages.
  *
- * Events are immutable records describing something that already happened.
- * They MUST NOT contain behavior and SHOULD expose their data via accessors.
+ * Events are immutable records describing something that already happened: a final
+ * class with public readonly properties, and no behaviour.
  *
  * @psalm-immutable
  *

@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Registration;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\RetryPolicyRegistrar;
 use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
@@ -30,7 +31,7 @@ final class RetryPolicyRegistrarTest extends TestCase
         self::assertSame(NullRetryPolicy::class, (string) $container->getAlias('somework_cqrs.retry.query'));
         self::assertSame(ExponentialBackoffRetryPolicy::class, (string) $container->getAlias('somework_cqrs.retry.event'));
         self::assertSame(
-            [['retry_policies.default', ExponentialBackoffRetryPolicy::class], ['retry_policies.query.default', NullRetryPolicy::class]],
+            [['retry_policies.default', ExponentialBackoffRetryPolicy::class, RetryPolicy::class], ['retry_policies.query.default', NullRetryPolicy::class, RetryPolicy::class]],
             $container->getParameter(ContainerHelper::CONFIGURED_SERVICES),
         );
     }

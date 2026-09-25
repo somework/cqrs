@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
+use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
@@ -45,6 +46,21 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
         }
 
         $this->validateAsynchronousAttributes($container);
+
+        // #[AsEventHandler(fromTransport: ...)]: a worker would skip the handler for every message.
+        foreach ($container->findTaggedServiceIds('messenger.message_handler') as $id => $tags) {
+            $class = $container->findDefinition($id)->getClass();
+            $reflection = null === $class ? null : $container->getReflectionClass($container->getParameterBag()->resolveValue($class), false);
+            if (null === $reflection) {
+                continue;
+            }
+            foreach ($reflection->getAttributes(AsEventHandler::class) as $attribute) {
+                $fromTransport = $attribute->newInstance()->fromTransport;
+                if (null !== $fromTransport && !self::transportExists($container, $fromTransport)) {
+                    throw new InvalidConfigurationException(sprintf('#[AsEventHandler(fromTransport: "%s")] on "%s" names a Messenger transport that is not defined.', $fromTransport, $reflection->getName()));
+                }
+            }
+        }
     }
 
     /**

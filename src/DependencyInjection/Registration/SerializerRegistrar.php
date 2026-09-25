@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
+use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -30,19 +31,19 @@ final class SerializerRegistrar
      */
     public function register(ContainerBuilder $container, array $config): void
     {
-        $defaultId = $this->helper->configuredService($container, 'serialization.default', $config['default']);
+        $defaultId = $this->helper->configuredService($container, 'serialization.default', $config['default'], MessageSerializer::class);
         $container->setAlias('somework_cqrs.serializer.default', $defaultId)->setPublic(false);
 
         foreach (['command', 'query', 'event'] as $type) {
             $typeDefaultId = $config[$type]['default'];
             $resolvedTypeDefaultId = null === $typeDefaultId
                 ? $defaultId
-                : $this->helper->configuredService($container, sprintf('serialization.%s.default', $type), $typeDefaultId);
+                : $this->helper->configuredService($container, sprintf('serialization.%s.default', $type), $typeDefaultId, MessageSerializer::class);
 
             $serviceMap = [MessageSerializerResolver::DEFAULT_KEY => new Reference($resolvedTypeDefaultId)];
 
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
-                $resolvedId = $this->helper->configuredService($container, sprintf('serialization.%s.map.%s', $type, $messageClass), $serviceId);
+                $resolvedId = $this->helper->configuredService($container, sprintf('serialization.%s.map.%s', $type, $messageClass), $serviceId, MessageSerializer::class);
                 $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 

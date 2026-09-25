@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
+use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -22,12 +23,12 @@ final class NamingRegistrar
      */
     public function register(ContainerBuilder $container, array $config): void
     {
-        $defaultId = $this->helper->configuredService($container, 'naming.default', $config['default']);
+        $defaultId = $this->helper->configuredService($container, 'naming.default', $config['default'], MessageNamingStrategy::class);
         $serviceMap = ['default' => new Reference($defaultId)];
 
         foreach (['command', 'query', 'event'] as $type) {
             $typeId = $config[$type]['default'];
-            $serviceMap[$type] = new Reference(null === $typeId ? $defaultId : $this->helper->configuredService($container, sprintf('naming.%s.default', $type), $typeId));
+            $serviceMap[$type] = new Reference(null === $typeId ? $defaultId : $this->helper->configuredService($container, sprintf('naming.%s.default', $type), $typeId, MessageNamingStrategy::class));
         }
 
         $locatorId = ServiceLocatorTagPass::register($container, $serviceMap);

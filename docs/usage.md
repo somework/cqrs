@@ -63,9 +63,12 @@ argument:
 * With `bus: 'my.bus'`, the handler is registered on that Messenger bus only.
 
 `#[AsEventHandler]` also accepts `priority` (handlers of the same event with a
-higher priority run first) and `fromTransport`, and `#[AsCommandHandler]`
-accepts `fromTransport`: the handler then only runs for messages a worker
-received from that transport. Both are passed to Messenger's handler tag.
+higher priority run first) and `fromTransport`: a worker then only runs the
+handler for messages it received from that transport, e.g. to keep a slow
+projection on its own transport. Synchronous dispatches still run the handler,
+because Messenger only restricts handlers of received messages. Both are passed
+to Messenger's handler tag, and a `fromTransport` that is not a Messenger
+transport fails the compilation.
 
 Commands and queries must have exactly one handler. Two handlers for the same
 command or query on the same bus make the container compilation fail, and so

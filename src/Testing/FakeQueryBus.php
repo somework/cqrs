@@ -9,6 +9,8 @@ use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_key_exists;
+use function class_exists;
+use function sprintf;
 
 /**
  * Test double for QueryBus that records all asks and returns configurable results.
@@ -62,10 +64,16 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
     }
 
     /**
-     * @param class-string<Query> $queryClass
+     * Configures the result {@see ask()} returns for queries of exactly the given class.
+     *
+     * @template TResult
+     *
+     * @param class-string<Query<TResult>> $queryClass
+     * @param TResult                      $result
      */
     public function willReturnFor(string $queryClass, mixed $result): void
     {
+        self::assertConcrete($queryClass);
         $this->resultMap[$queryClass] = $result;
     }
 
@@ -80,6 +88,7 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
         if (null === $queryClass) {
             $this->failure = $exception;
         } else {
+            self::assertConcrete($queryClass);
             $this->failureMap[$queryClass] = $exception;
         }
     }
@@ -99,5 +108,15 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
         $this->resultMap = [];
         $this->failure = null;
         $this->failureMap = [];
+    }
+
+    /**
+     * The fake matches messages by their exact class: an interface or an abstract class would never match.
+     */
+    private static function assertConcrete(string $class): void
+    {
+        if (!class_exists($class) || (new \ReflectionClass($class))->isAbstract()) {
+            throw new \InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
+        }
     }
 }

@@ -193,7 +193,7 @@ final class CqrsExtensionOutboxTest extends TestCase
         ]);
 
         self::assertTrue(
-            $container->hasAlias(\SomeWork\CqrsBundle\Contract\OutboxStorage::class),
+            $container->hasAlias(\SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage::class),
             'OutboxStorage interface should be aliased when outbox is enabled',
         );
     }

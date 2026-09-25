@@ -296,7 +296,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         $container->registerAttributeForAutoconfiguration(
             AsCommandHandler::class,
             static function (ChildDefinition $definition, AsCommandHandler $attribute): void {
-                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->command, $attribute->bus, 'command', fromTransport: $attribute->fromTransport));
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->command, $attribute->bus, 'command'));
             }
         );
 

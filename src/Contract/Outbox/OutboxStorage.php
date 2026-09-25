@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Contract;
+namespace SomeWork\CqrsBundle\Contract\Outbox;
 
 use DateTimeImmutable;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;

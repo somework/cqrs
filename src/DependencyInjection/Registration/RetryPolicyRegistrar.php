@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
+use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -30,17 +31,17 @@ final class RetryPolicyRegistrar
      */
     public function register(ContainerBuilder $container, array $config): void
     {
-        $defaultId = $this->helper->configuredService($container, 'retry_policies.default', $config['default']);
+        $defaultId = $this->helper->configuredService($container, 'retry_policies.default', $config['default'], RetryPolicy::class);
 
         foreach (['command', 'query', 'event'] as $type) {
             $typeDefaultId = null === $config[$type]['default']
                 ? $defaultId
-                : $this->helper->configuredService($container, sprintf('retry_policies.%s.default', $type), $config[$type]['default']);
+                : $this->helper->configuredService($container, sprintf('retry_policies.%s.default', $type), $config[$type]['default'], RetryPolicy::class);
             $container->setAlias(sprintf('somework_cqrs.retry.%s', $type), $typeDefaultId)->setPublic(false);
 
             $serviceMap = [];
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
-                $resolvedId = $this->helper->configuredService($container, sprintf('retry_policies.%s.map.%s', $type, $messageClass), $serviceId);
+                $resolvedId = $this->helper->configuredService($container, sprintf('retry_policies.%s.map.%s', $type, $messageClass), $serviceId, RetryPolicy::class);
                 $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 

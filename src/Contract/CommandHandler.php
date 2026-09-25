@@ -16,6 +16,9 @@ namespace SomeWork\CqrsBundle\Contract;
  *
  * Handlers SHOULD be stateless services and MUST NOT mutate the command.
  *
+ * The templates document the handled message (and result) for readers and tools; PHPStan
+ * cannot check them against __invoke(), which the interface does not declare.
+ *
  * @template TCommand of Command = Command
  *
  * @api

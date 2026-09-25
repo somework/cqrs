@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TransportBoundHandlers;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -44,6 +45,28 @@ final class ValidateTransportNamesPassTest extends TestCase
         $this->expectExceptionMessage('Messenger transport "missing" configured for SomeWork CQRS is not defined.');
 
         $container->compile();
+    }
+
+    public function test_an_event_handler_bound_to_an_unknown_transport_fails(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register(TransportBoundHandlers::class, TransportBoundHandlers::class)->addTag('messenger.message_handler', ['from_transport' => 'audit']);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('#[AsEventHandler(fromTransport: "audit")] on "'.TransportBoundHandlers::class.'" names a Messenger transport that is not defined.');
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_an_event_handler_bound_to_a_known_transport_passes(): void
+    {
+        $container = new ContainerBuilder();
+        $container->register('messenger.transport.audit', \stdClass::class);
+        $container->register(TransportBoundHandlers::class, TransportBoundHandlers::class)->addTag('messenger.message_handler', ['from_transport' => 'audit']);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
     }
 
     public function test_it_allows_known_transports(): void

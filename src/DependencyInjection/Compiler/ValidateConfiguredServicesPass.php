@@ -9,7 +9,10 @@ use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
+use function class_exists;
+use function is_a;
 use function is_array;
+use function is_string;
 use function sprintf;
 use function str_starts_with;
 use function substr;
@@ -34,8 +37,18 @@ final class ValidateConfiguredServicesPass implements CompilerPassInterface
         $services = $container->getParameter(ContainerHelper::CONFIGURED_SERVICES);
         $container->getParameterBag()->remove(ContainerHelper::CONFIGURED_SERVICES);
 
-        foreach (is_array($services) ? $services : [] as [$path, $serviceId]) {
+        foreach (is_array($services) ? $services : [] as $entry) {
+            [$path, $serviceId] = $entry;
+            $interface = $entry[2] ?? null;
             if ($container->has($serviceId)) {
+                // Otherwise the first dispatch fails with a TypeError about an internal service.
+                // A service defined by its class name has no class until ResolveClassPass.
+                $class = $container->findDefinition($serviceId)->getClass() ?? $serviceId;
+                $class = $container->getParameterBag()->resolveValue($class);
+                if (null !== $interface && is_string($class) && class_exists($class) && !is_a($class, $interface, true)) {
+                    throw new InvalidConfigurationException(sprintf('The service "%s" configured at "somework_cqrs.%s" must implement %s, %s does not.', $serviceId, $path, $interface, $class));
+                }
+
                 continue;
             }
 

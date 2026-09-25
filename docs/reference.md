@@ -685,7 +685,7 @@ somework_cqrs:
 | `signing.previous_secrets` | `[]` | list of strings: secrets whose signatures are still accepted |
 | `signing.accept_unsigned` | `false` | boolean: relay rows without a signature (e.g. of an earlier version) |
 
-Enabling the outbox registers the `SomeWork\CqrsBundle\Contract\OutboxStorage`
+Enabling the outbox registers the `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`
 service plus the `somework:cqrs:outbox:*` commands. With `storage: null` that is
 `DbalOutboxStorage`, which requires doctrine/dbal (compilation fails otherwise)
 and uses `table_name`, `connection` and `auto_setup`; another storage ignores

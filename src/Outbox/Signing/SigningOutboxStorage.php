@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Outbox\Signing;
 
 use DateTimeImmutable;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
 /**

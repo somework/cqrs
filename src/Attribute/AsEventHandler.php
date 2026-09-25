@@ -20,7 +20,7 @@ final class AsEventHandler
      * @param class-string          $event
      * @param non-empty-string|null $bus
      * @param int                   $priority      Handlers of the same event with a higher priority run first
-     * @param non-empty-string|null $fromTransport Only run this handler for messages received from this transport
+     * @param non-empty-string|null $fromTransport Skip this handler for messages a worker received from another transport (synchronous dispatches still run it)
      */
     public function __construct(
         public readonly string $event,

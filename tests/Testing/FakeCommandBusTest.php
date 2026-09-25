@@ -256,4 +256,14 @@ final class FakeCommandBusTest extends TestCase
 
         $bus->dispatchSync(new class implements Command {});
     }
+
+    public function test_an_interface_is_rejected_because_messages_match_by_exact_class(): void
+    {
+        $bus = new FakeCommandBus();
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage('the fake bus matches messages by their exact class');
+
+        $bus->willThrow(new \RuntimeException('boom'), Command::class);
+    }
 }

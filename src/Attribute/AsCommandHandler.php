@@ -19,12 +19,10 @@ final class AsCommandHandler
      *
      * @param class-string          $command
      * @param non-empty-string|null $bus
-     * @param non-empty-string|null $fromTransport Only run this handler for messages received from this transport
      */
     public function __construct(
         public readonly string $command,
         public readonly ?string $bus = null,
-        public readonly ?string $fromTransport = null,
     ) {
     }
 }

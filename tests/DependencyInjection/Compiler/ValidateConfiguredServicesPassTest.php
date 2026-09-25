@@ -6,9 +6,11 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateConfiguredServicesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -39,10 +41,20 @@ final class ValidateConfiguredServicesPassTest extends TestCase
         (new ValidateConfiguredServicesPass())->process($container);
     }
 
+    public function test_a_service_of_the_wrong_kind_is_reported_with_the_option_that_names_it(): void
+    {
+        $container = $this->containerWith(['retry_policies' => ['default' => NullMessageSerializer::class]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('The service "%s" configured at "somework_cqrs.retry_policies.default" must implement %s, %s does not.', NullMessageSerializer::class, RetryPolicy::class, NullMessageSerializer::class));
+
+        (new ValidateConfiguredServicesPass())->process($container);
+    }
+
     public function test_existing_services_pass_and_the_list_is_dropped(): void
     {
         $container = $this->containerWith(['serialization' => ['query' => ['default' => 'app.serializer']]]);
-        $container->register('app.serializer', \stdClass::class);
+        $container->register('app.serializer', NullMessageSerializer::class);
 
         (new ValidateConfiguredServicesPass())->process($container);
 

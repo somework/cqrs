@@ -566,14 +566,14 @@ daily.
 ## Custom storage
 
 The DBAL storage covers relational databases that DoctrineBundle can connect to. To keep
-the outbox somewhere else, implement `SomeWork\CqrsBundle\Contract\OutboxStorage`:
+the outbox somewhere else, implement `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`:
 
 ```php
 <?php
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Contract;
+namespace SomeWork\CqrsBundle\Contract\Outbox;
 
 use DateTimeImmutable;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
@@ -626,6 +626,18 @@ interface OutboxStorage
      * @return list<string> The ids of the claimed messages, in the order of $messages
      */
     public function claim(array $messages, array $retryAt, string $token): array;
+
+    /**
+     * Renews the claims of fetched messages that are still claimed with $token: claimedAt becomes
+     * now and the retry time $retryAt[<fetched attempts>], so the claims of a long batch do not run
+     * out before the relay gets to them.
+     *
+     * @param list<OutboxMessage>           $messages As fetchUnpublished() returned them
+     * @param array<int, DateTimeImmutable> $retryAt  Retry times keyed by the fetched number of attempts
+     *
+     * @return list<string> The ids still claimed with $token, in the order of $messages
+     */
+    public function renew(array $messages, array $retryAt, string $token): array;
 
     /**
      * Undoes the claims of messages the relay did not attempt (it stopped, or paused their

@@ -10,7 +10,8 @@ use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
@@ -102,7 +103,8 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame(OutboxPurgeCommand::class, $container->getDefinition('somework_cqrs.outbox.purge_command')->getClass());
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.setup_command')->hasTag('console.command'));
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.purge_command')->hasTag('console.command'));
-        self::assertSame('somework_cqrs.outbox.dbal_storage', (string) $container->getAlias(DbalOutboxStorage::class));
+        self::assertFalse($container->hasAlias(DbalOutboxStorage::class), 'Storing through it would bypass the decorators (signing).');
+        self::assertSame('somework_cqrs.outbox.base_storage', (string) $container->getAlias(FailedOutboxMessages::class));
     }
 
     public function test_the_relay_lock_is_scoped_to_the_connection_and_table(): void
@@ -200,7 +202,7 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame('storage.app.outbox', $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$lockName'));
         $configured = $container->getParameter('somework_cqrs.configured_services');
         self::assertIsArray($configured);
-        self::assertContains(['outbox.storage', 'app.outbox'], $configured);
-        self::assertNotContains(['outbox.connection', 'doctrine.dbal.default_connection'], $configured);
+        self::assertContains(['outbox.storage', 'app.outbox', null], $configured);
+        self::assertNotContains(['outbox.connection', 'doctrine.dbal.default_connection', null], $configured);
     }
 }

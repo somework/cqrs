@@ -11,6 +11,8 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_key_exists;
+use function class_exists;
+use function sprintf;
 
 /**
  * Test double for CommandBus that records all dispatches without requiring Messenger infrastructure.
@@ -74,6 +76,7 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
      */
     public function willReturnFor(string $commandClass, mixed $result): void
     {
+        self::assertConcrete($commandClass);
         $this->resultMap[$commandClass] = $result;
     }
 
@@ -88,6 +91,7 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
         if (null === $commandClass) {
             $this->failure = $exception;
         } else {
+            self::assertConcrete($commandClass);
             $this->failureMap[$commandClass] = $exception;
         }
     }
@@ -119,5 +123,15 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
         $this->dispatched[] = new RecordedDispatch($command, $mode, $stamps);
 
         return new Envelope($command, $stamps);
+    }
+
+    /**
+     * The fake matches messages by their exact class: an interface or an abstract class would never match.
+     */
+    private static function assertConcrete(string $class): void
+    {
+        if (!class_exists($class) || (new \ReflectionClass($class))->isAbstract()) {
+            throw new \InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
+        }
     }
 }

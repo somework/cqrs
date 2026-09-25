@@ -6,7 +6,7 @@ namespace SomeWork\CqrsBundle\Command;
 
 use DateTimeImmutable;
 use DateTimeZone;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;

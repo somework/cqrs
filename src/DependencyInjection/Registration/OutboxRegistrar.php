@@ -8,7 +8,7 @@ use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
@@ -48,7 +48,6 @@ final class OutboxRegistrar
             $storageDef->setArgument('$autoSetup', $config['auto_setup'] ?? true);
             $storageDef->setPublic(false);
             $container->setDefinition(OutboxStoragePass::DBAL_STORAGE_ID, $storageDef);
-            $container->setAlias(DbalOutboxStorage::class, OutboxStoragePass::DBAL_STORAGE_ID)->setPublic(false);
             $baseStorage = OutboxStoragePass::DBAL_STORAGE_ID;
         } else {
             $baseStorage = $helper->configuredService($container, 'outbox.storage', $customStorage);
@@ -60,6 +59,12 @@ final class OutboxRegistrar
         $container->setAlias(OutboxStoragePass::BASE_STORAGE_ID, $baseStorage)->setPublic(false);
         $container->setAlias(OutboxStoragePass::STORAGE_ID, $baseStorage)->setPublic(false);
         $container->setAlias(OutboxStorage::class, OutboxStoragePass::STORAGE_ID)->setPublic(false);
+        // The capabilities autowire to the configured storage (OutboxStoragePass drops the ones it
+        // does not implement). There is no alias of DbalOutboxStorage: storing through it would
+        // bypass the decorators, signing included.
+        foreach (OutboxStoragePass::CAPABILITIES as $capability) {
+            $container->setAlias($capability, OutboxStoragePass::BASE_STORAGE_ID)->setPublic(false);
+        }
 
         // Signing decorates the storage the application uses, so rows of any storage are signed; the
         // highest priority makes it the innermost decorator, which stores what it signed.

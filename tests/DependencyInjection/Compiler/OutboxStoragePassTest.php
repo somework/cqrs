@@ -8,6 +8,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
@@ -73,13 +74,26 @@ final class OutboxStoragePassTest extends TestCase
         self::assertFalse($container->has('somework_cqrs.outbox.dbal_storage'));
     }
 
+    public function test_capabilities_autowire_to_the_storage_that_implements_them(): void
+    {
+        $container = $this->container(['storage' => 'app.outbox']);
+        $container->register('app.outbox', InMemoryOutboxStorage::class);
+        (new OutboxStoragePass())->process($container);
+
+        self::assertFalse($container->hasAlias(FailedOutboxMessages::class), 'The in-memory storage lists no failed messages.');
+
+        $dbal = $this->container();
+        (new OutboxStoragePass())->process($dbal);
+        self::assertSame('somework_cqrs.outbox.base_storage', (string) $dbal->getAlias(FailedOutboxMessages::class));
+    }
+
     public function test_a_custom_storage_must_be_an_outbox_storage(): void
     {
         $container = $this->container(['storage' => 'app.outbox']);
         $container->register('app.outbox', \stdClass::class);
 
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('The outbox storage "app.outbox" configured at "somework_cqrs.outbox.storage" must implement SomeWork\CqrsBundle\Contract\OutboxStorage, stdClass does not.');
+        $this->expectExceptionMessage('The outbox storage "app.outbox" configured at "somework_cqrs.outbox.storage" must implement SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage, stdClass does not.');
 
         $container->compile();
     }
