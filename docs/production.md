@@ -256,6 +256,10 @@ session lock, which a pooler in transaction mode (PgBouncer) would move to
 another client. The automatic setup is safe behind such a pooler: on PostgreSQL
 it runs in one transaction.
 
+The relay trusts the rows of the table: give the application a role that can only
+read and write rows, run the setup with a role that may change the schema, and see
+[Security](outbox.md#security) for the serializer and the Symfony version to use.
+
 ### Relay
 
 `somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new

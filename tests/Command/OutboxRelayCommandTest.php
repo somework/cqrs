@@ -32,18 +32,23 @@ use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
+use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\Sender\SenderInterface;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
+use function addslashes;
 use function array_map;
 use function array_slice;
 use function mb_check_encoding;
 use function mb_strlen;
 use function preg_replace;
+use function serialize;
 use function sprintf;
 use function str_repeat;
 use function str_starts_with;
@@ -416,6 +421,35 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertTrue(mb_check_encoding($error, 'UTF-8'));
         self::assertSame(2000, mb_strlen($error, 'UTF-8'));
         self::assertStringStartsWith('RuntimeException: Invalid ? byte', $error);
+    }
+
+    public function test_stored_errors_have_no_control_characters(): void
+    {
+        // Escape sequences in an exception message would reach the terminal of the operator.
+        $message = $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $bus = new RecordingBus(new \RuntimeException("declined \e]8;;http://evil.example\e\\click\e]8;;\e\\ \e[2J\nnext line \u{9B}31m"));
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        $error = $this->storage->failures[$message->id]['error'];
+        self::assertSame('RuntimeException: declined  ]8;;http://evil.example \\click ]8;; \\  [2J next line  31m', $error);
+        self::assertStringNotContainsString("\e", $tester->getDisplay());
+    }
+
+    public function test_stamps_of_a_dispatch_in_progress_are_not_taken_from_a_row(): void
+    {
+        // Serializers drop them when they encode an envelope: only a forged row holds them. A
+        // ReceivedStamp would make the relay handle the message itself instead of sending it.
+        $forged = new Envelope(new CreateTaskCommand('1', 'forged'), [new ReceivedStamp('async'), new SentStamp('async'), new HandledStamp('result', 'handler')]);
+        $this->storage->store(new OutboxMessage('00000000-0000-7000-8000-000000000001', addslashes(serialize($forged)), '[]', new DateTimeImmutable(), 'async'));
+
+        $this->execute();
+
+        self::assertCount(1, $this->async->getSent());
+        $sent = $this->async->getSent()[0];
+        self::assertNull($sent->last(ReceivedStamp::class));
+        self::assertNull($sent->last(HandledStamp::class));
     }
 
     public function test_rejects_less_than_one_attempt(): void

@@ -619,6 +619,41 @@ three caveats:
 - `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:failed` only work with
   `DbalOutboxStorage`; with another storage they exit with `1`.
 
+## Security
+
+The relay trusts the outbox table: it decodes every due row with the outbox serializer and
+dispatches the message it finds. Whoever can write rows (e.g. through an SQL injection in
+your application) can make the relay dispatch any message. With Messenger's default PHP
+serializer, decoding runs `unserialize()`, which can execute code through classes your
+application loads. This is the same trust model as Messenger's Doctrine transport.
+
+- **Keep write access narrow.** Let the application connect with a role that can only read and
+  write rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`); every command of the outbox works with
+  it once the table is set up. Run `somework:cqrs:outbox:setup` or your migrations with a role
+  that may change the schema, and set `auto_setup: false`.
+- **Prefer a serializer that does not create arbitrary PHP objects**, e.g.
+  `serializer: messenger.transport.symfony_serializer` (JSON). Messages made of primitives, as
+  the bundle recommends, encode without extra normalizers. Rows written with another serializer
+  cannot be decoded after the switch: relay them first.
+- **Symfony 7.4 or later** refuses unsigned `RunProcessMessage` and `RunCommandMessage`; on
+  7.2 and 7.3 a forged row can start a process or a console command through Messenger's own
+  handlers when `symfony/process` or `symfony/console` is installed.
+- The relay drops the stamps that only describe a dispatch in progress (`ReceivedStamp`,
+  `SentStamp`, `HandledStamp` and the other non-sendable stamps). Serializers never write them,
+  so only a forged row holds them; a `ReceivedStamp` would make the relay handle the message
+  itself instead of sending it.
+
+**Error texts.** The relay stores the message of the exception of a failed attempt in
+`last_error`, prints it and logs it, and the OpenTelemetry middleware records exceptions on
+spans. Exception messages can contain personal data. Rows the relay gave up on keep their
+error until you requeue them or delete them (e.g. with SQL, by `failed_at`), so include them in
+your retention policy. Control characters are replaced by spaces in stored errors and in the
+output of `somework:cqrs:outbox:failed`.
+
+**Message size.** A fetch reads the bodies of at most 8 MiB of messages (a larger message is
+read on its own); the rest waits for the next fetch of the same run. The relay needs a few
+times the size of the largest message in memory: decoding and sending copy it.
+
 ## Limitations
 
 - **Polling only.** Messages leave the outbox when the relay runs. Change data capture is

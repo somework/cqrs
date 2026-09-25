@@ -92,7 +92,10 @@ final class PaymentService
 ```
 
 The key should identify the operation, for example an order id or a client-supplied request
-id. `new IdempotencyStamp('')` throws an `InvalidArgumentException`. Stamps are variadic
+id. Keys are global per message class: two users or tenants that send the same key for the same
+message class collide, and the second message is dropped as a duplicate. Scope keys that come
+from clients, e.g. `new IdempotencyStamp($tenantId.':'.$userId.':'.$requestId)`.
+`new IdempotencyStamp('')` throws an `InvalidArgumentException`. Stamps are variadic
 arguments of every dispatch method: `dispatch($message, DispatchMode::DEFAULT, ...$stamps)`,
 `dispatchSync($message, ...$stamps)`, `dispatchAsync($message, ...$stamps)` and
 `ask($query, ...$stamps)`.

@@ -287,7 +287,7 @@ final class Configuration implements ConfigurationInterface
             ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
         self::requireName($tableName);
         $tableName->validate()
-            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $value))
+            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/D', $value))
             ->thenInvalid('Invalid outbox table name %s: use letters, digits and underscores, optionally prefixed with a schema ("schema.table").')
         ->end();
         // The outbox queries do not quote the name, so a reserved word breaks them (e.g. "order", or "user" on PostgreSQL).

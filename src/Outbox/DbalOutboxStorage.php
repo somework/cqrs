@@ -78,6 +78,12 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private const PURGE_BATCH_SIZE = 1000;
 
+    /**
+     * Bytes of bodies and headers one fetch reads at most (it always reads one row): a batch
+     * of large messages must not exhaust the memory of the relay before any of them is claimed.
+     */
+    private const FETCH_BUDGET = 8 * 1024 * 1024;
+
     /** Seconds a change of an existing table by the setup command waits for the transactions that lock it. */
     private const DDL_LOCK_TIMEOUT = 5;
 
@@ -1217,7 +1223,9 @@ final class DbalOutboxStorage implements OutboxStorage
                 ->setParameter('excluded', $names, ArrayParameterType::STRING);
         }
 
-        return $this->guard(fn (): array => $this->ordered($query, ['published_at'], ['created_at', 'id'])->executeQuery()->fetchAllAssociative());
+        $ids = $this->guard(fn (): array => $this->ordered($query->select('id'), ['published_at'], ['created_at', 'id'])->executeQuery()->fetchFirstColumn());
+
+        return $this->readDue(array_map(strval(...), $ids));
     }
 
     /**
@@ -1274,31 +1282,76 @@ final class DbalOutboxStorage implements OutboxStorage
             }
         }
 
+        return $this->readDue($ids);
+    }
+
+    /**
+     * Reads the given rows in full, in the given order, as long as their bodies and headers fit
+     * into the budget of a fetch (the first row is always read); the others wait for the next
+     * fetch. A row that is no longer due (published, given up or claimed by another relay in the
+     * meantime) is left out.
+     *
+     * @param list<string> $ids
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function readDue(array $ids): array
+    {
         if ([] === $ids) {
             return [];
         }
 
-        // Only the chosen rows are read in full (bodies can be large); a row that another relay
-        // claimed in the meantime is no longer due and is left out.
-        $query = $this->pending()
+        $platform = $this->connection->getDatabasePlatform();
+        // In bytes where the platform tells (PostgreSQL then needs no decompression of the value).
+        $length = static fn (string $column): string => match (true) {
+            $platform instanceof PostgreSQLPlatform => sprintf('OCTET_LENGTH(%s)', $column),
+            $platform instanceof AbstractMySQLPlatform => sprintf('LENGTH(%s)', $column),
+            default => $platform->getLengthExpression($column),
+        };
+        $due = static fn (QueryBuilder $query, array $ids): QueryBuilder => $query
             ->andWhere('id IN (:ids)')
             ->andWhere('available_at IS NULL OR available_at <= :now')
             ->setParameter('ids', $ids, ArrayParameterType::STRING)
             ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE);
+
+        $sizes = [];
+        $query = $due($this->pending()->select('id', sprintf('%s + %s AS size', $length('body'), $length('headers'))), $ids);
+        foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
+            $sizes[strtolower((string) $row['id'])] = (int) $row['size'];
+        }
+
+        $chosen = [];
+        $total = 0;
+        foreach ($ids as $id) {
+            $size = $sizes[strtolower($id)] ?? null;
+            if (null === $size) {
+                continue;
+            }
+            if ([] !== $chosen && $total + $size > self::FETCH_BUDGET) {
+                break;
+            }
+            $chosen[] = $id;
+            $total += $size;
+        }
+
+        if ([] === $chosen) {
+            return [];
+        }
+
+        $query = $due($this->pending(), $chosen);
         $rows = [];
         foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
             $rows[strtolower((string) $row['id'])] = $row;
         }
 
-        $due = [];
-        foreach ($ids as $id) {
-            // Published, given up or claimed by another relay in the meantime: skipped.
+        $read = [];
+        foreach ($chosen as $id) {
             if (isset($rows[strtolower($id)])) {
-                $due[] = $rows[strtolower($id)];
+                $read[] = $rows[strtolower($id)];
             }
         }
 
-        return $due;
+        return $read;
     }
 
     /**

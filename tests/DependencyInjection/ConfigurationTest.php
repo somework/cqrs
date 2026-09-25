@@ -230,6 +230,26 @@ final class ConfigurationTest extends TestCase
         self::assertSame('my_outbox', $config['outbox']['table_name']);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function invalidTableNames(): iterable
+    {
+        yield 'statement separator' => ['outbox;drop', 'use letters, digits and underscores'];
+        yield 'trailing newline' => ["outbox\n", 'use letters, digits and underscores'];
+        yield 'two dots' => ['a.b.c', 'use letters, digits and underscores'];
+        yield 'reserved word' => ['user', 'it is a reserved SQL word'];
+    }
+
+    #[DataProvider('invalidTableNames')]
+    public function test_rejects_invalid_outbox_table_names(string $name, string $error): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage($error);
+
+        $this->processConfiguration(['outbox' => ['table_name' => $name]]);
+    }
+
     public function test_map_keys_drop_a_leading_backslash(): void
     {
         $config = $this->processConfiguration([

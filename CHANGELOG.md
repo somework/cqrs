@@ -91,6 +91,13 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `HandlerLocatorRegistrar`, `MessageTypeLocatorResetter`, `AsynchronousStampDecider` (merged into `MessageTransportStampDecider`) and the unused `message_types` attribute of the stamp decider tag (all internal).
 - The `somework_cqrs.discovered_messages` container parameter (internal).
 
+### Security
+- The outbox relay drops the non-sendable stamps (`ReceivedStamp`, `SentStamp`, …) and `HandledStamp` of a decoded row, so a forged row cannot make the relay handle a message itself instead of sending it.
+- A fetch of the outbox relay reads at most 8 MiB of message bodies (a larger message on its own), so a batch of large messages no longer exhausts the memory of the relay before any of them is claimed.
+- Stored and printed errors of the outbox relay and the output of `somework:cqrs:outbox:failed` have no control characters (escape sequences in an exception message reached the terminal).
+- Outbox table names and generated class names with a trailing newline are rejected.
+- Documented: the outbox table is trusted input (least-privilege roles, a JSON serializer, Symfony 7.4 for signed `RunProcessMessage`), personal data in stored errors, and idempotency keys that need a tenant or user scope.
+
 ## [0.4.0] - 2026-03-23
 
 ### Added

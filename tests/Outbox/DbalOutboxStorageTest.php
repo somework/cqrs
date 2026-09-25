@@ -100,6 +100,23 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(2)));
     }
 
+    public function test_a_fetch_reads_large_messages_up_to_a_budget(): void
+    {
+        // A batch of large messages must not exhaust the memory of the relay before it claims any of them.
+        $storage = new DbalOutboxStorage($this->connection);
+        foreach (['1' => 3, '2' => 3, '3' => 3, '4' => 9] as $minute => $megabytes) {
+            $storage->store(new OutboxMessage('00000000-0000-7000-8000-00000000000'.$minute, str_repeat('x', $megabytes * 1024 * 1024), '{"type":"test"}', new DateTimeImmutable('2026-01-01 10:0'.$minute.':00')));
+        }
+
+        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10)));
+        $storage->markPublished('00000000-0000-7000-8000-000000000001');
+        $storage->markPublished('00000000-0000-7000-8000-000000000002');
+        self::assertSame(['00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10)));
+        $storage->markPublished('00000000-0000-7000-8000-000000000003');
+        // A message larger than the budget is read on its own.
+        self::assertSame(['00000000-0000-7000-8000-000000000004'], self::ids($storage->fetchUnpublished(10)));
+    }
+
     public function test_a_failed_message_waits_for_its_retry_time(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
@@ -278,7 +295,8 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10, ['a'])));
         self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, [null])));
 
-        $sql = $queries->flush();
+        // One query chooses the rows, then their sizes and the rows themselves are read by id.
+        $sql = array_values(array_filter($queries->flush(), static fn (string $query): bool => str_contains($query, 'ORDER BY')));
         self::assertCount(4, $sql);
         $leading = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform ? 'published_at ASC, ' : '';
         foreach ($sql as $query) {

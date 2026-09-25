@@ -53,6 +53,18 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertStringContainsString('--requeue', $display);
     }
 
+    public function test_stored_text_is_listed_without_control_characters(): void
+    {
+        // A row written by someone else could put escape sequences into the terminal of the operator.
+        $this->storage->store(new OutboxMessage('00000000-0000-7000-8000-000000000003', 'body', '{}', new DateTimeImmutable(), "as\e[2Jync"));
+        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000003', 3, "boom \e]8;;http://evil.example\e\\", null);
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute([]));
+        self::assertStringNotContainsString("\e", $tester->getDisplay());
+        self::assertStringContainsString(']8;;http://evil.example', $tester->getDisplay());
+    }
+
     public function test_requeues_the_given_messages(): void
     {
         $tester = new CommandTester(new OutboxFailedCommand($this->storage));

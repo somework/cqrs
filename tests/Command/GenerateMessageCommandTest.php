@@ -265,6 +265,7 @@ final class GenerateMessageCommandTest extends TestCase
         yield 'parent segment' => ['App\\..\\..\\Evil', 'not a valid fully-qualified class name'];
         yield 'slashes' => ['App/Command/DoSomething', 'not a valid fully-qualified class name'];
         yield 'trailing separator' => ['App\\Command\\', 'not a valid fully-qualified class name'];
+        yield 'trailing newline' => ["App\\Command\\DoSomething\n", 'not a valid fully-qualified class name'];
         yield 'reserved word' => ['App\\Command\\List', '"List" is a reserved word'];
     }
 

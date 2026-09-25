@@ -73,7 +73,7 @@ final class GenerateMessageCommand extends SymfonyCommand
         'event' => AsEventHandler::class,
     ];
 
-    private const CLASS_NAME_PATTERN = '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(?:\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)+$/';
+    private const CLASS_NAME_PATTERN = '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(?:\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)+$/D';
 
     /** Words that cannot be used as a class name. */
     private const RESERVED_CLASS_NAMES = [

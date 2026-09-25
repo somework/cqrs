@@ -33,6 +33,7 @@ use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
+use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
 use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
@@ -533,8 +534,11 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     {
         $description = '' === $exception->getMessage() ? $exception::class : sprintf('%s: %s', $exception::class, $exception->getMessage());
 
-        // Stored in a text column: keep it valid UTF-8 and bounded.
-        return mb_substr(mb_scrub($description, 'UTF-8'), 0, self::MAX_ERROR_LENGTH, 'UTF-8');
+        // Stored in a text column and shown in terminals: valid UTF-8, bounded, and without control
+        // characters (escape sequences in a message would reach the terminal of the operator).
+        $description = (string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($description, 'UTF-8'));
+
+        return mb_substr($description, 0, self::MAX_ERROR_LENGTH, 'UTF-8');
     }
 
     private function decode(OutboxMessage $message): Envelope
@@ -552,6 +556,11 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         if (null !== $envelope->last(MessageDecodingFailedStamp::class)) {
             throw new MessageDecodingFailedException(sprintf('The class of the message (%s) cannot be loaded.', $decoded::class));
         }
+
+        // Stamps that only describe a dispatch in progress (e.g. ReceivedStamp, which would make the
+        // relay handle the message itself instead of sending it) are not taken from a row: the
+        // serializers drop them when they encode an envelope, only a forged row can hold them.
+        $envelope = $envelope->withoutStampsOfType(NonSendableStampInterface::class)->withoutAll(HandledStamp::class);
 
         if (null !== $message->transportName) {
             $envelope = $envelope->with(new TransportNamesStamp([$message->transportName]));

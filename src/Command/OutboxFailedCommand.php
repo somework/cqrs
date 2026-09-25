@@ -35,7 +35,7 @@ use const FILTER_VALIDATE_INT;
 )]
 final class OutboxFailedCommand extends Command
 {
-    private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i';
+    private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/Di';
 
     public function __construct(private readonly OutboxStorage $outboxStorage)
     {
@@ -129,15 +129,24 @@ final class OutboxFailedCommand extends Command
             ['Id', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
             array_map(static fn (array $message): array => [
                 $message['id'],
-                $message['transport_name'] ?? '(routing)',
+                self::printable($message['transport_name'] ?? '(routing)'),
                 $message['created_at']->format(DATE_ATOM),
                 $message['failed_at']->format(DATE_ATOM),
                 $message['attempts'],
-                $message['last_error'] ?? '',
+                self::printable($message['last_error'] ?? ''),
             ], $failed),
         );
         $io->note('Fix the cause, then run this command with --requeue (optionally followed by message ids).');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Text read from the table, without control characters: escape sequences stored in a row
+     * would reach the terminal of the operator.
+     */
+    private static function printable(string $text): string
+    {
+        return (string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8'));
     }
 }
