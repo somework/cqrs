@@ -442,7 +442,8 @@ What happens in special cases:
   transport of the row (`<key>@<transport>`), so the rows of a message stored for several
   transports, at once or one by one, do not drop each other; a row that follows the Messenger
   routing keeps the key. Rows you store with `OutboxStorage::store()` yourself need distinct
-  keys per transport.
+  keys per transport. A scoped key does not match the same key dispatched directly on a bus,
+  so a message dispatched both ways is not deduplicated across the two.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
   relay finishes the row it is working on, starts no other, marks the sent rows as published,
   releases the claims of the others, prints `Stopped by signal <number>
