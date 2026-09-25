@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
@@ -254,6 +255,100 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertStringContainsString('ALTER TABLE', implode("\n", $queries->flush()));
     }
 
+    public function test_without_the_index_of_this_version_one_query_fetches_along_the_index_of_04(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00', 'a'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000002', '2026-01-01 10:00:01', 'b'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000003', '2026-01-01 10:00:02'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000004', '2026-01-01 10:00:03', 'a'));
+        $storage->fetchUnpublished(1);
+        $storage->recordAttempt('00000000-0000-7000-8000-000000000004', 1, 'boom', new DateTimeImmutable('+1 hour'));
+        $queries->flush();
+
+        // The per-transport queries would each read every pending row of a big 0.4 table.
+        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10)));
+        self::assertSame(['00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, ['a', null])));
+        self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10, ['a'])));
+
+        $sql = $queries->flush();
+        self::assertCount(3, $sql);
+        $leading = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform ? 'published_at ASC, ' : '';
+        foreach ($sql as $query) {
+            self::assertStringEndsWith('ORDER BY '.$leading.'created_at ASC, id ASC LIMIT 10', $query);
+        }
+
+        // Once the setup command built it, the transports take turns again.
+        $storage->setup();
+        $storage->fetchUnpublished(10);
+        self::assertStringContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()));
+    }
+
+    public function test_the_relay_asks_for_the_pending_changes_without_looking_at_the_table_again(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->fetchUnpublished(10);
+        $queries->flush();
+
+        self::assertSame([
+            'the index "idx_somework_cqrs_outbox_pending" is missing',
+            'the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there',
+        ], $storage->pendingChanges());
+        self::assertSame([], $queries->flush(), 'The first use of the process just looked.');
+
+        // Asked again, it looks again (e.g. after the setup command ran elsewhere).
+        (new DbalOutboxStorage($this->connection))->setup();
+        self::assertSame([], $storage->pendingChanges());
+    }
+
+    public function test_the_setup_command_refuses_a_pooler_in_transaction_mode(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('The setup takes a session lock of PostgreSQL.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        // Behind PgBouncer in transaction mode, two statements may run on different server connections.
+        $pooler = new BeforeQueryMiddleware('pg_backend_pid()');
+        $pooler->replacement = 'SELECT (extract(epoch from clock_timestamp()) * 1000000)::bigint';
+        $connection = TestDatabase::connect(null, [$pooler], keepTables: true);
+
+        try {
+            (new DbalOutboxStorage($connection, autoSetup: false))->setup();
+            self::fail('The setup lock would stay with another client.');
+        } catch (\RuntimeException $exception) {
+            self::assertStringContainsString('is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients.', $exception->getMessage());
+        } finally {
+            $connection->close();
+        }
+    }
+
+    public function test_a_mysql_table_of_a_database_is_used_on_a_connection_without_one(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            self::markTestSkipped('Only MySQL qualifies table names with a database.');
+        }
+        $database = (string) $this->connection->getDatabase();
+        (new DbalOutboxStorage($this->connection))->setup();
+        $params = $this->connection->getParams();
+        unset($params['dbname']);
+        $connection = DriverManager::getConnection($params);
+
+        try {
+            $storage = new DbalOutboxStorage($connection, $database.'.somework_cqrs_outbox');
+            $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+            self::assertSame([self::ID_1], self::ids($storage->fetchUnpublished(10)));
+        } finally {
+            $connection->close();
+        }
+    }
+
     public function test_the_automatic_upgrade_gives_up_at_once_behind_a_long_transaction_and_writes_go_on(): void
     {
         if (TestDatabase::isSqlite($this->connection)) {
@@ -335,6 +430,10 @@ final class DbalOutboxStorageTest extends TestCase
         $progress->replacement = "SELECT 'idx_somework_cqrs_outbox_pending' AS relname WHERE CAST(? AS text) IS NOT NULL";
         $connection = TestDatabase::connect(null, [$progress], keepTables: true);
         $storage = new DbalOutboxStorage($connection);
+        // e.g. a setup killed during the build, whose server process goes on building and holds the lock.
+        $holder = TestDatabase::connect(keepTables: true);
+        $holder->fetchOne('SELECT pg_advisory_lock(hashtext(?))', ['somework_cqrs_outbox_setup_'.substr(sha1('somework_cqrs_outbox'), 0, 16)]);
+        $started = microtime(true);
 
         self::assertSame(['the index "idx_somework_cqrs_outbox_pending" is being built'], $storage->pendingChanges());
         try {
@@ -342,8 +441,10 @@ final class DbalOutboxStorageTest extends TestCase
             self::fail('The build of the other process is not dropped.');
         } catch (\RuntimeException $exception) {
             self::assertSame('Another process is building the index "idx_somework_cqrs_outbox_pending" of the outbox table "somework_cqrs_outbox". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', $exception->getMessage());
+            self::assertLessThan(5, microtime(true) - $started, 'It says so instead of waiting for the lock.');
         } finally {
             $connection->close();
+            $holder->close();
         }
         self::assertTrue(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_pending'));
     }

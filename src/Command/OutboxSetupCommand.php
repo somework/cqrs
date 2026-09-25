@@ -8,11 +8,18 @@ use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Command\SignalableCommandInterface;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\ConsoleOutputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\SignalRegistry\SignalRegistry;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+use function defined;
 use function sprintf;
+
+use const SIGINT;
+use const SIGTERM;
 
 /**
  * @internal
@@ -21,15 +28,40 @@ use function sprintf;
     name: 'somework:cqrs:outbox:setup',
     description: 'Create the outbox table, or add the columns a table of an earlier version lacks.',
 )]
-final class OutboxSetupCommand extends Command
+final class OutboxSetupCommand extends Command implements SignalableCommandInterface
 {
+    private ?OutputInterface $output = null;
+
     public function __construct(private readonly OutboxStorage $outboxStorage)
     {
         parent::__construct();
     }
 
+    /**
+     * @return list<int>
+     */
+    public function getSubscribedSignals(): array
+    {
+        return defined('SIGTERM') && SignalRegistry::isSupported() ? [SIGTERM, SIGINT] : [];
+    }
+
+    /**
+     * Stops right away (e.g. a deploy job that is terminated) and says so: exiting with 0 would let
+     * the deployment go on as if the table was ready. What was done so far stays; the next setup
+     * continues from there. A statement that runs (e.g. the index build) is only interrupted once
+     * it returns.
+     */
+    public function handleSignal(int $signal, int|false $previousExitCode = 0): int
+    {
+        $output = $this->output instanceof ConsoleOutputInterface ? $this->output->getErrorOutput() : $this->output;
+        $output?->writeln(sprintf('<error>The outbox table setup was stopped by signal %d; run it again.</error>', $signal));
+
+        return 128 + $signal;
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $this->output = $output;
         $io = new SymfonyStyle($input, $output);
 
         if (!$this->outboxStorage instanceof DbalOutboxStorage) {

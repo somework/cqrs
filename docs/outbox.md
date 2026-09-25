@@ -57,7 +57,7 @@ somework_cqrs:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `false` | Registers the outbox storage and the four console commands. It decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
-| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`: with `auto_setup` the connection must select a database, its `dbname`, and the Doctrine schema listener only adds a table of that database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
+| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`: without a database selected on the connection, its `dbname`, the automatic setup is skipped, and the Doctrine schema listener only adds a table of the connection's database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
 | `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
@@ -192,13 +192,18 @@ the table is missing, it creates it. Storing never changes an existing table (wr
 working on a table of 0.4); the relay and the `failed` command add the columns they need.
 Processes that start at the same time wait for each other (at most 30 seconds, less once
 another one has added the columns), and adding the columns waits at most 1 second for the
-transactions on the table; on PostgreSQL it does not even try while a transaction has held
-the table for longer, so writes do not queue behind the change. Until the columns exist,
+transactions on the table. It does not even try while a transaction has held the table for
+longer (PostgreSQL), or while any transaction of the server has been open for longer (MySQL and
+MariaDB, which do not tell which tables a transaction holds; this needs the `PROCESS`
+privilege, without it each attempt holds up the writes to the table for up to 1 second), so
+writes do not queue behind the change. Until the columns exist,
 every relay run fails with `could not be changed: a transaction kept it locked`: run the
 setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
 pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
 a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
-it (without the index every fetch reads all pending rows). It never creates the table inside an open
+it. Until then the relay fetches with one query along the index of 0.4, in the order the rows
+were stored (the transports do not take turns), and the health check reads all pending rows,
+which takes seconds with a large backlog. It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -237,16 +242,20 @@ and the new index to stay fast. Add them with one of:
 
 - `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
   start at the same time wait for each other with a database lock held by the session, which
-  PgBouncer in transaction mode would hand to another client). On
+  PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
+  notices it and refuses). A signal (e.g. a deploy job that is terminated) stops it with the
+  exit code `128 + signal`, once the running statement returns; the next setup continues. On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
   `statement_timeout`), so writes go on while it runs; it waits for transactions that started
   before (e.g. a `pg_dump`). It rebuilds an index that an interrupted build left invalid, and
   stops with `Another process is building the index` while one is being built (e.g. by your
-  migration). The old index is dropped only once the new one exists. Changing the table needs
+  migration, or by the server process of a setup that was killed). The old index is dropped only once the new one exists. Changing the table needs
   a moment without open transactions on it: adding
   the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
   fails with `could not be changed: a transaction kept it locked` instead of blocking every
-  write behind it; run the setup again when the table is less busy. With `auto_setup: true`,
+  write behind it; run the setup again when the table is less busy. On MySQL and MariaDB the
+  index is built online, but the build needs that moment at its end too: if a transaction
+  (e.g. a dump) holds the table then, the work of the build is lost. With `auto_setup: true`,
   the first relay run adds the columns (waiting at most 1 second), so the relay works before
   the setup command has run, only slower;
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes

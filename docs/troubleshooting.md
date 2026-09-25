@@ -421,6 +421,14 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   in the run, it is paused after 10 failures in a row, or after 3 once its
   failures have lasted 10 seconds (e.g. every send waits for a timeout). The rows of the other transports
   are still relayed; the paused ones are tried again by the next run.
+  `Messages without a transport name failed to be sent 3 times in a row; the
+  other ones wait for the next run.` is the same for the rows that follow
+  `framework.messenger.routing`, which share one count.
+* `The outbox table setup was stopped by signal <number>; run it again.` The
+  setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
+  it did so far stays.
+* `The outbox table "…" is set up through a pooler in transaction mode …` Run
+  the setup command over a direct database connection, not through PgBouncer.
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
   `outbox.max_attempts` times (three times as many for transport failures). Fix
   the cause, then list and requeue it with `somework:cqrs:outbox:failed

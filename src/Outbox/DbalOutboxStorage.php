@@ -9,6 +9,7 @@ use DateTimeZone;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception as DbalException;
+use Doctrine\DBAL\Exception\ConnectionException;
 use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use Doctrine\DBAL\Exception\LockWaitTimeoutException;
@@ -107,6 +108,16 @@ final class DbalOutboxStorage implements OutboxStorage
     /** Process-local cache of the "table exists" check (it may still lack the columns of this version). */
     private bool $tableExists = false;
 
+    /**
+     * What the first use found left for the setup command, for pendingChanges(); false when unknown.
+     *
+     * @var array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<string>>, invalid: list<string>, building: list<string>, legacy: string|null}|false|null
+     */
+    private array|false|null $knownPlan = false;
+
+    /** Whether the first use found the index of this version missing (or unusable) */
+    private bool $withoutPendingIndex = false;
+
     public function __construct(
         private readonly Connection $connection,
         private readonly string $tableName = 'somework_cqrs_outbox',
@@ -146,7 +157,11 @@ final class DbalOutboxStorage implements OutboxStorage
 
         // Transports take turns, so the backlog of one (e.g. after an outage) does not hold up the
         // others; each is queried on its own part of the index, a paused one is not even read.
-        $rows = $this->dueRows($limit, $this->transportsExcept($excludedTransports));
+        // Without that index (until the setup command builds it), each of those queries would read
+        // every pending row: one query along the index of 0.4 instead, in the order rows were stored.
+        $rows = $this->withoutPendingIndex
+            ? $this->dueRowsInStoredOrder($limit, $excludedTransports)
+            : $this->dueRows($limit, $this->transportsExcept($excludedTransports));
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -406,7 +421,11 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     public function pendingChanges(): array
     {
-        $plan = $this->guard(fn (): ?array => $this->inDatabaseOfTable(fn (): ?array => $this->plan()));
+        // The first use of this process just looked (e.g. the relay's): no need to look again.
+        [$plan, $this->knownPlan] = [$this->knownPlan, false];
+        if (false === $plan) {
+            $plan = $this->guard(fn (): ?array => $this->inDatabaseOfTable(fn (): ?array => $this->plan()));
+        }
         if (null === $plan) {
             return [];
         }
@@ -445,15 +464,23 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $complete = $this->inDatabaseOfTable(function () use ($explicit, $columns): bool {
             $plan = $this->plan();
+            $this->knownPlan = $plan;
+            $this->withoutPendingIndex = null !== $plan && !$plan['create'] && isset($plan['indexes']['pending']);
 
             if (null === $plan) {
                 return true;
             }
 
             if ($explicit) {
+                // Say so right away, instead of waiting for the lock of a setup that was killed during the build.
+                $this->assertNotBuilding($plan);
                 $this->whileLocked(fn () => $this->upgrade(), self::SETUP_LOCK_TIMEOUT);
+                [$this->knownPlan, $this->withoutPendingIndex] = [false, false];
             } elseif ($plan['create'] || ($columns && [] !== $plan['columns'])) {
                 $this->makeUsable($plan);
+                // The table and the columns exist now; the indexes are as they were.
+                $left = ['columns' => []] + $plan;
+                $this->knownPlan = $plan['create'] || ([] === $left['indexes'] && null === $left['legacy']) ? null : $left;
             } elseif ([] !== $plan['columns']) {
                 return false;
             }
@@ -511,6 +538,9 @@ final class DbalOutboxStorage implements OutboxStorage
         };
 
         if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            if (!$plan['create'] && $this->oldTransactionOnMySql()) {
+                throw $this->tableLocked(self::AUTO_DDL_LOCK_TIMEOUT);
+            }
             $this->whileLocked(fn () => $this->withLockTimeout(fn () => $this->addMissingColumns(), self::AUTO_DDL_LOCK_TIMEOUT), self::AUTO_SETUP_LOCK_TIMEOUT, $stillNeeded);
 
             return;
@@ -537,6 +567,28 @@ final class DbalOutboxStorage implements OutboxStorage
                 $this->addMissingColumns();
             }
         }, self::AUTO_DDL_LOCK_TIMEOUT);
+    }
+
+    /**
+     * Whether a transaction has been open for longer than the automatic setup waits: the ALTER
+     * would wait for it if it read the table, and hold up the writes behind it meanwhile. MySQL does
+     * not tell which tables a transaction holds, so any transaction of the server counts; without
+     * the PROCESS privilege nothing is known.
+     */
+    private function oldTransactionOnMySql(): bool
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            return false;
+        }
+
+        try {
+            return false !== $this->connection->fetchOne(
+                'SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < NOW() - INTERVAL ? SECOND LIMIT 1',
+                [self::AUTO_DDL_LOCK_TIMEOUT],
+            );
+        } catch (DbalException) {
+            return false;
+        }
     }
 
     /**
@@ -586,11 +638,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
         $this->assertNoTransaction([] === $plan['columns'] ? 'needs the index of this version' : sprintf('lacks the columns %s', implode(', ', $plan['columns'])));
 
-        $building = array_values(array_filter(array_keys($plan['indexes']), fn (string $suffix): bool => in_array(strtolower(self::indexName($this->tableName, $suffix)), $plan['building'], true)));
-        if ([] !== $building) {
-            // e.g. a migration: dropping its index would fail once it is done, and throw its work away.
-            throw new \RuntimeException(sprintf('Another process is building the index "%s" of the outbox table "%s". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', self::indexName($this->tableName, $building[0]), $this->tableName));
-        }
+        $this->assertNotBuilding($plan);
 
         $schemaManager = $this->connection->createSchemaManager();
         $current = $this->introspectTable($schemaManager);
@@ -625,6 +673,18 @@ final class DbalOutboxStorage implements OutboxStorage
                 $withoutLegacyIndex->dropIndex($plan['legacy']);
                 $this->withLockTimeout(static fn () => $schemaManager->alterTable($schemaManager->createComparator()->compareTables($upgraded, $withoutLegacyIndex)), self::DDL_LOCK_TIMEOUT);
             }
+        }
+    }
+
+    /**
+     * @param array{indexes: array<string, non-empty-list<string>>, building: list<string>} $plan
+     */
+    private function assertNotBuilding(array $plan): void
+    {
+        $building = array_values(array_filter(array_keys($plan['indexes']), fn (string $suffix): bool => in_array(strtolower(self::indexName($this->tableName, $suffix)), $plan['building'], true)));
+        if ([] !== $building) {
+            // e.g. a migration: dropping its index would fail once it is done, and throw its work away.
+            throw new \RuntimeException(sprintf('Another process is building the index "%s" of the outbox table "%s". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', self::indexName($this->tableName, $building[0]), $this->tableName));
         }
     }
 
@@ -725,6 +785,8 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
+        $backend = $platform instanceof PostgreSQLPlatform ? $this->assertDirectConnection(null) : null;
+
         // Polled, not waited for: on PostgreSQL, CREATE INDEX CONCURRENTLY waits for every running
         // statement, so a process blocked in pg_advisory_lock() would deadlock with the one holding
         // the lock. On MySQL, in short waits, so that a second signal stops the process.
@@ -737,12 +799,31 @@ final class DbalOutboxStorage implements OutboxStorage
         if (null === $locked) {
             return;
         }
+        if (null !== $backend) {
+            $this->assertDirectConnection($backend);
+        }
 
         try {
             $setup();
         } finally {
             $this->connection->executeQuery($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$this->setupLockName()])->free();
         }
+    }
+
+    /**
+     * A pooler in transaction mode (PgBouncer) hands every statement to any server connection: the
+     * session lock and settings of the setup would stay with other clients. Returns the backend.
+     */
+    private function assertDirectConnection(?int $backend): int
+    {
+        $current = (int) $this->connection->fetchOne('SELECT pg_backend_pid()');
+        $backend ??= (int) $this->connection->fetchOne('SELECT pg_backend_pid()');
+
+        if ($current !== $backend) {
+            throw new \RuntimeException(sprintf('The outbox table "%s" is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
+        }
+
+        return $backend;
     }
 
     /**
@@ -858,6 +939,32 @@ final class DbalOutboxStorage implements OutboxStorage
         self::configureTable($table, $tableName);
 
         return $table;
+    }
+
+    /**
+     * The due rows of all but the excluded transports, in the order they were stored.
+     *
+     * @param list<string|null> $excludedTransports
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function dueRowsInStoredOrder(int $limit, array $excludedTransports): array
+    {
+        $query = $this->pending()
+            ->andWhere('available_at IS NULL OR available_at <= :now')
+            ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
+            ->setMaxResults($limit);
+
+        $names = array_values(array_filter($excludedTransports, static fn (?string $name): bool => null !== $name));
+        if (in_array(null, $excludedTransports, true)) {
+            $query->andWhere('transport_name IS NOT NULL');
+        }
+        if ([] !== $names) {
+            $query->andWhere(in_array(null, $excludedTransports, true) ? 'transport_name NOT IN (:excluded)' : 'transport_name IS NULL OR transport_name NOT IN (:excluded)')
+                ->setParameter('excluded', $names, ArrayParameterType::STRING);
+        }
+
+        return $this->guard(fn (): array => $this->ordered($query, ['published_at'], ['created_at', 'id'])->executeQuery()->fetchAllAssociative());
     }
 
     /**
@@ -1043,6 +1150,14 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
+        // DBAL cannot look into a "database.table" of MySQL without a database selected: the queries
+        // themselves report a missing table or column.
+        if (null === $this->connection->getDatabase() && isset($this->tableParts()[1]) && $this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            $this->setupDone = true;
+
+            return;
+        }
+
         $this->setupDone = $this->guard(fn (): bool => $this->prepareTable(false, $columns));
         $this->tableExists = true;
     }
@@ -1179,7 +1294,7 @@ final class DbalOutboxStorage implements OutboxStorage
             throw new \LogicException(sprintf('The database rejected a query on the outbox table "%s"; the name is probably a reserved word of this database. Choose another "somework_cqrs.outbox.table_name".', $this->tableName), 0, $exception);
         } catch (DriverException $exception) {
             // Not every driver reports an unknown column as InvalidFieldNameException (SQLite does not).
-            if ($exception instanceof InvalidFieldNameException || $this->lacksFailureColumns()) {
+            if (!$exception instanceof ConnectionException && ($exception instanceof InvalidFieldNameException || $this->lacksFailureColumns())) {
                 throw new \LogicException(sprintf('The outbox table "%s" lacks columns this version of the bundle needs (%s). Upgrade it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.', $this->tableName, implode(', ', self::FAILURE_COLUMNS)), 0, $exception);
             }
 
