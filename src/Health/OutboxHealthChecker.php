@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 
 use function array_filter;
 use function implode;
@@ -71,30 +72,41 @@ final class OutboxHealthChecker implements HealthChecker
         $results = null === $needsSetup ? [] : [$needsSetup];
 
         if ($status->failed > 0) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status->failed));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %s outbox message(s); see "somework:cqrs:outbox:failed"', self::count($status->failed, $status)));
         }
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
+
+        // A relay that hangs (e.g. on a send without a timeout) or died holds its claims.
+        $claimedFor = null === $status->oldestClaim ? 0 : $now - $status->oldestClaim->getTimestamp();
+        if ($claimedFor > self::MAX_WAIT_SECONDS) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('An outbox relay claimed messages %d minute(s) ago and has not finished them: it hangs, or it died (then they are retried after their retry delay)', intdiv($claimedFor, 60)));
+        }
         $oldestRetrying = $status->oldestRetrying;
         $failingFor = null === $oldestRetrying ? 0 : $now - $oldestRetrying->getTimestamp();
 
         // Postponed after failed attempts, so not due: an outage of their transport, or messages that cannot be sent.
         if ($failingFor > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', $status->retrying, intdiv($failingFor, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%s outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', self::count($status->retrying, $status), intdiv($failingFor, 60)));
         }
 
         $oldestDue = $status->oldestDue;
         $waited = null === $oldestDue ? 0 : $now - $oldestDue->getTimestamp();
 
         if ($waited > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport', $status->due, intdiv($waited, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%s outbox message(s) are due, the oldest for %d minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport', self::count($status->due, $status), intdiv($waited, 60)));
         }
 
         if ([] === $results) {
-            $results[] = new CheckResult(CheckSeverity::OK, 'outbox', sprintf('Outbox: %d message(s) due, none waiting for long', $status->due));
+            $results[] = new CheckResult(CheckSeverity::OK, 'outbox', sprintf('Outbox: %s message(s) due, none waiting for long', self::count($status->due, $status)));
         }
 
         return $results;
+    }
+
+    private static function count(int $count, OutboxStatus $status): string
+    {
+        return $status->capped && $count >= OutboxStatus::COUNT_CAP ? sprintf('more than %d', OutboxStatus::COUNT_CAP) : (string) $count;
     }
 
     /**

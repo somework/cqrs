@@ -506,10 +506,13 @@ to relay them.
   when rows failed and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
-  their failing transport); and when the table needs `somework:cqrs:outbox:setup` (e.g. its
-  index is missing or invalid). It is critical when the table cannot be read, and when
-  messages have waited more than 10 minutes on a table that still lacks the columns of this
-  version.
+  their failing transport); when a claim is older than 10 minutes (a relay hangs, e.g. on a
+  send without a timeout, or died: its rows are retried after their retry delay); and when the
+  table needs `somework:cqrs:outbox:setup` (e.g. its index is missing or invalid). It is
+  critical when the table cannot be read, and when messages have waited more than 10 minutes
+  on a table that still lacks the columns of this version. The check reads at most 10 000
+  rows per count (it reports `more than 10000`) and finds the oldest due row with one probe
+  per transport along the index, so it stays cheap on a large backlog.
 - The relay logs failed attempts, paused transports, messages handled inline or dropped, a
   table that needs the setup command, and
   runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the

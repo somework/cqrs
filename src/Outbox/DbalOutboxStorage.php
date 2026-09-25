@@ -32,9 +32,11 @@ use function get_debug_type;
 use function in_array;
 use function is_string;
 use function min;
+use function preg_replace;
 use function random_int;
 use function sprintf;
 use function str_contains;
+use function str_starts_with;
 use function strtolower;
 use function usleep;
 
@@ -349,45 +351,91 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     public function status(): OutboxStatus
     {
         // Monitoring only reads: it never changes the table (an upgrade may be running elsewhere).
-        $new = $this->guard(fn (): array|false => $this->pending()
-            ->select('COUNT(*) AS due', 'MIN(created_at) AS since')
-            ->andWhere('available_at IS NULL')
-            ->executeQuery()
-            ->fetchAssociative());
+        // Counts stop at OutboxStatus::COUNT_CAP, so a backlog of millions of rows is not read.
+        $now = self::now();
+        $capped = false;
+        $count = function (QueryBuilder $query) use (&$capped): int {
+            $counted = $this->capped($query, 'COUNT(*)');
+            $capped = $capped || $counted > OutboxStatus::COUNT_CAP;
 
-        // A postponed message waits since its retry time, not since it was stored.
-        $retries = $this->guard(fn (): array|false => $this->pending()
-            ->select('COUNT(*) AS due', 'MIN(available_at) AS since')
-            ->andWhere('available_at <= :now')
-            ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
-            ->executeQuery()
-            ->fetchAssociative());
+            return min((int) $counted, OutboxStatus::COUNT_CAP);
+        };
 
-        $retrying = $this->guard(fn (): array|false => $this->pending()
-            ->select('COUNT(*) AS retrying', 'MIN(created_at) AS since')
-            ->andWhere('available_at IS NOT NULL')
-            ->executeQuery()
-            ->fetchAssociative());
+        $due = $count($this->pending()->andWhere('available_at IS NULL'))
+            + $count($this->pending()->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
+        $capped = $capped || $due > OutboxStatus::COUNT_CAP;
 
-        $failed = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
-            ->select('COUNT(*)')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NOT NULL')
-            ->executeQuery()
-            ->fetchOne());
+        // Rows whose last attempt failed; the oldest among the first COUNT_CAP of them.
+        $failing = $this->pending()->andWhere('last_error IS NOT NULL');
+        $retrying = $count(clone $failing);
+        $oldestRetrying = $this->capped($failing, 'MIN(created_at)');
+
+        $failed = $count($this->connection->createQueryBuilder()->from($this->tableName)->where('published_at IS NULL')->andWhere('failed_at IS NOT NULL'));
+
+        // Claims of attempts that have not finished: in flight, or interrupted (their relay died).
+        $claims = $this->pending()->andWhere('claim_token IS NOT NULL');
+        $inFlight = $count((clone $claims)->andWhere('available_at > :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
+        $oldestClaim = $this->capped($claims, 'MIN(claimed_at)');
 
         $platform = $this->connection->getDatabasePlatform();
-        $since = static fn (array|false $row): ?DateTimeImmutable => false === $row || null === $row['since'] ? null : self::readUtc($row['since'], $platform);
-        $oldestDue = array_filter([$since($new), $since($retries)]);
+        $date = static fn (mixed $value): ?DateTimeImmutable => null === $value || false === $value ? null : self::readUtc($value, $platform);
 
         return new OutboxStatus(
-            due: (false === $new ? 0 : (int) $new['due']) + (false === $retries ? 0 : (int) $retries['due']),
-            oldestDue: [] === $oldestDue ? null : min($oldestDue),
-            retrying: false === $retrying ? 0 : (int) $retrying['retrying'],
-            oldestRetrying: $since($retrying),
-            failed: (int) $failed,
+            due: min($due, OutboxStatus::COUNT_CAP),
+            oldestDue: $this->oldestDue($now),
+            retrying: $retrying,
+            oldestRetrying: $date($oldestRetrying),
+            failed: $failed,
+            inFlight: $inFlight,
+            oldestClaim: $date($oldestClaim),
+            capped: $capped,
         );
+    }
+
+    /**
+     * Evaluates $aggregate over at most COUNT_CAP + 1 rows of $query.
+     */
+    private function capped(QueryBuilder $query, string $aggregate): mixed
+    {
+        $column = str_starts_with($aggregate, 'COUNT') ? '1 AS one' : (string) preg_replace('/^\w+\((\w+)\)$/', '$1', $aggregate);
+        $inner = $query->select($column)->setMaxResults(OutboxStatus::COUNT_CAP + 1);
+        $sql = sprintf('SELECT %s FROM (%s) capped', str_starts_with($aggregate, 'COUNT') ? 'COUNT(*)' : $aggregate, $inner->getSQL());
+
+        return $this->guard(fn (): mixed => $this->connection->fetchOne($sql, $inner->getParameters(), $inner->getParameterTypes()));
+    }
+
+    /**
+     * Since when the longest-waiting due row waits: its retry time, or when it was stored. One
+     * probe per transport along the index (the whole pending part of the table without it).
+     */
+    private function oldestDue(DateTimeImmutable $now): ?DateTimeImmutable
+    {
+        $first = function (QueryBuilder $query): ?DateTimeImmutable {
+            $value = $this->guard(static fn (): mixed => $query->executeQuery()->fetchOne());
+
+            return null === $value || false === $value ? null : self::readUtc($value, $this->connection->getDatabasePlatform());
+        };
+
+        if (!$this->schema->hasPendingIndex()) {
+            $since = array_filter([
+                $first($this->pending()->select('MIN(created_at)')->andWhere('available_at IS NULL')),
+                $first($this->pending()->select('MIN(available_at)')->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE)),
+            ]);
+
+            return [] === $since ? null : min($since);
+        }
+
+        $since = [];
+        foreach ($this->transportsExcept([]) as $transport) {
+            $byTransport = static fn (QueryBuilder $query): QueryBuilder => null === $transport
+                    ? $query->andWhere('transport_name IS NULL')
+                    : $query->andWhere('transport_name = :transport')->setParameter('transport', $transport);
+            $since[] = $first($this->ordered($byTransport($this->pending()->select('created_at')->andWhere('available_at IS NULL')), ['published_at', 'failed_at', 'transport_name', 'available_at'], ['created_at'])->setMaxResults(1));
+            $since[] = $first($this->ordered($byTransport($this->pending()->select('available_at')->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE)), ['published_at', 'failed_at', 'transport_name'], ['available_at'])->setMaxResults(1));
+        }
+        $since = array_filter($since);
+
+        return [] === $since ? null : min($since);
     }
 
     public function fetchFailed(int $limit): array

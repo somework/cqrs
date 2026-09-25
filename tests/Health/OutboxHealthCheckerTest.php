@@ -144,7 +144,7 @@ final class OutboxHealthCheckerTest extends TestCase
     public function test_messages_that_cannot_be_read_are_critical_even_when_only_the_index_is_missing(): void
     {
         // e.g. the role lacks a privilege on the new columns: the upgrade is not the problem.
-        $status = new BeforeQueryMiddleware('COUNT(*) AS due');
+        $status = new BeforeQueryMiddleware('SELECT COUNT(*) FROM (SELECT');
         $connection = TestDatabase::connect(null, [$status]);
         TestDatabase::createTableOfVersion04($connection);
         (new DbalOutboxStorage($connection))->fetchUnpublished(1);
@@ -179,6 +179,29 @@ final class OutboxHealthCheckerTest extends TestCase
         self::assertCount(1, $results);
         self::assertSame(CheckSeverity::CRITICAL, $results[0]->severity);
         self::assertStringContainsString('The outbox storage cannot be read: The outbox table "somework_cqrs_outbox" does not exist.', $results[0]->message);
+    }
+
+    public function test_warns_about_a_claim_that_is_not_finished_for_long(): void
+    {
+        $storage = new CapableOutboxStorage();
+        $storage->status = new OutboxStatus(due: 0, oldestDue: null, retrying: 0, oldestRetrying: null, failed: 0, inFlight: 3, oldestClaim: new DateTimeImmutable('-15 minutes'));
+
+        self::assertSame([
+            [CheckSeverity::WARNING, 'An outbox relay claimed messages 15 minute(s) ago and has not finished them: it hangs, or it died (then they are retried after their retry delay)'],
+        ], self::summary((new OutboxHealthChecker($storage))->check()));
+    }
+
+    public function test_capped_counts_are_reported_as_lower_bounds(): void
+    {
+        $storage = new CapableOutboxStorage();
+        $storage->status = new OutboxStatus(due: OutboxStatus::COUNT_CAP, oldestDue: new DateTimeImmutable('-1 minute'), retrying: 0, oldestRetrying: null, failed: 3, capped: true);
+
+        self::assertSame([
+            [CheckSeverity::WARNING, 'The relay gave up on 3 outbox message(s); see "somework:cqrs:outbox:failed"'],
+        ], self::summary((new OutboxHealthChecker($storage))->check()));
+
+        $storage->status = new OutboxStatus(due: OutboxStatus::COUNT_CAP, oldestDue: new DateTimeImmutable('-1 minute'), retrying: 0, oldestRetrying: null, failed: 0, capped: true);
+        self::assertSame([[CheckSeverity::OK, 'Outbox: more than 10000 message(s) due, none waiting for long']], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
     public function test_storages_without_monitoring_are_not_checked(): void

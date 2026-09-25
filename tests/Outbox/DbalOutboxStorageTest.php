@@ -20,6 +20,7 @@ use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
@@ -37,6 +38,7 @@ use function microtime;
 use function preg_match_all;
 use function preg_replace;
 use function sha1;
+use function sprintf;
 use function str_contains;
 use function str_repeat;
 use function substr;
@@ -1263,6 +1265,43 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $status->retrying);
         self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
         self::assertSame(1, $status->failed);
+    }
+
+    public function test_status_reports_unfinished_claims(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 11:00:00'));
+        $storage->store(self::message(self::UNKNOWN_ID, '2026-01-01 12:00:00'));
+        // One attempt runs, one was interrupted (its relay died) and is due again.
+        OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('+1 minute'));
+        OutboxRows::claim($storage, self::ID_2, new DateTimeImmutable('-1 minute'));
+
+        $status = $storage->status();
+
+        self::assertSame(1, $status->inFlight);
+        self::assertNotNull($status->oldestClaim);
+        self::assertEqualsWithDelta(time(), $status->oldestClaim->getTimestamp(), 5);
+        self::assertSame(2, $status->due, 'The interrupted attempt is due, and the new message.');
+        self::assertSame(0, $status->retrying, 'No attempt failed.');
+        self::assertFalse($status->capped);
+    }
+
+    public function test_status_counts_stop_at_the_cap(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection, autoSetup: false);
+        $storage->setup();
+        $this->connection->beginTransaction();
+        for ($i = 0; $i <= OutboxStatus::COUNT_CAP; ++$i) {
+            $this->connection->insert('somework_cqrs_outbox', ['id' => sprintf('00000000-0000-7000-8000-%012d', $i), 'body' => 'b', 'headers' => '{}', 'created_at' => '2026-01-01 10:00:00']);
+        }
+        $this->connection->commit();
+
+        $status = $storage->status();
+
+        self::assertSame(OutboxStatus::COUNT_CAP, $status->due);
+        self::assertTrue($status->capped);
+        self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestDue?->format(DATE_ATOM));
     }
 
     public function test_purge_deletes_only_old_published_messages(): void
