@@ -119,7 +119,7 @@ somework_cqrs:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `transports` | `{}` | Maps a Messenger transport name to `command`, `query` or `event`. The type selects the `retry_policies` section used to resolve policies for messages on that transport. |
+| `transports` | `{}` | Messenger transport names, as a list or mapped to `command`, `query` or `event`. Commands, queries and events received from the transport use the `retry_policies` section of their own type; the mapped type (`command` for a list) is used for any other message. |
 | `jitter` | `0.0` | Random variation of each computed delay, between `0.0` and `1.0`. `0.1` means ±10 %. |
 | `max_delay` | `0` | Upper bound for each delay, in milliseconds. `0` means no cap. |
 

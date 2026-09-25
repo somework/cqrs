@@ -20,10 +20,14 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
  */
 final class CausationIdContext
 {
-    /** @var list<MessageMetadataStamp> */
+    /** @var list<MessageMetadataStamp|null> */
     private array $stack = [];
 
-    public function push(MessageMetadataStamp $parent): void
+    /**
+     * @param MessageMetadataStamp|null $parent Null for a message without metadata: the messages its
+     *                                          handlers dispatch have no parent to refer to
+     */
+    public function push(?MessageMetadataStamp $parent): void
     {
         $this->stack[] = $parent;
     }

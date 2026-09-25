@@ -16,7 +16,7 @@ use function sprintf;
 /**
  * Adds CausationIdMiddleware to the CQRS buses (or to the buses listed in
  * "somework_cqrs.causation_id.buses") so that messages dispatched while a handler runs
- * receive the parent's correlation id as their causation id.
+ * inherit the handled message's correlation id and get its message id as their causation id.
  *
  * @internal
  */

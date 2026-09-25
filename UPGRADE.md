@@ -10,7 +10,8 @@ The promise covers:
 
 - classes, interfaces, traits and enums annotated with `@api` in their class-level PHPDoc block,
   including parameter names (named arguments), except members marked `@internal` (the constructors
-  of `CommandBus`, `QueryBus`, `EventBus` and `OutboxWriter`: get them from the container);
+  of `CommandBus`, `QueryBus`, `EventBus`, `OutboxWriter` and `HandlerRegistry`: get them from the
+  container);
 - the `somework_cqrs` configuration tree;
 - the documented service ids and tags: `somework_cqrs.outbox.storage`,
   `somework_cqrs.outbox.base_storage`, `somework_cqrs.outbox.dbal_storage`,
@@ -69,7 +70,8 @@ rejects the new options.
      `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
    - tests that read `getDispatched()` of the fake buses as arrays.
 2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
-   deleted classes, and `%env()%` values in compile-time options
+   deleted classes or of another message type, `#[Asynchronous]` on queries, and `%env()%` values in
+   compile-time options
    ([Environment variables](#environment-variables-in-the-configuration)).
 3. **Outbox, before the deployment**:
    - 0.5 signs rows and only relays signed ones ([Signed rows](docs/outbox.md#signed-rows)). Rows stored by
@@ -84,6 +86,13 @@ rejects the new options.
 5. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
    migration): writes need the new columns.
 6. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+
+**Rolling back to 0.4** after the setup has run: stop the 0.5 relays first. 0.4 ignores the new columns, so it
+relays the rows 0.5 gave up on (including rows refused for a missing or invalid signature, which then reach
+`unserialize()`), ignores claims and retry times, and scans the table without the index of 0.4, which the setup
+dropped. Before starting the 0.4 relay, inspect the given-up rows (`somework:cqrs:outbox:failed`) and delete or
+mark as published those you do not want sent, and recreate the index of 0.4 if the table is large:
+`CREATE INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox (published_at, created_at)`.
 
 ### Requirements
 
@@ -252,8 +261,12 @@ omitted), and the ids mean what their names say:
 - `createWithRandomCorrelationId()` uses the same random id as message id and correlation id.
 
 If your logs or projections used the correlation id to identify a single message, use `getMessageId()`. Stamps
-serialized by 0.4 (messages in a queue or the outbox) are read with their correlation id as message id. Create
-one stamp per dispatch: a stamp passed to several dispatches gives them the same message id.
+serialized by 0.4 with Messenger's PHP serializer (messages in a queue or the outbox) are read with their
+correlation id as message id; with the Symfony serializer (JSON), they get a new message id each time they are
+decoded. Create one stamp per dispatch: a stamp passed to several dispatches gives them the same message id
+(a provider must return a new stamp for each call). Forwarding the handled message's own stamp to a child
+(for example `$received->withExtra('tenant', $id)`) is recognised: the child gets a new message id, keeps the
+correlation id and names the handled message as its cause.
 
 ### `dispatchSync()` and `ask()` errors
 
@@ -305,7 +318,7 @@ The transport of an asynchronous dispatch is now chosen in this order: a `Transp
 caller, an entry for exactly the message class in `transports.command_async.map` / `transports.event_async.map`,
 the attribute's `transport`, entries for parent classes or interfaces, the section's `default`. A bare
 `#[Asynchronous]` only falls back to the `async` transport when nothing is configured and
-`framework.messenger.routing` does not route the message; before, it overrode both the configuration and
+neither `framework.messenger.routing` nor `#[AsMessage(transport: ...)]` routes the message; before, it overrode both the configuration and
 Messenger's routing.
 
 For messages with a handler in the application, the container compilation now checks the attribute: the async
@@ -358,7 +371,9 @@ The container build now fails for configuration that used to be silently ignored
 
 - Service ids (policies, providers, serializers, naming strategies, buses) must be non-empty strings.
 - Keys of every per-message `map` must be existing classes or interfaces. A leading backslash is removed.
-  Remove entries for classes that no longer exist.
+  Remove entries for classes that no longer exist. A key of another message type (a query or an event
+  under a `command` map) never matched and is now an error.
+- `#[Asynchronous]` on a query is an error: queries are always handled synchronously.
 - `causation_id.buses` entries must be existing bus services (aliases are resolved), and so must
   `default_bus` when a command, query or event bus is not configured.
 - The `enabled` flags of `outbox`, `outbox.signing`, `idempotency`, `causation_id`, `sequence` and

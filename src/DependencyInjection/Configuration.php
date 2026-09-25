@@ -20,9 +20,11 @@ use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 
+use function array_fill_keys;
 use function array_filter;
 use function array_flip;
 use function array_intersect_key;
+use function array_is_list;
 use function array_key_exists;
 use function array_key_first;
 use function array_keys;
@@ -159,11 +161,16 @@ final class Configuration implements ConfigurationInterface
             ->arrayNode('transports')
             ->useAttributeAsKey('transport_name')
             ->normalizeKeys(false)
+            ->beforeNormalization()
+                // A list of transport names: each message uses the retry policies of its own type.
+                ->ifTrue(static fn (mixed $value): bool => is_array($value) && [] !== $value && array_is_list($value))
+                ->then(static fn (array $names): array => array_fill_keys($names, 'command'))
+            ->end()
             ->defaultValue([])
             ->enumPrototype()
                 ->values(['command', 'query', 'event'])
             ->end()
-            ->info('Map of Messenger transport names to CQRS message types. Each transport will use CqrsRetryStrategy with the corresponding RetryPolicyResolver.');
+            ->info('Messenger transports that use CqrsRetryStrategy: a list of names, or names mapped to the retry_policies section used for messages that are neither commands, queries nor events (each CQRS message uses the section of its own type).');
 
         $retryStrategyChildren
             ->floatNode('jitter')

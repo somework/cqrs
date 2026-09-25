@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Support\AsMessageRouting;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
@@ -14,6 +15,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 use function array_keys;
 use function array_values;
+use function class_exists;
 use function class_implements;
 use function class_parents;
 use function is_a;
@@ -151,10 +153,14 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
 
     /**
      * Whether framework.messenger.routing routes the message, the way Messenger's senders locator
-     * looks it up (class, parents, interfaces, namespace wildcards, "*").
+     * looks it up (class, parents, interfaces, namespace wildcards, "*"), or #[AsMessage(transport: ...)].
      */
     private static function isRouted(ContainerBuilder $container, string $messageClass): bool
     {
+        if (class_exists($messageClass) && AsMessageRouting::hasTransport($messageClass)) {
+            return true;
+        }
+
         $routing = $container->hasDefinition('messenger.senders_locator') ? ($container->getDefinition('messenger.senders_locator')->getArguments()[0] ?? null) : null;
 
         if (!is_array($routing) || [] === $routing) {

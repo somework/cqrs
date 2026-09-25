@@ -34,7 +34,6 @@ use function array_values;
 use function ceil;
 use function count;
 use function get_debug_type;
-use function hash;
 use function implode;
 use function in_array;
 use function is_array;
@@ -584,7 +583,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
             messageType: self::messageType((string) $row['headers']),
             bodyClass: self::serializedMessageClass((string) $row['body']),
-            bodyDigest: hash('sha256', (string) $row['body']),
+            digest: FailedOutboxMessage::digest((string) $row['body'], (string) $row['headers']),
         ), $rows);
     }
 

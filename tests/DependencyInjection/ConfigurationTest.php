@@ -293,6 +293,13 @@ final class ConfigurationTest extends TestCase
         $this->processConfiguration($config);
     }
 
+    public function test_retry_strategy_transports_accept_a_list_of_names(): void
+    {
+        $config = $this->processConfiguration(['retry_strategy' => ['transports' => ['async', 'async-events']]]);
+
+        self::assertSame(['async' => 'command', 'async-events' => 'command'], $config['retry_strategy']['transports']);
+    }
+
     public function test_rejects_map_keys_of_another_message_type(): void
     {
         $this->expectException(InvalidConfigurationException::class);

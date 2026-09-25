@@ -211,7 +211,7 @@ A `TransportNamesStamp` passed by the caller wins; otherwise, in this order:
 3. the transports configured for a parent class or interface, then the section's
    `default`;
 4. on asynchronous dispatches of a class with a bare `#[Asynchronous]`, the
-   `async` transport, unless `framework.messenger.routing` routes the message.
+   `async` transport, unless `framework.messenger.routing` or `#[AsMessage(transport: ...)]` routes the message.
 
 When nothing applies it adds nothing and Messenger's routing decides. See
 [`transports`](reference.md#transports) and

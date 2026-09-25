@@ -73,6 +73,35 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             }
         }
 
+        $transports = $this->transportsFor($message, $mode);
+
+        if (null === $transports) {
+            // Messenger handles a message that no transport is routed to right away: an async dispatch
+            // that silently runs in the calling process is almost always a missing transport. (Warned
+            // here, before the dispatch: inside a handler it is deferred until the handler finished.)
+            if (DispatchMode::ASYNC === $mode && ($message instanceof Command || $message instanceof Event) && !$this->isRouted($message)) {
+                $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
+                    'message' => $message::class,
+                    'type' => $message instanceof Event ? 'event' : 'command',
+                ]);
+            }
+
+            return $stamps;
+        }
+
+        $stamps[] = new TransportNamesStamp($transports);
+
+        return $stamps;
+    }
+
+    /**
+     * The transports the bundle's configuration (or #[Asynchronous]) gives the message, or null
+     * when Messenger's routing decides.
+     *
+     * @return non-empty-list<string>|null
+     */
+    public function transportsFor(object $message, DispatchMode $mode): ?array
+    {
         $resolver = $this->resolverFor($message, $mode);
         $attribute = DispatchMode::SYNC === $mode ? null : $this->asynchronousAttribute($message);
 
@@ -90,23 +119,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             $transports = [self::DEFAULT_ASYNC_TRANSPORT];
         }
 
-        if (null === $transports || [] === $transports) {
-            // Messenger handles a message that no transport is routed to right away: an async dispatch
-            // that silently runs in the calling process is almost always a missing transport. (Warned
-            // here, before the dispatch: inside a handler it is deferred until the handler finished.)
-            if (DispatchMode::ASYNC === $mode && !$this->isRouted($message)) {
-                $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
-                    'message' => $message::class,
-                    'type' => $message instanceof Event ? 'event' : 'command',
-                ]);
-            }
-
-            return $stamps;
-        }
-
-        $stamps[] = new TransportNamesStamp($transports);
-
-        return $stamps;
+        return null === $transports || [] === $transports ? null : $transports;
     }
 
     private function resolverFor(object $message, DispatchMode $mode): ?MessageTransportResolver
@@ -134,10 +147,14 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * Whether framework.messenger.routing routes the message.
+     * Whether framework.messenger.routing, or #[AsMessage(transport: ...)], routes the message.
      */
     private function isRouted(object $message): bool
     {
+        if (AsMessageRouting::hasTransport($message::class)) {
+            return true;
+        }
+
         if ([] === $this->routedMessageTypes) {
             return false;
         }

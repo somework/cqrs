@@ -158,6 +158,30 @@ final class CausationIdStampDeciderTest extends TestCase
         self::assertSame('parent-corr', $result[1]->getCausationId());
     }
 
+    public function test_a_forwarded_stamp_of_the_handled_message_gets_its_own_message_id(): void
+    {
+        $handled = new MessageMetadataStamp('flow', [], 'grandparent', 'handled');
+        $this->context->push($handled);
+
+        $result = $this->decider->decide(new class implements Command {}, DispatchMode::DEFAULT, [$handled->withExtra('tenant', 'x')]);
+
+        self::assertInstanceOf(MessageMetadataStamp::class, $result[0]);
+        self::assertNotSame('handled', $result[0]->getMessageId());
+        self::assertSame('handled', $result[0]->getCausationId());
+        self::assertSame('flow', $result[0]->getCorrelationId());
+        self::assertSame(['tenant' => 'x'], $result[0]->getExtras());
+    }
+
+    public function test_a_message_without_metadata_has_no_parent_for_its_children(): void
+    {
+        $this->context->push(self::parent('outer'));
+        $this->context->push(null);
+
+        $stamp = new MessageMetadataStamp('child');
+
+        self::assertSame([$stamp], $this->decider->decide(new class implements Command {}, DispatchMode::DEFAULT, [$stamp]));
+    }
+
     private static function parent(string $messageId): MessageMetadataStamp
     {
         return new MessageMetadataStamp('flow', [], null, $messageId);

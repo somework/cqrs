@@ -13,7 +13,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Sets the causation id of a metadata stamp passed by the caller while another message is
- * handled: the message id of the handled message. The caller's correlation id is kept.
+ * handled: the message id of the handled message. The caller's correlation id is kept. A copy of
+ * the handled message's own stamp (forwarded, e.g. with an extra added) gets a new message id.
  *
  * Stamps of the metadata providers already carry the causation (and the inherited
  * correlation id), set by MessageMetadataStampDecider; a causation id set by the caller is kept.
@@ -61,6 +62,14 @@ final class CausationIdStampDecider implements StampDecider
 
         /** @var MessageMetadataStamp $existingStamp */
         $existingStamp = $stamps[$foundIndex];
+
+        // The handled message's own stamp, forwarded (e.g. with an extra added): the child is another
+        // message of the same flow, caused by the handled one.
+        if ($existingStamp->getMessageId() === $parent->getMessageId()) {
+            $stamps[$foundIndex] = new MessageMetadataStamp($existingStamp->getCorrelationId(), $existingStamp->getExtras(), $parent->getMessageId());
+
+            return array_values($stamps);
+        }
 
         // An explicit causation id set by the caller is kept.
         if (null !== $existingStamp->getCausationId()) {

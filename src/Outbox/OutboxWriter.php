@@ -7,12 +7,15 @@ namespace SomeWork\CqrsBundle\Outbox;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
+use function count;
 
 /**
  * Stores messages in the outbox: call it inside the database transaction of the business change.
@@ -52,9 +55,18 @@ final class OutboxWriter
     {
         $envelope = new Envelope($message, array_values($stamps));
         $stored = [];
+        $transports = null !== $transportName ? [$transportName] : $this->transportsFor($message);
+        // One row per transport: rows sharing a deduplication key would drop each other when relayed.
+        $deduplicate = count($transports) > 1 ? $envelope->last(DeduplicateStamp::class) : null;
 
-        foreach (null !== $transportName ? [$transportName] : $this->transportsFor($message) as $transport) {
-            $row = OutboxMessage::fromEnvelope($envelope, $this->serializer, $transport);
+        foreach ($transports as $transport) {
+            $row = OutboxMessage::fromEnvelope(
+                $deduplicate instanceof DeduplicateStamp
+                    ? $envelope->withoutAll(DeduplicateStamp::class)->with(new DeduplicateStamp((string) $deduplicate->getKey().'@'.$transport, $deduplicate->getTtl(), $deduplicate->onlyDeduplicateInQueue()))
+                    : $envelope,
+                $this->serializer,
+                $transport,
+            );
             $this->storage->store($row);
             $stored[] = $row;
         }
@@ -67,6 +79,10 @@ final class OutboxWriter
      */
     private function transportsFor(object $message): array
     {
+        if ($this->transports instanceof MessageTransportStampDecider) {
+            return $this->transports->transportsFor($message, DispatchMode::ASYNC) ?? [null];
+        }
+
         foreach ($this->transports?->decide($message, DispatchMode::ASYNC, []) ?? [] as $stamp) {
             if ($stamp instanceof TransportNamesStamp && [] !== $stamp->getTransportNames()) {
                 return array_values($stamp->getTransportNames());

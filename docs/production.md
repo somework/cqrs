@@ -356,8 +356,9 @@ rows keep failing, long before they are given up.
   rows, when failed rows wait for another attempt and the oldest was stored more
   than 10 minutes ago, when due rows have waited more than 10 minutes, or when
   the table needs `somework:cqrs:outbox:setup` (e.g. its index is missing);
-  `CRITICAL` when the table cannot be read, or when messages have waited more
-  than 10 minutes on a table that still lacks the columns of this version.
+  `CRITICAL` when the table cannot be read, or when it lacks the columns of
+  this version (storing a message inside a transaction fails until the setup
+  command has run).
 
 The command prints a table of results and exits with the highest severity:
 `0` OK, `1` warnings, `2` critical. A checker that throws is reported as
@@ -432,7 +433,7 @@ monolog:
 ```
 
 Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
-message in the calling process), an event a worker received without a handler on its bus (it is
+message in the calling process), an event with handlers that a worker received on a bus without them (it is
 acknowledged without being handled), and the outbox relay's failures, paused transports and
 given-up messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
 

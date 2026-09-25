@@ -54,7 +54,20 @@ final class AllowNoHandlerMiddlewareTest extends TestCase
             ['message' => TaskCreatedEvent::class, 'transport' => 'async'],
         );
         $bus = new MessageBus([
-            new AllowNoHandlerMiddleware($logger),
+            new AllowNoHandlerMiddleware($logger, [TaskCreatedEvent::class]),
+            new HandleMessageMiddleware(new HandlersLocator([])),
+        ]);
+
+        $bus->dispatch(new Envelope(new TaskCreatedEvent('noop'), [new ReceivedStamp('async')]));
+    }
+
+    public function test_it_does_not_warn_about_a_received_event_that_has_no_handlers_at_all(): void
+    {
+        // Zero handlers is a valid state for an event (e.g. a broad route sends every event to a transport).
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+        $bus = new MessageBus([
+            new AllowNoHandlerMiddleware($logger, ['App\\Event\\SomethingElse']),
             new HandleMessageMiddleware(new HandlersLocator([])),
         ]);
 

@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
+use function array_keys;
 use function is_array;
 use function is_string;
 
@@ -29,6 +30,17 @@ final class AllowNoHandlerMiddlewarePass implements CompilerPassInterface
         if (!is_array($busIds)) {
             return;
         }
+
+        // The events that have handlers: only those are worth a warning when a worker receives one
+        // without a handler on its bus (an event may have no subscribers at all).
+        $metadata = $container->hasParameter('somework_cqrs.handler_metadata') ? $container->getParameter('somework_cqrs.handler_metadata') : [];
+        $handledEvents = [];
+        foreach (is_array($metadata) && is_array($metadata['event'] ?? null) ? $metadata['event'] : [] as $entry) {
+            if (is_array($entry) && is_string($entry['message'] ?? null)) {
+                $handledEvents[$entry['message']] = true;
+            }
+        }
+        $container->getDefinition(self::MIDDLEWARE_ID)->setArgument('$handledEvents', array_keys($handledEvents));
 
         foreach ($busIds as $busId) {
             if (is_string($busId) && '' !== $busId) {

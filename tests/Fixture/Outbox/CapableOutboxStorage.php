@@ -33,6 +33,12 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     /** @var list<array{list<string>, string|null, (\Closure(OutboxMessage): string)|null}> */
     public array $requeued = [];
 
+    /** @var list<OutboxMessage> Rows as stored, which requeueFailed() signs with */
+    public array $rows = [];
+
+    /** @var array<string, string> Signatures stored by requeueFailed() */
+    public array $signatures = [];
+
     public OutboxStatus $status;
 
     public function __construct(private readonly OutboxStorage $inner = new InMemoryOutboxStorage())
@@ -98,6 +104,11 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
     {
         $this->requeued[] = [$ids, $transportName, $sign];
+        if (null !== $sign) {
+            foreach ($this->rows as $row) {
+                $this->signatures[$row->id] = $sign($row);
+            }
+        }
 
         return [] === $ids ? count($this->failed) : count($ids);
     }

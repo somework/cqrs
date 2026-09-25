@@ -675,7 +675,7 @@ The attribute has two effects when the message is dispatched with
   the attribute's `transport`, then entries for parent classes or interfaces and
   the section's `default`. A bare `#[Asynchronous]` (no `transport`) falls back
   to the `async` transport only when nothing is configured and
-  `framework.messenger.routing` does not route the message.
+  neither `framework.messenger.routing` nor `#[AsMessage(transport: ...)]` routes the message.
 
 The default transport name is `async`. Pass a custom transport name when your
 infrastructure uses a different name:

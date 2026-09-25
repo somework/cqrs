@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -15,10 +16,12 @@ use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TransportBoundHandlers;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsynchronousQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Attribute\AsMessage;
 use Symfony\Component\Messenger\MessageBus;
 
 use function array_map;
@@ -92,6 +95,16 @@ final class ValidateTransportNamesPassTest extends TestCase
         $container->compile();
 
         $this->addToAssertionCount(1);
+    }
+
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_accepts_a_bare_asynchronous_attribute_routed_by_as_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
     }
 
     public function test_it_rejects_an_asynchronous_attribute_on_a_query(): void

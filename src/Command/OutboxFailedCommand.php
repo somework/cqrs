@@ -23,7 +23,6 @@ use function array_values;
 use function assert;
 use function count;
 use function filter_var;
-use function hash;
 use function hash_equals;
 use function is_array;
 use function is_string;
@@ -172,7 +171,7 @@ final class OutboxFailedCommand extends Command
                 self::printable($message->id),
                 self::printable($message->messageType ?? '-'),
                 self::printable($message->bodyClass ?? '-'),
-                null === $message->bodyDigest ? '?' : 'sha256 '.substr($message->bodyDigest, 0, 16),
+                null === $message->digest ? '?' : 'sha256 '.substr($message->digest, 0, 16),
                 self::printable($message->transportName ?? '(routing)'),
                 self::printable($message->lastError ?? ''),
             ], $failed),
@@ -193,20 +192,28 @@ final class OutboxFailedCommand extends Command
             return self::FAILURE;
         }
 
-        // Sign the rows as they were shown: a body changed since then (by whoever can write to the
-        // table) is refused. Storages that do not report a digest are trusted as they are.
+        // Sign the rows as they were shown: a body or headers changed since then (by whoever can
+        // write to the table) stop the command. Storages that do not report a digest are trusted.
         $reviewed = [];
         foreach ($failed as $message) {
-            $reviewed[$message->id] = $message->bodyDigest;
+            $reviewed[$message->id] = $message->digest;
         }
 
-        return $this->requeue($io, $storage, $ids, $transport, static function (OutboxMessage $message) use ($signer, $reviewed): string {
-            if (!array_key_exists($message->id, $reviewed) || (null !== $reviewed[$message->id] && !hash_equals($reviewed[$message->id], hash('sha256', $message->body)))) {
-                throw new \RuntimeException(sprintf('The body of message "%s" changed after it was listed; it was not signed, nor were the messages after it. Run the command again.', $message->id));
-            }
+        $signed = 0;
+        try {
+            return $this->requeue($io, $storage, $ids, $transport, static function (OutboxMessage $message) use ($signer, $reviewed, &$signed): string {
+                if (!array_key_exists($message->id, $reviewed) || (null !== $reviewed[$message->id] && !hash_equals($reviewed[$message->id], FailedOutboxMessage::digest($message->body, $message->headers)))) {
+                    throw new \UnexpectedValueException($message->id);
+                }
+                ++$signed;
 
-            return $signer->sign($message);
-        });
+                return $signer->sign($message);
+            });
+        } catch (\UnexpectedValueException $changed) {
+            $io->error(sprintf('Message "%s" changed after it was listed: it was not signed, nor were the messages after it%s. Run the command again.', self::printable($changed->getMessage()), 0 === $signed ? '' : sprintf(' (%d message(s) before it were signed and requeued)', $signed)));
+
+            return self::FAILURE;
+        }
     }
 
     /**

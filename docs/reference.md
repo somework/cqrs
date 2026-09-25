@@ -332,7 +332,7 @@ which applies the per-message `RetryConfiguration` described above.
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `transports` | `{}` | Messenger transport name => `command`, `query` or `event` |
+| `transports` | `{}` | list of Messenger transport names, or transport name => `command`, `query` or `event` |
 | `jitter` | `0.0` | float between `0.0` and `1.0` |
 | `max_delay` | `0` | integer >= 0, in milliseconds; `0` means no cap |
 
@@ -345,7 +345,8 @@ which applies the per-message `RetryConfiguration` described above.
 
 * Each message received from the transport uses the `retry_policies` section of
   its own type, so commands and events can share a transport. The value is the
-  section used for messages that are neither commands, queries nor events.
+  section used for messages that are neither commands, queries nor events; a
+  plain list (`transports: [async]`) uses `command` for them.
 * For a message whose policy implements `RetryConfiguration`, the message is
   retried while its retry count is below `getMaxRetries()`, with a delay of
   `initialDelay * multiplier ^ retryCount`. The delay is capped at `max_delay`,
@@ -429,8 +430,9 @@ interface MessageMetadataProvider
 }
 ```
 
-The default provider adds a `MessageMetadataStamp` with a random 32-character
-hexadecimal message id, which is also its correlation id. A
+A provider returns a new stamp for each call (or `null`): the stamp carries the
+message id. The default provider adds a `MessageMetadataStamp` with a random
+32-character hexadecimal message id, which is also its correlation id. A
 `MessageMetadataStamp` passed by the caller wins (use it to propagate a
 correlation id you received). When a message is dispatched from inside a
 handler, it inherits the correlation id of the handled message (see
@@ -504,7 +506,7 @@ message: Messenger sends it to exactly these transports.
   `#[Asynchronous(transport: '...')]` beats parent/interface entries and the
   `default`, but not an entry for exactly the message class; a bare
   `#[Asynchronous]` only adds the `async` transport when nothing is configured
-  and `framework.messenger.routing` does not route the message.
+  and neither `framework.messenger.routing` nor `#[AsMessage(transport: ...)]` routes the message.
 * Transports on the synchronous sections (`command`, `query`, `event`) send the
   message away instead of handling it in-process (unless the transport is
   `sync://`). `CommandBus::dispatchSync()` and `QueryBus::ask()` then throw

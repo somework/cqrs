@@ -24,7 +24,6 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_map;
-use function hash;
 use function json_encode;
 use function preg_replace;
 use function strtoupper;
@@ -89,23 +88,24 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertTrue($signer->verify($requeued));
     }
 
-    public function test_signing_refuses_a_body_that_changed_after_it_was_listed(): void
+    public function test_signing_stops_at_a_row_that_changed_after_it_was_listed(): void
     {
-        $id = '0199a000-0000-7000-8000-000000000001';
+        $ids = ['0199a000-0000-7000-8000-000000000001', '0199a000-0000-7000-8000-000000000002', '0199a000-0000-7000-8000-000000000003'];
         $storage = new CapableOutboxStorage();
-        $storage->failed = [new FailedOutboxMessage($id, 'async', new DateTimeImmutable(), new DateTimeImmutable(), 1, 'not signed', bodyDigest: hash('sha256', 'reviewed body'))];
+        $storage->failed = array_map(static fn (string $id): FailedOutboxMessage => new FailedOutboxMessage($id, 'async', new DateTimeImmutable(), new DateTimeImmutable(), 1, 'not signed', digest: FailedOutboxMessage::digest('body', '{}')), $ids);
+        $storage->rows = [
+            new OutboxMessage($ids[0], 'body', '{}', new DateTimeImmutable(), 'async'),
+            // Headers are signed too (the Symfony serializer decodes stamps from them).
+            new OutboxMessage($ids[1], 'body', '{"X-Message-Stamp-Forged":"[]"}', new DateTimeImmutable(), 'async'),
+            new OutboxMessage($ids[2], 'body', '{}', new DateTimeImmutable(), 'async'),
+        ];
         $signer = new OutboxSigner('secret');
 
-        self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage, $signer)))->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
-        $sign = $storage->requeued[0][2];
-        self::assertNotNull($sign);
+        $tester = new CommandTester(new OutboxFailedCommand($storage, $signer));
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => $ids], ['interactive' => false]));
 
-        $reviewed = new OutboxMessage($id, 'reviewed body', '{}', new DateTimeImmutable(), 'async');
-        self::assertSame($signer->sign($reviewed), $sign($reviewed));
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('The body of message "'.$id.'" changed after it was listed');
-        $sign(new OutboxMessage($id, 'swapped body', '{}', new DateTimeImmutable(), 'async'));
+        self::assertStringContainsString('Message "'.$ids[1].'" changed after it was listed: it was not signed, nor were the messages after it (1 message(s) before it were signed and requeued).', self::display($tester));
+        self::assertSame([$ids[0] => $signer->sign($storage->rows[0])], $storage->signatures);
     }
 
     public function test_requeues_to_another_transport(): void

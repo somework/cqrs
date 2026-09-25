@@ -44,7 +44,7 @@ When mode is `DEFAULT`, the decider resolves to SYNC or ASYNC by checking (first
 ## Error Propagation
 
 - **CommandBus/QueryBus** — Exceptions propagate immediately to the caller. `dispatchSync()` and `ask()` rethrow the handler's own exception when exactly one handler failed; `dispatch()` (also in sync mode) surfaces Messenger's `HandlerFailedException`. Failed commands mean the operation failed; failed queries mean data couldn't be retrieved.
-- **EventBus** — Handler failures in async mode are handled by retry/dead-letter mechanisms, not propagated to the caller. `AllowNoHandlerMiddleware` suppresses `NoHandlerForMessageException` for `Event` instances on the event buses; an event a worker received without a handler on its bus is acknowledged with a warning log.
+- **EventBus** — Handler failures in async mode are handled by retry/dead-letter mechanisms, not propagated to the caller. `AllowNoHandlerMiddleware` suppresses `NoHandlerForMessageException` for `Event` instances on the event buses; an event a worker received without a handler on its bus is acknowledged, with a warning log when the event has handlers elsewhere (another bus, or `fromTransport`).
 
 ## Caller Stamps
 

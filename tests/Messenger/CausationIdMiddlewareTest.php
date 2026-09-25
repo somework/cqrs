@@ -57,21 +57,29 @@ final class CausationIdMiddlewareTest extends TestCase
         self::assertNull($this->context->current());
     }
 
-    public function test_skips_push_pop_when_no_metadata_stamp(): void
+    public function test_a_message_without_metadata_hides_the_outer_message(): void
     {
-        $message = new class implements Command {};
-        $envelope = new Envelope($message);
+        // Its handlers' messages must not name the outer message as their cause.
+        $outer = new MessageMetadataStamp('outer');
+        $this->context->push($outer);
+        $envelope = new Envelope(new class implements Command {});
 
+        $captured = false;
         $nextMiddleware = $this->createMock(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
-            ->willReturnCallback(static fn (Envelope $envelope, StackInterface $stack): Envelope => $envelope);
+            ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
+                $captured = $this->context->current();
+
+                return $envelope;
+            });
 
         $stack = $this->createMock(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $result = $this->middleware->handle($envelope, $stack);
 
-        self::assertNull($this->context->current());
+        self::assertNull($captured);
+        self::assertSame($outer, $this->context->current(), 'Popped afterwards.');
         self::assertSame($envelope->getMessage(), $result->getMessage());
     }
 

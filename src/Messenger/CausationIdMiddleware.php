@@ -28,14 +28,10 @@ final class CausationIdMiddleware implements MiddlewareInterface
 
     public function handle(Envelope $envelope, StackInterface $stack): Envelope
     {
+        // A message without metadata is pushed too: the messages its handlers dispatch must not
+        // refer to an outer message as their cause.
         $metadataStamp = $envelope->last(MessageMetadataStamp::class);
-
-        if (null === $metadataStamp) {
-            return $stack->next()->handle($envelope, $stack);
-        }
-
-        /* @var MessageMetadataStamp $metadataStamp */
-        $this->causationIdContext->push($metadataStamp);
+        $this->causationIdContext->push($metadataStamp instanceof MessageMetadataStamp ? $metadataStamp : null);
 
         try {
             return $stack->next()->handle($envelope, $stack);

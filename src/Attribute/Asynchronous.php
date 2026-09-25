@@ -13,7 +13,7 @@ use Attribute;
  * entry for exactly this class). On asynchronous dispatches the message goes to the attribute's
  * transport unless the transports configuration has an entry for exactly this class; a bare
  * attribute falls back to the "async" transport only when no transport is configured and
- * framework.messenger.routing does not route the message.
+ * neither framework.messenger.routing nor #[AsMessage(transport: ...)] routes the message.
  *
  * @api
  */

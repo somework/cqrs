@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
@@ -50,6 +52,26 @@ final class OutboxWriterTest extends TestCase
 
         self::assertSame(['async', 'audit'], array_map(static fn ($row): ?string => $row->transportName, $rows));
         self::assertCount(2, $this->storage->fetchUnpublished(10));
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, 'getKey')]
+    public function test_rows_of_several_transports_get_their_own_deduplication_key(): void
+    {
+        // Rows sharing a key would drop each other when relayed: the second transport would never get it.
+        $rows = (new OutboxWriter($this->storage, new PhpSerializer(), $this->transports(['async', 'audit'])))
+            ->store(new CreateTaskCommand('1', 'a'), null, new DeduplicateStamp('task-1', 60.0));
+
+        $keys = array_map(static function ($row): string {
+            $stamp = (new PhpSerializer())->decode(['body' => $row->body, 'headers' => []])->last(DeduplicateStamp::class);
+            self::assertInstanceOf(DeduplicateStamp::class, $stamp);
+            self::assertSame(60.0, $stamp->getTtl());
+
+            return (string) $stamp->getKey();
+        }, $rows);
+        self::assertSame(['task-1@async', 'task-1@audit'], $keys);
+
+        $single = (new OutboxWriter($this->storage, new PhpSerializer()))->store(new CreateTaskCommand('2', 'b'), 'async', new DeduplicateStamp('task-2'));
+        self::assertSame('task-2', (string) (new PhpSerializer())->decode(['body' => $single[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
     }
 
     public function test_without_a_configured_transport_the_row_follows_the_routing(): void

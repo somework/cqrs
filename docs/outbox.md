@@ -428,13 +428,19 @@ What happens in special cases:
   an event without handlers or routing, the relay prints and logs `Message "<id>" (<class>)
   was neither sent to a transport nor handled …` and marks the row as published.
 - **A retry dropped by the deduplication is a failed attempt.** A row that carries a
-  `DeduplicateStamp` takes Messenger's deduplication lock when it is sent. When its attempt
-  does not finish (the process dies) or its send fails without releasing the lock, the lock
-  stays held until its TTL (300 seconds by default) expires, and the next attempt would be
-  dropped as a duplicate of itself. The relay therefore marks only a *first* attempt that the
-  deduplication dropped as published; a dropped retry fails with `Messenger's deduplication
-  dropped this retry …` and is retried after the backoff. A lock without a TTL never expires:
-  release it, or the relay gives the row up after `max_attempts`.
+  `DeduplicateStamp` takes Messenger's deduplication lock when it is sent, and the lock stays
+  held until a worker handled the message or its TTL (300 seconds by default) expires. An
+  earlier attempt of the same row may hold it: one that sent the message but died before the
+  row was marked as published, or one whose send failed without releasing it (the bundle's
+  idempotency bridge releases it). The relay cannot tell these apart, and prefers a duplicate
+  to a lost message: it marks only a *first* attempt that the deduplication dropped as
+  published (a duplicate of another row); a dropped retry fails with `Messenger's
+  deduplication dropped this retry …` and is retried after the backoff, when the lock has
+  usually expired. A lock without a TTL never expires: release it, or the relay gives the row
+  up after `max_attempts`. Release the lock (or wait for its TTL) before you requeue such a
+  row: a requeued row starts again at its first attempt. `OutboxWriter` gives the rows of a
+  message stored for several transports their own key (`<key>@<transport>`), so they do not
+  drop each other.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
   relay finishes the row it is working on, starts no other, marks the sent rows as published,
   releases the claims of the others, prints `Stopped by signal <number>
@@ -574,7 +580,8 @@ daily.
   every 2 seconds. A crash in between (it affects the rows sent in the last 2 seconds), a
   failed `markPublished()`, or a single send that outlasts the claims (at least 40 seconds)
   while another relay runs (it affects that row and the rows sent in the 2 seconds before
-  it) can send the same message twice. A message routed
+  it) can send the same message twice; so does the retry of a row carrying a `DeduplicateStamp`
+  after such a crash, once the deduplication lock expired. A message routed
   to several transports is sent to all of them again when one of them fails: store one row
   per transport to avoid that. **Consumers must be idempotent**, for example by
   recording processed message ids under a unique constraint. The bundle's
@@ -753,8 +760,9 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 `$sign`, it calls `$sign($message)` with each requeued row as stored (id, body, headers) and
 stores the returned string as the row's signature; that is how `--requeue --sign` works.
 `FailedOutboxMessage` may carry `messageType` (the serializer's `type` header), `bodyClass` (the
-class named in a PHP-serialized body, read without unserializing it) and `bodyDigest`, which
-`--sign` shows to the operator.
+class named in a PHP-serialized body, read without unserializing it) and `digest`
+(`FailedOutboxMessage::digest($body, $headers)`), which `--sign` shows to the operator and
+checks again before it signs a row.
 
 Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
 health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.

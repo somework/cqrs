@@ -27,7 +27,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A service id or rate limiter that does not exist, or a service that does not implement the interface its option needs, fails the build with the configuration path that names it.
 
 **Transactional outbox**
-- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use; `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
+- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (a `DeduplicateStamp` gets a key per transport); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
 - The commands `somework:cqrs:outbox:setup`, `…:failed` (list, `--requeue`, `--transport`, `--sign`) and `…:purge`; the options `outbox.storage`, `connection`, `serializer`, `auto_setup`, `max_attempts` and `signing`.
 - Retries with an exponential backoff (1 minute up to 1 hour); a row is given up after `outbox.max_attempts` attempts, or three times as many when its transport fails.
 - The relay claims each fetched batch with a token of its run before sending, and renews the claims of its batch every 20 seconds, so a slow send does not let another relay take them over. A row whose attempt was interrupted (the process died) is retried on its own, keeps the error of the attempt before, and is given up after three times `max_attempts`. Unattempted claims are released, also when a send throws, and sent rows are marked as published at most 2 seconds later, also while a slow send is running.
@@ -46,7 +46,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 
 **Diagnostics and tooling**
 - The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps.
-- A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event without a handler on its bus.
+- A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event that has handlers, but none on its bus.
 - The compilation log explains why idempotency cannot deduplicate, and the first `IdempotencyStamp` of a process logs it as a warning.
 - `somework:cqrs:list` prints a compact table per message type, filters with `--message`, and marks retry policies that no transport uses.
 - `somework:cqrs:generate` writes the imports of a handler in alphabetical order.
@@ -79,7 +79,8 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - New compile errors:
   - a handler attribute whose message the handler method does not accept, or whose type contradicts the message;
   - a query handler declared `: void`;
-  - `#[Asynchronous]` without an async bus or transport;
+  - `#[Asynchronous]` without an async bus or transport, or on a query;
+  - a per-message map key of another message type (e.g. a query under `dispatch_modes.command.map`);
   - a non-bus id under `buses.*`, `causation_id.buses`, or `default_bus` when a facade falls back to it;
   - an unknown transport under `retry_strategy.transports`.
 - `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies. Older `doctrine/dbal`, `open-telemetry/api`, `symfony/lock` and `symfony/rate-limiter` versions are declared as conflicts.
@@ -88,7 +89,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 **Dispatch**
 - Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus.
 - `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces, so handlers can type-hint the concrete message.
-- `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Its transports follow the configuration precedence, and a bare attribute no longer overrides Messenger's routing.
+- `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Its transports follow the configuration precedence, and a bare attribute no longer overrides Messenger's routing (`framework.messenger.routing` or `#[AsMessage(transport: ...)]`).
 - Stamps passed by the caller take precedence over the stamp pipeline, retry policy stamps included.
 - `IdempotencyStamp` stays on the envelope next to the `DeduplicateStamp` it produces.
 - `dispatchSync()` and `ask()` ignore `DispatchAfterCurrentBusStamp`.
@@ -98,7 +99,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware. It is only added to the default bus when a facade falls back to it.
 - OpenTelemetry records one span per pass: `cqrs.dispatch <Message>` (PRODUCER) and `cqrs.consume <Message>` (CONSUMER).
 - `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever, and caps delays before and after jitter.
-- `retry_strategy.transports` keys are kept as written, and each message received from such a transport uses the retry policies of its own type (commands and events can share a transport).
+- `retry_strategy.transports` keys are kept as written, and each message received from such a transport uses the retry policies of its own type (commands and events can share a transport); the option also accepts a list of transport names.
 - Rate limiting stays inactive until a limiter is configured. `RateLimitResolver` accepts any `RateLimiterFactoryInterface`.
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services.
 - A handler of several handler interfaces registers each union member under its own type.
