@@ -424,13 +424,18 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   the cause, then list and requeue it with `somework:cqrs:outbox:failed
   [--requeue]`. A reason of `The relay did not finish this attempt …` means that
   the process died during the last attempt: a PHP fatal error or running out of
-  memory caused by the row, a killed process, or a lost database connection. The
-  message may have been sent; check the consumer before requeuing it.
+  memory caused by the row, a killed process, or a lost database connection
+  (such rows get three times `outbox.max_attempts`; `Previous error:` shows the
+  failure before). The message may have been sent; check the consumer before
+  requeuing it.
 * `Skipped <n> message(s) that another relay claimed first.` Two relays ran at
   the same time (no `symfony/lock`, or a lock store that only guards one host).
-  Nothing was sent twice; configure a shared lock store.
+  Each skipped row was sent by the other relay; only a send that outlasts the
+  retry delay can be sent twice. Configure a shared lock store.
 * `Stopped by signal <number> after <count> message(s) …` The process received
   SIGTERM or SIGINT and stopped after the current row; the next run continues.
+* `Failed to relay message "<id>", but another relay claimed it in the meantime: <reason>`
+  Two relays overlapped while a send failed; the other relay's attempt counts.
 * `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
   table does not exist or lacks the columns of this version (run
   `somework:cqrs:outbox:setup`).

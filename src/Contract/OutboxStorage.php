@@ -20,9 +20,10 @@ interface OutboxStorage
     public function store(OutboxMessage $message): void;
 
     /**
-     * Returns the messages that are due: unpublished, not given up, and past the retry time of
-     * their last attempt. They are ordered by the time since which they are due (the time they
-     * were stored, or the retry time of a message that failed before), oldest first.
+     * Returns the messages that are due: neither published nor given up, and either never
+     * attempted (or requeued) or past the retry time of their last attempt. The messages never
+     * attempted come first, in the order they were stored; then the others, in the order of their
+     * retry time.
      *
      * @param list<string|null> $excludedTransports Transports whose messages are skipped; null
      *                                              stands for messages stored without a transport name
@@ -47,16 +48,17 @@ interface OutboxStorage
      * actual error when the attempt fails. A message must not be returned by {@see fetchUnpublished()}
      * before $retryAt; with $retryAt null it is given up and never returned again.
      *
-     * With $previousAttempts the attempt is only recorded while the stored number of attempts
-     * still equals it: two relays that fetched the same message cannot both claim it.
+     * With $previousAttempts the attempt is only recorded while the message is not given up and
+     * its stored number of attempts still equals it, in one atomic step: two relays that fetched
+     * the same message cannot both claim it, nor both give it up.
      *
      * @param int      $attempts         The number of attempts, including this one
      * @param int|null $previousAttempts The number of attempts the caller read, or null to record unconditionally
      *
      * @throws \RuntimeException when the message does not exist
      *
-     * @return bool false when nothing was recorded: the message is already published, or another
-     *              relay recorded an attempt since the caller read it
+     * @return bool false when nothing was recorded: the message is already published, or (with
+     *              $previousAttempts) another relay recorded an attempt or gave it up since the caller read it
      */
     public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool;
 

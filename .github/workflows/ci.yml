@@ -209,8 +209,16 @@ jobs:
         run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
 
   databases:
-    name: Outbox on PostgreSQL and MySQL
+    name: Outbox on PostgreSQL and MySQL (${{ matrix.dependency-versions }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.4'
+            dependency-versions: 'highest'
+          - php: '8.2'
+            dependency-versions: 'lowest'
     services:
       postgres:
         image: postgres:16
@@ -246,13 +254,18 @@ jobs:
       - name: Setup PHP
         uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.4'
+          php-version: ${{ matrix.php }}
           coverage: none
           extensions: mbstring, pdo_pgsql, pdo_mysql
           tools: composer
 
       - name: Install dependencies
-        run: composer install --prefer-dist --no-progress
+        run: |
+          if [ "${{ matrix.dependency-versions }}" = "lowest" ]; then
+            composer update --prefer-lowest --prefer-stable --no-progress
+          else
+            composer install --prefer-dist --no-progress
+          fi
 
       # The outbox storage, relay and command tests, which use in-memory SQLite elsewhere.
       - name: PHPUnit on PostgreSQL 16

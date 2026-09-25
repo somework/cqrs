@@ -758,7 +758,7 @@ checks.
 
 * `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
   and adds the columns a table of an earlier version lacks.
-* `somework:cqrs:outbox:relay` sends due rows in the order they became due and
+* `somework:cqrs:outbox:relay` sends due rows (new ones first, then retries) and
   marks them published. A row that fails is retried later (1 minute, doubling up
   to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
   (three times as many for transport failures) it is given up. A transport that

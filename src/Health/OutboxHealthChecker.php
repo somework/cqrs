@@ -61,7 +61,7 @@ final class OutboxHealthChecker implements HealthChecker
         $waited = null === $oldestDue ? 0 : $now - $oldestDue->getTimestamp();
 
         if ($waited > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): is "somework:cqrs:outbox:relay" running?', $status['due'], intdiv($waited, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport', $status['due'], intdiv($waited, 60)));
         }
 
         if ([] === $results) {

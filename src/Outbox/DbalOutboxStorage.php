@@ -14,6 +14,8 @@ use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use Doctrine\DBAL\Exception\SyntaxErrorException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
+use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Exception\TableDoesNotExist;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
@@ -33,6 +35,7 @@ use function implode;
 use function in_array;
 use function is_string;
 use function method_exists;
+use function min;
 use function sha1;
 use function sprintf;
 use function str_replace;
@@ -99,28 +102,18 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->ensureTableExists();
 
-        $query = $this->connection->createQueryBuilder()
-            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'attempts', 'last_error')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NULL')
-            ->andWhere('available_at IS NULL OR available_at <= :now')
-            // Due since: a row that failed queues up again behind the rows stored before its retry time.
-            ->orderBy('COALESCE(available_at, created_at)', 'ASC')
-            ->addOrderBy('id', 'ASC')
-            ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
+        // New rows first (never attempted, or requeued), in the order they were stored; then the rows
+        // whose retry time has passed. Two queries, so that both orders can use the "due" index.
+        $new = $this->ordered($this->pending($excludedTransports)->andWhere('available_at IS NULL'), ['published_at', 'failed_at', 'available_at'], ['created_at', 'id'])
             ->setMaxResults($limit);
+        $rows = $this->guard(static fn (): array => $new->executeQuery()->fetchAllAssociative());
 
-        $excludedNames = array_values(array_filter($excludedTransports, is_string(...)));
-        if (in_array(null, $excludedTransports, true)) {
-            $query->andWhere('transport_name IS NOT NULL');
+        if (count($rows) < $limit) {
+            $retries = $this->ordered($this->pending($excludedTransports)->andWhere('available_at <= :now'), ['published_at', 'failed_at'], ['available_at', 'created_at', 'id'])
+                ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
+                ->setMaxResults($limit - count($rows));
+            $rows = [...$rows, ...$this->guard(static fn (): array => $retries->executeQuery()->fetchAllAssociative())];
         }
-        if ([] !== $excludedNames) {
-            $query->andWhere('transport_name IS NULL OR transport_name NOT IN (:excluded)')
-                ->setParameter('excluded', $excludedNames, ArrayParameterType::STRING);
-        }
-
-        $rows = $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative());
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -179,7 +172,10 @@ final class DbalOutboxStorage implements OutboxStorage
             ->setParameter('id', $id);
 
         if (null !== $previousAttempts) {
-            $query->andWhere('attempts = :previous_attempts')->setParameter('previous_attempts', $previousAttempts, Types::INTEGER);
+            // A claim: nobody else recorded an attempt or gave the message up since the caller read it.
+            $query->andWhere('attempts = :previous_attempts')
+                ->andWhere('failed_at IS NULL')
+                ->setParameter('previous_attempts', $previousAttempts, Types::INTEGER);
         }
 
         if (0 !== (int) $this->guard(static fn (): int|string => $query->executeStatement())) {
@@ -188,7 +184,25 @@ final class DbalOutboxStorage implements OutboxStorage
 
         $this->assertExists($id, 'record an attempt');
 
-        return false;
+        // A claim that counts a new attempt or gives the message up always changes the row: it was not matched.
+        if (null !== $previousAttempts && ($previousAttempts !== $attempts || null === $retryAt)) {
+            return false;
+        }
+
+        // MySQL counts changed rows, not matched ones: a row that already holds these values was matched.
+        $row = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
+            ->select('attempts', 'last_error', 'published_at', 'failed_at')
+            ->from($this->tableName)
+            ->where('id = :id')
+            ->setParameter('id', $id)
+            ->executeQuery()
+            ->fetchAssociative());
+
+        return false !== $row
+            && null === $row['published_at']
+            && (null === $retryAt) === (null !== $row['failed_at'])
+            && $attempts === (int) $row['attempts']
+            && $error === $row['last_error'];
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -234,23 +248,23 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->ensureTableExists();
 
-        $due = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
-            // A postponed message waits since its retry time, not since it was stored.
-            ->select('COUNT(*) AS due', 'MIN(COALESCE(available_at, created_at)) AS oldest_due')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NULL')
-            ->andWhere('available_at IS NULL OR available_at <= :now')
+        $new = $this->guard(fn (): array|false => $this->pending()
+            ->select('COUNT(*) AS due', 'MIN(created_at) AS since')
+            ->andWhere('available_at IS NULL')
+            ->executeQuery()
+            ->fetchAssociative());
+
+        // A postponed message waits since its retry time, not since it was stored.
+        $retries = $this->guard(fn (): array|false => $this->pending()
+            ->select('COUNT(*) AS due', 'MIN(available_at) AS since')
+            ->andWhere('available_at <= :now')
             ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
             ->executeQuery()
             ->fetchAssociative());
 
-        $retrying = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
-            ->select('COUNT(*) AS retrying', 'MIN(created_at) AS oldest_retrying')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NULL')
-            ->andWhere('attempts > 0')
+        $retrying = $this->guard(fn (): array|false => $this->pending()
+            ->select('COUNT(*) AS retrying', 'MIN(created_at) AS since')
+            ->andWhere('available_at IS NOT NULL')
             ->executeQuery()
             ->fetchAssociative());
 
@@ -263,14 +277,14 @@ final class DbalOutboxStorage implements OutboxStorage
             ->fetchOne());
 
         $platform = $this->connection->getDatabasePlatform();
-        $oldestDue = false === $due ? null : ($due['oldest_due'] ?? null);
-        $oldestRetrying = false === $retrying ? null : ($retrying['oldest_retrying'] ?? null);
+        $since = static fn (array|false $row): ?DateTimeImmutable => false === $row || null === $row['since'] ? null : self::readUtc($row['since'], $platform);
+        $oldestDue = array_filter([$since($new), $since($retries)]);
 
         return [
-            'due' => false === $due ? 0 : (int) $due['due'],
-            'oldest_due' => null === $oldestDue ? null : self::readUtc($oldestDue, $platform),
+            'due' => (false === $new ? 0 : (int) $new['due']) + (false === $retries ? 0 : (int) $retries['due']),
+            'oldest_due' => [] === $oldestDue ? null : min($oldestDue),
             'retrying' => false === $retrying ? 0 : (int) $retrying['retrying'],
-            'oldest_retrying' => null === $oldestRetrying ? null : self::readUtc($oldestRetrying, $platform),
+            'oldest_retrying' => $since($retrying),
             'failed' => (int) $failed,
         ];
     }
@@ -344,7 +358,7 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->guard(function (): void {
             if ($this->tableExists()) {
-                $this->addMissingColumns();
+                $this->upgradeTable();
             } else {
                 $this->assertNoTransaction('does not exist');
 
@@ -380,6 +394,50 @@ final class DbalOutboxStorage implements OutboxStorage
         return $table;
     }
 
+    /**
+     * Messages that are neither published nor given up, except those of the excluded transports.
+     *
+     * @param list<string|null> $excludedTransports
+     */
+    private function pending(array $excludedTransports = []): QueryBuilder
+    {
+        $query = $this->connection->createQueryBuilder()
+            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'attempts', 'last_error')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NULL');
+
+        if (in_array(null, $excludedTransports, true)) {
+            $query->andWhere('transport_name IS NOT NULL');
+        }
+
+        $excludedNames = array_values(array_filter($excludedTransports, is_string(...)));
+        if ([] !== $excludedNames) {
+            $query->andWhere('transport_name IS NULL OR transport_name NOT IN (:excluded)')
+                ->setParameter('excluded', $excludedNames, ArrayParameterType::STRING);
+        }
+
+        return $query;
+    }
+
+    /**
+     * Orders by the "due" index. MySQL treats columns filtered with IS NULL as constant and sorts
+     * when they appear in ORDER BY; PostgreSQL only walks the index when they do.
+     *
+     * @param list<string> $nullColumns Leading index columns the query restricts to NULL
+     * @param list<string> $columns     The order
+     */
+    private function ordered(QueryBuilder $query, array $nullColumns, array $columns): QueryBuilder
+    {
+        $platform = $this->connection->getDatabasePlatform();
+
+        foreach ([...($platform instanceof PostgreSQLPlatform ? $nullColumns : []), ...$columns] as $column) {
+            $query->addOrderBy($column, 'ASC');
+        }
+
+        return $query;
+    }
+
     private function ensureTableExists(): void
     {
         // Inside a transaction the table cannot be changed; a missing table or column then fails the query itself.
@@ -391,30 +449,47 @@ final class DbalOutboxStorage implements OutboxStorage
         $this->setup();
     }
 
-    private function addMissingColumns(): void
+    /**
+     * Adds the columns and the index that a table of an earlier version lacks, and drops the
+     * index of 0.4 that the new one replaces (PostgreSQL would still pick it and sort).
+     */
+    private function upgradeTable(): void
     {
         $schemaManager = $this->connection->createSchemaManager();
         $current = $this->introspectTable($schemaManager);
         $missing = array_values(array_filter(self::FAILURE_COLUMNS, static fn (string $column): bool => !$current->hasColumn($column)));
+        $dueIndex = self::indexName($this->tableName, 'due');
+        $missingIndex = !$current->hasIndex($dueIndex);
+        $legacyIndex = self::indexName($this->tableName, 'published_created');
+        $hasLegacyIndex = $current->hasIndex($legacyIndex);
 
-        if ([] === $missing) {
+        if ([] === $missing && !$missingIndex && !$hasLegacyIndex) {
             return;
         }
 
-        $this->assertNoTransaction(sprintf('lacks the columns %s', implode(', ', $missing)));
+        $this->assertNoTransaction([] === $missing ? sprintf('needs the index %s instead of %s', $dueIndex, $legacyIndex) : sprintf('lacks the columns %s', implode(', ', $missing)));
 
         $upgraded = clone $current;
         self::addColumns($upgraded, $missing);
+        if ($missingIndex) {
+            self::addDueIndex($upgraded, $this->tableName);
+        }
+        if ($hasLegacyIndex) {
+            $upgraded->dropIndex($legacyIndex);
+        }
 
         try {
             $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded));
         } catch (DbalException $exception) {
-            // Another process may have added them in the meantime.
+            // Another process may have upgraded the table in the meantime.
             $now = $this->introspectTable($schemaManager);
             foreach ($missing as $column) {
                 if (!$now->hasColumn($column)) {
                     throw $exception;
                 }
+            }
+            if (!$now->hasIndex($dueIndex)) {
+                throw $exception;
             }
         }
     }
@@ -585,7 +660,17 @@ final class DbalOutboxStorage implements OutboxStorage
             $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
         }
 
-        $table->addIndex(['published_at', 'created_at'], self::indexName($tableName));
+        self::addDueIndex($table, $tableName);
+    }
+
+    /**
+     * Serves the relay: both of its queries select pending rows (published_at and failed_at NULL),
+     * new ones by created_at (available_at NULL), retries by available_at. The purge uses its
+     * first column. (0.4 had an index on published_at and created_at instead.).
+     */
+    private static function addDueIndex(Table $table, string $tableName): void
+    {
+        $table->addIndex(['published_at', 'failed_at', 'available_at', 'created_at', 'id'], self::indexName($tableName, 'due'));
     }
 
     /**
@@ -601,9 +686,9 @@ final class DbalOutboxStorage implements OutboxStorage
                 'transport_name' => $table->addColumn('transport_name', Types::STRING)->setLength(190)->setNotnull(false),
                 'created_at' => $table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true),
                 'published_at' => $table->addColumn('published_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
-                // Failed attempts so far; the relay gives up after "somework_cqrs.outbox.max_attempts".
+                // Attempts so far, counted when an attempt starts; the relay gives up after "somework_cqrs.outbox.max_attempts".
                 'attempts' => $table->addColumn('attempts', Types::INTEGER)->setNotnull(true)->setDefault(0),
-                // Earliest time of the next attempt after a failure (NULL: now).
+                // Earliest time of the next attempt (NULL: never attempted, or requeued).
                 'available_at' => $table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
                 // When the relay gave up on the message.
                 'failed_at' => $table->addColumn('failed_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
@@ -614,13 +699,13 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Keeps the historical "idx_<table>_published_created" name, falling back to a hashed
-     * name when it would exceed the 63-character identifier limit of PostgreSQL/MySQL.
+     * "idx_<table>_<suffix>", falling back to a hashed name when it would exceed the 63-character
+     * identifier limit of PostgreSQL/MySQL.
      */
-    private static function indexName(string $tableName): string
+    private static function indexName(string $tableName, string $suffix): string
     {
-        $name = 'idx_'.str_replace('.', '_', $tableName).'_published_created';
+        $name = 'idx_'.str_replace('.', '_', $tableName).'_'.$suffix;
 
-        return strlen($name) <= 63 ? $name : 'idx_'.substr(sha1($tableName), 0, 16).'_published_created';
+        return strlen($name) <= 63 ? $name : 'idx_'.substr(sha1($tableName), 0, 16).'_'.$suffix;
     }
 }

@@ -52,20 +52,25 @@ final class InMemoryOutboxStorage implements OutboxStorage
         }
 
         $now = new DateTimeImmutable();
-        $due = [];
+        $new = [];
+        $retries = [];
         foreach ($this->messages as $id => $message) {
             $failure = $this->failures[$id] ?? null;
             if (isset($this->published[$id]) || in_array($message->transportName, $excludedTransports, true)) {
                 continue;
             }
-            if (null !== $failure && $this->postponeFailures && (null === $failure['retryAt'] || $failure['retryAt'] > $now)) {
-                continue;
+            if (null === $failure) {
+                $new[] = [$message->createdAt, $message];
+            } elseif (!$this->postponeFailures || (null !== $failure['retryAt'] && $failure['retryAt'] <= $now)) {
+                $retries[] = [$failure['retryAt'] ?? $now, $message];
             }
-            $due[] = [$failure['retryAt'] ?? $message->createdAt, $message];
         }
 
-        // Due since: the time a message was stored, or the retry time of its last attempt (a stable sort keeps the insertion order).
-        usort($due, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+        // New messages in the order they were stored, then retries in the order of their retry time
+        // (stable sorts keep the insertion order).
+        usort($new, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+        usort($retries, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+        $due = [...$new, ...$retries];
 
         $batch = array_slice(array_map(static fn (array $entry): OutboxMessage => $entry[1], $due), 0, $limit);
 
@@ -98,7 +103,9 @@ final class InMemoryOutboxStorage implements OutboxStorage
 
         $message = $this->messages[$id];
 
-        if (isset($this->published[$id]) || (null !== $previousAttempts && $previousAttempts !== $message->attempts)) {
+        $givenUp = isset($this->failures[$id]) && null === $this->failures[$id]['retryAt'];
+
+        if (isset($this->published[$id]) || (null !== $previousAttempts && ($previousAttempts !== $message->attempts || $givenUp))) {
             return false;
         }
 

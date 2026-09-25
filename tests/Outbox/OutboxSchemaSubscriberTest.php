@@ -75,7 +75,7 @@ final class OutboxSchemaSubscriberTest extends TestCase
         $subscriber->postGenerateSchema($this->createEventArgs($schema));
 
         $table = $schema->getTable('somework_cqrs_outbox');
-        self::assertTrue($table->hasIndex('idx_somework_cqrs_outbox_published_created'));
+        self::assertTrue($table->hasIndex('idx_somework_cqrs_outbox_due'));
     }
 
     public function test_table_has_primary_key_after_subscriber(): void

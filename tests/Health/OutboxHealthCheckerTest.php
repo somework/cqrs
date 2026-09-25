@@ -44,7 +44,7 @@ final class OutboxHealthCheckerTest extends TestCase
 
         self::assertSame([
             [CheckSeverity::WARNING, 'The relay gave up on 1 outbox message(s); see "somework:cqrs:outbox:failed"'],
-            [CheckSeverity::WARNING, '1 outbox message(s) are due, the oldest for 120 minute(s): is "somework:cqrs:outbox:relay" running?'],
+            [CheckSeverity::WARNING, '1 outbox message(s) are due, the oldest for 120 minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport'],
         ], self::summary((new OutboxHealthChecker($this->storage))->check()));
     }
 

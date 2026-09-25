@@ -250,8 +250,9 @@ the configured connection.
 
 ### Relay
 
-`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) unpublished rows,
-oldest first, and marks each one published after dispatching it.
+`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new
+rows in the order they were stored, then retries in the order of their retry
+time) and marks each one published after dispatching it.
 
 * Rows are dispatched on the Messenger bus of their type (the async command or
   event bus when configured, otherwise the sync one; the default bus for other
@@ -317,9 +318,10 @@ bin/console somework:cqrs:outbox:failed --requeue    # after fixing the cause
 
 A broker outage uses up attempts slowly: rows whose transport fails get three
 times `max_attempts` (30 attempts by default, about a day of retries), and each
-run tries at most 3 rows of a failing transport. Once the outage is over,
-requeue the rows it gave up on. The health check warns while rows keep failing,
-long before they are given up.
+run tries 3 rows of a failing transport (3 of the rows stored for it by name, and
+3 of the rows without a transport name routed to it), new ones first. Once the
+outage is over, requeue the rows it gave up on. The health check warns while
+rows keep failing, long before they are given up.
 
 ## Health checks
 
@@ -331,6 +333,10 @@ long before they are given up.
 * **transport**: every Messenger transport is instantiated, which validates its
   DSN and options. For the built-in transports this does not connect to the
   broker.
+* **outbox** (when `outbox.enabled`): a `WARNING` when the relay gave up on
+  rows, when failed rows wait for another attempt and the oldest was stored more
+  than 10 minutes ago, or when due rows have waited more than 10 minutes;
+  `CRITICAL` when the table cannot be read.
 
 The command prints a table of results and exits with the highest severity:
 `0` OK, `1` warnings, `2` critical. A checker that throws is reported as

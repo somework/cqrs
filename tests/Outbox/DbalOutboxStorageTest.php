@@ -110,6 +110,23 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(1)));
     }
 
+    public function test_new_messages_come_before_retries_which_are_ordered_by_retry_time(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        foreach (['1', '2', '3', '4'] as $minute) {
+            $storage->store(self::message('00000000-0000-7000-8000-00000000000'.$minute, '2026-01-01 10:0'.$minute.':00'));
+        }
+        $storage->recordAttempt('00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 11:30:00+00:00'));
+        $storage->recordAttempt('00000000-0000-7000-8000-000000000002', 1, 'boom', new DateTimeImmutable('2026-01-01 11:00:00+00:00'));
+
+        self::assertSame(
+            ['00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000001'],
+            self::ids($storage->fetchUnpublished(10)),
+        );
+        self::assertSame(['00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(3)));
+        self::assertSame(['00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(1)));
+    }
+
     public function test_messages_of_excluded_transports_are_skipped(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
@@ -199,6 +216,30 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertFalse($storage->recordAttempt(self::ID_1, 2, 'late', null, 1));
     }
 
+    public function test_a_given_up_message_cannot_be_claimed_or_given_up_again(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        self::assertTrue($storage->recordAttempt(self::ID_1, 3, 'interrupted', null, 3 - 3));
+
+        self::assertFalse($storage->recordAttempt(self::ID_1, 3, 'interrupted', null, 3), 'A second relay gives it up again.');
+        self::assertFalse($storage->recordAttempt(self::ID_1, 4, 'claim', new DateTimeImmutable('+1 minute'), 3));
+        self::assertSame(3, $storage->fetchFailed(10)[0]['attempts']);
+    }
+
+    public function test_recording_the_same_values_twice_succeeds_on_every_platform(): void
+    {
+        // MySQL reports changed rows, not matched ones.
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $retryAt = new DateTimeImmutable('2030-01-01 10:00:00+00:00');
+
+        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 0));
+        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 1));
+        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt));
+        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 0), 'The attempts changed since the caller read them.');
+    }
+
     public function test_setup_adds_the_failure_columns_to_a_table_of_an_earlier_version(): void
     {
         TestDatabase::createTableOfVersion04($this->connection);
@@ -213,6 +254,8 @@ final class DbalOutboxStorageTest extends TestCase
         $messages = (new DbalOutboxStorage($this->connection, autoSetup: false))->fetchUnpublished(10);
         self::assertSame([self::ID_1], self::ids($messages));
         self::assertSame(0, $messages[0]->attempts);
+        self::assertTrue(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_due'));
+        self::assertFalse(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_published_created'), 'The index of 0.4 is replaced.');
     }
 
     public function test_auto_setup_upgrades_a_table_of_an_earlier_version_on_first_use(): void
@@ -469,7 +512,8 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertSame($schema->getTable('somework_cqrs_outbox'), $table);
         self::assertMatchesRegularExpression('/PRIMARY KEY\s*\(\s*id\s*\)/i', $sql);
-        self::assertStringContainsString('CREATE INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox (published_at, created_at)', $sql);
+        self::assertStringNotContainsString('published_created', $sql);
+        self::assertStringContainsString('CREATE INDEX idx_somework_cqrs_outbox_due ON somework_cqrs_outbox (published_at, failed_at, available_at, created_at, id)', $sql);
         self::assertFalse($table->getColumn('transport_name')->getNotnull());
         self::assertFalse($table->getColumn('published_at')->getNotnull());
         self::assertSame(190, $table->getColumn('transport_name')->getLength());
@@ -485,7 +529,7 @@ final class DbalOutboxStorageTest extends TestCase
         $tableName = 'outbox_'.str_repeat('x', 60);
         $sql = implode(";\n", (new SQLitePlatform())->getCreateTableSQL(DbalOutboxStorage::addTableToSchema(new Schema(), $tableName)));
 
-        self::assertMatchesRegularExpression('/CREATE INDEX (idx_[0-9a-f]{16}_published_created) ON/', $sql);
+        self::assertMatchesRegularExpression('/CREATE INDEX (idx_[0-9a-f]{16}_due) ON/', $sql);
     }
 
     /**

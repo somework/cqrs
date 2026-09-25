@@ -15,6 +15,7 @@ use Doctrine\DBAL\Types\Types;
 use function class_exists;
 use function getenv;
 use function is_string;
+use function method_exists;
 
 /**
  * The database of the outbox tests: in-memory SQLite, or the database named by the
@@ -49,6 +50,21 @@ final class TestDatabase
     public static function isSqlite(Connection $connection): bool
     {
         return $connection->getDatabasePlatform() instanceof SQLitePlatform;
+    }
+
+    /**
+     * @param non-empty-string $tableName
+     */
+    public static function hasIndex(Connection $connection, string $tableName, string $indexName): bool
+    {
+        $schemaManager = $connection->createSchemaManager();
+
+        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
+        $table = method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType
+            ? $schemaManager->introspectTableByUnquotedName($tableName)
+            : $schemaManager->introspectTable($tableName); // @phpstan-ignore method.deprecated
+
+        return $table->hasIndex($indexName);
     }
 
     /**

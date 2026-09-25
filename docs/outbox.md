@@ -16,7 +16,7 @@ database table **in the same transaction** as the business change. The
 1. Inside your database transaction, you write the business data and call
    `OutboxStorage::store()` with an `OutboxMessage` built from a Messenger envelope.
 2. The transaction commits. The message row is saved only if the business change is.
-3. `somework:cqrs:outbox:relay` reads due rows oldest first, decodes each one, and
+3. `somework:cqrs:outbox:relay` reads due rows, new ones first, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
    goes to the transport stored with the row, or follows the Messenger routing when no
    transport was stored. Then the relay marks the row as published. A row that fails is
@@ -207,22 +207,26 @@ on it for the write path.
 | `created_at` | DATETIME_IMMUTABLE | No | When the row was built |
 | `published_at` | DATETIME_IMMUTABLE | Yes | When the relay sent it (`null` = unpublished) |
 | `attempts` | INTEGER, default `0` | No | Attempts to relay the row (counted when an attempt starts) |
-| `available_at` | DATETIME_IMMUTABLE | Yes | Earliest time of the next attempt after a failure (`null` = now) |
+| `available_at` | DATETIME_IMMUTABLE | Yes | Earliest time of the next attempt (`null` = never attempted, or requeued) |
 | `failed_at` | DATETIME_IMMUTABLE | Yes | When the relay gave up on the row (`null` = still relayed) |
-| `last_error` | TEXT | Yes | Exception class and message of the last failure |
+| `last_error` | TEXT | Yes | Exception class and message of the last failure, or the note of an attempt that did not finish |
 
-An index on `(published_at, created_at)`, named `idx_<table>_published_created`, serves the
-relay query. `attempts`, `available_at`, `failed_at` and `last_error` were added in 0.5.0;
-[upgrade](#upgrading-from-04) a table created by an earlier version.
+An index on `(published_at, failed_at, available_at, created_at, id)`, named
+`idx_<table>_due` (`idx_<hash>_due` for long table names), serves the relay and the purge.
+`attempts`, `available_at`, `failed_at`, `last_error` and this index were added in 0.5.0; it
+replaces the index `idx_<table>_published_created` of 0.4. [Upgrade](#upgrading-from-04) a
+table created by an earlier version.
 
 ### Upgrading from 0.4
 
 `store()` keeps working on a table of an earlier version, so deploying the new version does
-not break writes. The relay needs the new columns. Add them with one of:
+not break writes. Stop the relays of the old version before the new ones start: an old relay
+ignores the new columns (retry times, given-up rows, claims). The relay needs the new columns
+and index. Add them with one of:
 
 - `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction);
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
-  the new columns);
+  the new columns and index);
 - a migration of your own:
 
 ```sql
@@ -231,10 +235,14 @@ ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL;
 ALTER TABLE somework_cqrs_outbox ADD available_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD failed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD last_error TEXT DEFAULT NULL;
+CREATE INDEX idx_somework_cqrs_outbox_due ON somework_cqrs_outbox (published_at, failed_at, available_at, created_at, id);
+DROP INDEX idx_somework_cqrs_outbox_published_created;
 
 -- MySQL / MariaDB
 ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL, ADD available_at DATETIME DEFAULT NULL,
     ADD failed_at DATETIME DEFAULT NULL, ADD last_error LONGTEXT DEFAULT NULL;
+CREATE INDEX idx_somework_cqrs_outbox_due ON somework_cqrs_outbox (published_at, failed_at, available_at, created_at, id);
+DROP INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox;
 ```
 
 ## Relaying
@@ -261,9 +269,14 @@ For each due row the relay:
    `buses.query` for queries, the default bus for anything else;
 5. marks the row as published.
 
-Rows are taken in the order they became due: when they were stored, or, for a row that failed
-before, at its retry time (then `id`). A row that failed queues up again behind the rows stored
-before its retry time.
+Each run takes the new rows first (never attempted, or requeued), in the order they were
+stored; then the rows that failed before and whose retry time has passed, in the order of their
+retry time. Rows that keep failing therefore do not hold up new rows. (A burst of new rows
+that the broker rejects one by one, such as messages over its size limit, is only told apart
+from an outage by trying them: each run tries 3 of them before it pauses their transport, so the
+burst delays the other rows of that transport once, by one run per 3 rejected rows.) A relay that
+cannot keep up with the new rows retries failed rows only once it catches up; the health check
+reports both (see [Monitoring](#monitoring)).
 
 What happens in special cases:
 
@@ -280,11 +293,13 @@ What happens in special cases:
   transport, the relay prints
   `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
   and skips the rows of that transport for the rest of the run instead of walking its whole
-  backlog. The rows of the other transports are relayed as usual. Rows stored without a
-  transport name share one such counter (`Messages without a transport name failed to be
-  sent 3 times in a row …`), so store the transport name to keep transports apart. A handler
-  that ran inline and failed counts against `max_attempts`, even when it failed to send
-  another message: its side effects happened.
+  backlog. The rows of the other transports are relayed as usual. As new rows come first,
+  3 new rows are enough to detect an outage, and the attempts of older rows are not used up.
+  Rows stored without a transport name share one such counter (`Messages without a transport
+  name failed to be sent 3 times in a row …`): when one of the transports they are routed to
+  is down, the others' rows may wait for the next run too. Store the transport name to keep
+  transports apart. A handler that ran inline and failed counts against `max_attempts`, even
+  when it failed to send another message: its side effects happened.
 - **A storage failure stops the run.** If the database is down, or a sent row cannot be
   marked as published, the run stops right away with `Stopping: …` and exit code `1`. A row
   that was sent but not marked is sent again later (see [Delivery
@@ -298,9 +313,11 @@ What happens in special cases:
   an event without handlers or routing, the relay prints and logs `Message "<id>" (<class>)
   was neither sent to a transport nor handled …` and marks the row as published.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
-  relay finishes the row it is working on, prints `Stopped by signal <number> after <count>
-  message(s); the remaining messages wait for the next run.`, releases the lock and exits
-  with `1`. A second signal stops it right away.
+  relay finishes the row it is working on, starts no other, prints `Stopped by signal <number>
+  after <count> message(s); the remaining messages wait for the next run.`, releases the lock
+  and exits with `1`. A second signal stops it at once. PHP handles signals between
+  operations: a send blocked on the network is only interrupted by the transport's own
+  timeout, so configure timeouts on your transports (and a grace period longer than them).
 - **Only one relay runs at a time.** When `symfony/lock` is installed, the command takes a
   lock named after the application, the connection and the table, and extends it after
   every row; if the lock is lost, the run stops with exit code `1`. The application part is
@@ -354,11 +371,14 @@ Requeued rows start again with `attempts = 0` and no `last_error`.
 
 When the relay process dies during an attempt (a PHP fatal error, running out of memory, a
 killed process, a lost database connection), the row keeps the error `The relay did not finish
-this attempt (…); the message may have been sent.` It is tried again after its retry delay. If
-that was its last allowed attempt, the next run gives it up without another attempt, because
-the row may be what kills the process. The message may have reached its transport: check the
-consumer before you requeue it. When you lower `max_attempts`, a row that already had more
-failed attempts gets one more attempt and, if it fails, is given up with its real error.
+this attempt (…); the message may have been sent. Previous error: <error of the attempt
+before>`. It is tried again after its retry delay. As the cause of an interrupted attempt is
+unknown (a hanging broker as well as a message that crashes the process), the larger budget
+applies: after three times `max_attempts` attempts, the next run gives the row up without
+another attempt, because the row may be what kills the process. The message may have reached
+its transport: check the consumer before you requeue it. When you lower `max_attempts`, a row
+that already had more failed attempts gets one more attempt and, if it fails, is given up with
+its real error.
 
 Publishing a row clears its `failed_at` and `last_error`. `purge` never deletes given-up rows; delete them
 with SQL (`DELETE FROM somework_cqrs_outbox WHERE failed_at IS NOT NULL`) if you do not want
@@ -369,8 +389,8 @@ to relay them.
 - `somework:cqrs:health` includes an outbox check. It warns when the relay gave up on rows;
   when rows failed and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
-  row has waited more than 10 minutes (the relay is not running or does not keep up). It is
-  critical when the table cannot be read.
+  row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
+  their failing transport). It is critical when the table cannot be read.
 - The relay logs failed attempts, paused transports, messages handled inline or dropped, and
   runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the
   application's `logger` service, besides printing them.
@@ -403,9 +423,9 @@ daily.
   recording processed message ids under a unique constraint. The bundle's
   [idempotency bridge](idempotency.md) does not cover this case: relayed messages do not
   pass through the CQRS stamp pipeline.
-- **Order.** Rows are relayed in the order they were stored. A row that fails is postponed,
-  so later rows overtake it, and so do the rows of other transports while its transport is
-  paused. Several workers consuming the
+- **Order.** New rows are relayed in the order they were stored. A row that fails is
+  postponed, so later rows overtake it, and so do the rows of other transports while its
+  transport is paused. Several workers consuming the
   transport can also process messages out of order.
 - **Latency.** Messages leave the outbox only when the relay runs. Your schedule sets the
   delay.
@@ -485,17 +505,18 @@ An implementation must meet these rules:
 - `store()` must write through the same transaction as your business data. Otherwise the
   outbox guarantees nothing.
 - `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
-  passed), in a stable order by the time since which they are due, and skips the excluded
-  transports. The relay excludes a transport after 3 send failures in a row; a storage that
+  passed): first the messages never attempted, in the order they were stored, then the
+  others, in the order of their retry time. It skips the excluded transports. The relay excludes a transport after 3 send failures in a row; a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
 - `recordAttempt()` stores the given number of attempts, the error and the retry time as they
   are; it is called before every attempt and again when the attempt fails. With
   `$previousAttempts` it must compare and update in one atomic step (e.g. a conditional
-  `UPDATE`) and return `false` when the stored attempts differ or the message is published.
+  `UPDATE`) and return `false` when the stored attempts differ, or the message is published or
+  given up.
 - Rebuild each message with
   `new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null, int $attempts = 0, ?string $lastError = null)`.
   Keep the values exactly as stored. The relay decides when to give up from `attempts`, and
-  recognises an interrupted attempt by `lastError`. `$headers` is the JSON string produced by
+  recognises an interrupted attempt by the beginning of `lastError`. `$headers` is the JSON string produced by
   `fromEnvelope()`, and `$id` and `$body` must not be empty.
 
 To use your implementation, override the storage service id in your application:

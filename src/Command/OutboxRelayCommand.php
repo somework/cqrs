@@ -48,6 +48,10 @@ use function mb_substr;
 use function min;
 use function register_shutdown_function;
 use function sprintf;
+use function str_starts_with;
+use function strlen;
+use function strpos;
+use function substr;
 
 use const DATE_ATOM;
 use const FILTER_VALIDATE_INT;
@@ -84,8 +88,13 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     /** Rows fetched at once: bodies can be large. */
     private const BATCH_SIZE = 50;
 
-    /** Stored before each attempt, so an attempt the process does not survive still counts. */
+    /**
+     * Stored before each attempt (followed by the previous error, if any), so an attempt the
+     * process does not survive still counts.
+     */
     public const INTERRUPTED = 'The relay did not finish this attempt (e.g. a PHP fatal error, running out of memory, a killed process or a lost database connection); the message may have been sent.';
+
+    private const PREVIOUS_ERROR = ' Previous error: ';
 
     private const RELAYED = 'relayed';
 
@@ -94,6 +103,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     private const TRANSPORT_FAILED = 'transport_failed';
 
     private const CLAIMED_ELSEWHERE = 'claimed_elsewhere';
+
+    private const STOPPED = 'stopped';
 
     /** The signal that asked the run to stop after the current message. */
     private ?int $stopSignal = null;
@@ -218,6 +229,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 ++$fresh;
 
                 $outcome = $this->process($message, $io);
+                if (self::STOPPED === $outcome) {
+                    break 2;
+                }
                 $key = $message->transportName ?? '';
 
                 if (self::CLAIMED_ELSEWHERE === $outcome) {
@@ -283,17 +297,25 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     }
 
     /**
-     * @return self::RELAYED|self::FAILED|self::TRANSPORT_FAILED|self::CLAIMED_ELSEWHERE
+     * @return self::RELAYED|self::FAILED|self::TRANSPORT_FAILED|self::CLAIMED_ELSEWHERE|self::STOPPED
      */
     private function process(OutboxMessage $message, SymfonyStyle $io): string
     {
-        if ($message->attempts >= $this->maxAttempts && self::INTERRUPTED === $message->lastError) {
-            // The process died during the last attempt (fatal error, out of memory, killed): do not
-            // try again, the message may be what kills it.
-            if (!$this->recordAttempt($message, $message->attempts, self::INTERRUPTED, null, $message->attempts)) {
+        // A signal arrived after the previous message (e.g. while the batch was fetched): do not start another one.
+        if (null !== $this->stopSignal) {
+            return self::STOPPED;
+        }
+
+        $interrupted = null !== $message->lastError && str_starts_with($message->lastError, self::INTERRUPTED);
+
+        // The process died during the last attempt (fatal error, out of memory, killed) and the
+        // largest budget is used up: do not try again, the message may be what kills it. (Whether
+        // the earlier attempts failed on the transport is unknown, so the transport budget applies.)
+        if ($interrupted && $message->attempts >= self::TRANSPORT_ATTEMPTS_FACTOR * $this->maxAttempts) {
+            if (!$this->recordAttempt($message, $message->attempts, $message->lastError, null, $message->attempts)) {
                 return self::CLAIMED_ELSEWHERE;
             }
-            $this->reportGivenUp($message, $message->attempts, self::INTERRUPTED, $io);
+            $this->reportGivenUp($message, $message->attempts, $message->lastError, $io);
 
             return self::FAILED;
         }
@@ -302,7 +324,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
         // Claim the message and count the attempt before sending it: if the process dies during the
         // attempt, the next run waits for the retry delay instead of starting with the same message.
-        if (!$this->recordAttempt($message, $attempt, self::INTERRUPTED, self::inSeconds($this->delayFor($attempt)), $message->attempts)) {
+        if (!$this->recordAttempt($message, $attempt, $this->interruptedError($message, $interrupted), self::inSeconds($this->delayFor($attempt)), $message->attempts)) {
             // Published, or claimed by a relay that overlaps this one (e.g. a lock store that is local to one host).
             return self::CLAIMED_ELSEWHERE;
         }
@@ -339,11 +361,14 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
         if (!$this->recordAttempt($message, $attempt, $error, $retryAt, $attempt)) {
             // Published or claimed by an overlapping relay in the meantime: its outcome counts.
+            $io->warning(sprintf('Failed to relay message "%s", but another relay claimed it in the meantime: %s', $message->id, $error));
+            $this->logger?->warning('Could not relay outbox message {id}, which another relay claimed in the meantime: {error}', ['id' => $message->id, 'error' => $error, 'exception' => $exception]);
+
             return $outcome;
         }
 
         if (null === $retryAt) {
-            $this->reportGivenUp($message, $attempt, $error, $io);
+            $this->reportGivenUp($message, $attempt, $error, $io, $exception);
         } else {
             $io->error(sprintf('Failed to relay message "%s" (attempt %d of %d, next attempt after %s): %s', $message->id, $attempt, $maxAttempts, $retryAt->format(DATE_ATOM), $error));
             $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $maxAttempts, 'error' => $error, 'exception' => $exception]);
@@ -410,10 +435,35 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         return new DateTimeImmutable(sprintf('+%d seconds', $seconds));
     }
 
-    private function reportGivenUp(OutboxMessage $message, int $attempts, string $error, SymfonyStyle $io): void
+    private function reportGivenUp(OutboxMessage $message, int $attempts, string $error, SymfonyStyle $io, ?\Throwable $exception = null): void
     {
         $io->error(sprintf('Gave up on message "%s" after %d attempt(s): %s', $message->id, $attempts, $error));
-        $this->logger?->error('Gave up on outbox message {id} after {attempts} attempt(s): {error}', ['id' => $message->id, 'attempts' => $attempts, 'error' => $error]);
+        $this->logger?->error('Gave up on outbox message {id} after {attempts} attempt(s): {error}', ['id' => $message->id, 'attempts' => $attempts, 'error' => $error] + (null === $exception ? [] : ['exception' => $exception]));
+    }
+
+    /**
+     * The error stored while an attempt runs. It keeps the error of the previous attempt, so the
+     * cause of an outage stays visible when the process dies during the next attempt.
+     */
+    private function interruptedError(OutboxMessage $message, bool $interrupted): string
+    {
+        $previous = $interrupted ? self::previousError((string) $message->lastError) : $message->lastError;
+
+        if (null === $previous || '' === $previous) {
+            return self::INTERRUPTED;
+        }
+
+        return mb_substr(self::INTERRUPTED.self::PREVIOUS_ERROR.$previous, 0, self::MAX_ERROR_LENGTH, 'UTF-8');
+    }
+
+    /**
+     * The error an interrupted attempt recorded before it, if any.
+     */
+    private static function previousError(string $interruptedError): ?string
+    {
+        $position = strpos($interruptedError, self::PREVIOUS_ERROR);
+
+        return false === $position ? null : substr($interruptedError, $position + strlen(self::PREVIOUS_ERROR));
     }
 
     private function stop(SymfonyStyle $io, string $reason, \Throwable $exception): int
