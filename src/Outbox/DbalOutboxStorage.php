@@ -308,6 +308,29 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
+     * The unpublished messages and when the oldest was stored, read with the columns of 0.4 only
+     * (for monitoring a table that still waits for its upgrade).
+     *
+     * @internal
+     *
+     * @return array{count: int, oldest: DateTimeImmutable|null}
+     */
+    public function unpublishedBacklog(): array
+    {
+        $row = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
+            ->select('COUNT(*) AS unpublished', 'MIN(created_at) AS since')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->executeQuery()
+            ->fetchAssociative());
+
+        return [
+            'count' => false === $row ? 0 : (int) $row['unpublished'],
+            'oldest' => false === $row || null === $row['since'] ? null : self::readUtc($row['since'], $this->connection->getDatabasePlatform()),
+        ];
+    }
+
+    /**
      * Counts the due, the retrying and the given-up messages, for monitoring.
      *
      * "Retrying" messages were attempted at least once and are neither published nor given up.
@@ -893,7 +916,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function tableLocked(int $seconds, ?\Throwable $previous = null): \RuntimeException
     {
-        return new \RuntimeException(sprintf('The outbox table "%s" could not be changed: a transaction kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $seconds), 0, $previous);
+        return new \RuntimeException(sprintf('The outbox table "%s" could not be changed: another session (a transaction, or an autovacuum that does not give way) kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $seconds), 0, $previous);
     }
 
     /**
@@ -945,9 +968,10 @@ final class DbalOutboxStorage implements OutboxStorage
         }
 
         if ($platform instanceof PostgreSQLPlatform) {
-            if (!$this->releaseSessionLock()) {
+            // A lost connection (e.g. its server process was terminated) took its lock with it.
+            if (!$failure instanceof ConnectionException && !$this->releaseSessionLock()) {
                 // A pooler handed the statements around: the lock stays with the server connection that took it.
-                throw new SetupLockLeftBehind(sprintf('The outbox table "%s" %s through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection until it closes (e.g. RECONNECT in the admin console of PgBouncer), and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName, null === $failure ? 'is set up, but was set up' : 'was not set up'), 0, $failure);
+                throw new SetupLockLeftBehind(sprintf('The outbox table "%s" %s; it ran through a pooler in transaction mode (e.g. PgBouncer): the setup lock (and possibly a statement_timeout of 0) stays with another server connection until it closes (e.g. RECONNECT in the admin console of PgBouncer), and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName, null === $failure ? 'is set up' : sprintf('was not set up (%s)', $failure->getMessage())), 0, $failure);
             }
         } else {
             $this->connection->executeQuery('SELECT RELEASE_LOCK(?)', [$this->setupLockName()])->free();
@@ -964,8 +988,12 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private function releaseSessionLock(): bool
     {
-        for ($try = 0; $try < 20; ++$try) {
-            $released = $this->connection->fetchOne('SELECT CASE WHEN pg_backend_pid() = ? THEN pg_advisory_unlock(hashtext(?)) END', [$this->lockHolder, $this->setupLockName()]);
+        for ($try = 0; $try < 100; ++$try) {
+            // With its server process, the lock is gone too (e.g. the connection was lost and DBAL reconnected).
+            $released = $this->connection->fetchOne(
+                'SELECT CASE WHEN pg_backend_pid() = ? THEN pg_advisory_unlock(hashtext(?)) WHEN NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid = ?) THEN true END',
+                [$this->lockHolder, $this->setupLockName(), $this->lockHolder],
+            );
             if (null !== $released && false !== $released) {
                 return (bool) $released;
             }

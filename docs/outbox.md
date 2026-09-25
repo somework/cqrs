@@ -263,12 +263,13 @@ and the new index to stay fast. Add them with one of:
   migration, or by the server process of a setup that was killed). The old index is dropped only once the new one exists. Changing the table needs
   a moment without open transactions on it: adding
   the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
-  fails with `could not be changed: a transaction kept it locked` instead of blocking every
+  fails with `could not be changed: another session … kept it locked` instead of blocking every
   write behind it; run the setup again when the table is less busy. On MySQL and MariaDB the
   index is built online, but the build needs that moment at its end too: if a transaction
   (e.g. a dump) holds the table then, the work of the build is lost. With `auto_setup: true`,
-  the first relay run adds the columns (waiting at most 1 second), so the relay works before
-  the setup command has run, only slower;
+  the first relay run adds the columns (it does not queue behind other sessions: see
+  [Creating the table](#creating-the-table) for autovacuum, MySQL and tables that MySQL or
+  MariaDB would rebuild), so the relay usually works before the setup command has run, only slower;
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
   the new columns and index);
 - a migration of your own:

@@ -54,7 +54,7 @@ final class OutboxHealthChecker implements HealthChecker
             // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
             // When neither can be read (e.g. the database is down), that is critical.
             if ($structureRead && null !== $needsSetup && !in_array('the table does not exist', $changes, true)) {
-                return [$needsSetup];
+                return [$this->withBacklog($this->outboxStorage, $needsSetup)];
             }
 
             return [new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('The outbox storage cannot be read: %s', $exception->getMessage()))];
@@ -87,5 +87,25 @@ final class OutboxHealthChecker implements HealthChecker
         }
 
         return $results;
+    }
+
+    /**
+     * Messages still wait on a table of 0.4 that the relay could not upgrade (it fails every run
+     * until the setup command has run): critical once the oldest has waited too long.
+     */
+    private function withBacklog(DbalOutboxStorage $storage, CheckResult $needsSetup): CheckResult
+    {
+        try {
+            $backlog = $storage->unpublishedBacklog();
+        } catch (\Throwable) {
+            return $needsSetup;
+        }
+
+        $waited = null === $backlog['oldest'] ? 0 : (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp() - $backlog['oldest']->getTimestamp();
+        if ($waited <= self::MAX_WAIT_SECONDS) {
+            return $needsSetup;
+        }
+
+        return new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('%s; %d outbox message(s) wait, the oldest for %d minute(s), and the relay cannot send them until then', $needsSetup->message, $backlog['count'], intdiv($waited, 60)));
     }
 }

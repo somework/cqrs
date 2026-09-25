@@ -428,11 +428,11 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
   it did so far stays.
 * `The outbox table "…" is set up through a pooler in transaction mode …`,
-  `… is set up, but was set up through a pooler …` or `… was not set up through
-  a pooler …` Run the setup command over a direct database connection, not
-  through PgBouncer. In the last two cases the setup lock stays with a server
-  connection of the pooler until it closes (e.g. `RECONNECT` in PgBouncer's
-  admin console).
+  `… is set up; it ran through a pooler …` or `… was not set up (…); it ran
+  through a pooler …` Run the setup command over a direct database connection,
+  not through PgBouncer. In the last two cases the setup lock, and possibly a
+  `statement_timeout` of 0, stays with a server connection of the pooler until it
+  closes (e.g. `RECONNECT` in PgBouncer's admin console).
 * `… lacks the columns of this version, which this database cannot add without
   rebuilding the table` (MySQL, MariaDB) The relay only adds columns that take no
   time; run `somework:cqrs:outbox:setup`.
@@ -455,9 +455,10 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   Two relays overlapped while a send failed; the other relay's attempt counts.
 * `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
   table does not exist or lacks the columns of this version (run
-  `somework:cqrs:outbox:setup`). With `could not be changed: a transaction kept it
-  locked for more than 1 second(s)`, the relay tried to add the columns while a
-  transaction held the table; with `is not changed while a transaction of the
+  `somework:cqrs:outbox:setup`). With `could not be changed: another session (…)
+  kept it locked for more than 1 second(s)`, the relay tried to add the columns while a
+  transaction (or an autovacuum that does not give way, or one the relay's role
+  cannot recognise without `pg_read_all_stats`) held the table; with `is not changed while a transaction of the
   database server has been open for more than 1 second(s)` (MySQL), any long
   transaction of the server, also of other databases, kept it from trying; with `Another process has been setting up the outbox
   table … for more than 30 seconds`, another process was upgrading it. Run

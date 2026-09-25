@@ -358,14 +358,14 @@ final class DbalOutboxStorageTest extends TestCase
         TestDatabase::createTableOfVersion04($this->connection);
         // The statement that releases the lock ran on another server connection, which does not hold it.
         $pooler = new BeforeQueryMiddleware('pg_advisory_unlock');
-        $pooler->replacement = 'SELECT NULL WHERE CAST(? AS text) IS NOT NULL AND CAST(? AS text) IS NOT NULL';
+        $pooler->replacement = 'SELECT NULL WHERE CAST(? AS text) IS NOT NULL AND CAST(? AS text) IS NOT NULL AND CAST(? AS text) IS NOT NULL';
         $connection = TestDatabase::connect(null, [$pooler], keepTables: true);
 
         try {
             (new DbalOutboxStorage($connection, autoSetup: false))->setup();
             self::fail('The setup lock stays with another client.');
         } catch (SetupLockLeftBehind $exception) {
-            self::assertStringContainsString('is set up, but was set up through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection', $exception->getMessage());
+            self::assertStringContainsString('is set up; it ran through a pooler in transaction mode (e.g. PgBouncer): the setup lock (and possibly a statement_timeout of 0) stays with another server connection', $exception->getMessage());
         } finally {
             $connection->close();
         }
@@ -396,6 +396,32 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertTrue($this->connection->fetchOne('SELECT pg_try_advisory_lock(hashtext(?))', ['somework_cqrs_outbox_setup_'.substr(sha1('somework_cqrs_outbox'), 0, 16)]), 'The lock was released.');
         $connection->close();
+    }
+
+    public function test_a_setup_whose_connection_was_killed_reports_that_instead_of_a_pooler(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('The setup takes a session lock of PostgreSQL.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        // e.g. a DBA terminates the long index build: its session and its lock are gone.
+        $build = new BeforeQueryMiddleware('CREATE INDEX CONCURRENTLY');
+        $connection = TestDatabase::connect(null, [$build], keepTables: true);
+        $build->callback = function () use ($connection): void {
+            $this->connection->fetchOne('SELECT pg_terminate_backend(?)', [$connection->fetchOne('SELECT pg_backend_pid()')]);
+        };
+
+        try {
+            (new DbalOutboxStorage($connection, autoSetup: false))->setup();
+            self::fail('The build was interrupted.');
+        } catch (\RuntimeException|DbalException $exception) {
+            self::assertNotInstanceOf(SetupLockLeftBehind::class, $exception, $exception->getMessage());
+        } finally {
+            $connection->close();
+        }
+
+        (new DbalOutboxStorage($this->connection))->setup();
+        self::assertSame([], (new DbalOutboxStorage($this->connection))->pendingChanges(), 'The next setup finishes the job.');
     }
 
     public function test_the_mysql_setup_lock_belongs_to_the_database_of_the_table(): void
@@ -588,7 +614,7 @@ final class DbalOutboxStorageTest extends TestCase
                 $storage->fetchUnpublished(10);
                 self::fail('The columns cannot be added while the transaction holds the table.');
             } catch (\RuntimeException $exception) {
-                self::assertStringContainsString('could not be changed: a transaction kept it locked for more than 1 second(s)', $exception->getMessage());
+                self::assertStringContainsString('kept it locked for more than 1 second(s)', $exception->getMessage());
             }
             self::assertLessThan(2.5, microtime(true) - $started);
             // The change never waits in the lock queue, where the writes would queue behind it
