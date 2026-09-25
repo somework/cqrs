@@ -10,7 +10,9 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use Symfony\Component\Console\Command\Command;
@@ -154,12 +156,25 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertStringContainsString('The outbox storage failed: The outbox table "somework_cqrs_outbox" does not exist.', self::display($tester));
     }
 
-    public function test_requires_the_dbal_storage(): void
+    public function test_requires_a_storage_that_lists_failed_messages(): void
     {
         $tester = new CommandTester(new OutboxFailedCommand(new InMemoryOutboxStorage()));
 
         self::assertSame(Command::FAILURE, $tester->execute([]));
-        self::assertStringContainsString('is not the DBAL storage', self::display($tester));
+        self::assertStringContainsString('does not implement SomeWork\\CqrsBundle\\Contract\\Outbox\\FailedOutboxMessages', self::display($tester));
+    }
+
+    public function test_works_with_any_storage_that_lists_failed_messages(): void
+    {
+        $storage = new CapableOutboxStorage();
+        $storage->failed = [new FailedOutboxMessage('0199a000-0000-7000-8000-000000000001', null, new DateTimeImmutable('2026-01-01 10:00:00+00:00'), new DateTimeImmutable('2026-01-01 11:00:00+00:00'), 3, "boom\e[31m")];
+
+        $tester = new CommandTester(new OutboxFailedCommand($storage));
+        self::assertSame(Command::SUCCESS, $tester->execute([]));
+        self::assertStringContainsString('0199a000-0000-7000-8000-000000000001 (routing) 2026-01-01T10:00:00+00:00 2026-01-01T11:00:00+00:00 3 boom [31m', self::display($tester));
+
+        self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage)))->execute(['--requeue' => true, '--transport' => 'async']));
+        self::assertSame([[[], 'async']], $storage->requeued);
     }
 
     private static function display(CommandTester $tester): string

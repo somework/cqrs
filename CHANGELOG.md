@@ -42,6 +42,8 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - **Breaking:** one configuration shape for every per-message section (global `default`, per type `default` and `map`): `async.dispatch_after_current_bus` moved to `dispatch_after_current_bus`, `naming.<type>` to `naming.<type>.default`, `transports.*.stamp` is removed, and `retry_policies` and `rate_limiting` gain a global and per-type `default`. Old options fail with a message naming the new place.
 - **Breaking:** the container no longer autowires internal services by class name (`DispatchModeDecider`, `DispatchAfterCurrentBusDecider`, `TransportMappingProvider`, `CausationIdContext`); `MessageTransportStampFactory` is removed.
 - A service id or rate limiter that does not exist fails the build with the configuration path that names it.
+- **Breaking:** `DbalOutboxStorage::status()` returns an `OutboxStatus` and `fetchFailed()` a list of `FailedOutboxMessage` instead of arrays.
+- Outbox: `outbox.storage` names another `OutboxStorage` (doctrine/dbal is then not needed); the setup and failed commands and the health check work with any storage that implements `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` or `OutboxMonitoring`, also behind a decorator.
 - **Breaking:** `HandlerRegistry::byType()` takes the new `MessageType` enum and `HandlerDescriptor::$type` is one; exceptions expose `$messageClass` instead of `$messageFqcn`; the fake buses record `RecordedDispatch` objects.
 - Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus when one is configured.
 - `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces without `__invoke()`, so handlers can type-hint the concrete message.

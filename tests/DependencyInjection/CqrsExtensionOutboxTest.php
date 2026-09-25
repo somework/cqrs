@@ -11,6 +11,7 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -81,6 +82,16 @@ final class CqrsExtensionOutboxTest extends TestCase
         $container = new ContainerBuilder();
         (new CqrsExtension(static fn (string $class): bool => Connection::class !== $class && class_exists($class)))
             ->load([['outbox' => ['enabled' => true]]], $container);
+    }
+
+    public function test_a_custom_storage_does_not_need_dbal(): void
+    {
+        $container = new ContainerBuilder();
+        (new CqrsExtension(static fn (string $class): bool => Connection::class !== $class && class_exists($class)))
+            ->load([['outbox' => ['enabled' => true, 'storage' => InMemoryOutboxStorage::class]]], $container);
+
+        self::assertSame(InMemoryOutboxStorage::class, (string) $container->getAlias('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition(InMemoryOutboxStorage::class), 'A class name is registered as a service.');
     }
 
     public function test_schema_subscriber_is_skipped_without_doctrine_orm(): void

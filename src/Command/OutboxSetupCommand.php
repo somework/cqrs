@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -33,6 +33,9 @@ final class OutboxSetupCommand extends Command implements SignalableCommandInter
 {
     private ?OutputInterface $output = null;
 
+    /**
+     * @param OutboxStorage $outboxStorage The storage behind any decorator (see OutboxStoragePass)
+     */
     public function __construct(private readonly OutboxStorage $outboxStorage)
     {
         parent::__construct();
@@ -65,8 +68,8 @@ final class OutboxSetupCommand extends Command implements SignalableCommandInter
         $this->output = $output;
         $io = new SymfonyStyle($input, $output);
 
-        if (!$this->outboxStorage instanceof DbalOutboxStorage) {
-            $io->error(sprintf('The outbox storage (%s) is not the DBAL storage; create its schema yourself.', $this->outboxStorage::class));
+        if (!$this->outboxStorage instanceof OutboxSchema) {
+            $io->error(sprintf('The outbox storage (%s) does not implement %s; create its schema yourself.', $this->outboxStorage::class, OutboxSchema::class));
 
             return self::FAILURE;
         }

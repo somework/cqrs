@@ -187,4 +187,20 @@ final class OutboxRegistrarTest extends TestCase
 
         return $container;
     }
+
+    public function test_a_custom_storage_replaces_the_dbal_storage(): void
+    {
+        $container = new ContainerBuilder();
+        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'outbox', 'storage' => 'app.outbox'], schemaToolAvailable: true);
+
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
+        self::assertFalse($container->hasAlias(DbalOutboxStorage::class));
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'), 'The schema of another storage is not DBAL\'s.');
+        self::assertSame('app.outbox', (string) $container->getAlias('somework_cqrs.outbox.storage'));
+        self::assertSame('storage.app.outbox', $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$lockName'));
+        $configured = $container->getParameter('somework_cqrs.configured_services');
+        self::assertIsArray($configured);
+        self::assertContains(['outbox.storage', 'app.outbox'], $configured);
+        self::assertNotContains(['outbox.connection', 'doctrine.dbal.default_connection'], $configured);
+    }
 }

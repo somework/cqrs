@@ -4,8 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
+use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -39,6 +40,9 @@ final class OutboxFailedCommand extends Command
 {
     private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/Di';
 
+    /**
+     * @param OutboxStorage $outboxStorage The storage behind any decorator (see OutboxStoragePass)
+     */
     public function __construct(private readonly OutboxStorage $outboxStorage)
     {
         parent::__construct();
@@ -58,8 +62,8 @@ final class OutboxFailedCommand extends Command
         $io = new SymfonyStyle($input, $output);
 
         $storage = $this->outboxStorage;
-        if (!$storage instanceof DbalOutboxStorage) {
-            $io->error(sprintf('The outbox storage (%s) is not the DBAL storage; inspect its failed messages yourself.', $storage::class));
+        if (!$storage instanceof FailedOutboxMessages) {
+            $io->error(sprintf('The outbox storage (%s) does not implement %s; inspect its failed messages yourself.', $storage::class, FailedOutboxMessages::class));
 
             return self::FAILURE;
         }
@@ -96,7 +100,7 @@ final class OutboxFailedCommand extends Command
     /**
      * @param list<string> $ids
      */
-    private function requeue(SymfonyStyle $io, DbalOutboxStorage $storage, array $ids, ?string $transport): int
+    private function requeue(SymfonyStyle $io, FailedOutboxMessages $storage, array $ids, ?string $transport): int
     {
         $requeued = $storage->requeueFailed($ids, $transport);
         $io->success(sprintf('Requeued %d message(s)%s; the next relay run sends them.', $requeued, null === $transport ? '' : sprintf(' to the transport "%s"', $transport)));
@@ -113,7 +117,7 @@ final class OutboxFailedCommand extends Command
     /**
      * @param list<string> $ids
      */
-    private function list(SymfonyStyle $io, InputInterface $input, DbalOutboxStorage $storage, array $ids): int
+    private function list(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids): int
     {
         if ([] !== $ids) {
             $io->error('Message ids are only accepted together with --requeue.');
@@ -137,13 +141,13 @@ final class OutboxFailedCommand extends Command
 
         $io->table(
             ['Id', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
-            array_map(static fn (array $message): array => [
-                $message['id'],
-                self::printable($message['transport_name'] ?? '(routing)'),
-                $message['created_at']->format(DATE_ATOM),
-                $message['failed_at']->format(DATE_ATOM),
-                $message['attempts'],
-                self::printable($message['last_error'] ?? ''),
+            array_map(static fn (FailedOutboxMessage $message): array => [
+                self::printable($message->id),
+                self::printable($message->transportName ?? '(routing)'),
+                $message->createdAt->format(DATE_ATOM),
+                $message->failedAt->format(DATE_ATOM),
+                $message->attempts,
+                self::printable($message->lastError ?? ''),
             ], $failed),
         );
         $io->note('Fix the cause, then run this command with --requeue (optionally followed by message ids).');

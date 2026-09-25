@@ -15,6 +15,9 @@ use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Types;
+use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 
@@ -47,7 +50,7 @@ use function strtolower;
  *
  * @api
  */
-final class DbalOutboxStorage implements OutboxStorage
+final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring
 {
     private const PURGE_BATCH_SIZE = 1000;
 
@@ -260,14 +263,7 @@ final class DbalOutboxStorage implements OutboxStorage
         ];
     }
 
-    /**
-     * Counts the due, the retrying and the given-up messages, for monitoring.
-     *
-     * "Retrying" messages were attempted at least once and are neither published nor given up.
-     *
-     * @return array{due: int, oldest_due: DateTimeImmutable|null, retrying: int, oldest_retrying: DateTimeImmutable|null, failed: int}
-     */
-    public function status(): array
+    public function status(): OutboxStatus
     {
         // Monitoring only reads: it never changes the table (an upgrade may be running elsewhere).
         $new = $this->guard(fn (): array|false => $this->pending()
@@ -302,20 +298,15 @@ final class DbalOutboxStorage implements OutboxStorage
         $since = static fn (array|false $row): ?DateTimeImmutable => false === $row || null === $row['since'] ? null : self::readUtc($row['since'], $platform);
         $oldestDue = array_filter([$since($new), $since($retries)]);
 
-        return [
-            'due' => (false === $new ? 0 : (int) $new['due']) + (false === $retries ? 0 : (int) $retries['due']),
-            'oldest_due' => [] === $oldestDue ? null : min($oldestDue),
-            'retrying' => false === $retrying ? 0 : (int) $retrying['retrying'],
-            'oldest_retrying' => $since($retrying),
-            'failed' => (int) $failed,
-        ];
+        return new OutboxStatus(
+            due: (false === $new ? 0 : (int) $new['due']) + (false === $retries ? 0 : (int) $retries['due']),
+            oldestDue: [] === $oldestDue ? null : min($oldestDue),
+            retrying: false === $retrying ? 0 : (int) $retrying['retrying'],
+            oldestRetrying: $since($retrying),
+            failed: (int) $failed,
+        );
     }
 
-    /**
-     * Returns the messages the relay gave up on, oldest failure first.
-     *
-     * @return list<array{id: string, transport_name: string|null, created_at: DateTimeImmutable, failed_at: DateTimeImmutable, attempts: int, last_error: string|null}>
-     */
     public function fetchFailed(int $limit): array
     {
         $this->ensureTableExists();
@@ -333,24 +324,16 @@ final class DbalOutboxStorage implements OutboxStorage
 
         $platform = $this->connection->getDatabasePlatform();
 
-        return array_map(static fn (array $row): array => [
-            'id' => (string) $row['id'],
-            'transport_name' => null === $row['transport_name'] ? null : (string) $row['transport_name'],
-            'created_at' => self::readUtc($row['created_at'], $platform),
-            'failed_at' => self::readUtc($row['failed_at'], $platform),
-            'attempts' => (int) $row['attempts'],
-            'last_error' => null === $row['last_error'] ? null : (string) $row['last_error'],
-        ], $rows);
+        return array_map(static fn (array $row): FailedOutboxMessage => new FailedOutboxMessage(
+            id: (string) $row['id'],
+            transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
+            createdAt: self::readUtc($row['created_at'], $platform),
+            failedAt: self::readUtc($row['failed_at'], $platform),
+            attempts: (int) $row['attempts'],
+            lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
+        ), $rows);
     }
 
-    /**
-     * Hands messages the relay gave up on back to it, with a fresh attempt counter and no last error.
-     *
-     * @param list<string> $ids           The messages to requeue; all given-up messages when empty
-     * @param string|null  $transportName A transport to send them to instead of the stored one (e.g. after a renamed transport)
-     *
-     * @return int The number of requeued messages
-     */
     public function requeueFailed(array $ids = [], ?string $transportName = null): int
     {
         $this->ensureTableExists();

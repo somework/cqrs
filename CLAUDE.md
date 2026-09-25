@@ -64,7 +64,7 @@ reports messages that were sent to a transport or deduplicated).
 
 ### Key Layers
 
-**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `OutboxStorage`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
+**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `OutboxStorage` (plus the optional outbox capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
 
 **Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
 
@@ -80,7 +80,7 @@ reports messages that were sent to a transport or deduplicated).
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
-- `OutboxStoragePass` — keeps setup, failed, health and the relay's table report on the DBAL storage when the application decorates `somework_cqrs.outbox.storage`
+- `OutboxStoragePass` — keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage`, and checks that a custom storage implements `OutboxStorage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
 - `ValidateConfiguredServicesPass` — every service id and rate limiter named in the configuration exists (the error names the config path)

@@ -296,7 +296,9 @@ final class Configuration implements ConfigurationInterface
         $outbox->addDefaultsIfNotSet()->info('Transactional outbox configuration.');
         $outboxChildren = $outbox->children();
         $outboxChildren->booleanNode('enabled')->defaultFalse()
-            ->info('Enable transactional outbox. Requires doctrine/dbal.');
+            ->info('Enable transactional outbox. Requires doctrine/dbal unless "storage" names another storage.');
+        self::requireName($outboxChildren->scalarNode('storage')->defaultNull()
+            ->info('Service id (or class) of the OutboxStorage; null for the DBAL storage configured by table_name, connection and auto_setup. The setup, failed and health features need it to implement OutboxSchema, FailedOutboxMessages and OutboxMonitoring.'), true);
         $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
             ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
         self::requireName($tableName);

@@ -18,6 +18,7 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
@@ -944,12 +945,12 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([], self::ids($storage->fetchUnpublished(10)), 'Given-up messages are no longer due.');
 
         $failed = $storage->fetchFailed(10);
-        self::assertSame([self::ID_1, self::ID_2], array_map(static fn (array $message): string => $message['id'], $failed));
-        self::assertSame(2, $failed[0]['attempts']);
-        self::assertSame('MessageDecodingFailedException: gone', $failed[0]['last_error']);
-        self::assertSame('async', $failed[0]['transport_name']);
-        self::assertSame('2026-01-01T10:00:00+00:00', $failed[0]['created_at']->format(DATE_ATOM));
-        self::assertEqualsWithDelta(time(), $failed[0]['failed_at']->getTimestamp(), 5);
+        self::assertSame([self::ID_1, self::ID_2], array_map(static fn (FailedOutboxMessage $message): string => $message->id, $failed));
+        self::assertSame(2, $failed[0]->attempts);
+        self::assertSame('MessageDecodingFailedException: gone', $failed[0]->lastError);
+        self::assertSame('async', $failed[0]->transportName);
+        self::assertSame('2026-01-01T10:00:00+00:00', $failed[0]->createdAt->format(DATE_ATOM));
+        self::assertEqualsWithDelta(time(), $failed[0]->failedAt->getTimestamp(), 5);
 
         self::assertSame(1, $storage->requeueFailed([self::ID_2]));
         $requeued = $storage->fetchUnpublished(10);
@@ -1003,7 +1004,7 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertFalse($storage->recordAttempt(self::ID_1, 3, 'interrupted', null, 3), 'A second relay gives it up again.');
         self::assertFalse($storage->recordAttempt(self::ID_1, 4, 'claim', new DateTimeImmutable('+1 minute'), 3));
-        self::assertSame(3, $storage->fetchFailed(10)[0]['attempts']);
+        self::assertSame(3, $storage->fetchFailed(10)[0]->attempts);
     }
 
     public function test_recording_the_same_values_twice_succeeds_on_every_platform(): void
@@ -1045,7 +1046,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->recordAttempt(self::ID_1, 1, 'boom', null);
 
-        self::assertSame(1, $storage->fetchFailed(10)[0]['attempts']);
+        self::assertSame(1, $storage->fetchFailed(10)[0]->attempts);
     }
 
     public function test_a_table_of_an_earlier_version_accepts_messages_but_asks_for_an_upgrade(): void
@@ -1149,11 +1150,11 @@ final class DbalOutboxStorageTest extends TestCase
 
         $status = $storage->status();
 
-        self::assertSame(2, $status['due']);
-        self::assertSame('2026-01-01T11:00:00+00:00', $status['oldest_due']?->format(DATE_ATOM));
-        self::assertSame(1, $status['retrying']);
-        self::assertSame('2026-01-01T10:00:00+00:00', $status['oldest_retrying']?->format(DATE_ATOM));
-        self::assertSame(0, $status['failed']);
+        self::assertSame(2, $status->due);
+        self::assertSame('2026-01-01T11:00:00+00:00', $status->oldestDue?->format(DATE_ATOM));
+        self::assertSame(1, $status->retrying);
+        self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
+        self::assertSame(0, $status->failed);
     }
 
     public function test_status_counts_messages_that_keep_failing_even_while_they_are_postponed(): void
@@ -1166,11 +1167,11 @@ final class DbalOutboxStorageTest extends TestCase
 
         $status = $storage->status();
 
-        self::assertSame(0, $status['due']);
-        self::assertNull($status['oldest_due']);
-        self::assertSame(1, $status['retrying']);
-        self::assertSame('2026-01-01T10:00:00+00:00', $status['oldest_retrying']?->format(DATE_ATOM));
-        self::assertSame(1, $status['failed']);
+        self::assertSame(0, $status->due);
+        self::assertNull($status->oldestDue);
+        self::assertSame(1, $status->retrying);
+        self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
+        self::assertSame(1, $status->failed);
     }
 
     public function test_purge_deletes_only_old_published_messages(): void
@@ -1334,7 +1335,7 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertSame([self::ID_1], self::ids((new DbalOutboxStorage($this->connection, $tableName))->fetchUnpublished(10)));
         self::assertSame([], (new DbalOutboxStorage($this->connection, $tableName))->pendingChanges());
-        self::assertNull((new DbalOutboxStorage($this->connection, $tableName))->status()['oldest_retrying']);
+        self::assertNull((new DbalOutboxStorage($this->connection, $tableName))->status()->oldestRetrying);
     }
 
     private static function message(string $id, string $createdAt, ?string $transportName = null): OutboxMessage

@@ -10,16 +10,20 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Health\CheckResult;
 use SomeWork\CqrsBundle\Health\CheckSeverity;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_map;
+use function sprintf;
 
 #[Group('database')]
 #[CoversClass(OutboxHealthChecker::class)]
@@ -175,9 +179,22 @@ final class OutboxHealthCheckerTest extends TestCase
         self::assertStringContainsString('The outbox storage cannot be read: The outbox table "somework_cqrs_outbox" does not exist.', $results[0]->message);
     }
 
-    public function test_other_storages_are_not_checked(): void
+    public function test_storages_without_monitoring_are_not_checked(): void
     {
-        self::assertSame([CheckSeverity::OK], array_map(static fn (CheckResult $result): CheckSeverity => $result->severity, (new OutboxHealthChecker(new InMemoryOutboxStorage()))->check()));
+        self::assertSame([[CheckSeverity::OK, sprintf('The outbox storage (%s) is not checked: it does not implement %s', InMemoryOutboxStorage::class, OutboxMonitoring::class)]], self::summary((new OutboxHealthChecker(new InMemoryOutboxStorage()))->check()));
+    }
+
+    public function test_checks_any_storage_that_reports_its_status(): void
+    {
+        $storage = new CapableOutboxStorage();
+        $storage->status = new OutboxStatus(due: 4, oldestDue: new DateTimeImmutable('-30 minutes'), retrying: 0, oldestRetrying: null, failed: 2);
+        $storage->pendingChanges = ['the queue is missing'];
+
+        self::assertSame([
+            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the queue is missing'],
+            [CheckSeverity::WARNING, 'The relay gave up on 2 outbox message(s); see "somework:cqrs:outbox:failed"'],
+            [CheckSeverity::WARNING, '4 outbox message(s) are due, the oldest for 30 minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport'],
+        ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
     /**

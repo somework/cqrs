@@ -674,15 +674,18 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `false` | boolean (no environment variables) |
+| `storage` | `null` | service id or class name of an `OutboxStorage`; `null` for the DBAL storage below |
 | `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table` (`database.table` on MySQL); avoid reserved SQL words |
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
 | `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
 
-Enabling the outbox requires doctrine/dbal (compilation fails otherwise) and
-registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
-(`DbalOutboxStorage`) plus the `somework:cqrs:outbox:*` commands.
+Enabling the outbox registers the `SomeWork\CqrsBundle\Contract\OutboxStorage`
+service plus the `somework:cqrs:outbox:*` commands. With `storage: null` that is
+`DbalOutboxStorage`, which requires doctrine/dbal (compilation fails otherwise)
+and uses `table_name`, `connection` and `auto_setup`; another storage ignores
+them (see [Custom storage](outbox.md#custom-storage)).
 
 * Use the connection that holds your business data, so storing an outbox row
   is part of the same transaction.

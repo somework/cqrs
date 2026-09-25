@@ -11,8 +11,10 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\DecoratingOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\PassConfig;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -53,7 +55,39 @@ final class OutboxStoragePassTest extends TestCase
         self::assertNull(self::argument($container->get('somework_cqrs.outbox.relay_command'), 'table'));
     }
 
-    private function container(): ContainerBuilder
+    public function test_a_decorated_custom_storage_keeps_the_capabilities_on_the_custom_storage(): void
+    {
+        $container = $this->container(['storage' => 'app.outbox']);
+        $container->register('app.outbox', CapableOutboxStorage::class);
+        $container->register('app.logging_outbox', DecoratingOutboxStorage::class)
+            ->setDecoratedService('somework_cqrs.outbox.storage')
+            ->setArguments([new Reference('.inner')]);
+        $container->compile();
+
+        foreach (['somework_cqrs.outbox.setup_command', 'somework_cqrs.outbox.failed_command', 'somework_cqrs.outbox.health_checker'] as $id) {
+            self::assertInstanceOf(CapableOutboxStorage::class, self::argument($container->get($id), 'outboxStorage'), $id);
+        }
+        $relay = $container->get('somework_cqrs.outbox.relay_command');
+        self::assertInstanceOf(DecoratingOutboxStorage::class, self::argument($relay, 'outboxStorage'));
+        self::assertInstanceOf(CapableOutboxStorage::class, self::argument($relay, 'table'));
+        self::assertFalse($container->has('somework_cqrs.outbox.dbal_storage'));
+    }
+
+    public function test_a_custom_storage_must_be_an_outbox_storage(): void
+    {
+        $container = $this->container(['storage' => 'app.outbox']);
+        $container->register('app.outbox', \stdClass::class);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('The outbox storage "app.outbox" configured at "somework_cqrs.outbox.storage" must implement SomeWork\CqrsBundle\Contract\OutboxStorage, stdClass does not.');
+
+        $container->compile();
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function container(array $config = []): ContainerBuilder
     {
         $container = new ContainerBuilder();
         $container->register('doctrine.dbal.default_connection', Connection::class)
@@ -61,7 +95,7 @@ final class OutboxStoragePassTest extends TestCase
             ->setArguments([['driver' => 'pdo_sqlite', 'memory' => true]]);
         $container->register('messenger.default_serializer', PhpSerializer::class);
         $container->register('messenger.default_bus', MessageBus::class);
-        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'outbox']);
+        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'outbox'] + $config);
         $container->addCompilerPass(new OutboxStoragePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION);
         foreach (['somework_cqrs.outbox.setup_command', 'somework_cqrs.outbox.failed_command', 'somework_cqrs.outbox.health_checker', 'somework_cqrs.outbox.relay_command'] as $id) {
             $container->getDefinition($id)->setPublic(true);

@@ -385,6 +385,12 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - With very long table names the new index is named `idx_<hash>_pending`.
+- A storage of your own is configured with `outbox.storage: App\Outbox\MyStorage` instead of redefining the
+  `somework_cqrs.outbox.storage` service (which still works), and no longer needs doctrine/dbal. The setup and
+  failed commands and the health check use it when it implements `SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema`,
+  `FailedOutboxMessages` or `OutboxMonitoring` (see [Custom storage](docs/outbox.md#custom-storage)).
+- Code that calls `DbalOutboxStorage::status()` or `fetchFailed()` gets an `OutboxStatus` and `FailedOutboxMessage`
+  objects instead of arrays (`$status->oldestDue` instead of `$status['oldest_due']`).
 
 ### Console commands
 

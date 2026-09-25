@@ -83,9 +83,9 @@ final class OutboxRelayDbalTest extends TestCase
         self::assertSame(3, $this->ext->sendAttempts);
 
         $status = $this->storage->status();
-        self::assertSame(3, $status['retrying']);
-        self::assertSame(2, $status['due'], 'The messages of the paused transport were not touched.');
-        self::assertSame(0, $status['failed']);
+        self::assertSame(3, $status->retrying);
+        self::assertSame(2, $status->due, 'The messages of the paused transport were not touched.');
+        self::assertSame(0, $status->failed);
     }
 
     public function test_overlapping_relays_send_each_message_once(): void

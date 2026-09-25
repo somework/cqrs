@@ -134,9 +134,10 @@ somework_cqrs:
     #         default: ~
     #         map: {}
 
-    # Transactional outbox (requires doctrine/dbal and doctrine/doctrine-bundle)
+    # Transactional outbox (the DBAL storage requires doctrine/dbal and doctrine/doctrine-bundle)
     # outbox:
     #     enabled: false
+    #     storage: ~                  # OutboxStorage service id or class; null = DBAL storage below
     #     table_name: somework_cqrs_outbox
     #     connection: default         # Doctrine DBAL connection name
     #     serializer: messenger.default_serializer

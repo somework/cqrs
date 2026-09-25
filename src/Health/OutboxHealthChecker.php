@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Health;
 
 use DateTimeImmutable;
 use DateTimeZone;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 
@@ -27,6 +29,9 @@ final class OutboxHealthChecker implements HealthChecker
     /** A due message older than this means that the relay does not run, or does not keep up; a failing one, that it cannot deliver. */
     private const MAX_WAIT_SECONDS = 600;
 
+    /**
+     * @param OutboxStorage $outboxStorage The storage behind any decorator (see OutboxStoragePass)
+     */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
     ) {
@@ -35,13 +40,14 @@ final class OutboxHealthChecker implements HealthChecker
     /** @return list<CheckResult> */
     public function check(): array
     {
-        if (!$this->outboxStorage instanceof DbalOutboxStorage) {
-            return [new CheckResult(CheckSeverity::OK, 'outbox', sprintf('The outbox storage (%s) is not checked', $this->outboxStorage::class))];
+        $storage = $this->outboxStorage;
+        if (!$storage instanceof OutboxMonitoring) {
+            return [new CheckResult(CheckSeverity::OK, 'outbox', sprintf('The outbox storage (%s) is not checked: it does not implement %s', $storage::class, OutboxMonitoring::class))];
         }
 
         $structureRead = true;
         try {
-            $changes = $this->outboxStorage->pendingChanges();
+            $changes = $storage instanceof OutboxSchema ? $storage->pendingChanges() : [];
         } catch (\Throwable $exception) {
             $changes = [sprintf('its structure cannot be read (%s)', $exception->getMessage())];
             $structureRead = false;
@@ -50,13 +56,13 @@ final class OutboxHealthChecker implements HealthChecker
         $needsSetup = [] === $changes ? null : new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
 
         try {
-            $status = $this->outboxStorage->status();
+            $status = $storage->status();
         } catch (\Throwable $exception) {
             // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
             // When neither can be read (e.g. the database is down), that is critical.
             $lacksColumns = [] !== array_filter($changes, static fn (string $change): bool => str_starts_with($change, 'the columns '));
-            if ($structureRead && null !== $needsSetup && $lacksColumns) {
-                return [$this->withBacklog($this->outboxStorage, $needsSetup)];
+            if ($structureRead && null !== $needsSetup && $lacksColumns && $storage instanceof DbalOutboxStorage) {
+                return [$this->withBacklog($storage, $needsSetup)];
             }
 
             return [new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('The outbox storage cannot be read: %s', $exception->getMessage()))];
@@ -64,28 +70,28 @@ final class OutboxHealthChecker implements HealthChecker
 
         $results = null === $needsSetup ? [] : [$needsSetup];
 
-        if ($status['failed'] > 0) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status['failed']));
+        if ($status->failed > 0) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status->failed));
         }
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
-        $oldestRetrying = $status['oldest_retrying'];
+        $oldestRetrying = $status->oldestRetrying;
         $failingFor = null === $oldestRetrying ? 0 : $now - $oldestRetrying->getTimestamp();
 
         // Postponed after failed attempts, so not due: an outage of their transport, or messages that cannot be sent.
         if ($failingFor > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', $status['retrying'], intdiv($failingFor, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', $status->retrying, intdiv($failingFor, 60)));
         }
 
-        $oldestDue = $status['oldest_due'];
+        $oldestDue = $status->oldestDue;
         $waited = null === $oldestDue ? 0 : $now - $oldestDue->getTimestamp();
 
         if ($waited > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport', $status['due'], intdiv($waited, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%d outbox message(s) are due, the oldest for %d minute(s): "somework:cqrs:outbox:relay" does not run, does not keep up, or pauses their failing transport', $status->due, intdiv($waited, 60)));
         }
 
         if ([] === $results) {
-            $results[] = new CheckResult(CheckSeverity::OK, 'outbox', sprintf('Outbox: %d message(s) due, none waiting for long', $status['due']));
+            $results[] = new CheckResult(CheckSeverity::OK, 'outbox', sprintf('Outbox: %d message(s) due, none waiting for long', $status->due));
         }
 
         return $results;

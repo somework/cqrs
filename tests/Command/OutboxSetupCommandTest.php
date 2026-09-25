@@ -10,9 +10,13 @@ use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
+
+use function preg_replace;
 
 use const SIGINT;
 use const SIGTERM;
@@ -67,5 +71,23 @@ final class OutboxSetupCommandTest extends TestCase
         $command = new OutboxSetupCommand(new DbalOutboxStorage(TestDatabase::connect(), 'outbox', autoSetup: false));
 
         self::assertSame([SIGTERM, SIGINT], $command->getSubscribedSignals());
+    }
+
+    public function test_sets_up_any_storage_that_manages_its_schema(): void
+    {
+        $storage = new CapableOutboxStorage();
+
+        $tester = new CommandTester(new OutboxSetupCommand($storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute([]));
+        self::assertSame(1, $storage->setups);
+    }
+
+    public function test_refuses_a_storage_without_a_schema(): void
+    {
+        $tester = new CommandTester(new OutboxSetupCommand(new InMemoryOutboxStorage()));
+
+        self::assertSame(Command::FAILURE, $tester->execute([]));
+        self::assertStringContainsString('does not implement SomeWork\\CqrsBundle\\Contract\\Outbox\\OutboxSchema', (string) preg_replace('/\\s+/', ' ', $tester->getDisplay()));
     }
 }

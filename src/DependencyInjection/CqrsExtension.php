@@ -134,8 +134,8 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         }
 
         if (true === $config['outbox']['enabled']) {
-            if (!($this->classExists)(Connection::class)) {
-                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
+            if (null === $config['outbox']['storage'] && !($this->classExists)(Connection::class)) {
+                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal", configure another storage under somework_cqrs.outbox.storage, or set somework_cqrs.outbox.enabled to false.');
             }
             (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }

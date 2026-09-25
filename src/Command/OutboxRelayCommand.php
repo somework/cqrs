@@ -6,8 +6,8 @@ namespace SomeWork\CqrsBundle\Command;
 
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -73,7 +73,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      * @param ContainerInterface|null  $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
      * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
      * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
-     * @param DbalOutboxStorage|null   $table       The DBAL storage behind a decorated $outboxStorage, for the report of pending table changes
+     * @param OutboxSchema|null        $table       The storage behind a decorated $outboxStorage, for the report of pending schema changes
      * @param ContainerInterface|null  $transports  Messenger's transports by name; a message stored for another transport is given up at once
      */
     public function __construct(
@@ -86,7 +86,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         int $maxAttempts = 10,
         private readonly ?LoggerInterface $logger = null,
         private readonly ?\Closure $clock = null,
-        private readonly ?DbalOutboxStorage $table = null,
+        private readonly ?OutboxSchema $table = null,
         ?ContainerInterface $transports = null,
     ) {
         $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports);
@@ -174,8 +174,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             return self::FAILURE;
         }
 
-        // The DBAL storage behind a decorated one still tells what the table needs.
-        $table = $this->table ?? ($this->outboxStorage instanceof DbalOutboxStorage ? $this->outboxStorage : null);
+        // The storage behind a decorated one still tells what its schema needs.
+        $table = $this->table ?? ($this->outboxStorage instanceof OutboxSchema ? $this->outboxStorage : null);
         if (null !== $table) {
             $this->reportPendingChanges($table, $io);
         }
@@ -210,7 +210,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      * The automatic setup leaves indexes to the setup command: without them, every fetch reads the
      * whole table.
      */
-    private function reportPendingChanges(DbalOutboxStorage $storage, SymfonyStyle $io): void
+    private function reportPendingChanges(OutboxSchema $storage, SymfonyStyle $io): void
     {
         try {
             $changes = $storage->pendingChanges();

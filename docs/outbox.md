@@ -622,30 +622,40 @@ An implementation must meet these rules:
   recognises an interrupted attempt by the beginning of `lastError`. `$headers` is the JSON string produced by
   `fromEnvelope()`, and `$id` and `$body` must not be empty.
 
-To use your implementation, override the storage service id in your application:
+Name your implementation under `outbox.storage` (a service id, or a class name, which the
+bundle registers as an autowired service):
 
 ```yaml
-# config/services.yaml
-services:
-    somework_cqrs.outbox.storage:
-        class: App\Outbox\MongoOutboxStorage
-        autowire: true
+# config/packages/somework_cqrs.yaml
+somework_cqrs:
+    outbox:
+        enabled: true
+        storage: App\Outbox\MongoOutboxStorage
 ```
 
-The relay and purge commands, and the `OutboxStorage` alias, then use your class. There are
-three caveats:
+The relay and purge commands, `OutboxWriter` and the `OutboxStorage` alias then use it.
+doctrine/dbal is not needed, and `table_name`, `connection` and `auto_setup` are ignored:
+they only configure the DBAL storage. The relay lock is named after the service id.
 
-- `outbox.enabled: true` still requires `doctrine/dbal` to be installed.
-- `table_name`, `connection` and `auto_setup` only configure the DBAL storage.
-- `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:failed` only work with
-  `DbalOutboxStorage`; with another storage they exit with `1`.
+The other features need more than `OutboxStorage`. Implement the interfaces of
+`SomeWork\CqrsBundle\Contract\Outbox` your storage can support:
 
-To add behaviour to the DBAL storage instead (logging, metrics), decorate it:
+| Interface | Methods | Used by |
+|---|---|---|
+| `OutboxSchema` | `setup(?\Closure $onWait = null): void`, `pendingChanges(): list<string>` | `somework:cqrs:outbox:setup`; the relay and the health check report what `pendingChanges()` returns |
+| `FailedOutboxMessages` | `fetchFailed(int $limit): list<FailedOutboxMessage>`, `requeueFailed(list<string> $ids = [], ?string $transportName = null): int` | `somework:cqrs:outbox:failed` |
+| `OutboxMonitoring` | `status(): OutboxStatus` | the outbox check of `somework:cqrs:health` |
+
+Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
+health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.
+
+To add behaviour to the storage instead (logging, metrics), decorate it:
 `#[AsDecorator('somework_cqrs.outbox.storage')]` on a class that implements `OutboxStorage`
 and takes the inner storage. The relay, the purge command and your code then go through the
-decorator, while `setup`, `failed`, the health check and the relay's report of pending table
-changes keep working on the DBAL storage (`somework_cqrs.outbox.dbal_storage`), which is also
-what `DbalOutboxStorage` autowires to.
+decorator, while `setup`, `failed`, the health check and the relay's report of pending
+changes keep working on the configured storage behind it (`somework_cqrs.outbox.base_storage`;
+for the DBAL storage also `somework_cqrs.outbox.dbal_storage`, which `DbalOutboxStorage`
+autowires to), so the decorator does not have to implement the capabilities.
 
 ## Security
 
