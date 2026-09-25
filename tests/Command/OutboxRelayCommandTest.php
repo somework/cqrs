@@ -9,9 +9,11 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Command\ConsoleRelayReporter;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
@@ -59,6 +61,8 @@ use const SIGINT;
 use const SIGTERM;
 
 #[CoversClass(OutboxRelayCommand::class)]
+#[CoversClass(ConsoleRelayReporter::class)]
+#[CoversClass(OutboxRelay::class)]
 final class OutboxRelayCommandTest extends TestCase
 {
     private InMemoryOutboxStorage $storage;

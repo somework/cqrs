@@ -16,6 +16,7 @@ use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
@@ -48,6 +49,7 @@ use const DATE_ATOM;
  */
 #[Group('database')]
 #[CoversClass(DbalOutboxStorage::class)]
+#[CoversClass(DbalOutboxSchema::class)]
 final class DbalOutboxStorageTest extends TestCase
 {
     private const ID_1 = '00000000-0000-7000-8000-000000000001';

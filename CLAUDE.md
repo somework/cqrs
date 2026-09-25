@@ -93,7 +93,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`.
 
-**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, DBAL storage, `OutboxMessage::fromEnvelope()`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
+**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 
