@@ -442,6 +442,8 @@ final class DbalOutboxStorageTest extends TestCase
             $other->close();
         }
 
+        // InnoDB refreshes information_schema.innodb_trx at most every 0.1 seconds.
+        usleep(200_000);
         self::assertSame([], (new DbalOutboxStorage($this->connection))->fetchUnpublished(10), 'Once the transaction ended.');
     }
 

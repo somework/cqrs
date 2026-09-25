@@ -39,8 +39,14 @@ final class OutboxSetupCommandTest extends TestCase
         $connection->beginTransaction();
         $tester = new CommandTester(new OutboxSetupCommand(new DbalOutboxStorage($connection, 'outbox', autoSetup: false)));
 
-        self::assertSame(Command::FAILURE, $tester->execute([]));
-        self::assertStringContainsString('cannot be changed inside an open database transaction', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        try {
+            self::assertSame(Command::FAILURE, $tester->execute([]));
+            self::assertStringContainsString('cannot be changed inside an open database transaction', (string) preg_replace('/\s+/', ' ', $tester->getDisplay()));
+        } finally {
+            // An open transaction left behind would look like a long one to the tests that follow.
+            $connection->rollBack();
+            $connection->close();
+        }
     }
 
     public function test_a_signal_stops_the_setup_with_a_failure(): void

@@ -604,7 +604,7 @@ final class DbalOutboxStorage implements OutboxStorage
             $this->connection->executeStatement("SET time_zone = 'SYSTEM'");
             try {
                 return false !== $this->connection->fetchOne(
-                    'SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < NOW() - INTERVAL ? SECOND LIMIT 1',
+                    'SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id NOT IN (0, CONNECTION_ID()) AND trx_started < NOW() - INTERVAL ? SECOND LIMIT 1',
                     [self::AUTO_DDL_LOCK_TIMEOUT],
                 );
             } finally {
