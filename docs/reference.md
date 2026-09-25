@@ -22,13 +22,14 @@ somework_cqrs:
         event_async: null
     naming:
         default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
-        command: null
-        query: null
-        event: null
+        command: { default: null }
+        query: { default: null }
+        event: { default: null }
     retry_policies:
-        command: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
-        query: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
-        event: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
+        default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+        command: { default: null, map: {} }
+        query: { default: null, map: {} }
+        event: { default: null, map: {} }
     retry_strategy:
         transports: {}
         jitter: 0.0
@@ -47,15 +48,14 @@ somework_cqrs:
         command: { default: sync, map: {} }
         event: { default: sync, map: {} }
     transports:
-        command: { stamp: transport_names, default: [], map: {} }
-        command_async: { stamp: transport_names, default: [], map: {} }
-        query: { stamp: transport_names, default: [], map: {} }
-        event: { stamp: transport_names, default: [], map: {} }
-        event_async: { stamp: transport_names, default: [], map: {} }
-    async:
-        dispatch_after_current_bus:
-            command: { default: true, map: {} }
-            event: { default: true, map: {} }
+        command: { default: [], map: {} }
+        command_async: { default: [], map: {} }
+        query: { default: [], map: {} }
+        event: { default: [], map: {} }
+        event_async: { default: [], map: {} }
+    dispatch_after_current_bus:
+        command: { default: true, map: {} }
+        event: { default: true, map: {} }
     idempotency:
         enabled: true
         ttl: 300
@@ -66,9 +66,10 @@ somework_cqrs:
         enabled: true
     rate_limiting:
         enabled: true
-        command: { map: {} }
-        query: { map: {} }
-        event: { map: {} }
+        default: null
+        command: { default: null, map: {} }
+        query: { default: null, map: {} }
+        event: { default: null, map: {} }
     outbox:
         enabled: false
         table_name: somework_cqrs_outbox
@@ -94,7 +95,19 @@ For `naming`, `retry_policies`, `serialization` and `metadata` you may use a
 fully-qualified class name instead of a service id. When no service with that
 id exists and the class is concrete, the bundle registers it as a private,
 autowired and autoconfigured service. Any other unknown id makes the container
-compilation fail with Symfony's "non-existent service" error.
+compilation fail with the option that names it:
+
+```
+The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\Command\ChargePayment" does not exist.
+```
+
+**One shape for every per-message section.** `retry_policies`, `serialization`,
+`metadata` and `rate_limiting` have a global `default` and, per message type, a
+`default` (`null` falls back to the global one) and a `map`. `naming` has the
+defaults only. `dispatch_modes`, `transports` and `dispatch_after_current_bus`
+have no global default, because it would also apply to synchronous messages.
+Options of earlier versions fail with where they moved, e.g.
+`"somework_cqrs.async.dispatch_after_current_bus" moved to "somework_cqrs.dispatch_after_current_bus".`
 
 **Per-message maps.** Every `map` is keyed by a message class or interface.
 Keys must name an existing class or interface; a leading backslash is removed.
@@ -116,7 +129,7 @@ rejected:
 **Environment variables.** Only options read at runtime accept `%env(...)%`:
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
 `outbox.auto_setup`, `outbox.max_attempts` and the
-`async.dispatch_after_current_bus` flags. Every other option names services,
+`dispatch_after_current_bus` flags. Every other option names services,
 buses, transports, dispatch modes or message classes that the container
 compilation needs, and rejects an environment variable:
 
@@ -134,18 +147,18 @@ bundle looks for, in this order:
 3. an entry for an interface the message implements (including interfaces
    inherited from parents and parent interfaces);
 4. the `default` of the message type section;
-5. the global `default`, for `serialization` and `metadata` only.
+5. the global `default` of the section, where it has one.
 
 What happens when nothing matches depends on the section:
 
 | Section | Fallback after the map |
 |---------|------------------------|
-| `retry_policies.<type>` | `retry_policies.<type>.default` |
+| `retry_policies.<type>` | `retry_policies.<type>.default`, then `retry_policies.default` |
 | `serialization.<type>` | `serialization.<type>.default`, then `serialization.default` |
 | `metadata.<type>` | `metadata.<type>.default`, then `metadata.default` |
+| `rate_limiting.<type>` | `rate_limiting.<type>.default`, then `rate_limiting.default`, then no limiter |
 | `transports.<bus>` | `transports.<bus>.default`; when that is empty, no stamp is added and Messenger routing applies |
-| `async.dispatch_after_current_bus.<type>` | `async.dispatch_after_current_bus.<type>.default` |
-| `rate_limiting.<type>` | no limiter |
+| `dispatch_after_current_bus.<type>` | `dispatch_after_current_bus.<type>.default` |
 
 **Dispatch modes** follow a slightly different order because the
 `#[Asynchronous]` attribute takes part. For a command or event dispatched with
@@ -232,7 +245,7 @@ somework_cqrs:
 | Key | Default |
 |-----|---------|
 | `default` | `SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy` |
-| `command`, `query`, `event` | `null` (use `default`) |
+| `command.default`, `query.default`, `event.default` | `null` (use the global `default`) |
 
 Services implementing `SomeWork\CqrsBundle\Contract\MessageNamingStrategy`
 (`getName(string $messageClass): string`). They only produce the display names
@@ -243,17 +256,20 @@ class name.
 ```yaml
 somework_cqrs:
     naming:
-        command: App\Infrastructure\Cqrs\CommandNamingStrategy
+        command:
+            default: App\Infrastructure\Cqrs\CommandNamingStrategy
 ```
 
 ## retry_policies
 
-One section per message type (`command`, `query`, `event`), each with:
+A global `default` plus one section per message type (`command`, `query`,
+`event`):
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `default` | `SomeWork\CqrsBundle\Policy\NullRetryPolicy` | service id or class name |
-| `map` | `{}` | message class or interface => service id or class name |
+| `<type>.default` | `null` (use the global `default`) | service id or class name |
+| `<type>.map` | `{}` | message class or interface => service id or class name |
 
 Services implement `SomeWork\CqrsBundle\Contract\RetryPolicy`:
 
@@ -290,7 +306,8 @@ The bundle ships two policies:
   `somework_cqrs.exponential_backoff_retry_policy`; define your own service of
   the class to change the arguments (see [Retry strategy bridge](retry.md)).
 
-Resolution: exact class, parent classes, interfaces, then the type `default`.
+Resolution: exact class, parent classes, interfaces, the type `default`, then
+the global `default`.
 
 ```yaml
 somework_cqrs:
@@ -463,7 +480,6 @@ dispatched asynchronously uses `command_async`).
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `stamp` | `transport_names` | `transport_names` (the only stamp type) |
 | `default` | `[]` | list of transport names (a single string is accepted) |
 | `map` | `{}` | message class or interface => list of transport names (or one string) |
 
@@ -504,7 +520,7 @@ somework_cqrs:
                 App\Domain\Event\OrderShipped: [async_events, audit_log]
 ```
 
-## async.dispatch_after_current_bus
+## dispatch_after_current_bus
 
 Controls Messenger's `DispatchAfterCurrentBusStamp` on asynchronous dispatches.
 With the stamp, a message dispatched while another message is being handled is
@@ -524,11 +540,10 @@ Resolution: exact class, parent classes, interfaces, then the type `default`.
 
 ```yaml
 somework_cqrs:
-    async:
-        dispatch_after_current_bus:
-            command:
-                map:
-                    App\Application\Command\SendAlert: false
+    dispatch_after_current_bus:
+        command:
+            map:
+                App\Application\Command\SendAlert: false
 ```
 
 ## idempotency
@@ -618,20 +633,25 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `true` | boolean (no environment variables) |
+| `default` | `null` | rate limiter name applied to every message without a more specific entry |
+| `command.default`, `query.default`, `event.default` | `null` (use the global `default`) | rate limiter name |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => rate limiter name |
 
 Values are limiter names from `framework.rate_limiter` (the bundle uses the
-`limiter.<name>` service). Rate limiting is inactive while no limiter is mapped.
-Mapping a limiter requires symfony/rate-limiter:
+`limiter.<name>` service; a name that is not defined fails the compilation).
+Rate limiting is inactive while no limiter is configured. Configuring a limiter
+requires symfony/rate-limiter:
 
 ```
-Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove the mappings.
+Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.
 ```
 
-Each dispatch of a matching message consumes one token (the limiter key is the
-message class). When no token is left, the dispatch throws
+Each dispatch of a matching message consumes one token. The limiter key is the
+message class, so a `default` gives every message class its own bucket, not one
+shared bucket. When no token is left, the dispatch throws
 `RateLimitExceededException` before anything is sent. Resolution: exact class,
-parent classes, interfaces; unmatched messages are not limited. See
+parent classes, interfaces, the type `default`, then the global `default`;
+messages without any of them are not limited. See
 [Rate limiting](rate-limiting.md).
 
 ```yaml

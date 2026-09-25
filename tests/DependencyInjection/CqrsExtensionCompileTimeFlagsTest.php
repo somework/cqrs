@@ -95,7 +95,7 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
     {
         $container = $this->container([
             'retry_strategy' => ['jitter' => '%env(float:JITTER)%', 'max_delay' => '%env(int:MAX_DELAY)%'],
-            'async' => ['dispatch_after_current_bus' => ['command' => ['default' => '%env(bool:DEFER)%']]],
+            'dispatch_after_current_bus' => ['command' => ['default' => '%env(bool:DEFER)%']],
         ]);
 
         (new MergeExtensionConfigurationPass())->process($container);

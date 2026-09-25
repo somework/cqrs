@@ -100,7 +100,6 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         $causationCtx->addTag('kernel.reset', ['method' => 'reset']);
         $causationCtx->setPublic(false);
         $container->setDefinition('somework_cqrs.causation_id_context', $causationCtx);
-        $container->setAlias(CausationIdContext::class, 'somework_cqrs.causation_id_context')->setPublic(false);
 
         $causationMiddleware = new Definition(CausationIdMiddleware::class);
         $causationMiddleware->setArgument('$causationIdContext', new Reference('somework_cqrs.causation_id_context'));
@@ -128,17 +127,17 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         (new MetadataRegistrar($helper))->register($container, $config['metadata']);
         (new TransportRegistrar())->register($container, $config['transports']);
         (new DispatchModeRegistrar())->register($container, $config['dispatch_modes']);
-        (new DispatchAfterCurrentBusRegistrar($helper))->register($container, $config['async']['dispatch_after_current_bus']);
+        (new DispatchAfterCurrentBusRegistrar($helper))->register($container, $config['dispatch_after_current_bus']);
         $rateLimitingActive = $this->isRateLimitingActive($config['rate_limiting']);
         if ($rateLimitingActive) {
-            (new RateLimitRegistrar())->register($container, $config['rate_limiting']);
+            (new RateLimitRegistrar())->register($container, $config['rate_limiting'], $helper);
         }
 
         if (true === $config['outbox']['enabled']) {
             if (!($this->classExists)(Connection::class)) {
                 throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
             }
-            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId);
+            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
         if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
@@ -198,7 +197,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      * Options read only at runtime; every other option names services, buses, transports, dispatch
      * modes or message classes that must be known when the container is compiled.
      */
-    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'async.dispatch_after_current_bus'];
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'dispatch_after_current_bus'];
 
     /**
      * Without this check an environment variable in such an option fails later with Symfony's
@@ -259,7 +258,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      * Rate limiting only needs symfony/rate-limiter once limiters are mapped to messages;
      * with no mapping the feature is simply inactive, so the default config never fails.
      *
-     * @param array{enabled: bool, command: array{map: array<string, string>}, query: array{map: array<string, string>}, event: array{map: array<string, string>}} $config
+     * @param array{enabled: bool, default?: string|null, command: array{default?: string|null, map: array<string, string>}, query: array{default?: string|null, map: array<string, string>}, event: array{default?: string|null, map: array<string, string>}} $config
      */
     private function isRateLimitingActive(array $config): bool
     {
@@ -267,14 +266,17 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             return false;
         }
 
-        $hasMappings = [] !== $config['command']['map'] || [] !== $config['query']['map'] || [] !== $config['event']['map'];
+        $hasMappings = null !== ($config['default'] ?? null);
+        foreach (['command', 'query', 'event'] as $type) {
+            $hasMappings = $hasMappings || null !== ($config[$type]['default'] ?? null) || [] !== $config[$type]['map'];
+        }
 
         if (!$hasMappings) {
             return false;
         }
 
         if (!($this->classExists)(RateLimiterFactory::class)) {
-            throw new InvalidConfigurationException('Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove the mappings.');
+            throw new InvalidConfigurationException('Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.');
         }
 
         return true;

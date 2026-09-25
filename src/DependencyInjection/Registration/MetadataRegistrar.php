@@ -30,24 +30,19 @@ final class MetadataRegistrar
      */
     public function register(ContainerBuilder $container, array $config): void
     {
-        $defaultId = $this->helper->ensureServiceExists($container, $config['default']);
+        $defaultId = $this->helper->configuredService($container, 'metadata.default', $config['default']);
         $container->setAlias('somework_cqrs.metadata.default', $defaultId)->setPublic(false);
 
         foreach (['command', 'query', 'event'] as $type) {
             $typeDefaultId = $config[$type]['default'];
-            if (null === $typeDefaultId) {
-                $resolvedTypeDefaultId = $defaultId;
-            } else {
-                $resolvedTypeDefaultId = $this->helper->ensureServiceExists($container, $typeDefaultId);
-            }
+            $resolvedTypeDefaultId = null === $typeDefaultId
+                ? $defaultId
+                : $this->helper->configuredService($container, sprintf('metadata.%s.default', $type), $typeDefaultId);
 
-            $serviceMap = [
-                MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => new Reference($defaultId),
-                MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => new Reference($resolvedTypeDefaultId),
-            ];
+            $serviceMap = [MessageMetadataProviderResolver::DEFAULT_KEY => new Reference($resolvedTypeDefaultId)];
 
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
-                $resolvedId = $this->helper->ensureServiceExists($container, $serviceId);
+                $resolvedId = $this->helper->configuredService($container, sprintf('metadata.%s.map.%s', $type, $messageClass), $serviceId);
                 $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 

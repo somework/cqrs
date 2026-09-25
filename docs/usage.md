@@ -395,14 +395,13 @@ the handler fails. You can turn this off globally or per message:
 
 ```yaml
 somework_cqrs:
-    async:
-        dispatch_after_current_bus:
-            command:
-                default: true
-                map:
-                    App\Application\Command\ShipOrder: false
-            event:
-                default: true
+    dispatch_after_current_bus:
+        command:
+            default: true
+            map:
+                App\Application\Command\ShipOrder: false
+        event:
+            default: true
 ```
 
 With the override above `ShipOrder` commands are sent to the async bus

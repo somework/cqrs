@@ -57,7 +57,7 @@ final class ConfigurationOverridesTest extends KernelTestCase
 
     public function test_message_specific_dispatch_after_current_bus_toggle_is_honoured(): void
     {
-        $decider = self::getContainer()->get(DispatchAfterCurrentBusDecider::class);
+        $decider = self::getContainer()->get('somework_cqrs.dispatch_after_current_bus_decider');
         self::assertInstanceOf(DispatchAfterCurrentBusDecider::class, $decider);
 
         self::assertFalse($decider->shouldDefer(new CreateTaskCommand('1', 'x')));

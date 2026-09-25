@@ -8,14 +8,14 @@ neither handled nor sent.
 
 ## Activation and requirements
 
-Rate limiting stays inactive until a message is mapped to a limiter:
+Rate limiting stays inactive until a limiter is configured:
 
-- `rate_limiting.enabled` defaults to `true`. With no mapping, nothing is registered and
+- `rate_limiting.enabled` defaults to `true`. With no limiter, nothing is registered and
   `symfony/rate-limiter` is not needed.
-- Once a limiter is mapped, `symfony/rate-limiter` is required. Without it, container
-  compilation fails with
-  `Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed.`
-- `enabled: false` switches the feature off even when mappings exist. The flag decides
+- Once a limiter is configured (a `default` or a map entry), `symfony/rate-limiter` is required.
+  Without it, container compilation fails with
+  `Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed.`
+- `enabled: false` switches the feature off even when limiters are configured. The flag decides
   which services exist, so it must be a plain boolean, not an `%env()%` value.
 
 ```bash
@@ -48,20 +48,25 @@ somework_cqrs:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Master switch. It only has an effect once something is mapped. |
+| `enabled` | `true` | Master switch. It only has an effect once a limiter is configured. |
+| `default` | `null` | Limiter for every message without a more specific entry. |
+| `command.default`, `query.default`, `event.default` | `null` | Limiter for every message of the type without a map entry. |
 | `command.map` | `{}` | Command class or interface names mapped to `framework.rate_limiter` names. |
 | `query.map` | `{}` | The same for queries. |
 | `event.map` | `{}` | The same for events. |
 
-Each map value is the name of a limiter under `framework.rate_limiter`. The bundle uses the
+Each value is the name of a limiter under `framework.rate_limiter`. The bundle uses the
 service `limiter.<name>`. An unknown name fails container compilation with
-`... has a dependency on a non-existent service "limiter.<name>"`. The keys must be existing
+`The rate limiter "<name>" configured at "somework_cqrs.rate_limiting.command.map.App\..." does not exist. Define it under "framework.rate_limiter".` The keys must be existing
 class or interface names (a leading `\` is allowed). A typo fails compilation.
 
 A message's limiter is looked up the same way as in the bundle's other per-message maps:
-exact class first, then parent classes, then interfaces. Map an interface to throttle every
-message that implements it. Messages without a match are not throttled, because there is no
-default limiter.
+exact class first, then parent classes, then interfaces, then the type `default` and the global
+`default`. Map an interface to throttle every message that implements it. Messages without a
+match are not throttled.
+
+The limiter key is the message class: a `default` limiter gives every message class its own
+bucket of `limit` tokens, not one bucket shared by all messages.
 
 ## One bucket per message class
 

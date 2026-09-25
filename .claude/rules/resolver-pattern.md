@@ -21,9 +21,9 @@ Extend `AbstractMessageTypeResolver` and implement two hooks:
 - **`assertService(string $key, mixed $service): mixed`** — Validate the resolved service matches your expected type. Throw `LogicException` with `get_debug_type()` for clear diagnostics. The locator returns the service itself (registrars pass plain references to `ServiceLocatorTagPass::register()`), never a closure.
 - **`resolveFallback(object $message): mixed`** — Provide the default when no hierarchy match is found. Two variants exist in the codebase:
   - **Simple:** Return a stored default (see `RetryPolicyResolver`)
-  - **Two-level chain:** Try `TYPE_DEFAULT_KEY`, then `GLOBAL_DEFAULT_KEY` using `resolveFirstAvailable()` (see `MessageSerializerResolver`, `MessageMetadataProviderResolver`)
+  - **Default key:** Look up the resolver's `DEFAULT_KEY` in the locator (see `MessageSerializerResolver`, `MessageMetadataProviderResolver`, `RateLimitResolver`). The registrar stores the per-type default, or the global default when the type has none, under that key; the resolver never walks two levels of defaults
 
-Choose the simple variant unless the config tree supports both per-type and global defaults.
+Pass `DEFAULT_KEY` as an ignored key to `resolveService()` so the hierarchy walk never matches it.
 
 ## WeakMap Caching
 

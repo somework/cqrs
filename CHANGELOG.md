@@ -39,6 +39,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 ### Changed
 - **Breaking:** the abstract handlers (`AbstractCommandHandler`, `AbstractQueryHandler`, `AbstractEventHandler`) are removed; implement the marker interface with a typed `__invoke()`, plus `EnvelopeAware` and `EnvelopeAwareTrait` for the envelope.
 - **Breaking:** `StampDecider` and `MessageTypeAwareStampDecider` moved to `SomeWork\CqrsBundle\Contract`, the default policies (`NullRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NullMessageSerializer`, `RandomCorrelationMetadataProvider`, `ClassNameMessageNamingStrategy`) to `SomeWork\CqrsBundle\Policy`.
+- **Breaking:** one configuration shape for every per-message section (global `default`, per type `default` and `map`): `async.dispatch_after_current_bus` moved to `dispatch_after_current_bus`, `naming.<type>` to `naming.<type>.default`, `transports.*.stamp` is removed, and `retry_policies` and `rate_limiting` gain a global and per-type `default`. Old options fail with a message naming the new place.
+- **Breaking:** the container no longer autowires internal services by class name (`DispatchModeDecider`, `DispatchAfterCurrentBusDecider`, `TransportMappingProvider`, `CausationIdContext`); `MessageTransportStampFactory` is removed.
+- A service id or rate limiter that does not exist fails the build with the configuration path that names it.
 - **Breaking:** `HandlerRegistry::byType()` takes the new `MessageType` enum and `HandlerDescriptor::$type` is one; exceptions expose `$messageClass` instead of `$messageFqcn`; the fake buses record `RecordedDispatch` objects.
 - Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus when one is configured.
 - `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces without `__invoke()`, so handlers can type-hint the concrete message.
@@ -56,7 +59,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - `retry_strategy.transports` keys are kept as written and must name existing transports.
 - `causation_id.buses` entries must name existing buses, and every `buses.*` id must be a Messenger bus (a typo in an async bus id used to surface only at runtime as "bus is not configured"); the transport of `#[Asynchronous(transport: ...)]` on a handled message must exist.
 - The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` no longer accept environment variables.
-- Rate limiting stays inactive until a limiter is mapped; mapping one without symfony/rate-limiter is a configuration error.
+- Rate limiting stays inactive until a limiter is configured; configuring one without symfony/rate-limiter is a configuration error.
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services; a handler registered without a bus (e.g. a plain `#[AsMessageHandler]`) counts on every bus, and handlers of parent classes, interfaces and `*` (including plain Messenger handlers) count for the messages that inherit them.
 - `dispatchSync()` throws `MultipleHandlersException` when more than one handler ran instead of returning the last result.
 - A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error. A handler implementing several handler interfaces (e.g. a process manager with `__invoke(CreateTask|TaskCreated $message)`) registers each union member under its own type; a union member whose type matches none of the handler's interfaces is a compile error.
@@ -64,7 +67,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, postpones failing rows, exits with 1 when a row failed and with 2 for an invalid `--limit`; `--limit` counts processed rows.
 - `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (at most 6 digits); `outbox.table_name` must be a plain or schema-qualified identifier and not a reserved SQL word.
 - Outbox commands exit with 1 and a message when the database fails, instead of the driver's error code; `outbox:failed --requeue` validates the ids and exits with 1 when some were not requeued.
-- Environment variables are rejected, with a clear message, in every option the container compilation needs (dispatch modes, transports, buses, service ids); they remain allowed in `retry_strategy.jitter`/`max_delay`, `idempotency.ttl`, `outbox.auto_setup`/`max_attempts` and the `async.dispatch_after_current_bus` flags.
+- Environment variables are rejected, with a clear message, in every option the container compilation needs (dispatch modes, transports, buses, service ids); they remain allowed in `retry_strategy.jitter`/`max_delay`, `idempotency.ttl`, `outbox.auto_setup`/`max_attempts` and the `dispatch_after_current_bus` flags.
 - A handler attribute naming a message that the handler method's parameter type does not accept is a compile error (it failed every dispatch with a `TypeError`).
 - `#[Asynchronous]` on a handled message requires the async bus of its type, and a bare attribute requires a transport (the `async` transport, a `transports.*_async` entry or a Messenger route), at compile time.
 - `somework:cqrs:health` instantiates every CQRS handler and every Messenger transport.

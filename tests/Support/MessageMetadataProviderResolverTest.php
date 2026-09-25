@@ -9,7 +9,6 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
-use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -24,8 +23,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
             MessageMetadataProviderResolverTestParentCommand::class => static fn (): MessageMetadataProvider => $provider,
         ]));
 
@@ -41,8 +39,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
             MessageMetadataProviderResolverTestInterface::class => static fn (): MessageMetadataProvider => $provider,
         ]));
 
@@ -56,8 +53,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => new RandomCorrelationMetadataProvider(),
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
         ]));
 
         $resolved = $resolver->resolveFor(new MessageMetadataProviderResolverTestChildCommand());
@@ -70,7 +66,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
         $globalDefault = $this->createMock(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,
         ]));
 
         $resolved = $resolver->resolveFor(new MessageMetadataProviderResolverTestChildCommand());
@@ -78,12 +74,12 @@ final class MessageMetadataProviderResolverTest extends TestCase
         self::assertSame($globalDefault, $resolved);
     }
 
-    public function test_requires_global_default_provider(): void
+    public function test_requires_a_default_provider(): void
     {
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([]));
 
         $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('Metadata provider resolver must be initialised with a global default provider.');
+        $this->expectExceptionMessage('Metadata provider resolver must be initialised with a default metadata provider.');
 
         $resolver->resolveFor(new MessageMetadataProviderResolverTestChildCommand());
     }

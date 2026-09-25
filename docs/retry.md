@@ -75,28 +75,30 @@ services:
 
 ## Mapping policies to messages
 
-`retry_policies` has one section per message type. Each section has a `default` service id
-and a `map` from message class or interface names to service ids:
+`retry_policies` has a global `default` and one section per message type. Each section has
+an optional `default` service id and a `map` from message class or interface names to
+service ids:
 
 ```yaml
 # config/packages/somework_cqrs.yaml
 somework_cqrs:
     retry_policies:
+        default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
         command:
-            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+            default: ~
             map:
                 App\Application\Command\ProcessPayment: app.retry.payment
                 App\Application\Command\TalksToPaymentGateway: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         event:
-            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+            default: ~
             map: {}
         query:
-            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+            default: ~
             map: {}
 ```
 
 A message's policy is looked up in this order: exact class, parent classes, interfaces,
-then the section's `default`. Map keys must be existing class or interface names (a
+the section's `default`, then the global `default`. Map keys must be existing class or interface names (a
 leading `\` is allowed), and a typo fails container compilation. Each value must be a
 service that implements `RetryPolicy`.
 

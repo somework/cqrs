@@ -16,6 +16,31 @@ use function sprintf;
 /** @internal */
 final class ContainerHelper
 {
+    /** Parameter listing the services the configuration names, checked by ValidateConfiguredServicesPass. */
+    public const CONFIGURED_SERVICES = 'somework_cqrs.configured_services';
+
+    /**
+     * Remembers that the option at $path (below "somework_cqrs.") names the service $serviceId, so
+     * a missing service is reported with that option instead of an internal service id.
+     */
+    public function recordConfiguredService(ContainerBuilder $container, string $path, string $serviceId): void
+    {
+        /** @var list<array{string, string}> $services */
+        $services = $container->hasParameter(self::CONFIGURED_SERVICES) ? $container->getParameter(self::CONFIGURED_SERVICES) : [];
+        $services[] = [$path, $serviceId];
+        $container->setParameter(self::CONFIGURED_SERVICES, $services);
+    }
+
+    /**
+     * {@see ensureServiceExists()} for a service the option at $path names.
+     */
+    public function configuredService(ContainerBuilder $container, string $path, string $serviceId): string
+    {
+        $this->recordConfiguredService($container, $path, $serviceId);
+
+        return $this->ensureServiceExists($container, $serviceId);
+    }
+
     /**
      * Registers a service for a class name used as service id, unless it is already defined.
      * Abstract classes are left alone: they cannot be instantiated, and the missing service is

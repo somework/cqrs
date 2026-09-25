@@ -41,9 +41,9 @@ final class CqrsExtensionRegistrarsTest extends TestCase
             ],
             'naming' => [
                 'default' => 'app.naming.default',
-                'command' => 'app.naming.command',
-                'query' => 'app.naming.query',
-                'event' => 'app.naming.event',
+                'command' => ['default' => 'app.naming.command'],
+                'query' => ['default' => 'app.naming.query'],
+                'event' => ['default' => 'app.naming.event'],
             ],
             'retry_policies' => [
                 'command' => [
@@ -105,31 +105,26 @@ final class CqrsExtensionRegistrarsTest extends TestCase
                     'map' => [
                         CreateTaskCommand::class => ['command-map'],
                     ],
-                    'stamp' => 'transport_names',
                 ],
                 'command_async' => [
                     'default' => ['command-async-default'],
                     'map' => [],
-                    'stamp' => 'transport_names',
                 ],
                 'query' => [
                     'default' => [],
                     'map' => [
                         FindTaskQuery::class => ['query-map'],
                     ],
-                    'stamp' => 'transport_names',
                 ],
                 'event' => [
                     'default' => ['event-default'],
                     'map' => [],
-                    'stamp' => 'transport_names',
                 ],
                 'event_async' => [
                     'default' => ['event-async-default'],
                     'map' => [
                         OrderPlacedEvent::class => ['event-async-map'],
                     ],
-                    'stamp' => 'transport_names',
                 ],
             ],
             'dispatch_modes' => [
@@ -146,19 +141,17 @@ final class CqrsExtensionRegistrarsTest extends TestCase
                     ],
                 ],
             ],
-            'async' => [
-                'dispatch_after_current_bus' => [
-                    'command' => [
-                        'default' => false,
-                        'map' => [
-                            CreateTaskCommand::class => true,
-                        ],
+            'dispatch_after_current_bus' => [
+                'command' => [
+                    'default' => false,
+                    'map' => [
+                        CreateTaskCommand::class => true,
                     ],
-                    'event' => [
-                        'default' => true,
-                        'map' => [
-                            OrderPlacedEvent::class => false,
-                        ],
+                ],
+                'event' => [
+                    'default' => true,
+                    'map' => [
+                        OrderPlacedEvent::class => false,
                     ],
                 ],
             ],
@@ -206,16 +199,7 @@ final class CqrsExtensionRegistrarsTest extends TestCase
             ],
             $container->getParameter('somework_cqrs.transport_names'),
         );
-        self::assertSame(
-            [
-                'command' => 'transport_names',
-                'command_async' => 'transport_names',
-                'query' => 'transport_names',
-                'event' => 'transport_names',
-                'event_async' => 'transport_names',
-            ],
-            $container->getParameter('somework_cqrs.transport_stamp_types'),
-        );
+        self::assertFalse($container->hasParameter('somework_cqrs.transport_stamp_types'));
 
         self::assertTrue($container->hasParameter('somework_cqrs.bus.command'));
         self::assertSame('messenger.default_bus', $container->getParameter('somework_cqrs.bus.command'));

@@ -89,7 +89,9 @@ final class ListHandlersCommand extends Command
      */
     public function __construct(
         private readonly HandlerRegistry $registry,
+        #[Autowire(service: 'somework_cqrs.dispatch_mode_decider')]
         private readonly DispatchModeDecider $dispatchModeDecider,
+        #[Autowire(service: 'somework_cqrs.dispatch_after_current_bus_decider')]
         private readonly DispatchAfterCurrentBusDecider $dispatchAfterCurrentBusDecider,
         #[Autowire(service: 'somework_cqrs.retry.command_resolver')]
         RetryPolicyResolver $commandRetryResolver,
@@ -115,6 +117,7 @@ final class ListHandlersCommand extends Command
         MessageTransportResolver $queryTransportResolver,
         #[Autowire(service: 'somework_cqrs.transports.event_resolver')]
         MessageTransportResolver $eventTransportResolver,
+        #[Autowire(service: 'somework_cqrs.transport_mapping_provider')]
         TransportMappingProvider $transportMappingProvider,
         #[Autowire(service: 'somework_cqrs.transports.command_async_resolver')]
         ?MessageTransportResolver $commandAsyncTransportResolver = null,

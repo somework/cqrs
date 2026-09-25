@@ -67,22 +67,6 @@ abstract class AbstractMessageTypeResolver
         return $this->assertService($key, $this->services->get($key));
     }
 
-    /**
-     * @param list<string> $keys
-     */
-    final protected function resolveFirstAvailable(array $keys): mixed
-    {
-        foreach ($keys as $key) {
-            if (!$this->hasService($key)) {
-                continue;
-            }
-
-            return $this->getService($key);
-        }
-
-        return null;
-    }
-
     abstract protected function assertService(string $key, mixed $service): mixed;
 
     abstract protected function resolveFallback(object $message): mixed;

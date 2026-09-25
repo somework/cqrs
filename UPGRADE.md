@@ -56,7 +56,8 @@ releases.
 1. Before `composer update`, change the code the new version no longer accepts (the build or the
    `cache:clear` script of `composer update` fails otherwise): custom `OutboxStorage` implementations,
    `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`, per-message map keys of deleted classes,
-   `%env()%` values in compile-time options, and the fake buses of your tests (see the sections below).
+   `%env()%` values in compile-time options, the moved configuration options (see
+   [Configuration shape](#configuration-shape)) and the fake buses of your tests (see the sections below).
 2. With the outbox: let the 0.4 relay send what is due, then stop it. Check that every stored transport name
    exists, because 0.4 ignored it and 0.5 sends to it
    (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`).
@@ -152,6 +153,27 @@ typed first parameter and no attribute now fails at compile time with
   asks for generic types on them; declare `@implements Query<ResultType>` to get the result type from
   `QueryBusInterface::ask()`.
 
+### Configuration shape
+
+Every per-message section now has the same shape: an optional global `default`, and per message type a
+`default` and a `map`. Options of 0.4 that moved fail the build with a message naming the new place.
+
+| 0.4 | 0.5 |
+|---|---|
+| `async.dispatch_after_current_bus.<type>` | `dispatch_after_current_bus.<type>` |
+| `naming.<type>: App\Naming` | `naming.<type>.default: App\Naming` |
+| `transports.<section>.stamp` | removed (`transport_names` was the only value) |
+| `retry_policies.<type>.default` (required, `NullRetryPolicy`) | optional; `null` falls back to the new `retry_policies.default` (`NullRetryPolicy`) |
+| `rate_limiting.<type>.map` only | also `rate_limiting.default` and `rate_limiting.<type>.default` |
+
+- A service id or rate limiter name that does not exist now fails the build with the option that names it:
+  `The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\…" does not exist.`
+  (before: `The service "somework_cqrs.retry.command_resolver" has a dependency on a non-existent service …`).
+- A `rate_limiting` `default` is applied per message class: every class gets its own bucket.
+- The container no longer autowires the internal services `DispatchModeDecider`, `DispatchAfterCurrentBusDecider`,
+  `TransportMappingProvider`, `CausationIdContext` and the removed `MessageTransportStampFactory` by class name.
+  They were `@internal`; use the bus facades, `HandlerRegistry` or the console commands instead.
+
 ### Handlers are registered on the async buses
 
 Handlers without an explicit `bus` are registered on the sync bus of their type **and** on the async bus of
@@ -246,7 +268,7 @@ Options the container compilation needs (dispatch modes, transport names, bus id
 `%env(...)%` with a clear message; before, they failed with
 "Incompatible use of dynamic environment variables" or an invalid enum value. Environment variables still work in
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup`, `outbox.max_attempts`
-and the `async.dispatch_after_current_bus` flags.
+and the `dispatch_after_current_bus` flags.
 
 ### Handler attributes must match the handler method
 
@@ -284,7 +306,7 @@ The container build now fails for configuration that used to be silently ignored
 - `causation_id.buses` entries must be existing bus services (aliases are resolved).
 - The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` decide which
   services are registered and can no longer use `%env()%`.
-- Rate limiting is inactive while no limiter is mapped; mapping a limiter without symfony/rate-limiter
+- Rate limiting is inactive while no limiter is configured; configuring a limiter without symfony/rate-limiter
   installed is an error instead of a silent no-op.
 
 ### Idempotency

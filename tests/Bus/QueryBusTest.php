@@ -758,8 +758,7 @@ final class QueryBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $global,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $type,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $type,
         ];
 
         foreach ($map as $class => $serializer) {
@@ -809,8 +808,7 @@ final class QueryBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $global,
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $type,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $type,
         ];
 
         foreach ($map as $class => $provider) {

@@ -21,7 +21,6 @@ use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
@@ -722,7 +721,6 @@ final class EventBusTest extends TestCase
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, EventContract::class),
             new MessageTransportStampDecider(
-                stampFactory: new MessageTransportStampFactory(),
                 commandResolvers: new TransportResolverMap(),
                 queryResolvers: new TransportResolverMap(),
                 eventResolvers: new TransportResolverMap(sync: $transports, async: $asyncTransports),
@@ -743,8 +741,7 @@ final class EventBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $global,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $type,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $type,
         ];
 
         foreach ($map as $class => $serializer) {

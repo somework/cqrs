@@ -302,11 +302,13 @@ the option allows it.
 ### Unknown service id
 
 ```
-The service "somework_cqrs.retry.command_resolver" has a dependency on a non-existent service "app.retry.payment".
+The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\Application\Command\ProcessPayment" does not exist.
+The rate limiter "send_notifications" configured at "somework_cqrs.rate_limiting.command.default" does not exist. Define it under "framework.rate_limiter".
 ```
 
-A service id under `naming`, `retry_policies`, `serialization` or `metadata`
-does not exist. Define the service, or use the fully-qualified name of a
+A service id under `naming`, `retry_policies`, `serialization`, `metadata` or
+`outbox`, or a limiter name under `rate_limiting`, does not exist. The message
+names the option. Define the service, or use the fully-qualified name of a
 concrete class: the bundle registers such classes as services automatically.
 
 ### Environment variable in the configuration
@@ -352,7 +354,7 @@ List bus service ids as declared under `framework.messenger.buses`.
 ### Missing optional packages
 
 ```
-Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove the mappings.
+Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.
 ```
 
 ```

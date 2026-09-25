@@ -17,8 +17,8 @@ use function sprintf;
 /** @internal */
 final class MessageSerializerResolver extends AbstractMessageTypeResolver
 {
-    public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_serializer_global_default';
-    public const TYPE_DEFAULT_KEY = '__somework_cqrs_serializer_type_default';
+    /** Key of the default for the message type (the type default, else the global one). */
+    public const DEFAULT_KEY = '__somework_cqrs_serializer_default';
 
     public function __construct(
         ContainerInterface $serializers,
@@ -32,15 +32,14 @@ final class MessageSerializerResolver extends AbstractMessageTypeResolver
         $serializer = $defaultSerializer ?? new NullMessageSerializer();
 
         return new self(new ServiceLocator([
-            self::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $serializer,
-            self::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $serializer,
+            self::DEFAULT_KEY => static fn (): MessageSerializer => $serializer,
         ]));
     }
 
     public function resolveFor(object $message): MessageSerializer
     {
         /** @var MessageSerializer $serializer */
-        $serializer = $this->resolveService($message, [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY]);
+        $serializer = $this->resolveService($message, [self::DEFAULT_KEY]);
 
         return $serializer;
     }
@@ -67,16 +66,10 @@ final class MessageSerializerResolver extends AbstractMessageTypeResolver
 
     protected function resolveFallback(object $message): MessageSerializer
     {
-        $serializer = $this->resolveFirstAvailable([self::TYPE_DEFAULT_KEY]);
-
-        if (null !== $serializer) {
-            return $serializer;
+        if (!$this->hasService(self::DEFAULT_KEY)) {
+            throw new \LogicException('Serializer resolver must be initialised with a default serializer.');
         }
 
-        if (!$this->hasService(self::GLOBAL_DEFAULT_KEY)) {
-            throw new \LogicException('Serializer resolver must be initialised with a global default serializer.');
-        }
-
-        return $this->getService(self::GLOBAL_DEFAULT_KEY);
+        return $this->getService(self::DEFAULT_KEY);
     }
 }

@@ -17,21 +17,25 @@ somework_cqrs:
     # Message naming strategies
     # naming:
     #     default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
-    #     command: ~                  # Override for commands
-    #     query: ~                    # Override for queries
-    #     event: ~                    # Override for events
-
-    # Retry policies (per-type default + per-message map)
-    # retry_policies:
     #     command:
-    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+    #         default: ~              # Override for commands
+    #     query:
+    #         default: ~              # Override for queries
+    #     event:
+    #         default: ~              # Override for events
+
+    # Retry policies (global default, per-type default, per-message map)
+    # retry_policies:
+    #     default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+    #     command:
+    #         default: ~
     #         map:
     #             App\Message\MyCommand: app.my_retry_policy   # keys must be existing classes or interfaces
     #     query:
-    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+    #         default: ~
     #         map: {}
     #     event:
-    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+    #         default: ~
     #         map: {}
 
     # Transport-level retry strategy using per-message RetryPolicy
@@ -78,35 +82,29 @@ somework_cqrs:
     # Messenger transport names
     # transports:
     #     command:
-    #         stamp: transport_names
     #         default: []
     #         map: {}
     #     command_async:
-    #         stamp: transport_names
     #         default: []
     #         map: {}
     #     query:
-    #         stamp: transport_names
     #         default: []
     #         map: {}
     #     event:
-    #         stamp: transport_names
     #         default: []
     #         map: {}
     #     event_async:
-    #         stamp: transport_names
     #         default: []
     #         map: {}
 
-    # Asynchronous delivery configuration
-    # async:
-    #     dispatch_after_current_bus:
-    #         command:
-    #             default: true
-    #             map: {}
-    #         event:
-    #             default: true
-    #             map: {}
+    # DispatchAfterCurrentBusStamp on asynchronous dispatches
+    # dispatch_after_current_bus:
+    #     command:
+    #         default: true
+    #         map: {}
+    #     event:
+    #         default: true
+    #         map: {}
 
     # Idempotency bridge (DeduplicateStamp integration)
     # idempotency:
@@ -122,14 +120,18 @@ somework_cqrs:
     # sequence:
     #     enabled: true
 
-    # Rate limiting (inactive until a limiter is mapped; mapping one requires symfony/rate-limiter)
+    # Rate limiting (inactive until a limiter is configured; configuring one requires symfony/rate-limiter)
     # rate_limiting:
     #     enabled: true
+    #     default: ~                  # framework.rate_limiter name; one bucket per message class
     #     command:
+    #         default: ~
     #         map: {}
     #     query:
+    #         default: ~
     #         map: {}
     #     event:
+    #         default: ~
     #         map: {}
 
     # Transactional outbox (requires doctrine/dbal and doctrine/doctrine-bundle)

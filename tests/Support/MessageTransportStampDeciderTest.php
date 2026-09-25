@@ -12,7 +12,6 @@ use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
@@ -220,10 +219,8 @@ final class MessageTransportStampDeciderTest extends TestCase
         ?MessageTransportResolver $query = null,
         ?MessageTransportResolver $event = null,
         ?MessageTransportResolver $eventAsync = null,
-        ?MessageTransportStampFactory $factory = null,
     ): MessageTransportStampDecider {
         return new MessageTransportStampDecider(
-            stampFactory: $factory ?? new MessageTransportStampFactory(),
             commandResolvers: new TransportResolverMap(sync: $command, async: $commandAsync),
             queryResolvers: new TransportResolverMap(sync: $query),
             eventResolvers: new TransportResolverMap(sync: $event, async: $eventAsync),

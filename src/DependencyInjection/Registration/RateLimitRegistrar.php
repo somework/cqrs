@@ -18,17 +18,32 @@ final class RateLimitRegistrar
 {
     /**
      * @param array{
-     *     command: array{map: array<string, string>},
-     *     query: array{map: array<string, string>},
-     *     event: array{map: array<string, string>},
+     *     default?: string|null,
+     *     command: array{default?: string|null, map: array<string, string>},
+     *     query: array{default?: string|null, map: array<string, string>},
+     *     event: array{default?: string|null, map: array<string, string>},
      * } $config
      */
-    public function register(ContainerBuilder $container, array $config): void
+    public function register(ContainerBuilder $container, array $config, ?ContainerHelper $helper = null): void
     {
+        $helper ??= new ContainerHelper();
+
         foreach (['command', 'query', 'event'] as $type) {
             $serviceMap = [];
 
+            $default = $config[$type]['default'] ?? null;
+            $defaultPath = sprintf('rate_limiting.%s.default', $type);
+            if (null === $default) {
+                $default = $config['default'] ?? null;
+                $defaultPath = 'rate_limiting.default';
+            }
+            if (null !== $default) {
+                $helper->recordConfiguredService($container, $defaultPath, sprintf('limiter.%s', $default));
+                $serviceMap[RateLimitResolver::DEFAULT_KEY] = new Reference(sprintf('limiter.%s', $default));
+            }
+
             foreach ($config[$type]['map'] as $messageClass => $limiterName) {
+                $helper->recordConfiguredService($container, sprintf('rate_limiting.%s.map.%s', $type, $messageClass), sprintf('limiter.%s', $limiterName));
                 $serviceMap[$messageClass] = new Reference(sprintf('limiter.%s', $limiterName));
             }
 

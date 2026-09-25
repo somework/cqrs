@@ -250,8 +250,8 @@ Turns an `IdempotencyStamp` into Messenger's `DeduplicateStamp`, with the key
 ### DispatchAfterCurrentBusStampDecider (-10)
 
 For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
-`async.dispatch_after_current_bus` disables it for the message. See
-[`async.dispatch_after_current_bus`](reference.md#asyncdispatch_after_current_bus).
+`dispatch_after_current_bus` disables it for the message. See
+[`dispatch_after_current_bus`](reference.md#dispatch_after_current_bus).
 
 ## Creating custom stamp deciders
 

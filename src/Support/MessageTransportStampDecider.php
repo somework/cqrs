@@ -29,22 +29,6 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
  */
 final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 {
-    /**
-     * @var array<string, string>
-     */
-    public const DEFAULT_STAMP_TYPES = [
-        'command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'command_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'query' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-    ];
-
-    /**
-     * @var array<string, string>
-     */
-    private array $stampTypes;
-
     public const DEFAULT_ASYNC_TRANSPORT = 'async';
 
     /**
@@ -58,18 +42,14 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     private array $asynchronousAttributes = [];
 
     /**
-     * @param array<string, string> $stampTypes
-     * @param list<string>          $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
+     * @param list<string> $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
      */
     public function __construct(
-        private readonly MessageTransportStampFactory $stampFactory,
         private readonly TransportResolverMap $commandResolvers,
         private readonly TransportResolverMap $queryResolvers,
         private readonly TransportResolverMap $eventResolvers,
-        array $stampTypes = self::DEFAULT_STAMP_TYPES,
         array $routedMessageTypes = [],
     ) {
-        $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
         $this->routedMessageTypes = array_fill_keys($routedMessageTypes, true);
     }
 
@@ -112,10 +92,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             return $stamps;
         }
 
-        $typeKey = $this->typeKeyFor($message, $mode);
-        $stampType = $this->stampTypes[$typeKey] ?? MessageTransportStampFactory::TYPE_TRANSPORT_NAMES;
-
-        $stamps[] = $this->stampFactory->create($stampType, $transports);
+        $stamps[] = new TransportNamesStamp($transports);
 
         return $stamps;
     }
@@ -130,23 +107,6 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         };
 
         return $map?->resolverFor($mode);
-    }
-
-    private function typeKeyFor(object $message, DispatchMode $mode): ?string
-    {
-        if ($message instanceof Command) {
-            return DispatchMode::ASYNC === $mode ? 'command_async' : 'command';
-        }
-
-        if ($message instanceof Query) {
-            return 'query';
-        }
-
-        if ($message instanceof Event) {
-            return DispatchMode::ASYNC === $mode ? 'event_async' : 'event';
-        }
-
-        return null;
     }
 
     private function asynchronousAttribute(object $message): ?Asynchronous

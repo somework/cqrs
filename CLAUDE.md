@@ -83,6 +83,7 @@ reports messages that were sent to a transport or deduplicated).
 - `OutboxStoragePass` — keeps setup, failed, health and the relay's table report on the DBAL storage when the application decorates `somework_cqrs.outbox.storage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
+- `ValidateConfiguredServicesPass` — every service id and rate limiter named in the configuration exists (the error names the config path)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 - `RemoveHandlerMetadataParameterPass` — drops the handler metadata parameter after `HandlerRegistry` received it
 
@@ -96,7 +97,7 @@ reports messages that were sent to a transport or deduplicated).
 
 ### Configuration
 
-All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Per-type sections (`command`, `query`, `event`) support `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, dispatch modes, dispatch-after-current-bus and rate limiters. Map keys must be existing classes/interfaces and service ids non-empty strings (validated in the tree); `enabled` flags that decide which services exist reject env placeholders.
+All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Every per-message section has one shape: an optional global `default` (retry policies, serialization, metadata, naming, rate limiting) and per type (`command`, `query`, `event`) a `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, dispatch modes, dispatch-after-current-bus and rate limiters. Options moved since 0.4 fail with a "moved to …" message. Map keys must be existing classes/interfaces and service ids non-empty strings (validated in the tree); `enabled` flags that decide which services exist reject env placeholders.
 
 ### Test Structure
 

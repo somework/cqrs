@@ -64,11 +64,9 @@ final class OverridesTestKernel extends Kernel
                     'map' => [CreateTaskCommand::class => ExponentialBackoffRetryPolicy::class],
                 ],
             ],
-            'async' => [
-                'dispatch_after_current_bus' => [
-                    'command' => [
-                        'map' => [CreateTaskCommand::class => false],
-                    ],
+            'dispatch_after_current_bus' => [
+                'command' => [
+                    'map' => [CreateTaskCommand::class => false],
                 ],
             ],
             'retry_strategy' => [

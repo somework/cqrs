@@ -18,6 +18,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\RemoveHandlerMetadataParameterPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateBusIdsPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateConfiguredServicesPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
@@ -34,6 +35,8 @@ final class SomeWorkCqrsBundle extends Bundle
     {
         parent::build($container);
 
+        // Before the passes that use them: the services the configuration names must exist.
+        $container->addCompilerPass(new ValidateConfiguredServicesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 10);
         // Configured bus ids must be Messenger buses before handlers are registered on them.
         $container->addCompilerPass(new ValidateBusIdsPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 2);
         // Before Symfony's MessengerPass (priority 0): normalises handler tags and buses.

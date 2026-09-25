@@ -30,9 +30,12 @@ final class OutboxRegistrar
      * @param bool                                                                                                                             $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
      * @param array<string, string|null>                                                                                                       $buses               The "somework_cqrs.buses" configuration
      */
-    public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus'): void
+    public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus', ?ContainerHelper $helper = null): void
     {
+        $helper ??= new ContainerHelper();
         $connection = $config['connection'] ?? 'default';
+        $helper->recordConfiguredService($container, 'outbox.connection', sprintf('doctrine.dbal.%s_connection', $connection));
+        $helper->recordConfiguredService($container, 'outbox.serializer', $config['serializer'] ?? 'messenger.default_serializer');
 
         $storageDef = new Definition(DbalOutboxStorage::class);
         $storageDef->setArgument('$connection', new Reference(sprintf('doctrine.dbal.%s_connection', $connection)));

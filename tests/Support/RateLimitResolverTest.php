@@ -29,6 +29,20 @@ final class RateLimitResolverTest extends TestCase
         self::assertNull($result);
     }
 
+    public function test_falls_back_to_the_default_limiter_of_the_type(): void
+    {
+        $default = $this->createRealFactory();
+        $mapped = $this->createRealFactory();
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            RateLimitResolver::DEFAULT_KEY => static fn (): RateLimiterFactory => $default,
+            TaskCreatedEvent::class => static fn (): RateLimiterFactory => $mapped,
+        ]));
+
+        self::assertSame($mapped, $resolver->resolveFor(new TaskCreatedEvent('1')));
+        self::assertSame($default, $resolver->resolveFor(new CreateTaskCommand('1', 'Test')));
+    }
+
     public function test_returns_limiter_factory_for_known_message(): void
     {
         $factory = $this->createRealFactory();

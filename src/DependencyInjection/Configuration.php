@@ -15,11 +15,18 @@ use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 
+use function array_filter;
+use function array_flip;
+use function array_intersect_key;
+use function array_key_exists;
+use function array_key_first;
 use function array_keys;
 use function class_exists;
 use function explode;
 use function interface_exists;
+use function is_array;
 use function is_string;
 use function ltrim;
 use function preg_match;
@@ -31,11 +38,14 @@ use function trim;
 /** @internal */
 final class Configuration implements ConfigurationInterface
 {
+    private const TYPES = ['command', 'query', 'event'];
+
     public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder('somework_cqrs');
 
         $rootNode = $treeBuilder->getRootNode();
+        self::rejectMovedOptions($rootNode);
 
         $children = $rootNode->children();
 
@@ -96,16 +106,22 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Message naming strategies used by diagnostics and tooling.');
 
+        $naming->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && [] !== array_filter(array_intersect_key($value, array_flip(self::TYPES)), 'is_string'))
+            ->then(static function (array $value): never {
+                $type = array_key_first(array_filter(array_intersect_key($value, array_flip(self::TYPES)), 'is_string'));
+
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.naming.%1$s" moved to "somework_cqrs.naming.%1$s.default".', $type));
+            })
+        ->end();
+
         $namingChildren = $naming->children();
         self::requireName($namingChildren
             ->scalarNode('default')
             ->defaultValue(ClassNameMessageNamingStrategy::class)
             ->info('Service id implementing MessageNamingStrategy for all message types.'));
-        foreach (['command' => 'commands', 'query' => 'queries', 'event' => 'events'] as $type => $label) {
-            self::requireName($namingChildren
-                ->scalarNode($type)
-                ->defaultNull()
-                ->info(sprintf('Overrides the default naming strategy for %s.', $label)), true);
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($namingChildren, $type, 'MessageNamingStrategy', 'naming', false);
         }
         $namingChildren->end();
         $naming->end();
@@ -116,9 +132,13 @@ final class Configuration implements ConfigurationInterface
             ->info('Retry policy services applied when dispatching messages. Supports per-message overrides.');
 
         $retryChildren = $retry->children();
-        $this->configureRetryPolicySection($retryChildren, 'command');
-        $this->configureRetryPolicySection($retryChildren, 'event');
-        $this->configureRetryPolicySection($retryChildren, 'query');
+        self::requireName($retryChildren
+            ->scalarNode('default')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info('Fallback RetryPolicy service id applied to all messages.'));
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($retryChildren, $type, 'RetryPolicy', 'retry_policies');
+        }
         $retryChildren->end();
         $retry->end();
 
@@ -166,9 +186,9 @@ final class Configuration implements ConfigurationInterface
             ->defaultValue(NullMessageSerializer::class)
             ->info('Fallback MessageSerializer service id applied to all messages.'));
 
-        $this->configureSerializerSection($serializationChildren, 'command');
-        $this->configureSerializerSection($serializationChildren, 'event');
-        $this->configureSerializerSection($serializationChildren, 'query');
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($serializationChildren, $type, 'MessageSerializer', 'serialization');
+        }
         $serializationChildren->end();
         $serialization->end();
 
@@ -183,9 +203,9 @@ final class Configuration implements ConfigurationInterface
             ->defaultValue(RandomCorrelationMetadataProvider::class)
             ->info('Fallback MessageMetadataProvider service id applied to all messages.'));
 
-        $this->configureMetadataSection($metadataChildren, 'command');
-        $this->configureMetadataSection($metadataChildren, 'event');
-        $this->configureMetadataSection($metadataChildren, 'query');
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($metadataChildren, $type, 'MessageMetadataProvider', 'metadata');
+        }
         $metadataChildren->end();
         $metadata->end();
 
@@ -214,14 +234,7 @@ final class Configuration implements ConfigurationInterface
         $transportChildren->end();
         $transports->end();
 
-        $async = $children->arrayNode('async');
-        $async
-            ->addDefaultsIfNotSet()
-            ->info('Asynchronous delivery configuration.');
-
-        $asyncChildren = $async->children();
-
-        $dispatchAfterCurrentBus = $asyncChildren->arrayNode('dispatch_after_current_bus');
+        $dispatchAfterCurrentBus = $children->arrayNode('dispatch_after_current_bus');
         $dispatchAfterCurrentBus
             ->addDefaultsIfNotSet()
             ->info('Controls when DispatchAfterCurrentBusStamp is added to async dispatches.');
@@ -231,9 +244,6 @@ final class Configuration implements ConfigurationInterface
         $this->configureDispatchAfterCurrentBusSection($dispatchAfterChildren, 'event');
         $dispatchAfterChildren->end();
         $dispatchAfterCurrentBus->end();
-
-        $asyncChildren->end();
-        $async->end();
 
         $idempotency = $children->arrayNode('idempotency');
         $idempotency->addDefaultsIfNotSet()->info('Idempotency bridge configuration for DeduplicateStamp integration.');
@@ -270,11 +280,15 @@ final class Configuration implements ConfigurationInterface
         $rateLimitChildren
             ->booleanNode('enabled')
             ->defaultTrue()
-            ->info('Enable rate limiting. Inactive while no limiter is mapped; mapping a limiter requires symfony/rate-limiter.');
+            ->info('Enable rate limiting. Inactive while no limiter is configured; configuring a limiter requires symfony/rate-limiter.');
+        self::requireName($rateLimitChildren
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info('Rate limiter name (framework.rate_limiter) applied to every message; each message class consumes its own bucket.'), true);
 
-        $this->configureRateLimitSection($rateLimitChildren, 'command');
-        $this->configureRateLimitSection($rateLimitChildren, 'query');
-        $this->configureRateLimitSection($rateLimitChildren, 'event');
+        foreach (self::TYPES as $type) {
+            $this->configureRateLimitSection($rateLimitChildren, $type);
+        }
         $rateLimitChildren->end();
         $rateLimiting->end();
 
@@ -318,75 +332,32 @@ final class Configuration implements ConfigurationInterface
         return $treeBuilder;
     }
 
-    private function configureRetryPolicySection(NodeBuilder $parent, string $type): void
+    /**
+     * The shape shared by the per-message service sections: a per-type default that falls back
+     * to the section's global default, and a map of message classes or interfaces to service ids.
+     */
+    private function configureServiceSection(NodeBuilder $parent, string $type, string $contract, string $section, bool $withMap = true): void
     {
         $node = $parent->arrayNode($type);
         $node
             ->addDefaultsIfNotSet()
-            ->info(sprintf('RetryPolicy services applied to %s messages.', $type));
-
-        $children = $node->children();
-        self::requireName($children
-            ->scalarNode('default')
-            ->defaultValue(NullRetryPolicy::class)
-            ->info(sprintf('Fallback RetryPolicy service id applied to %s messages.', $type)));
-
-        $map = $children->arrayNode('map');
-        $map
-            ->useAttributeAsKey('message')
-            ->info('Message-specific RetryPolicy service ids, keyed by message class or interface.');
-        self::requireName($map->scalarPrototype());
-        self::messageKeyedMap($map);
-
-        $children->end();
-        $node->end();
-    }
-
-    private function configureSerializerSection(NodeBuilder $parent, string $type): void
-    {
-        $node = $parent->arrayNode($type);
-        $node
-            ->addDefaultsIfNotSet()
-            ->info(sprintf('MessageSerializer services applied to %s messages.', $type));
+            ->info(sprintf('%s services applied to %s messages.', $contract, $type));
 
         $children = $node->children();
         self::requireName($children
             ->scalarNode('default')
             ->defaultNull()
-            ->info(sprintf('Fallback MessageSerializer service id applied to %s messages. Falls back to serialization.default when null.', $type)), true);
+            ->info(sprintf('%s service id applied to %s messages. Falls back to %s.default when null.', $contract, $type, $section)), true);
 
-        $map = $children->arrayNode('map');
-        $map
-            ->useAttributeAsKey('message')
-            ->defaultValue([])
-            ->info('Message-specific MessageSerializer service ids, keyed by message class or interface.');
-        self::requireName($map->scalarPrototype());
-        self::messageKeyedMap($map);
-
-        $children->end();
-        $node->end();
-    }
-
-    private function configureMetadataSection(NodeBuilder $parent, string $type): void
-    {
-        $node = $parent->arrayNode($type);
-        $node
-            ->addDefaultsIfNotSet()
-            ->info(sprintf('MessageMetadataProvider services applied to %s messages.', $type));
-
-        $children = $node->children();
-        self::requireName($children
-            ->scalarNode('default')
-            ->defaultNull()
-            ->info(sprintf('Fallback MessageMetadataProvider service id applied to %s messages. Falls back to metadata.default when null.', $type)), true);
-
-        $map = $children->arrayNode('map');
-        $map
-            ->useAttributeAsKey('message')
-            ->defaultValue([])
-            ->info('Message-specific MessageMetadataProvider service ids, keyed by message class or interface.');
-        self::requireName($map->scalarPrototype());
-        self::messageKeyedMap($map);
+        if ($withMap) {
+            $map = $children->arrayNode('map');
+            $map
+                ->useAttributeAsKey('message')
+                ->defaultValue([])
+                ->info(sprintf('Message-specific %s service ids, keyed by message class or interface.', $contract));
+            self::requireName($map->scalarPrototype());
+            self::messageKeyedMap($map);
+        }
 
         $children->end();
         $node->end();
@@ -459,6 +430,10 @@ final class Configuration implements ConfigurationInterface
             ->info(sprintf('Rate limiter mappings for %s messages.', $type));
 
         $children = $node->children();
+        self::requireName($children
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info(sprintf('Rate limiter name applied to %s messages. Falls back to rate_limiting.default when null.', $type)), true);
         $map = $children->arrayNode('map');
         $map
             ->useAttributeAsKey('message')
@@ -482,13 +457,14 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info(sprintf('Messenger transports applied to %s messages.', $label));
 
-        $children = $node->children();
+        $node->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && array_key_exists('stamp', $value))
+            ->then(static function () use ($type): never {
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.transports.%s.stamp" was removed: the transports are always applied with a TransportNamesStamp.', $type));
+            })
+        ->end();
 
-        $children
-            ->enumNode('stamp')
-            ->values(['transport_names'])
-            ->defaultValue('transport_names')
-            ->info(sprintf('Messenger stamp type to apply for %s messages.', $label));
+        $children = $node->children();
 
         $default = $children->arrayNode('default');
         $default
@@ -518,6 +494,19 @@ final class Configuration implements ConfigurationInterface
 
         $children->end();
         $node->end();
+    }
+
+    /**
+     * Options of earlier versions fail with where they moved, instead of "Unrecognized option".
+     */
+    private static function rejectMovedOptions(ArrayNodeDefinition $root): void
+    {
+        $root->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && array_key_exists('async', $value))
+            ->then(static function (): never {
+                throw new InvalidConfigurationException('"somework_cqrs.async.dispatch_after_current_bus" moved to "somework_cqrs.dispatch_after_current_bus".');
+            })
+        ->end();
     }
 
     /**
