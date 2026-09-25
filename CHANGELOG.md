@@ -24,7 +24,8 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - Part of the public API (`@api`): `HealthChecker`, `CheckResult` and `CheckSeverity`; `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage`; `HandlerRegistry` and `HandlerDescriptor`; the default implementations named in the configuration (`NullRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NullMessageSerializer`, `RandomCorrelationMetadataProvider`, `ClassNameMessageNamingStrategy`); and `SomeWorkCqrsBundle`.
 - Diagnostics: a warning log when an asynchronous dispatch was handled synchronously because no transport is configured for the message; the bundle logs on its own `cqrs` channel when MonologBundle is installed, with one debug line per dispatch (and one per stamp decider that changed the stamps) instead of three plus one per decider; `NoHandlerException` and `AsyncBusNotConfiguredException` say how to fix the problem; the health check says that a transport can be created instead of calling it valid (the connection is not tested).
 - A query handler declared `: void` or `: never` is a compile error (`ask()` returned `null`).
-- The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered).
+- `somework:cqrs:list` prints a compact table per message type (one table per handler with `--details`), filters with `--message`, and marks retry policies that no transport of `retry_strategy.transports` uses.
+- The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered), and the first `IdempotencyStamp` of a process logs it as a warning.
 
 ### Changed
 - Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus when one is configured.

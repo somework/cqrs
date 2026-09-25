@@ -36,7 +36,7 @@ final class ConsoleCommandKernelTest extends KernelTestCase
 
         $display = $tester->getDisplay(true);
 
-        self::assertStringContainsString('Type', $display);
+        self::assertStringContainsString('Handler', $display);
         self::assertStringContainsString('CreateTaskCommand', $display);
         self::assertStringContainsString('GenerateReportCommand', $display);
         self::assertStringContainsString('FindTaskQuery', $display);

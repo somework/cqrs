@@ -293,7 +293,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   is resolved against the project directory and replaces the directory mapped to the namespace prefix; a namespace
   that no prefix covers is refused unless `--dir` is given.
   Handlers are generated with the attribute and a typed `__invoke()`. Invalid input exits with code 2.
-- `somework:cqrs:list --type=<unknown>` exits with code 2.
+- `somework:cqrs:list --type=<unknown>` exits with code 2. Without `--details` it prints one compact table per
+  message type (message class, handler, bus); `--details` keeps one table per handler.
 
 ### Testing helpers
 

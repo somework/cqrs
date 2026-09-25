@@ -16,6 +16,9 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_map;
+use function is_array;
+
 #[CoversClass(LoggerChannelPass::class)]
 #[CoversClass(CqrsExtension::class)]
 final class LoggerChannelPassTest extends TestCase
@@ -32,10 +35,10 @@ final class LoggerChannelPassTest extends TestCase
         (new LoggerChannelPass())->process($container);
 
         $bus = $container->getDefinition('bus');
-        self::assertSame(new Reference('monolog.logger.cqrs', ContainerInterface::NULL_ON_INVALID_REFERENCE), $bus->getArgument('$logger'));
-        self::assertSame([new Reference('monolog.logger.cqrs')], $bus->getArgument('$nested'));
-        self::assertSame([['setLogger', [new Reference('monolog.logger.cqrs')]]], $bus->getMethodCalls());
-        self::assertSame(new Reference('logger'), $container->getDefinition('app')->getArgument(0), 'Services of the application are left alone.');
+        self::assertSame('@monolog.logger.cqrs (null on invalid)', self::describe($bus->getArgument('$logger')));
+        self::assertSame(['@monolog.logger.cqrs'], self::describe($bus->getArgument('$nested')));
+        self::assertSame([['setLogger', ['@monolog.logger.cqrs']]], self::describe($bus->getMethodCalls()));
+        self::assertSame('@logger', self::describe($container->getDefinition('app')->getArgument(0)), 'Services of the application are left alone.');
     }
 
     public function test_without_the_channel_the_logger_is_kept(): void
@@ -45,7 +48,7 @@ final class LoggerChannelPassTest extends TestCase
 
         (new LoggerChannelPass())->process($container);
 
-        self::assertSame(new Reference('logger'), $container->getDefinition('bus')->getArgument(0));
+        self::assertSame('@logger', self::describe($container->getDefinition('bus')->getArgument(0)));
     }
 
     public function test_the_extension_declares_the_channel_when_monolog_is_installed(): void
@@ -74,5 +77,14 @@ final class LoggerChannelPassTest extends TestCase
         (new CqrsExtension())->prepend($container);
 
         self::assertSame([], $container->getExtensionConfig('monolog'));
+    }
+
+    private static function describe(mixed $value): mixed
+    {
+        if ($value instanceof Reference) {
+            return '@'.$value.(ContainerInterface::NULL_ON_INVALID_REFERENCE === $value->getInvalidBehavior() ? ' (null on invalid)' : '');
+        }
+
+        return is_array($value) ? array_map(self::describe(...), $value) : $value;
     }
 }

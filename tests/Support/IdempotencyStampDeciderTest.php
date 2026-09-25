@@ -14,10 +14,12 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\RecordingLogger;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
+use function array_filter;
 use function array_values;
 
 #[CoversClass(IdempotencyStampDecider::class)]
@@ -52,6 +54,25 @@ final class IdempotencyStampDeciderTest extends TestCase
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_a_problem_is_logged_once_when_a_message_carries_an_idempotency_stamp(): void
+    {
+        $logger = new RecordingLogger();
+        $decider = new IdempotencyStampDecider(logger: $logger, problem: 'the lock store "flock" releases a key as soon as the dispatch returns');
+        $message = new class implements Command {};
+
+        $decider->decide($message, DispatchMode::DEFAULT, []);
+        self::assertFalse($logger->hasRecordContaining('warning', 'IdempotencyStamp'), 'Messages without an IdempotencyStamp are not concerned.');
+
+        $decider->decide($message, DispatchMode::DEFAULT, [new IdempotencyStamp('a')]);
+        $decider->decide($message, DispatchMode::DEFAULT, [new IdempotencyStamp('b')]);
+        $warnings = array_values(array_filter($logger->records, static fn (array $record): bool => 'warning' === $record['level']));
+        self::assertSame([[
+            'level' => 'warning',
+            'message' => 'The IdempotencyStamp of {message} may not prevent duplicates: {problem}',
+            'context' => ['message' => $message::class, 'problem' => 'the lock store "flock" releases a key as soon as the dispatch returns'],
+        ]], $warnings);
+    }
+
     public function test_uses_the_configured_ttl(): void
     {
         $result = (new IdempotencyStampDecider(60.0))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new IdempotencyStamp('key')]);

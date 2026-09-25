@@ -15,9 +15,12 @@ use function class_exists;
 use function is_string;
 use function preg_match;
 use function sprintf;
+use function str_replace;
 
 /**
- * Explains in the container compilation log why IdempotencyStamp would not deduplicate messages.
+ * Explains in the container compilation log why IdempotencyStamp would not deduplicate messages,
+ * and hands the explanation to the stamp decider, which logs it as a warning the first time a
+ * message carries an IdempotencyStamp.
  *
  * Idempotency is enabled by default, so missing pieces are reported instead of failing the build.
  *
@@ -26,6 +29,8 @@ use function sprintf;
 final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
 {
     private const DEDUPLICATE_MIDDLEWARE = 'messenger.middleware.deduplicate_middleware';
+
+    private const DECIDER = 'somework_cqrs.stamp_decider.idempotency';
 
     /** @var Closure(string): bool */
     private readonly Closure $classExists;
@@ -46,13 +51,13 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
         }
 
         if (!($this->classExists)(DeduplicateStamp::class) || !($this->classExists)(Key::class)) {
-            $container->log($this, 'Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.');
+            $this->report($container, 'Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.');
 
             return;
         }
 
         if (!$container->hasDefinition(self::DEDUPLICATE_MIDDLEWARE)) {
-            $container->log($this, 'Idempotency is enabled but Messenger\'s deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").');
+            $this->report($container, 'Idempotency is enabled but Messenger\'s deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").');
 
             return;
         }
@@ -65,11 +70,21 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
         $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $store) : sprintf('"%s"', $store);
 
         if (1 === preg_match('/^in-memory$/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+            $this->report($container, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^(flock|semaphore)(:|$)/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store %s releases a key as soon as the dispatch returns and only lives on one host: a later dispatch with the same key goes through, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+            $this->report($container, sprintf('Idempotency is enabled but the lock store %s releases a key as soon as the dispatch returns and only lives on one host: a later dispatch with the same key goes through, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
-            $container->log($this, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages (asynchronous dispatches with an IdempotencyStamp fail), and a key stays locked while the connection lives, whatever the TTL. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
+            $this->report($container, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages (asynchronous dispatches with an IdempotencyStamp fail), and a key stays locked while the connection lives, whatever the TTL. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
+        }
+    }
+
+    private function report(ContainerBuilder $container, string $problem): void
+    {
+        $container->log($this, $problem);
+
+        if ($container->hasDefinition(self::DECIDER)) {
+            // "%" would read as a parameter (the advice contains "%env(LOCK_DSN)%").
+            $container->getDefinition(self::DECIDER)->setArgument('$problem', str_replace('%', '%%', $problem));
         }
     }
 

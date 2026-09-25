@@ -36,8 +36,10 @@ composer require symfony/lock
 ```
 
 A missing piece never breaks the build, because idempotency is enabled by default. Instead,
-the `IdempotencyStamp` is ignored and nothing is deduplicated. The container compilation log
-says what is missing. In debug mode, Symfony writes it to
+the `IdempotencyStamp` is ignored and nothing is deduplicated. The first message that carries
+an `IdempotencyStamp` in a process logs a warning with the reason (`The IdempotencyStamp of
+App\Command\ChargePayment may not prevent duplicates: …`), and the container compilation log
+says the same. In debug mode, Symfony writes it to
 `var/cache/<env>/<ContainerClass>Compiler.log`:
 
 ```bash

@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
+use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -16,6 +17,8 @@ use Symfony\Component\Lock\PersistingStoreInterface;
 use Symfony\Component\Lock\Store\StoreFactory;
 use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
+
+use function str_replace;
 
 #[CoversClass(ValidateIdempotencyDependenciesPass::class)]
 final class ValidateIdempotencyDependenciesPassTest extends TestCase
@@ -130,6 +133,22 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         $log = $container->getCompiler()->getLog();
         self::assertCount(1, $log);
         self::assertStringContainsString('"flock" (the environment value when the container was compiled)', $log[0]);
+    }
+
+    public function test_hands_the_problem_to_the_stamp_decider(): void
+    {
+        // The decider logs it as a warning the first time a message carries an IdempotencyStamp.
+        $container = $this->containerWithLockStore('flock');
+        $container->register('somework_cqrs.stamp_decider.idempotency', IdempotencyStampDecider::class);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $problem = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$problem');
+        self::assertIsString($problem);
+        self::assertStringContainsString('releases a key as soon as the dispatch returns', $problem);
+        // Escaped: the advice names "%env(LOCK_DSN)%", which must not become an environment variable.
+        self::assertStringContainsString('"%%env(LOCK_DSN)%%"', $problem);
+        self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
     }
 
     private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder

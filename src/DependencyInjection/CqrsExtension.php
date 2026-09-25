@@ -43,8 +43,6 @@ use Symfony\Component\DependencyInjection\Extension\Extension;
 use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
-use Symfony\Component\Lock\Key;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
@@ -151,10 +149,9 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
         }
 
+        // Registered without symfony/lock too, so the first IdempotencyStamp logs that it is ignored.
         $idempotencyConfig = $config['idempotency'];
-        $idempotencyConfig['enabled'] = true === $idempotencyConfig['enabled']
-            && ($this->classExists)(DeduplicateStamp::class)
-            && ($this->classExists)(Key::class);
+        $idempotencyConfig['enabled'] = true === $idempotencyConfig['enabled'];
 
         $rateLimitConfig = $config['rate_limiting'];
         $rateLimitConfig['enabled'] = $rateLimitingActive;

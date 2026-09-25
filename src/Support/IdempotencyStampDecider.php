@@ -19,15 +19,23 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  * middleware can still read the key; a DeduplicateStamp passed by the caller wins.
  *
  * Runs for all message types (does NOT implement MessageTypeAwareStampDecider).
- * No-op when symfony/lock is not installed (DeduplicateStamp requires it).
+ * No-op when symfony/lock is not installed (DeduplicateStamp requires it); the first
+ * IdempotencyStamp then logs why.
  *
  * @internal
  */
 final class IdempotencyStampDecider implements StampDecider
 {
+    private bool $problemReported = false;
+
+    /**
+     * @param string|null $problem Why deduplication does not work (missing packages, a lock store
+     *                             that cannot hold keys), logged as a warning once per process
+     */
     public function __construct(
         private readonly float $defaultTtl = 300.0,
         private readonly ?LoggerInterface $logger = null,
+        private readonly ?string $problem = null,
     ) {
     }
 
@@ -48,6 +56,14 @@ final class IdempotencyStampDecider implements StampDecider
 
         if (null === $idempotencyStamp) {
             return $stamps;
+        }
+
+        if (null !== $this->problem && !$this->problemReported) {
+            $this->problemReported = true;
+            $this->logger?->warning('The IdempotencyStamp of {message} may not prevent duplicates: {problem}', [
+                'message' => $message::class,
+                'problem' => $this->problem,
+            ]);
         }
 
         // DeduplicateStamp exists since symfony/messenger 7.3 and requires symfony/lock.

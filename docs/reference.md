@@ -692,7 +692,7 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 
 | Command | Arguments and options | Exit codes |
 |---------|-----------------------|------------|
-| `somework:cqrs:list` | `[--type=TYPE ...] [--details]` | `0`; `2` for an unknown `--type` |
+| `somework:cqrs:list` | `[--type=TYPE ...] [--message=TEXT] [--details]` | `0`; `2` for an unknown `--type` |
 | `somework:cqrs:generate` | `<type> <name> [--handler=FQCN] [--dir=DIR] [--force]` | `0`; `1` when a file exists (without `--force`) or cannot be written; `2` for an invalid type, class name or path |
 | `somework:cqrs:debug-transports` | none | `0` |
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
@@ -703,10 +703,13 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 
 ### somework:cqrs:list
 
-Prints one table per handler and bus with the type, display name of the message
-(see [`naming`](#naming)), handler class, service id and bus. `--type` accepts
-`command`, `query` or `event` and can be repeated. `--details` adds the
-configuration the bundle resolves for the message:
+Prints one table per message type with a row per handler and bus: the message
+class, its display name when the [`naming`](#naming) strategy gives it another
+name than the class name, the handler class and the bus. `--type` accepts
+`command`, `query` or `event` and can be repeated; `--message` keeps the messages
+whose class or display name contains the text (case-insensitive). `--details`
+prints one table per handler with its service id and the configuration the
+bundle resolves for the message:
 
 * **Dispatch Mode**: the mode used for `DispatchMode::DEFAULT`.
 * **Async Defers**: whether async dispatches get `DispatchAfterCurrentBusStamp`
@@ -715,7 +718,8 @@ configuration the bundle resolves for the message:
   `transports` configuration (`None` when nothing is configured, so Messenger
   routing applies; `n/a` for the async column of queries).
 * **Retry Policy**, **Serializer**, **Metadata Provider**: the resolved service
-  classes.
+  classes. A retry policy other than `NullRetryPolicy` is marked as not used while
+  no transport is listed under `retry_strategy.transports`.
 
 The details are resolved on an instance created without calling the
 constructor; they show `n/a` for abstract classes and interfaces.

@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -24,12 +25,17 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
+use function array_filter;
 use function class_exists;
 use function count;
 use function implode;
 use function in_array;
 use function is_string;
 use function sprintf;
+use function str_starts_with;
+use function stripos;
+use function strrpos;
+use function substr;
 
 /** @internal */
 #[AsCommand(
@@ -77,6 +83,9 @@ final class ListHandlersCommand extends Command
      */
     private readonly array $transportMappings;
 
+    /**
+     * @param array<string, string> $retryStrategyTransports Transports whose retries follow the retry policies, with their message type
+     */
     public function __construct(
         private readonly HandlerRegistry $registry,
         private readonly DispatchModeDecider $dispatchModeDecider,
@@ -110,6 +119,8 @@ final class ListHandlersCommand extends Command
         ?MessageTransportResolver $commandAsyncTransportResolver = null,
         #[Autowire(service: 'somework_cqrs.transports.event_async_resolver')]
         ?MessageTransportResolver $eventAsyncTransportResolver = null,
+        #[Autowire(param: 'somework_cqrs.retry_strategy.transports')]
+        private readonly array $retryStrategyTransports = [],
     ) {
         parent::__construct();
 
@@ -149,7 +160,8 @@ final class ListHandlersCommand extends Command
     {
         $this
             ->addOption('details', mode: InputOption::VALUE_NONE, description: 'Display resolved configuration details for each handler.')
-            ->addOption('type', mode: InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, description: 'Filter by message type (command, query, event).');
+            ->addOption('type', mode: InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, description: 'Filter by message type (command, query, event).')
+            ->addOption('message', mode: InputOption::VALUE_REQUIRED, description: 'Only messages whose class or name contains this text (case-insensitive).');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -168,19 +180,25 @@ final class ListHandlersCommand extends Command
         }
 
         $showDetails = (bool) $input->getOption('details');
+        $filter = $input->getOption('message');
+        $filter = is_string($filter) && '' !== $filter ? $filter : null;
 
         $rowsByType = [];
         foreach ($types as $type) {
             $descriptors = $this->registry->byType($type);
             $rows = [];
             foreach ($descriptors as $descriptor) {
+                if (null !== $filter && false === stripos($descriptor->messageClass, $filter) && false === stripos($this->registry->getDisplayName($descriptor), $filter)) {
+                    continue;
+                }
+
                 $rows[] = $this->formatDescriptor($descriptor, $showDetails);
             }
 
             if ([] !== $rows) {
                 usort(
                     $rows,
-                    static fn (array $a, array $b): int => [$a['Message'], $a['Handler']] <=> [$b['Message'], $b['Handler']]
+                    static fn (array $a, array $b): int => [$a['Class'], $a['Handler'], $a['Bus']] <=> [$b['Class'], $b['Handler'], $b['Bus']]
                 );
 
                 $rowsByType[$type] = $rows;
@@ -246,6 +264,7 @@ final class ListHandlersCommand extends Command
         $row = [
             'Type' => ucfirst($descriptor->type),
             'Message' => $this->registry->getDisplayName($descriptor),
+            'Class' => $descriptor->messageClass,
             'Handler' => $descriptor->handlerClass,
             'Service Id' => $descriptor->serviceId,
             'Bus' => $descriptor->bus ?? 'default',
@@ -295,6 +314,11 @@ final class ListHandlersCommand extends Command
             $message,
             static fn (MessageMetadataProviderResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
+
+        // The policies only take effect on the transports that use the bundle's retry strategy.
+        if ([] === $this->retryStrategyTransports && 'n/a' !== $retry && NullRetryPolicy::class !== $retry && !str_starts_with($retry, 'error: ')) {
+            $retry .= ' (not used: no transport is listed under somework_cqrs.retry_strategy.transports)';
+        }
 
         $details = [
             'Dispatch Mode' => $dispatchMode,
@@ -450,19 +474,32 @@ final class ListHandlersCommand extends Command
     }
 
     /**
+     * One row per handler and bus; with --details, one table per handler with its configuration.
+     *
      * @param list<array<string, string>> $rows
      */
     private function renderTable(OutputInterface $output, array $rows, bool $showDetails): void
     {
+        if (!$showDetails) {
+            // The name of the naming strategy only when it says more than the class name.
+            $named = [] !== array_filter($rows, static fn (array $row): bool => $row['Message'] !== self::shortName($row['Class']));
+
+            $table = new Table($output);
+            $table->setHeaders($named ? ['Message', 'Name', 'Handler', 'Bus'] : ['Message', 'Handler', 'Bus']);
+            $table->setRows(array_map(
+                static fn (array $row): array => $named ? [$row['Class'], $row['Message'], $row['Handler'], $row['Bus']] : [$row['Class'], $row['Handler'], $row['Bus']],
+                $rows,
+            ));
+            $table->render();
+
+            return;
+        }
+
         $total = count($rows);
 
         foreach ($rows as $index => $row) {
             $tableRows = [];
             foreach ($row as $label => $value) {
-                if (!$showDetails && !in_array($label, ['Type', 'Message', 'Handler', 'Service Id', 'Bus'], true)) {
-                    continue;
-                }
-
                 $tableRows[] = [$label, $value];
             }
 
@@ -476,5 +513,12 @@ final class ListHandlersCommand extends Command
                 $output->writeln('');
             }
         }
+    }
+
+    private static function shortName(string $class): string
+    {
+        $position = strrpos($class, '\\');
+
+        return false === $position ? $class : substr($class, $position + 1);
     }
 }
