@@ -93,6 +93,7 @@ final class OutboxRegistrar
         $writerDef->setArgument('$storage', new Reference(OutboxStoragePass::STORAGE_ID));
         $writerDef->setArgument('$serializer', $serializer);
         $writerDef->setArgument('$transports', new Reference('somework_cqrs.stamp_decider.message_transport', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        $writerDef->setArgument('$causation', new Reference('somework_cqrs.causation_id_context', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $writerDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.writer', $writerDef);
         $container->setAlias(OutboxWriter::class, 'somework_cqrs.outbox.writer')->setPublic(false);

@@ -52,8 +52,14 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 {
     use LockableTrait;
 
-    /** Seconds between two extensions of the relay lock (its TTL is 300 seconds). */
+    /** Seconds between two extensions of the relay lock. */
     private const LOCK_REFRESH_SECONDS = 10;
+
+    /**
+     * TTL of the relay lock. A relay killed without cleanup (SIGKILL, OOM kill) keeps the next
+     * runs out until it expires; a running relay extends it every LOCK_REFRESH_SECONDS.
+     */
+    public const LOCK_TTL_SECONDS = 60.0;
 
     /** When the relay lock was last extended. */
     private ?float $lockRefreshedAt = null;
@@ -135,7 +141,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
         // Overlapping runs (cron) would publish the same rows twice.
         try {
-            if (class_exists(LockFactory::class) && !$this->lock($this->lockName)) {
+            if (class_exists(LockFactory::class) && !$this->acquireLock()) {
                 $io->note('Another outbox relay is already running.');
 
                 return self::SUCCESS;
@@ -269,6 +275,22 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      * A PHP fatal error (e.g. running out of memory) skips "finally" blocks and destructors, so a
      * lock store with a TTL would keep the next runs out until the lock expires.
      */
+    private function acquireLock(): bool
+    {
+        // Without the application's lock factory, LockableTrait creates a local store.
+        if (null === $this->lockFactory) {
+            return $this->lock($this->lockName);
+        }
+
+        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS);
+        if (!$lock->acquire()) {
+            return false;
+        }
+        $this->lock = $lock;
+
+        return true;
+    }
+
     private function releaseLockOnShutdown(): void
     {
         if ($this->releasesLockOnShutdown) {

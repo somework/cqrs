@@ -560,6 +560,13 @@ bin/console messenger:consume async_commands --time-limit=300
 **Removing or renaming a property** loses the data of queued messages or makes
 them fail to decode.
 
+**Stamps are serialized too.** A worker running an older version of a library
+cannot decode a message carrying a stamp class that version does not have: with
+OpenTelemetry enabled, this bundle adds `TraceContextStamp` since 0.5, so 0.4
+workers must be stopped before 0.5 code dispatches. Deploy workers before (or
+with) the code that dispatches, and roll back only once the queues hold no
+message of the newer version.
+
 **Adding a property** depends on the serializer:
 
 * Messenger's default PHP serializer restores objects without calling the

@@ -10,6 +10,8 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -76,6 +78,26 @@ final class OutboxWriterTest extends TestCase
         self::assertSame('task-2@async', (string) (new PhpSerializer())->decode(['body' => $single[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
         $routed = $writer->store(new CreateTaskCommand('3', 'c'), null, new DeduplicateStamp('task-3'));
         self::assertSame('task-3', (string) (new PhpSerializer())->decode(['body' => $routed[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
+    }
+
+    public function test_a_message_stored_by_a_handler_continues_its_flow(): void
+    {
+        $context = new CausationIdContext();
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), null, $context);
+        $handled = new MessageMetadataStamp('flow', [], null, 'handled-message');
+        $decode = static fn ($row) => (new PhpSerializer())->decode(['body' => $row->body, 'headers' => []])->last(MessageMetadataStamp::class);
+
+        self::assertNull($decode($writer->store(new CreateTaskCommand('1', 'a'), 'async')[0]), 'Outside a handler nothing is added.');
+
+        $context->push($handled);
+        $child = $decode($writer->store(new CreateTaskCommand('2', 'b'), 'async')[0]);
+        self::assertInstanceOf(MessageMetadataStamp::class, $child);
+        self::assertSame('flow', $child->getCorrelationId());
+        self::assertSame('handled-message', $child->getCausationId());
+        self::assertNotSame('handled-message', $child->getMessageId());
+
+        $own = new MessageMetadataStamp('own');
+        self::assertSame('own', $decode($writer->store(new CreateTaskCommand('3', 'c'), 'async', $own)[0])?->getCorrelationId(), 'A stamp passed by the caller is kept.');
     }
 
     public function test_without_a_configured_transport_the_row_follows_the_routing(): void

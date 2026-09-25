@@ -6,8 +6,10 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DbalException;
+use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
@@ -1316,6 +1318,47 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $status->retrying);
         self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
         self::assertSame(1, $status->failed);
+    }
+
+    public function test_the_table_gets_the_default_table_options_of_the_connection(): void
+    {
+        // e.g. a database whose default charset is latin1, used through a utf8mb4 connection.
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            self::markTestSkipped('Table options (charset, collation) are specific to MySQL and MariaDB.');
+        }
+
+        $connection = DriverManager::getConnection([...$this->connection->getParams(), 'defaultTableOptions' => ['charset' => 'utf8mb4', 'collation' => 'utf8mb4_bin']]);
+        (new DbalOutboxStorage($connection))->setup();
+
+        self::assertSame('utf8mb4_bin', $connection->fetchOne('SELECT TABLE_COLLATION FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', ['somework_cqrs_outbox']));
+    }
+
+    public function test_marking_as_published_is_retried_after_serialization_failures(): void
+    {
+        // e.g. overlapping relays at SERIALIZABLE isolation: a failure would send the messages again.
+        $failures = new BeforeQueryMiddleware('published_at = ');
+        $connection = TestDatabase::connect(null, [$failures]);
+        $storage = new DbalOutboxStorage($connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
+
+        $remaining = 3;
+        $fail = static function () use (&$remaining, $failures, &$fail): void {
+            if ($remaining-- > 0) {
+                $failures->callback = $fail;
+
+                // Retryable on every platform: SQLite "database is locked", PostgreSQL 40001, MySQL 1213.
+                throw new class('database is locked', '40001', 1213) extends AbstractException {};
+            }
+        };
+        $failures->callback = $fail;
+        $storage->markPublished([self::ID_1]);
+        self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(10)));
+
+        $remaining = 6;
+        $failures->callback = $fail;
+        $this->expectException(RetryableException::class);
+        $storage->markPublished([self::ID_2]);
     }
 
     public function test_status_reports_unfinished_claims(): void

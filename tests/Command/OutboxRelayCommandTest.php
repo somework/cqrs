@@ -23,6 +23,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CountingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnavailableTransport;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -477,7 +478,7 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertSame(1, $this->storage->attempts($message->id));
         self::assertNull($this->storage->failures[$message->id]['retryAt']);
-        self::assertStringContainsString('The transport "async_events" does not exist.', $this->storage->failures[$message->id]['error']);
+        self::assertStringContainsString('The transport "async_events" does not exist (is the row from another application sharing this table?)', $this->storage->failures[$message->id]['error']);
         self::assertStringContainsString('--requeue --transport=<name> '.$message->id, self::display($tester));
         self::assertCount(1, $this->async->getSent(), 'The other messages are relayed.');
     }
@@ -1057,6 +1058,20 @@ final class OutboxRelayCommandTest extends TestCase
             self::assertStringContainsString('deduplication dropped this retry', (string) $this->storage->lastError($message->id));
         }
         self::assertTrue($this->storage->isPublished($first->id), 'A first attempt dropped as a duplicate of another message is done.');
+    }
+
+    public function test_the_lock_expires_soon_after_a_killed_relay(): void
+    {
+        // A relay killed without cleanup (SIGKILL, OOM kill) keeps the next runs out until the
+        // lock expires; a running relay extends it every 10 seconds.
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $store = new RecordingLockStore();
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory($store)));
+        self::assertSame(Command::SUCCESS, $tester->execute([]));
+
+        self::assertNotSame([], $store->ttls);
+        self::assertSame([OutboxRelayCommand::LOCK_TTL_SECONDS], array_values(array_unique($store->ttls)));
     }
 
     public function test_stops_when_the_lock_is_lost(): void

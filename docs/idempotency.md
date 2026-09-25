@@ -80,7 +80,9 @@ final class PaymentService
         try {
             return $this->commandBus->dispatchSync(new ChargePayment($orderId), new IdempotencyStamp($orderId));
         } catch (DuplicateMessageException $e) {
-            // Charged recently (within the TTL): $e->deduplicationKey === 'App\Application\Command\ChargePayment::<orderId>'
+            // Dispatched recently (within the TTL): $e->deduplicationKey === 'App\Application\Command\ChargePayment::<orderId>'.
+            // Usually charged already, or in progress; after a killed process the charge may not have
+            // run (see "Lock lifetime"), so check the order's state before reporting success.
             return null;
         }
     }
@@ -159,6 +161,8 @@ With `onlyDeduplicateInQueue = false`, the lock lives as follows:
 |-----------|------|
 | Handled synchronously, handler succeeded | Held until the TTL expires. Further dispatches with the key are dropped during that window. |
 | Handled synchronously, handler threw | **Released immediately** by the bundle's `DeduplicationLockReleaseMiddleware`, so the caller can retry with the same key at once. The same applies when sending to a transport fails. |
+| Handled synchronously, PHP fatal error (memory or time limit) | Released when PHP shuts down, by a shutdown function of the same middleware. |
+| Handled synchronously, process killed (SIGKILL, OOM killer) | Held until the TTL expires: a retry is reported as a duplicate although the handler did not finish. Keep the TTL short for operations the caller retries, and do not treat `DuplicateMessageException` as proof that the operation succeeded. |
 | Sent to a transport | Held while the message waits in the queue and while a worker handles it. Released after the worker handled it successfully. |
 | Worker handler threw | Kept. It is released when a Messenger retry of the message succeeds, and otherwise expires with the TTL. |
 | Queue wait or processing longer than the TTL | The lock expires, and a new dispatch with the same key goes through. |

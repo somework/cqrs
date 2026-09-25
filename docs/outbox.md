@@ -95,7 +95,6 @@ use App\Application\Event\OrderPlaced;
 use Doctrine\DBAL\Connection;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
-use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 
 #[AsCommandHandler(command: PlaceOrder::class)]
 final class PlaceOrderHandler
@@ -114,11 +113,9 @@ final class PlaceOrderHandler
                 'customer_id' => $command->customerId,
             ]);
 
-            $this->outbox->store(
-                new OrderPlaced($command->orderId),
-                null, // the transports an async dispatch would use
-                MessageMetadataStamp::createWithRandomCorrelationId(),
-            );
+            // Stored while this handler runs, the event continues the flow of PlaceOrder:
+            // same correlation id, PlaceOrder as its cause (pass a MessageMetadataStamp to override).
+            $this->outbox->store(new OrderPlaced($command->orderId));
         });
 
         return null;
@@ -454,8 +451,9 @@ What happens in special cases:
   While the relay waits for another process to add the columns to the table (at most 30
   seconds, on upgrade day), the first signal takes effect after that wait.
 - **Only one relay runs at a time.** When `symfony/lock` is installed, the command takes a
-  lock named after the application, the connection and the table, and extends it after
-  every row; if the lock is lost, the run stops with exit code `1`. The application part is
+  lock named after the application, the connection and the table. The lock expires after 60
+  seconds, and the relay extends it every 10 seconds between rows; if the lock is lost, the run
+  stops with exit code `1`. The application part is
   `framework.cache.prefix_seed` when you set it, the project directory otherwise (Symfony's
   default seed is not used: it differs between environments and debug modes). If every
   release is deployed to a new directory, set `prefix_seed` to a stable value (Symfony
@@ -466,8 +464,9 @@ What happens in special cases:
   one host, so configure a shared store in `framework.lock` (Redis, a database, …) when
   cron runs the relay on several servers. A second relay that finds the lock taken prints
   `Another outbox relay is already running.` and exits with `0`. After a PHP fatal error the
-  relay still releases the lock (in a shutdown function), so a store with a TTL does not keep
-  the next runs out until the lock expires.
+  relay still releases the lock (in a shutdown function). A relay killed without cleanup
+  (SIGKILL, the OOM killer, a container stopped after its grace period) cannot: the next runs
+  exit with `0` without relaying until the lock expires, at most 60 seconds later.
 - **Relays that overlap anyway skip each other's rows.** Without `symfony/lock`, or with a
   lock store that only guards one host, two relays can run at the same time. The claim keeps
   them from sending the same row twice: a relay that finds a row claimed by the other one
@@ -478,7 +477,8 @@ What happens in special cases:
   slow row itself, and the rows sent in the 2 seconds before it, which are not marked as
   published yet. Claims are computed with the clock of the relay host: keep the clocks of the
   relay hosts synchronised (NTP). The relay lock is also only extended between sends, so a
-  single send that outlasts its TTL (300 seconds) lets another relay start.
+  single send that outlasts its TTL (60 seconds) lets another relay start; the claims keep it
+  from sending the rows of the slow relay's batch until they run out.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -520,7 +520,7 @@ bin/console somework:cqrs:outbox:failed --requeue --transport=async <id>   # and
 Requeued rows start again with `attempts = 0` and no `last_error`.
 
 A row stored for a transport that does not exist (a typo, a renamed transport) is given up on
-its first run, without an attempt: `The transport "<name>" does not exist. Fix the code that
+its first run, without an attempt: `The transport "<name>" does not exist (is the row from another application sharing this table?). Fix the code that
 stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> <id>".`
 
 When the relay process dies during an attempt (a PHP fatal error, running out of memory, a
@@ -872,6 +872,16 @@ times the size of the largest message in memory: decoding and sending copy it.
   not supported.
 - **One database.** The outbox table must be reachable through the same connection and
   transaction as your business data. Distributed transactions are not supported.
+- **One table per application.** The relay of an application sends every row of its table:
+  a second application (or kernel) sharing the table would have its rows given up as
+  unsigned or badly signed (another secret) or for an unknown transport, or sent by the wrong
+  relay. Give each application its own `table_name`, schema or database.
+- **Long transactions slow the relay on PostgreSQL.** While any transaction holds an old
+  snapshot (a long report, `pg_dump` on the primary, an idle-in-transaction session), the
+  rows relayed since stay in the index as dead entries, and every fetch walks them: relaying
+  gets slower the longer the snapshot is held, until it ends (then autovacuum cleans up).
+  Keep long transactions off the primary (run `pg_dump` against a replica), and watch
+  `pg_stat_activity` for `idle in transaction` sessions. Larger `--limit` runs suffer less.
 - **Given-up rows wait for you.** Rows the relay gave up on stay in the table until you
   requeue or delete them. Once a row is relayed, Messenger's retry and failure transports
   take over.

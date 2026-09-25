@@ -19,7 +19,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - `#[AsEventHandler(priority: …, fromTransport: …)]`; a `fromTransport` that names no Messenger transport fails the build.
 - `TraceContextStamp`: the W3C trace context travels from the dispatching process to the worker.
 - `MessageMetadataStamp::getMessageId()`: every message has its own id.
-- `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock.
+- `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock, also after a PHP fatal error (in a shutdown function).
 
 **Configuration**
 - A global `default` for `retry_policies` and `rate_limiting`, and a per-type `default` for `rate_limiting`.
@@ -27,7 +27,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A service id or rate limiter that does not exist, or a service that does not implement the interface its option needs, fails the build with the configuration path that names it.
 
 **Transactional outbox**
-- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (the key of a `DeduplicateStamp` is scoped to the row's transport); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
+- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (the key of a `DeduplicateStamp` is scoped to the row's transport, and a message stored while a handler runs continues the flow of the handled message: same correlation id, the handled message as cause); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
 - The commands `somework:cqrs:outbox:setup`, `…:failed` (list, `--requeue`, `--transport`, `--sign`) and `…:purge`; the options `outbox.storage`, `connection`, `serializer`, `auto_setup`, `max_attempts` and `signing`.
 - Retries with an exponential backoff (1 minute up to 1 hour); a row is given up after `outbox.max_attempts` attempts, or three times as many when its transport fails.
 - The relay claims each fetched batch with a token of its run before sending, and renews the claims of its batch every 20 seconds, so a slow send does not let another relay take them over. A row whose attempt was interrupted (the process died) is retried on its own, keeps the error of the attempt before, and is given up after three times `max_attempts`. Unattempted claims are released, also when a send throws, and sent rows are marked as published at most 2 seconds later, also while a slow send is running.
@@ -36,7 +36,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - Signed rows (HMAC-SHA256, `outbox.signing`, on by default with `framework.secret`): the relay only decodes rows with a valid signature. `previous_secrets` supports a rotation, and `accept_unsigned` lets rows of 0.4 drain.
 - Capability interfaces `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` and `OutboxMonitoring`, with the `FailedOutboxMessage` and `OutboxStatus` DTOs. With them, setup, failed and health work with any storage, also behind a decorator. The interfaces are autowired to the configured storage when it implements them.
 - `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header and a digest of the body, refuses to sign a row whose type header names another class, and signs only the bodies it showed. `--transport` needs the ids of the messages.
-- A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds.
+- A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds; it expires after 60 seconds, so a killed relay blocks the next runs for at most a minute. Marking rows as published is retried up to 5 times after a deadlock or serialization failure.
 - SIGTERM and SIGINT stop the relay after the current row with exit code 1; after a PHP fatal error it still releases its lock.
 - An outbox check in `somework:cqrs:health`: given-up rows, failing rows, due rows waiting more than 10 minutes, claims that ran out more than 10 minutes ago without a relay taking them over, and a table that needs the setup command. Counts stop at 10 000 rows.
 - The indexes `idx_<table>_pending` for the relay and `idx_<table>_claimed` for the health check. `setup` builds it with `CREATE INDEX CONCURRENTLY` on PostgreSQL, and serialises concurrent setups with a database lock. It gives up after 5 seconds instead of blocking writes, notices a transaction pooler, and exits with `128 + signal`.
@@ -142,7 +142,8 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
   - marked rows as published when their message class could not be loaded (symfony/messenger 7.4+);
   - marked a retry as published when Messenger's deduplication dropped it because an earlier attempt of the same row still held the lock;
   - dispatched relayed messages on the default bus;
-  - added its table to the schema of every connection.
+  - added its table to the schema of every connection;
+  - created its table without the default table options of the connection (e.g. a latin1 table in a latin1 database used through a utf8mb4 connection, which then failed on 4-byte characters).
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.
 - `somework:cqrs:generate` could write outside the PSR-4 layout and the project directory, generated code that did not compile, and left half a skeleton behind on failure.
 - `FakeQueryBus` ignored a configured `null` result, and the fake buses returned envelopes without the dispatched stamps.

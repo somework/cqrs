@@ -393,7 +393,7 @@ final class OutboxRelay
         // A stored transport that does not exist (a typo, a renamed transport) fails every attempt:
         // give the message up at once, to be requeued with the right transport name.
         if (null !== $message->transportName && null !== $this->transports && !$this->transports->has($message->transportName)) {
-            return $this->giveUp($message, $attempt, sprintf('The transport "%s" does not exist. Fix the code that stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> %s".', $message->transportName, $message->id), $reporter);
+            return $this->giveUp($message, $attempt, sprintf('The transport "%s" does not exist (is the row from another application sharing this table?). Fix the code that stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> %s".', $message->transportName, $message->id), $reporter);
         }
 
         // Only rows this application signed reach the serializer (PHP's unserialize() by default).
@@ -430,7 +430,7 @@ final class OutboxRelay
             return sprintf('The message is not signed, so it was not decoded: it was stored before outbox signing was enabled, by code that bypasses the OutboxStorage service, or by someone else. Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s" (or set "somework_cqrs.outbox.signing.accept_unsigned" while rows of an earlier version drain).', $message->id);
         }
 
-        return sprintf('The signature of the message does not match, so it was not decoded: the row was changed or written by someone else, or signed with a secret that is no longer configured (add it to "somework_cqrs.outbox.signing.previous_secrets"). Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s".', $message->id);
+        return sprintf('The signature of the message does not match, so it was not decoded: the row was changed or written by someone else (another application sharing this table?), or signed with a secret that is no longer configured (add it to "somework_cqrs.outbox.signing.previous_secrets"). Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s".', $message->id);
     }
 
     /**

@@ -343,7 +343,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
         $this->ensureTableExists();
 
-        $this->retryOnce(fn (): int|string => $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
+        // Idempotent, and a failure makes the relay send these messages again: retry serialization
+        // failures and deadlocks (e.g. overlapping relays at SERIALIZABLE isolation) a few times.
+        $this->retry(5, fn (): int|string => $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
             ->update($this->tableName)
             ->set('published_at', ':published_at')
             ->set('failed_at', 'NULL')
@@ -1045,16 +1047,31 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     private function retryOnce(\Closure $operation): mixed
     {
-        try {
-            return $operation();
-        } catch (RetryableException $exception) {
-            if ($this->connection->isTransactionActive()) {
-                throw $exception;
+        return $this->retry(1, $operation);
+    }
+
+    /**
+     * Runs an idempotent statement of the relay again after a deadlock or a serialization failure,
+     * up to $retries times with a growing random delay (outside a transaction of the caller).
+     *
+     * @template T
+     *
+     * @param \Closure(): T $operation
+     *
+     * @return T
+     */
+    private function retry(int $retries, \Closure $operation): mixed
+    {
+        for ($attempt = 0;; ++$attempt) {
+            try {
+                return $operation();
+            } catch (RetryableException $exception) {
+                if ($attempt >= $retries || $this->connection->isTransactionActive()) {
+                    throw $exception;
+                }
+
+                usleep(random_int(10_000, 50_000) * ($attempt + 1));
             }
-
-            usleep(random_int(10_000, 50_000));
-
-            return $operation();
         }
     }
 

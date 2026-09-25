@@ -60,7 +60,11 @@ argument:
   type (`buses.command_async` or `buses.event_async`). Workers consuming
   asynchronous messages therefore find the handler without extra
   configuration.
-* With `bus: 'my.bus'`, the handler is registered on that Messenger bus only.
+* With `bus: 'my.bus'`, the handler is registered on that Messenger bus only. The
+  facades dispatch on the buses configured under `buses`: a handler pinned to another
+  bus is not found by them (a command fails with `NoHandlerException`, an event is
+  ignored), and a handler pinned to the sync bus is not found by a worker consuming
+  the async bus.
 
 `#[AsEventHandler]` also accepts `priority` (handlers of the same event with a
 higher priority run first) and `fromTransport`: a worker then only runs the
@@ -171,6 +175,8 @@ the attribute defines the registration.
 A handler that needs the Messenger envelope of the message it handles (stamps, metadata,
 the idempotency key) implements `EnvelopeAware` and uses `EnvelopeAwareTrait`. The bundle
 passes the envelope right before it calls the handler; `$this->getEnvelope()` returns it.
+Call it only while the handler runs: afterwards the handler service still holds the envelope
+of the last message it handled.
 
 ```php
 <?php

@@ -7,6 +7,8 @@ namespace SomeWork\CqrsBundle\Outbox;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -31,7 +33,8 @@ final class OutboxWriter
      * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
      * OutboxWriter): the constructor takes internal services and may change in any release.
      *
-     * @param StampDecider|null $transports The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param StampDecider|null       $transports The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param CausationIdContext|null $causation  The message being handled, whose flow a stored message continues
      *
      * @internal
      */
@@ -39,6 +42,7 @@ final class OutboxWriter
         private readonly OutboxStorage $storage,
         private readonly SerializerInterface $serializer,
         private readonly ?StampDecider $transports = null,
+        private readonly ?CausationIdContext $causation = null,
     ) {
     }
 
@@ -48,11 +52,18 @@ final class OutboxWriter
      * configuration for asynchronous dispatches; when none is configured, one row follows the
      * Messenger routing when it is relayed.
      *
+     * Stored while a handler runs and without a MessageMetadataStamp, the message continues the
+     * flow of the handled message: same correlation id, the handled message as cause.
+     *
      * @return list<OutboxMessage> The stored rows
      */
     public function store(object $message, ?string $transportName = null, StampInterface ...$stamps): array
     {
         $envelope = new Envelope($message, array_values($stamps));
+        $parent = $this->causation?->current();
+        if (null !== $parent && null === $envelope->last(MessageMetadataStamp::class)) {
+            $envelope = $envelope->with(new MessageMetadataStamp($parent->getCorrelationId(), [], $parent->getMessageId()));
+        }
         $stored = [];
         $transports = null !== $transportName ? [$transportName] : $this->transportsFor($message);
         // The deduplication key is scoped to the row's transport: the rows of one message for several

@@ -35,6 +35,9 @@ use function bin2hex;
 use function random_bytes;
 use function sprintf;
 
+use const E_ERROR;
+use const E_WARNING;
+
 #[CoversClass(DeduplicationLockReleaseMiddleware::class)]
 #[RequiresMethod(DeduplicateStamp::class, '__construct')]
 final class DeduplicationLockReleaseMiddlewareTest extends TestCase
@@ -160,6 +163,47 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
 
         self::assertSame([], $transport->getSent());
         self::assertTrue($locks->createLockFromKey($stamp->getKey())->acquire(), 'The lock was released.');
+    }
+
+    public function test_a_fatal_error_during_synchronous_handling_releases_the_key_at_shutdown(): void
+    {
+        // A memory or time limit throws nothing: the shutdown function releases the key.
+        $locks = new LockFactory(new InMemoryStore());
+        $release = new DeduplicationLockReleaseMiddleware($locks);
+        $stamp = new DeduplicateStamp('task-fatal');
+        $bus = new MessageBus([
+            new DeduplicateMiddleware($locks),
+            $release,
+            new HandleMessageMiddleware(new HandlersLocator([CreateTaskCommand::class => [static function () use ($release): string {
+                // What the shutdown function does after "Allowed memory size exhausted".
+                $release->releaseInFlightAfterFatalError(['type' => E_ERROR, 'message' => 'Allowed memory size exhausted', 'file' => __FILE__, 'line' => __LINE__]);
+
+                return 'never reached';
+            }]])),
+        ]);
+
+        $bus->dispatch(new CreateTaskCommand('1', 'x'), [$stamp]);
+
+        self::assertTrue($locks->createLock('task-fatal')->acquire(), 'The lock was released.');
+    }
+
+    public function test_only_dispatches_in_progress_are_released_after_a_fatal_error(): void
+    {
+        $locks = new LockFactory(new InMemoryStore());
+        $release = new DeduplicationLockReleaseMiddleware($locks);
+        $bus = new MessageBus([
+            new DeduplicateMiddleware($locks),
+            $release,
+            new HandleMessageMiddleware(new HandlersLocator([CreateTaskCommand::class => [static fn (): string => 'done']])),
+        ]);
+        $stamp = new DeduplicateStamp('task-done');
+        $bus->dispatch(new CreateTaskCommand('1', 'x'), [$stamp]);
+
+        // A finished dispatch keeps deduplicating; a warning is not a fatal error either.
+        $release->releaseInFlightAfterFatalError(['type' => E_ERROR, 'message' => 'later', 'file' => __FILE__, 'line' => __LINE__]);
+        $release->releaseInFlightAfterFatalError(['type' => E_WARNING, 'message' => 'warning', 'file' => __FILE__, 'line' => __LINE__]);
+
+        self::assertFalse($locks->createLock('task-done')->acquire(), 'The lock is still held.');
     }
 
     private function bus(\Closure $handler, ?LockFactory $locks = null, ?RecordingLogger $logger = null): MessageBus

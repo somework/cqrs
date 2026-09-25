@@ -80,6 +80,10 @@ rejects the new options.
      the 0.4 relay before the 0.5 relay starts;
    - check that every stored transport name exists, because 0.4 ignored it and 0.5 sends to it
      (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
+   - with OpenTelemetry enabled, messages dispatched by 0.5 carry a `TraceContextStamp`, a class 0.4 does not
+     have: a 0.4 worker fails to decode them. Stop the 0.4 workers (or drain their queues) before 0.5 code
+     dispatches, and roll back only once no message sent by 0.5 is queued. Messages sent by 0.4 are read by
+     0.5;
    - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
      value in `outbox.signing.previous_secrets` until the rows signed with it are relayed.
 4. `composer update somework/cqrs-bundle`, committed together with steps 1 to 3.
@@ -399,6 +403,12 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   The details (locks, timeouts, `CREATE INDEX CONCURRENTLY`, the SQL for a migration of your own) are in
   [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they
   ignore retry times, given-up rows and claims.
+- The relay lock expires after 60 seconds (it was the lock factory's default, 300 seconds) and is extended every
+  10 seconds; a relay killed without cleanup blocks the next runs for at most a minute.
+- `OutboxWriter::store()` called while a handler runs adds a `MessageMetadataStamp` that continues the flow of the
+  handled message, unless you pass one.
+- Each application needs its own outbox table: a relay gives up the rows of another application sharing its table
+  (other secret, unknown transports).
 - `OutboxStorage` is now `@api`, moved to `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`, and changed (see
   [Custom storage](docs/outbox.md#custom-storage)). Custom implementations must:
   - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it

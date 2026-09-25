@@ -19,6 +19,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
 use Doctrine\DBAL\Schema\Exception\TableDoesNotExist;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
+use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Types;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
@@ -337,7 +338,7 @@ final class DbalOutboxSchema
 
         $schemaManager = $this->connection->createSchemaManager();
         if ($plan['create']) {
-            $schemaManager->createTable(self::buildTableDefinition($this->tableName));
+            $schemaManager->createTable(self::buildTableDefinition($schemaManager, $this->tableName));
 
             return;
         }
@@ -464,7 +465,8 @@ final class DbalOutboxSchema
 
         if ($plan['create']) {
             $this->assertNoTransaction('does not exist');
-            $this->connection->createSchemaManager()->createTable(self::buildTableDefinition($this->tableName));
+            $schemaManager = $this->connection->createSchemaManager();
+            $schemaManager->createTable(self::buildTableDefinition($schemaManager, $this->tableName));
 
             return;
         }
@@ -993,9 +995,15 @@ final class DbalOutboxSchema
         return false;
     }
 
-    private static function buildTableDefinition(string $tableName): Table
+    /**
+     * Built in a schema of the connection's schema config, so the table gets the default table
+     * options of the connection (charset and collation on MySQL/MariaDB), as in a migration.
+     *
+     * @param AbstractSchemaManager<AbstractPlatform> $schemaManager
+     */
+    private static function buildTableDefinition(AbstractSchemaManager $schemaManager, string $tableName): Table
     {
-        $table = new Table($tableName);
+        $table = (new Schema([], [], $schemaManager->createSchemaConfig()))->createTable($tableName);
 
         self::configureTable($table, $tableName);
 
