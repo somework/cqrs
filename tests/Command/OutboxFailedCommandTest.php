@@ -24,6 +24,7 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_map;
+use function hash;
 use function json_encode;
 use function preg_replace;
 use function strtoupper;
@@ -88,6 +89,25 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertTrue($signer->verify($requeued));
     }
 
+    public function test_signing_refuses_a_body_that_changed_after_it_was_listed(): void
+    {
+        $id = '0199a000-0000-7000-8000-000000000001';
+        $storage = new CapableOutboxStorage();
+        $storage->failed = [new FailedOutboxMessage($id, 'async', new DateTimeImmutable(), new DateTimeImmutable(), 1, 'not signed', bodyDigest: hash('sha256', 'reviewed body'))];
+        $signer = new OutboxSigner('secret');
+
+        self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage, $signer)))->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        $sign = $storage->requeued[0][2];
+        self::assertNotNull($sign);
+
+        $reviewed = new OutboxMessage($id, 'reviewed body', '{}', new DateTimeImmutable(), 'async');
+        self::assertSame($signer->sign($reviewed), $sign($reviewed));
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('The body of message "'.$id.'" changed after it was listed');
+        $sign(new OutboxMessage($id, 'swapped body', '{}', new DateTimeImmutable(), 'async'));
+    }
+
     public function test_requeues_to_another_transport(): void
     {
         // e.g. a row stored with a misspelt or renamed transport, which the relay gave up on.
@@ -107,8 +127,13 @@ final class OutboxFailedCommandTest extends TestCase
         $tester = new CommandTester(new OutboxFailedCommand($this->storage));
 
         self::assertSame(Command::INVALID, $tester->execute(['--transport' => 'orders']));
-        self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--transport' => ' ']));
+        self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--transport' => ' ', 'ids' => [self::ID_1]]));
         self::assertStringContainsString('--transport needs a transport name and --requeue.', self::display($tester));
+
+        // It overwrites the stored transport names: only of the messages given.
+        self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--transport' => 'orders']));
+        self::assertStringContainsString('--transport needs the ids of the messages', self::display($tester));
+        self::assertCount(0, $this->storage->fetchUnpublished(10));
     }
 
     public function test_stored_text_is_listed_without_control_characters(): void
@@ -206,8 +231,8 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->execute([]));
         self::assertStringContainsString('0199a000-0000-7000-8000-000000000001 ? (routing) 2026-01-01T10:00:00+00:00 2026-01-01T11:00:00+00:00 3 boom [31m', self::display($tester));
 
-        self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage)))->execute(['--requeue' => true, '--transport' => 'async']));
-        self::assertSame([[[], 'async', null]], $storage->requeued);
+        self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage)))->execute(['--requeue' => true, '--transport' => 'async', 'ids' => ['0199a000-0000-7000-8000-000000000001']]));
+        self::assertSame([[['0199a000-0000-7000-8000-000000000001'], 'async', null]], $storage->requeued);
     }
 
     private static function display(CommandTester $tester): string

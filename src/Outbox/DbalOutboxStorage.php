@@ -52,7 +52,6 @@ use function str_replace;
 use function str_starts_with;
 use function stripslashes;
 use function strtolower;
-use function substr;
 use function usleep;
 use function usort;
 
@@ -484,12 +483,13 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
         // Claims of attempts that have not finished (published and given-up rows have none).
         $inFlight = $count($this->connection->createQueryBuilder()->from($this->tableName)->where('claimed_at IS NOT NULL')->andWhere('available_at > :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
+        // A claim runs out at the retry time of its attempt (available_at).
         $expiredClaim = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
-            ->select('claimed_at')
+            ->select('available_at')
             ->from($this->tableName)
             ->where('claimed_at IS NOT NULL')
             ->andWhere('available_at <= :now')
-            ->orderBy('claimed_at', 'ASC')
+            ->orderBy('available_at', 'ASC')
             ->setMaxResults(1)
             ->setParameter('now', $now, Types::DATETIME_IMMUTABLE)
             ->executeQuery()
@@ -505,7 +505,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             oldestRetrying: $date($oldestRetrying),
             failed: $failed,
             inFlight: $inFlight,
-            oldestClaim: $date($expiredClaim),
+            claimExpiredSince: $date($expiredClaim),
             capped: $capped,
         );
     }
@@ -584,7 +584,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
             messageType: self::messageType((string) $row['headers']),
             bodyClass: self::serializedMessageClass((string) $row['body']),
-            bodyDigest: substr(hash('sha256', (string) $row['body']), 0, 16),
+            bodyDigest: hash('sha256', (string) $row['body']),
         ), $rows);
     }
 

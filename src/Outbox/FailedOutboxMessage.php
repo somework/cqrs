@@ -24,7 +24,7 @@ final class FailedOutboxMessage
         public readonly ?string $messageType = null,
         /** The message class named in a body of Messenger's PHP serializer, read as text without unserializing it. */
         public readonly ?string $bodyClass = null,
-        /** The first 16 hexadecimal digits of the SHA-256 of the body, to recognise a row before signing it. */
+        /** The SHA-256 of the body (hexadecimal), to recognise a row before signing it. */
         public readonly ?string $bodyDigest = null,
     ) {
     }

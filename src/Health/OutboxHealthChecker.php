@@ -53,15 +53,20 @@ final class OutboxHealthChecker implements HealthChecker
             $changes = [sprintf('its structure cannot be read (%s)', $exception->getMessage())];
             $structureRead = false;
         }
-        // e.g. the index of this version, which the automatic setup leaves to the setup command.
-        $needsSetup = [] === $changes ? null : new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
+        // e.g. the index of this version, which the automatic setup leaves to the setup command. Without
+        // the columns of this version, storing a message inside a transaction fails (and rolls it back).
+        $lacksColumns = [] !== array_filter($changes, static fn (string $change): bool => str_starts_with($change, 'the columns '));
+        $needsSetup = [] === $changes ? null : new CheckResult(
+            $lacksColumns ? CheckSeverity::CRITICAL : CheckSeverity::WARNING,
+            'outbox',
+            sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s%s', implode('; ', $changes), $lacksColumns ? '; until then, storing a message inside a transaction fails' : ''),
+        );
 
         try {
             $status = $storage->status();
         } catch (\Throwable $exception) {
-            // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
-            // When neither can be read (e.g. the database is down), that is critical.
-            $lacksColumns = [] !== array_filter($changes, static fn (string $change): bool => str_starts_with($change, 'the columns '));
+            // A table of 0.4 (without the new columns) cannot be read: report the upgrade it needs.
+            // When neither can be read (e.g. the database is down), report the error.
             if ($structureRead && null !== $needsSetup && $lacksColumns && $storage instanceof DbalOutboxStorage) {
                 return [$this->withBacklog($storage, $needsSetup)];
             }
@@ -78,9 +83,9 @@ final class OutboxHealthChecker implements HealthChecker
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
 
         // Claims run out at the retry time of their attempt; the next relay run takes them over.
-        $claimedFor = null === $status->oldestClaim ? 0 : $now - $status->oldestClaim->getTimestamp();
-        if ($claimedFor > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('An outbox relay claimed messages %d minute(s) ago and did not finish them (it died, or hangs on a send), and no relay has taken them over since their retry time: check that "somework:cqrs:outbox:relay" runs', intdiv($claimedFor, 60)));
+        $expiredFor = null === $status->claimExpiredSince ? 0 : $now - $status->claimExpiredSince->getTimestamp();
+        if ($expiredFor > self::MAX_WAIT_SECONDS) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('An outbox relay claimed messages and did not finish them (it died, or hangs on a send), and no relay has taken them over since their claim ran out %d minute(s) ago: check that "somework:cqrs:outbox:relay" runs', intdiv($expiredFor, 60)));
         }
         $oldestRetrying = $status->oldestRetrying;
         $failingFor = null === $oldestRetrying ? 0 : $now - $oldestRetrying->getTimestamp();

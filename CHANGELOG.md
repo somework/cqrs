@@ -35,10 +35,10 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A row stored for a transport that does not exist is given up at once, with an error that says how to fix it.
 - Signed rows (HMAC-SHA256, `outbox.signing`, on by default with `framework.secret`): the relay only decodes rows with a valid signature. `previous_secrets` supports a rotation, and `accept_unsigned` lets rows of 0.4 drain.
 - Capability interfaces `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` and `OutboxMonitoring`, with the `FailedOutboxMessage` and `OutboxStatus` DTOs. With them, setup, failed and health work with any storage, also behind a decorator. The interfaces are autowired to the configured storage when it implements them.
-- `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header and a digest of the body, and refuses to sign a row whose type header names another class.
+- `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header and a digest of the body, refuses to sign a row whose type header names another class, and signs only the bodies it showed. `--transport` needs the ids of the messages.
 - A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds.
 - SIGTERM and SIGINT stop the relay after the current row with exit code 1; after a PHP fatal error it still releases its lock.
-- An outbox check in `somework:cqrs:health`: given-up rows, failing rows, due rows waiting more than 10 minutes, claims older than 10 minutes that no relay took over after their retry time, and a table that needs the setup command. Counts stop at 10 000 rows.
+- An outbox check in `somework:cqrs:health`: given-up rows, failing rows, due rows waiting more than 10 minutes, claims that ran out more than 10 minutes ago without a relay taking them over, and a table that needs the setup command. Counts stop at 10 000 rows.
 - The indexes `idx_<table>_pending` for the relay and `idx_<table>_claimed` for the health check. `setup` builds it with `CREATE INDEX CONCURRENTLY` on PostgreSQL, and serialises concurrent setups with a database lock. It gives up after 5 seconds instead of blocking writes, notices a transaction pooler, and exits with `128 + signal`.
 - The automatic setup creates the table or adds the columns without waiting in the table's lock queue. It never builds indexes, and never runs inside a transaction.
 - `DbalOutboxStorage::pendingChanges()` lists what `setup` still has to do.
@@ -139,6 +139,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
   - ordered messages randomly within a second, and stored dates without a time zone;
   - generated index names longer than 63 characters;
   - marked rows as published when their message class could not be loaded (symfony/messenger 7.4+);
+  - marked a retry as published when Messenger's deduplication dropped it because an earlier attempt of the same row still held the lock;
   - dispatched relayed messages on the default bus;
   - added its table to the schema of every connection.
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.

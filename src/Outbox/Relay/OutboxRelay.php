@@ -19,6 +19,7 @@ use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
@@ -661,9 +662,18 @@ final class OutboxRelay
             return;
         }
 
+        // Messenger's deduplication (symfony/messenger 7.3+) dropped a retry. The lock is most likely
+        // held by an earlier attempt of this message that did not send it (the process died, or the
+        // send failed without releasing the lock): marking it published would lose it. Retry it
+        // after the backoff, by when the lock (300 seconds by default) has usually expired.
+        $deduplicate = $envelope->last(DeduplicateStamp::class);
+        if ($deduplicate instanceof DeduplicateStamp && $message->attempts > 0 && null === $envelope->last(HandledStamp::class)) {
+            throw new \RuntimeException(sprintf('Messenger\'s deduplication dropped this retry: the lock "%s" is still held, probably by an earlier attempt of this message. It is retried when the lock has expired.', (string) $deduplicate->getKey()));
+        }
+
         $warning = null !== $envelope->last(HandledStamp::class)
             ? 'Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.'
-            : 'Message "%s" (%s) was neither sent to a transport nor handled (e.g. Messenger\'s deduplication dropped it as a duplicate, or it is an event without handlers); it is marked as published.';
+            : 'Message "%s" (%s) was neither sent to a transport nor handled (e.g. Messenger\'s deduplication dropped it as a duplicate of another message, or it is an event without handlers); it is marked as published.';
 
         $reporter->notSent(sprintf($warning, $message->id, $envelope->getMessage()::class));
         $this->logger?->warning(sprintf($warning, '{id}', '{class}'), ['id' => $message->id, 'class' => $envelope->getMessage()::class]);

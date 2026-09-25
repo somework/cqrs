@@ -17,16 +17,20 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+use function array_key_exists;
 use function array_map;
 use function array_values;
 use function assert;
 use function count;
 use function filter_var;
+use function hash;
+use function hash_equals;
 use function is_array;
 use function is_string;
 use function preg_match;
 use function sprintf;
 use function strtolower;
+use function substr;
 use function trim;
 
 use const DATE_ATOM;
@@ -59,7 +63,7 @@ final class OutboxFailedCommand extends Command
         $this
             ->addArgument('ids', InputArgument::IS_ARRAY, 'Ids of the messages to requeue (with --requeue); all given-up messages when omitted')
             ->addOption('requeue', null, InputOption::VALUE_NONE, 'Requeue the messages with a fresh attempt counter instead of listing them')
-            ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue: send the messages to this transport instead of the stored one')
+            ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue and message ids: send the messages to this transport instead of the stored one')
             ->addOption('sign', null, InputOption::VALUE_NONE, 'With --requeue and message ids: sign the messages with the current secret (they were unsigned, or signed with another secret)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to list', '50');
     }
@@ -90,6 +94,12 @@ final class OutboxFailedCommand extends Command
         $transport = $input->getOption('transport');
         if (null !== $transport && (!is_string($transport) || '' === trim($transport) || true !== $input->getOption('requeue'))) {
             $io->error('--transport needs a transport name and --requeue.');
+
+            return self::INVALID;
+        }
+        // The stored transport names are overwritten: never for every given-up message at once.
+        if (null !== $transport && [] === $ids) {
+            $io->error('--transport needs the ids of the messages: it replaces their stored transport name, which cannot be undone.');
 
             return self::INVALID;
         }
@@ -162,7 +172,7 @@ final class OutboxFailedCommand extends Command
                 self::printable($message->id),
                 self::printable($message->messageType ?? '-'),
                 self::printable($message->bodyClass ?? '-'),
-                null === $message->bodyDigest ? '?' : 'sha256 '.$message->bodyDigest,
+                null === $message->bodyDigest ? '?' : 'sha256 '.substr($message->bodyDigest, 0, 16),
                 self::printable($message->transportName ?? '(routing)'),
                 self::printable($message->lastError ?? ''),
             ], $failed),
@@ -183,7 +193,20 @@ final class OutboxFailedCommand extends Command
             return self::FAILURE;
         }
 
-        return $this->requeue($io, $storage, $ids, $transport, static fn (OutboxMessage $message): string => $signer->sign($message));
+        // Sign the rows as they were shown: a body changed since then (by whoever can write to the
+        // table) is refused. Storages that do not report a digest are trusted as they are.
+        $reviewed = [];
+        foreach ($failed as $message) {
+            $reviewed[$message->id] = $message->bodyDigest;
+        }
+
+        return $this->requeue($io, $storage, $ids, $transport, static function (OutboxMessage $message) use ($signer, $reviewed): string {
+            if (!array_key_exists($message->id, $reviewed) || (null !== $reviewed[$message->id] && !hash_equals($reviewed[$message->id], hash('sha256', $message->body)))) {
+                throw new \RuntimeException(sprintf('The body of message "%s" changed after it was listed; it was not signed, nor were the messages after it. Run the command again.', $message->id));
+            }
+
+            return $signer->sign($message);
+        });
     }
 
     /**

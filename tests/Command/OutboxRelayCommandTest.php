@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Command;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\ConsoleRelayReporter;
@@ -36,6 +37,7 @@ use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
 use Symfony\Component\Messenger\Stamp\ReceivedStamp;
@@ -1030,6 +1032,31 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertStringContainsString('was neither sent to a transport nor handled', self::display($tester));
         self::assertTrue($this->storage->isPublished($message->id));
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, 'getKey')]
+    public function test_a_retry_dropped_by_the_deduplication_is_not_marked_as_published(): void
+    {
+        // The lock is most likely held by the attempt before, which did not send the message.
+        $failed = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('1', 'a'), [new DeduplicateStamp('task-1')]), new PhpSerializer(), 'async');
+        $this->storage->store($failed);
+        $this->storage->setFailure($failed->id, 1, 'Connection refused', new DateTimeImmutable('-1 second'));
+        $interrupted = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('2', 'b'), [new DeduplicateStamp('task-2')]), new PhpSerializer(), 'async');
+        $this->storage->store($interrupted);
+        $this->storage->interrupt($interrupted->id, 1);
+        $first = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('3', 'c'), [new DeduplicateStamp('task-3')]), new PhpSerializer(), 'async');
+        $this->storage->store($first);
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), new MessageBus([]), $this->locks));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        foreach ([$failed, $interrupted] as $message) {
+            self::assertFalse($this->storage->isPublished($message->id));
+            self::assertSame(2, $this->storage->attempts($message->id));
+            self::assertStringContainsString('deduplication dropped this retry', (string) $this->storage->lastError($message->id));
+        }
+        self::assertTrue($this->storage->isPublished($first->id), 'A first attempt dropped as a duplicate of another message is done.');
     }
 
     public function test_stops_when_the_lock_is_lost(): void

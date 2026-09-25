@@ -204,8 +204,12 @@ final class Version20260101000000 extends AbstractMigration
 
 **`auto_setup: true` (default).** The first time a process uses the storage, it checks
 whether the table exists and has the columns of this version (without locking anything). If
-the table is missing, it creates it. Storing never changes an existing table (writes keep
-working on a table of 0.4); the relay and the `failed` command add the columns they need.
+the table is missing, it creates it; if it lacks the columns of this version (a table of 0.4),
+it adds them. This only happens outside a transaction: inside one, storing a message in a
+table of 0.4 fails (and your transaction is rolled back) until the columns exist, which is why
+the setup command runs before the deployment (the health check reports it as critical). The
+relay and the `failed` command add the columns they need too; indexes are left to the setup
+command.
 Processes that start at the same time wait for each other (at most 30 seconds, less once
 another one has added the columns). Adding the columns does not wait in the lock queue of the
 table, where the writes would queue behind it: PostgreSQL tries `LOCK TABLE … NOWAIT` and
@@ -423,6 +427,14 @@ What happens in special cases:
   for example because Messenger's deduplication dropped it as a duplicate, or because it is
   an event without handlers or routing, the relay prints and logs `Message "<id>" (<class>)
   was neither sent to a transport nor handled …` and marks the row as published.
+- **A retry dropped by the deduplication is a failed attempt.** A row that carries a
+  `DeduplicateStamp` takes Messenger's deduplication lock when it is sent. When its attempt
+  does not finish (the process dies) or its send fails without releasing the lock, the lock
+  stays held until its TTL (300 seconds by default) expires, and the next attempt would be
+  dropped as a duplicate of itself. The relay therefore marks only a *first* attempt that the
+  deduplication dropped as published; a dropped retry fails with `Messenger's deduplication
+  dropped this retry …` and is retried after the backoff. A lock without a TTL never expires:
+  release it, or the relay gives the row up after `max_attempts`.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
   relay finishes the row it is working on, starts no other, marks the sent rows as published,
   releases the claims of the others, prints `Stopped by signal <number>
@@ -451,9 +463,13 @@ What happens in special cases:
   lock store that only guards one host, two relays can run at the same time. The claim keeps
   them from sending the same row twice: a relay that finds a row claimed by the other one
   skips it and prints `Skipped <n> message(s) that another relay claimed first.` The claims of
-  a batch are renewed every 20 seconds, so a row is only sent twice when a single send takes
-  longer than its claim lasts after the last renewal (at least 40 seconds on the first
-  attempt: the claim holds 1 minute), and the other relay claims it meanwhile.
+  a batch are renewed every 20 seconds, between sends. A row can therefore be sent twice when a
+  single send takes longer than the claims last after the last renewal (at least 40 seconds on
+  the first attempt: the claim holds 1 minute) and the other relay claims them meanwhile: the
+  slow row itself, and the rows sent in the 2 seconds before it, which are not marked as
+  published yet. Claims are computed with the clock of the relay host: keep the clocks of the
+  relay hosts synchronised (NTP). The relay lock is also only extended between sends, so a
+  single send that outlasts its TTL (300 seconds) lets another relay start.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -521,12 +537,12 @@ to relay them.
   when rows failed and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
-  their failing transport); when a claim made more than 10 minutes ago has run out without a
-  relay taking it over (a relay died, or hangs on a send without a timeout, and no relay runs
+  their failing transport); when a claim ran out (at the retry time of its attempt) more than
+  10 minutes ago without a relay taking it over (a relay died, or hangs on a send without a timeout, and no relay runs
   since); and when the
   table needs `somework:cqrs:outbox:setup` (e.g. its index is missing or invalid). It is
-  critical when the table cannot be read, and when messages have waited more than 10 minutes
-  on a table that still lacks the columns of this version. The check reads at most 10 000
+  critical when the table cannot be read, and when the table lacks the columns of this version
+  (storing a message inside a transaction fails until the setup has run). The check reads at most 10 000
   rows per count (it reports `more than 10000`) and finds the oldest due row with one probe
   per transport along the index, so it stays cheap on a large backlog.
 - The relay logs failed attempts, paused transports, messages handled inline or dropped, a
@@ -556,8 +572,9 @@ daily.
 - **Atomic write.** The row exists only if your transaction commits.
 - **At-least-once delivery.** The relay marks rows as published *after* dispatching them,
   every 2 seconds. A crash in between (it affects the rows sent in the last 2 seconds), a
-  failed `markPublished()`, or a single send that outlasts its claim (at least 40 seconds)
-  while another relay runs can send the same message twice. A message routed
+  failed `markPublished()`, or a single send that outlasts the claims (at least 40 seconds)
+  while another relay runs (it affects that row and the rows sent in the 2 seconds before
+  it) can send the same message twice. A message routed
   to several transports is sent to all of them again when one of them fails: store one row
   per transport to avoid that. **Consumers must be idempotent**, for example by
   recording processed message ids under a unique constraint. The bundle's
@@ -801,7 +818,8 @@ Operating it:
   `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
   header, the class named in a PHP-serialized body (read as text, never unserialized) and a
   SHA-256 prefix of the body. It refuses a row whose `type` header does not match the class in
-  its body, and in an interactive terminal it asks for confirmation. Only sign rows your
+  its body, and in an interactive terminal it asks for confirmation. It signs the bodies it
+  showed: a row whose body changed in the meantime stops the command. Only sign rows your
   application stored.
 - A storage of your own must return the id, body, headers and signature exactly as stored.
 

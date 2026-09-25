@@ -237,11 +237,11 @@ database transaction and a relay sends them to Messenger afterwards. See
 
 The table is created on first use (`auto_setup: true`), but never inside an open
 transaction: storing the first message inside a transaction throws a
-`LogicException` if the table does not exist yet. Storing never changes an
-existing table; the relay adds the columns a table of an earlier version lacks,
-but leaves its indexes to the setup command (the relay and the health check warn
-until it has run). Create the table,
-or upgrade one of an earlier version, during deployment:
+`LogicException` if the table does not exist yet or lacks the columns of this
+version (a table of 0.4). Outside a transaction, storing and the relay add the
+missing columns, but leave the indexes to the setup command (the relay and the
+health check report it until it has run; missing columns are critical). Create
+the table, or upgrade one of an earlier version, before deploying the code:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -256,8 +256,9 @@ session lock, which a pooler in transaction mode (PgBouncer) would move to
 another client. The automatic setup is safe behind such a pooler: on PostgreSQL
 it runs in one transaction.
 
-The relay trusts the rows of the table: give the application a role that can only
-read and write rows, run the setup with a role that may change the schema, and see
+The relay only decodes rows with a valid signature (`outbox.signing`), but
+whoever writes to the table can still delay, redirect or drop messages: give the
+application a role that can only read and write rows, run the setup with a role that may change the schema, and see
 [Security](outbox.md#security) for the serializer and the Symfony version to use.
 
 ### Relay

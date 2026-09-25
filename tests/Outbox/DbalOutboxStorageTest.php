@@ -1331,8 +1331,8 @@ final class DbalOutboxStorageTest extends TestCase
         $status = $storage->status();
 
         self::assertSame(1, $status->inFlight);
-        self::assertNotNull($status->oldestClaim);
-        self::assertEqualsWithDelta(time(), $status->oldestClaim->getTimestamp(), 5);
+        self::assertNotNull($status->claimExpiredSince);
+        self::assertEqualsWithDelta(time() - 60, $status->claimExpiredSince->getTimestamp(), 5, 'The claim ran out at the retry time of its attempt.');
         self::assertSame(2, $status->due, 'The interrupted attempt is due, and the new message.');
         self::assertSame(0, $status->retrying, 'No attempt failed.');
         self::assertFalse($status->capped);
