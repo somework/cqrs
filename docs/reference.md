@@ -654,7 +654,7 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `false` | boolean (no environment variables) |
-| `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table`; avoid reserved SQL words |
+| `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table` (`database.table` on MySQL); avoid reserved SQL words |
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
@@ -667,7 +667,7 @@ registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
 * Use the connection that holds your business data, so storing an outbox row
   is part of the same transaction.
 * With `auto_setup: true` the table is created (or upgraded with the columns
-  added in 0.5.0) on first use, but never inside an open transaction: that throws a `LogicException` asking you to run
+  added in 0.5.0, but not the index, which is left to `somework:cqrs:outbox:setup`) on first use, but never inside an open transaction: that throws a `LogicException` asking you to run
   `somework:cqrs:outbox:setup`. Disable `auto_setup` when migrations manage the
   table. With doctrine/orm installed, the table is also added to the schema of
   the outbox connection, so `doctrine:migrations:diff` picks it up.
@@ -757,14 +757,15 @@ checks.
 ### Outbox commands
 
 * `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
-  and adds the columns and indexes a table of an earlier version lacks.
+  and adds the columns and indexes a table of an earlier version lacks (the
+  automatic setup only adds the columns).
 * `somework:cqrs:outbox:relay` sends due rows (transports take turns; new rows
   first, then retries) and
   marks them published. A row that fails is retried later (1 minute, doubling up
   to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
   (three times as many for transport failures) it is given up. A transport that
-  fails 3 times in a row (10 times after a successful send) is paused until the
-  next run.
+  fails 3 times in a row (10 times, or 3 over 10 seconds, after a successful
+  send) is paused until the next run.
 * `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
   `--requeue` hands all of them, or the given ids, back to the relay.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.

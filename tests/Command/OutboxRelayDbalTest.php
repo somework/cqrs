@@ -121,6 +121,20 @@ final class OutboxRelayDbalTest extends TestCase
         self::assertSame([], $this->storage->fetchUnpublished(10));
     }
 
+    public function test_warns_when_the_table_needs_the_setup_command(): void
+    {
+        $this->connection->executeStatement('DROP TABLE somework_cqrs_outbox');
+        TestDatabase::createTableOfVersion04($this->connection);
+        $this->storage = new DbalOutboxStorage($this->connection);
+        $this->store('task-1', 'async');
+
+        $tester = $this->relay($this->bus());
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode(), 'The table works without the index, only slower.');
+        self::assertSame(['task-1'], $this->sentTaskIds());
+        self::assertStringContainsString('The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing;', self::display($tester));
+    }
+
     private function store(string $taskId, string $transportName): void
     {
         $this->storage->store(OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand($taskId, 'x')), new PhpSerializer(), $transportName));

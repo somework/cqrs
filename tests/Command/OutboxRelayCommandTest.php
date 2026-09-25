@@ -10,6 +10,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
+use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
@@ -39,6 +40,7 @@ use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_map;
+use function array_slice;
 use function mb_check_encoding;
 use function mb_strlen;
 use function preg_replace;
@@ -602,6 +604,74 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertTrue($this->storage->isPublished($rows['ok2']), 'Three rejections in a row do not pause a transport that works.');
         self::assertStringContainsString('Transport "async" failed 10 times in a row; its other messages wait for the next run.', self::display($tester));
         self::assertFalse($this->storage->isPublished($rows['ok3']));
+    }
+
+    public function test_a_transport_that_accepted_a_message_is_paused_after_three_failures_once_it_has_failed_for_ten_seconds(): void
+    {
+        // e.g. the broker went down during the run, and every send waits for its timeout.
+        $rows = [];
+        foreach (['ok', 'r1', 'r2', 'r3', 'r4'] as $taskId) {
+            $rows[$taskId] = $this->store(new CreateTaskCommand($taskId, 'x'), 'async')->id;
+        }
+        $bus = new CallbackBus(static function (object $message): void {
+            if ($message instanceof CreateTaskCommand && str_starts_with($message->id, 'r')) {
+                throw new TransportException('Connection timed out');
+            }
+        });
+        $now = 0.0;
+        $clock = static function () use (&$now): float {
+            return $now += 5.0;
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks, clock: $clock));
+        $tester->execute([]);
+
+        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertSame(0, $this->storage->attempts($rows['r4']));
+    }
+
+    public function test_a_short_batch_does_not_end_the_run(): void
+    {
+        foreach (['1', '2', '3', '4', '5'] as $taskId) {
+            $this->store(new CreateTaskCommand($taskId, 'x'), 'async');
+        }
+        // e.g. the storage left out rows that an overlapping relay claimed after they were chosen.
+        $storage = new class($this->storage) implements OutboxStorage {
+            public function __construct(private readonly OutboxStorage $storage)
+            {
+            }
+
+            public function store(OutboxMessage $message): void
+            {
+                $this->storage->store($message);
+            }
+
+            public function fetchUnpublished(int $limit, array $excludedTransports = []): array
+            {
+                return array_slice($this->storage->fetchUnpublished($limit, $excludedTransports), 0, 2);
+            }
+
+            public function markPublished(string $id): void
+            {
+                $this->storage->markPublished($id);
+            }
+
+            public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool
+            {
+                return $this->storage->recordAttempt($id, $attempts, $error, $retryAt, $previousAttempts);
+            }
+
+            public function purgePublished(DateTimeImmutable $publishedBefore): int
+            {
+                return $this->storage->purgePublished($publishedBefore);
+            }
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($storage, new PhpSerializer(), $this->bus(), $this->locks));
+        $tester->execute([]);
+
+        self::assertStringContainsString('Relayed 5 message(s).', self::display($tester));
+        self::assertCount(5, $this->async->getSent());
     }
 
     public function test_new_messages_are_relayed_before_retries(): void

@@ -6,25 +6,27 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception as DbalException;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
-use Psr\Log\AbstractLogger;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\QueryLog;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
+use function array_filter;
 use function array_map;
 use function array_unique;
 use function array_values;
 use function date_default_timezone_get;
 use function date_default_timezone_set;
 use function implode;
-use function is_string;
 use function preg_replace;
 use function str_contains;
 use function str_repeat;
@@ -215,27 +217,7 @@ final class DbalOutboxStorageTest extends TestCase
 
     public function test_a_table_that_is_up_to_date_is_used_without_taking_the_setup_lock(): void
     {
-        $queries = new class extends AbstractLogger {
-            /** @var list<string> */
-            private array $sql = [];
-
-            public function log($level, string|\Stringable $message, array $context = []): void
-            {
-                if (is_string($context['sql'] ?? null)) {
-                    $this->sql[] = $context['sql'];
-                }
-            }
-
-            /**
-             * @return list<string>
-             */
-            public function flush(): array
-            {
-                [$sql, $this->sql] = [$this->sql, []];
-
-                return $sql;
-            }
-        };
+        $queries = new QueryLog();
         $this->connection = TestDatabase::connect($queries);
         (new DbalOutboxStorage($this->connection))->setup();
         $queries->flush();
@@ -276,37 +258,131 @@ final class DbalOutboxStorageTest extends TestCase
             self::markTestSkipped('SQLite has no schemas to qualify the table name with.');
         }
 
-        $storage = new DbalOutboxStorage($this->connection, $qualifier.'.app_outbox');
-        $storage->setup();
+        $this->assertQualifiedTableNameWorks($qualifier.'.app_outbox');
+    }
+
+    public function test_a_table_in_another_database_of_mysql_works(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            self::markTestSkipped('Only MySQL qualifies table names with a database.');
+        }
+
+        try {
+            $this->connection->executeStatement('DROP TABLE IF EXISTS cqrs_test_other.app_outbox');
+        } catch (DbalException $exception) {
+            self::markTestSkipped('Needs the database "cqrs_test_other": '.$exception->getMessage());
+        }
+        $database = $this->connection->getDatabase();
+
+        $this->assertQualifiedTableNameWorks('cqrs_test_other.app_outbox');
+
+        self::assertSame($database, $this->connection->getDatabase(), 'The connection is back on its own database.');
+    }
+
+    public function test_the_automatic_setup_adds_the_columns_and_leaves_the_indexes_to_the_setup_command(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $queries->flush();
+
+        $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
 
         self::assertSame([self::ID_1], self::ids($storage->fetchUnpublished(10)));
-        self::assertNull((new DbalOutboxStorage($this->connection, $qualifier.'.app_outbox'))->status()['oldest_retrying']);
+        self::assertDoesNotMatchRegularExpression('/(CREATE|DROP) INDEX|ADD INDEX/', implode("\n", $queries->flush()), 'Building an index takes long on a big table.');
+        self::assertSame([
+            'the index "idx_somework_cqrs_outbox_pending" is missing',
+            'the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there',
+        ], $storage->pendingChanges());
+
+        $storage->setup();
+
+        self::assertSame([], $storage->pendingChanges());
+        self::assertTrue(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_pending'));
+    }
+
+    public function test_setting_up_the_table_leaves_the_session_settings_of_the_connection_as_they_were(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        [$settings, $set] = match (true) {
+            $platform instanceof PostgreSQLPlatform => [['SHOW lock_timeout', 'SHOW statement_timeout'], ["SET lock_timeout = '42s'", "SET statement_timeout = '42s'"]],
+            $platform instanceof AbstractMySQLPlatform => [['SELECT @@SESSION.lock_wait_timeout'], ['SET SESSION lock_wait_timeout = 42']],
+            default => [[], []],
+        };
+        if ([] === $settings) {
+            self::markTestSkipped('SQLite has no lock timeouts.');
+        }
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        foreach ($set as $statement) {
+            $this->connection->executeStatement($statement);
+        }
+        $before = array_map(fn (string $sql): mixed => $this->connection->fetchOne($sql), $settings);
+        $queries->flush();
+
+        // The automatic setup adds the columns, the setup command builds the index.
+        (new DbalOutboxStorage($this->connection))->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $automatic = implode("\n", $queries->flush());
+        (new DbalOutboxStorage($this->connection))->setup();
+        $explicit = implode("\n", $queries->flush());
+
+        self::assertSame($before, array_map(fn (string $sql): mixed => $this->connection->fetchOne($sql), $settings));
+        if ($platform instanceof PostgreSQLPlatform) {
+            // Behind a pooler in transaction mode, only what ends with the transaction stays with this client.
+            self::assertStringContainsString('pg_try_advisory_xact_lock', $automatic);
+            self::assertStringContainsString("SET LOCAL lock_timeout = '1s'", $automatic);
+            self::assertStringNotContainsString('SET lock_timeout', $automatic);
+            self::assertSame(0, (int) $this->connection->fetchOne("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"));
+            // A statement timeout of the role would cancel the build of the index on a big table.
+            self::assertMatchesRegularExpression('/SET statement_timeout = 0\s+CREATE INDEX CONCURRENTLY/', $explicit);
+        } else {
+            self::assertStringContainsString('SET SESSION lock_wait_timeout = 1', $automatic);
+            self::assertStringContainsString('SET SESSION lock_wait_timeout = 5', $explicit);
+        }
+    }
+
+    public function test_setup_finds_an_invalid_index_along_the_search_path(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('Invalid indexes exist only on PostgreSQL (CREATE INDEX CONCURRENTLY).');
+        }
+
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->setup();
+        // The table is in "public", the first schema of the search path is another one.
+        $this->connection->executeStatement('DROP SCHEMA IF EXISTS cqrs_test_first CASCADE');
+        $this->connection->executeStatement('CREATE SCHEMA cqrs_test_first');
+        $this->connection->executeStatement('SET search_path = cqrs_test_first, public');
+        $this->connection->executeStatement("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'public.idx_somework_cqrs_outbox_pending'::regclass");
+
+        self::assertSame(['the index "idx_somework_cqrs_outbox_pending" is invalid (its build was interrupted)'], $storage->pendingChanges());
+        (new DbalOutboxStorage($this->connection))->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        self::assertNull($this->connection->fetchOne("SELECT to_regclass('cqrs_test_first.somework_cqrs_outbox')"), 'The table is found, not created again in the first schema.');
+        (new DbalOutboxStorage($this->connection))->setup();
+
+        self::assertTrue($this->connection->fetchOne("SELECT indisvalid FROM pg_index WHERE indexrelid = 'public.idx_somework_cqrs_outbox_pending'::regclass"));
+        $this->connection->executeStatement('DROP SCHEMA cqrs_test_first CASCADE');
+    }
+
+    public function test_transports_whose_next_rows_tie_take_turns_across_fetches(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'a'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:00', 'b'));
+
+        $first = $storage->fetchUnpublished(1);
+        $second = $storage->fetchUnpublished(1);
+
+        self::assertCount(1, $first);
+        self::assertCount(1, $second);
+        self::assertNotSame($first[0]->transportName, $second[0]->transportName, 'The rows were left as they were, yet the other transport comes first.');
     }
 
     public function test_fetch_queries_are_ordered_along_an_index(): void
     {
-        $queries = new class extends AbstractLogger {
-            /** @var list<string> */
-            private array $sql = [];
-
-            public function log($level, string|\Stringable $message, array $context = []): void
-            {
-                if (is_string($context['sql'] ?? null) && str_contains($context['sql'], 'ORDER BY')) {
-                    $this->sql[] = $context['sql'];
-                }
-            }
-
-            /**
-             * @return list<string>
-             */
-            public function flush(): array
-            {
-                [$sql, $this->sql] = [$this->sql, []];
-
-                return $sql;
-            }
-        };
+        $queries = new QueryLog();
         $this->connection = TestDatabase::connect($queries);
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
@@ -318,7 +394,8 @@ final class DbalOutboxStorageTest extends TestCase
         // PostgreSQL only walks an index when the columns restricted to one value are part of the
         // ORDER BY; MySQL sorts when they are. Otherwise every fetch sorts the whole backlog.
         $leading = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
-        $orders = array_map(static fn (string $sql): string => (string) preg_replace('/^.*ORDER BY (.*?)( LIMIT.*)?$/s', '$1', $sql), $queries->flush());
+        $sorted = array_filter($queries->flush(), static fn (string $sql): bool => str_contains($sql, 'ORDER BY'));
+        $orders = array_map(static fn (string $sql): string => (string) preg_replace('/^.*ORDER BY (.*?)( LIMIT.*)?$/s', '$1', $sql), $sorted);
         $expected = [
             ($leading ? 'published_at ASC, failed_at ASC, ' : '').'transport_name ASC',
             ($leading ? 'published_at ASC, failed_at ASC, transport_name ASC, available_at ASC, ' : '').'created_at ASC, id ASC',
@@ -738,6 +815,19 @@ final class DbalOutboxStorageTest extends TestCase
     private static function ids(array $messages): array
     {
         return array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
+    }
+
+    private function assertQualifiedTableNameWorks(string $tableName): void
+    {
+        (new DbalOutboxStorage($this->connection, $tableName))->setup();
+        // Every process has its own storage (the table must be found again, not created twice).
+        (new DbalOutboxStorage($this->connection, $tableName))->setup();
+        $storage = new DbalOutboxStorage($this->connection, $tableName);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+        self::assertSame([self::ID_1], self::ids((new DbalOutboxStorage($this->connection, $tableName))->fetchUnpublished(10)));
+        self::assertSame([], (new DbalOutboxStorage($this->connection, $tableName))->pendingChanges());
+        self::assertNull((new DbalOutboxStorage($this->connection, $tableName))->status()['oldest_retrying']);
     }
 
     private static function message(string $id, string $createdAt, ?string $transportName = null): OutboxMessage

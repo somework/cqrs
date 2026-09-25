@@ -9,13 +9,14 @@ use DateTimeZone;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 
+use function implode;
 use function intdiv;
 use function sprintf;
 
 /**
  * Reports whether the outbox relay keeps up: messages the relay gave up on, messages that failed
  * and still wait for another attempt, and due messages that have waited longer than a relay run
- * should take.
+ * should take; and whether the table needs the setup command (e.g. its index is missing).
  *
  * @internal
  */
@@ -43,6 +44,17 @@ final class OutboxHealthChecker implements HealthChecker
         }
 
         $results = [];
+
+        try {
+            $changes = $this->outboxStorage->pendingChanges();
+        } catch (\Throwable) {
+            $changes = [];
+        }
+
+        // e.g. the index of this version, which the automatic setup leaves to the setup command.
+        if ([] !== $changes) {
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
+        }
 
         if ($status['failed'] > 0) {
             $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status['failed']));

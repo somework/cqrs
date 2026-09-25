@@ -237,8 +237,10 @@ database transaction and a relay sends them to Messenger afterwards. See
 
 The table is created on first use (`auto_setup: true`), but never inside an open
 transaction: storing the first message inside a transaction throws a
-`LogicException` if the table does not exist yet. Create it, or upgrade a table of
-an earlier version, during deployment:
+`LogicException` if the table does not exist yet. The automatic setup adds the
+columns a table of an earlier version lacks, but leaves its indexes to the setup
+command (the relay and the health check warn until it has run). Create the table,
+or upgrade one of an earlier version, during deployment:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -250,7 +252,8 @@ the configured connection.
 
 Run `somework:cqrs:outbox:setup` over a direct database connection: it holds a
 session lock, which a pooler in transaction mode (PgBouncer) would move to
-another client.
+another client. The automatic setup is safe behind such a pooler: on PostgreSQL
+it runs in one transaction.
 
 ### Relay
 
@@ -343,7 +346,8 @@ rows keep failing, long before they are given up.
   broker.
 * **outbox** (when `outbox.enabled`): a `WARNING` when the relay gave up on
   rows, when failed rows wait for another attempt and the oldest was stored more
-  than 10 minutes ago, or when due rows have waited more than 10 minutes;
+  than 10 minutes ago, when due rows have waited more than 10 minutes, or when
+  the table needs `somework:cqrs:outbox:setup` (e.g. its index is missing);
   `CRITICAL` when the table cannot be read.
 
 The command prints a table of results and exits with the highest severity:

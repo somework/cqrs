@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -40,6 +41,7 @@ use function class_exists;
 use function count;
 use function defined;
 use function filter_var;
+use function implode;
 use function in_array;
 use function json_decode;
 use function max;
@@ -122,8 +124,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     private bool $releasesLockOnShutdown = false;
 
     /**
-     * @param ContainerInterface|null $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
-     * @param int                     $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
+     * @param ContainerInterface|null  $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
+     * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -134,6 +137,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         private readonly string $lockName = 'somework:cqrs:outbox:relay',
         private readonly int $maxAttempts = 10,
         private readonly ?LoggerInterface $logger = null,
+        private readonly ?\Closure $clock = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -242,7 +246,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 $seen[$message->id] = true;
                 ++$fresh;
 
-                $started = microtime(true);
+                $started = $this->now();
                 $outcome = $this->process($message, $io);
                 if (self::STOPPED === $outcome) {
                     break 2;
@@ -270,7 +274,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                     $failingSince[$key] ??= $started;
                     $failures = $consecutiveTransportFailures[$key];
                     $pause = isset($workingTransports[$key])
-                        ? self::MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT <= $failures || (self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures && microtime(true) - $failingSince[$key] >= self::MAX_FAILING_SECONDS)
+                        ? self::MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT <= $failures || (self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures && $this->now() - $failingSince[$key] >= self::MAX_FAILING_SECONDS)
                         : self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures;
                     if ($pause) {
                         $pausedTransports[] = $message->transportName;
@@ -292,6 +296,10 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             if (0 === $fresh) {
                 break;
             }
+        }
+
+        if ($this->outboxStorage instanceof DbalOutboxStorage) {
+            $this->reportPendingChanges($this->outboxStorage, $io);
         }
 
         if ($claimedElsewhere > 0) {
@@ -318,6 +326,29 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         }
 
         return 0 === $failed ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * The automatic setup leaves indexes to the setup command: without them, every fetch reads the
+     * whole table.
+     */
+    private function reportPendingChanges(DbalOutboxStorage $storage, SymfonyStyle $io): void
+    {
+        try {
+            $changes = $storage->pendingChanges();
+        } catch (\Throwable) {
+            return;
+        }
+
+        if ([] !== $changes) {
+            $io->warning(sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s.', implode('; ', $changes)));
+            $this->logger?->warning('The outbox table needs "bin/console somework:cqrs:outbox:setup": {changes}.', ['changes' => implode('; ', $changes)]);
+        }
+    }
+
+    private function now(): float
+    {
+        return null === $this->clock ? microtime(true) : ($this->clock)();
     }
 
     /**

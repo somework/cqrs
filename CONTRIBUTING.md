@@ -46,6 +46,9 @@ point `CQRS_TEST_DATABASE_URL` at an empty database (the tests drop and create t
 CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
 ```
 
+On MySQL, the test of a `database.table` name also needs a database `cqrs_test_other` that the same user can
+change; it is skipped otherwise.
+
 ## Coding Standards
 
 - **Code style:** PSR-12 via [PHP-CS-Fixer](https://github.com/PHP-CS-Fixer/PHP-CS-Fixer). Run `composer fix` to auto-format.

@@ -57,10 +57,10 @@ somework_cqrs:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `false` | Registers the outbox storage and the four console commands. It decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
-| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table`. A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
+| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`; setting it up needs a connection that selects a database). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
-| `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns and indexes a table of an earlier version lacks, but never inside an open transaction. Set it to `false` when migrations manage the table. |
+| `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
 | `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See [Failures](#failures). |
 
 ## Writing to the outbox
@@ -148,7 +148,7 @@ The table has to exist before the first `store()`. There are three ways to creat
 
 **Setup command.** Run it once per environment, for example in your deployment script. It
 creates the table if it is missing, adds the columns and indexes that a table created by an earlier
-version lacks, and does nothing otherwise:
+version lacks (see [Upgrading from 0.4](#upgrading-from-04)), and does nothing otherwise:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -187,12 +187,13 @@ final class Version20260101000000 extends AbstractMigration
 ```
 
 **`auto_setup: true` (default).** The first time a process uses the storage, it checks
-whether the table exists and is up to date (without locking anything), and creates or upgrades
-it if needed. Processes that find the table missing or lacking columns wait for each other (at
-most 30 seconds; the setup command waits 10 minutes); a
-missing index is only built by a process that finds no other setup running, and a failure to
-build it does not fail the process (the table works, only slower; `somework:cqrs:outbox:setup`
-reports the error). It never creates the table inside an open
+whether the table exists and has the columns of this version (without locking anything). If
+not, it creates the table, or adds the columns: processes that start at the same time wait for
+each other (at most 30 seconds), and adding the columns waits at most 1 second for the
+transactions on the table. On PostgreSQL this runs in one transaction, so it is safe behind a
+pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
+a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
+it (without the index every fetch reads all pending rows). It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -226,20 +227,23 @@ by an earlier version.
 
 `store()` keeps working on a table of an earlier version, so deploying the new version does
 not break writes. Stop the relays of the old version before the new ones start: an old relay
-ignores the new columns (retry times, given-up rows, claims). The relay needs the new columns
-and indexes. Add them with one of:
+ignores the new columns (retry times, given-up rows, claims). The relay needs the new columns,
+and the new index to stay fast. Add them with one of:
 
-- `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction). On
+- `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
+  start at the same time wait for each other with a database lock held by the session, which
+  PgBouncer in transaction mode would hand to another client). On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
-  `statement_timeout`), so writes go on while it runs, and rebuilds an index that a killed
-  build left invalid. The old index is dropped only
-  once the new one exists, and setups that start at the same time wait for each other (a
-  database lock, held by the database session: run the setup over a direct connection, not
-  through PgBouncer in transaction mode). Changing the table needs a moment without open
-  transactions on it: adding
+  `statement_timeout`), so writes go on while it runs; it waits for transactions that started
+  before (e.g. a `pg_dump`). It rebuilds an index that an interrupted build left invalid, and
+  stops with `Another process is building the index` while one is being built (e.g. by your
+  migration). The old index is dropped only once the new one exists. Changing the table needs
+  a moment without open transactions on it: adding
   the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
   fails with `could not be changed: a transaction kept it locked` instead of blocking every
-  write behind it; run the setup again when the table is less busy;
+  write behind it; run the setup again when the table is less busy. With `auto_setup: true`,
+  the first process adds the columns (waiting at most 1 second), so the relay works before
+  the setup command has run, only slower;
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
   the new columns and index);
 - a migration of your own:
@@ -422,8 +426,10 @@ to relay them.
   when rows failed and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
-  their failing transport). It is critical when the table cannot be read.
-- The relay logs failed attempts, paused transports, messages handled inline or dropped, and
+  their failing transport); and when the table needs `somework:cqrs:outbox:setup` (e.g. its
+  index is missing or invalid). It is critical when the table cannot be read.
+- The relay logs failed attempts, paused transports, messages handled inline or dropped, a
+  table that needs the setup command, and
   runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the
   application's `logger` service, besides printing them.
 - Alert on the relay's exit code `1`.
@@ -543,7 +549,8 @@ An implementation must meet these rules:
   passed). The transports take turns, the one whose next message has waited longest first;
   within a transport, first the messages never attempted,
   in the order they were stored, then the others, in the order of their retry time. It skips
-  the excluded transports. The relay excludes a transport after 3 (or 10) send failures in a row; a storage that
+  the excluded transports. The relay excludes a transport after 3 send failures in a row (after 10, or 3 over at least
+  10 seconds, once it accepted a message in the run); a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
 - `recordAttempt()` stores the given number of attempts, the error and the retry time as they
   are; it is called before every attempt and again when the attempt fails. With

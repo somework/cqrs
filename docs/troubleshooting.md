@@ -417,8 +417,9 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   are relayed; the command exits with `1`. The maximum is three times
   `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
 * `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
-  The broker is down or rejects the messages (`failed 10 times in a row` when it
-  accepted a message earlier in the run). The rows of the other transports
+  The broker is down or rejects the messages. When it accepted a message earlier
+  in the run, it is paused after 10 failures in a row, or after 3 once its
+  failures have lasted 10 seconds (e.g. every send waits for a timeout). The rows of the other transports
   are still relayed; the paused ones are tried again by the next run.
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
   `outbox.max_attempts` times (three times as many for transport failures). Fix
@@ -439,7 +440,15 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   Two relays overlapped while a send failed; the other relay's attempt counts.
 * `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
   table does not exist or lacks the columns of this version (run
-  `somework:cqrs:outbox:setup`).
+  `somework:cqrs:outbox:setup`). With `could not be changed: a transaction kept it
+  locked for more than 1 second(s)`, the relay tried to add the columns while a
+  transaction held the table; with `Another process has been setting up the outbox
+  table … for more than 30 seconds`, another process was upgrading it. Run
+  `somework:cqrs:outbox:setup`, which waits longer.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …` The table
+  lacks the index of this version, or has an invalid one (an interrupted build),
+  or still has the index of 0.4. The relay works, but reads every pending row on
+  each fetch. Run the setup command (over a direct database connection).
 
 ## Health check failures
 
