@@ -479,7 +479,7 @@ final class AsyncEventTest extends KernelTestCase
         $container = static::getContainer();
 
         // TaskCreated is routed to the "async" transport (Messenger routing or somework_cqrs.transports).
-        $container->get(EventBus::class)->dispatchAsync(new TaskCreated('task-1'));
+        $container->get(EventBus::class)->dispatchAsync(new TaskCreated('task-1', 'Write docs'));
 
         $sent = $container->get('messenger.transport.async')->getSent();
         self::assertCount(1, $sent);

@@ -345,7 +345,7 @@ somework_cqrs:
             default: [async]
 ```
 
-`MESSENGER_TRANSPORT_DSN` must point to a transport you have installed (Doctrine, AMQP, Redis, ...). Now `$commandBus->dispatchAsync($command)` sends the command to the `async` transport, and so does a plain `dispatch()` of a command class marked with `#[Asynchronous]` (`SomeWork\CqrsBundle\Attribute\Asynchronous`) or mapped to `async` under `dispatch_modes.command.map`. Handlers without an explicit `bus` are registered on the async bus automatically, so the worker finds them:
+`MESSENGER_TRANSPORT_DSN` must point to a transport you have installed (Doctrine, AMQP, Redis, ...); for the Flex default `doctrine://default?auto_setup=0`, run `composer require symfony/doctrine-messenger` and `bin/console messenger:setup-transports`. Now `$commandBus->dispatchAsync($command)` sends the command to the `async` transport, and so does a plain `dispatch()` of a command class marked with `#[Asynchronous]` (`SomeWork\CqrsBundle\Attribute\Asynchronous`) or mapped to `async` under `dispatch_modes.command.map`. Handlers without an explicit `bus` are registered on the async bus automatically, so the worker finds them:
 
 ```bash
 bin/console messenger:consume async
@@ -365,6 +365,7 @@ Full documentation is available at **[somework.github.io/cqrs](https://somework.
 * [Testing Guide](docs/testing.md) -- fake buses, assertions, integration testing
 * [Production Guide](docs/production.md) -- deployment, workers, monitoring
 * [Troubleshooting](docs/troubleshooting.md) -- common issues and solutions
+* [Example application](docs/example-app/) -- a runnable Symfony application with commands, queries, events and an async transport
 * [Upgrade Guide](UPGRADE.md) -- upgrading between versions of the bundle
 * [Changelog](CHANGELOG.md)
 

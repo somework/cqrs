@@ -49,6 +49,7 @@ use function strlen;
 use function strrpos;
 use function strtolower;
 use function substr;
+use function usort;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -354,6 +355,8 @@ final class GenerateMessageCommand extends SymfonyCommand
         };
 
         $lines = ['<?php', '', 'declare(strict_types=1);', '', sprintf('namespace %s;', $handlerNamespace), ''];
+        // In alphabetical order, as coding standards (e.g. PHP-CS-Fixer's ordered_imports) expect.
+        usort($imports, strcasecmp(...));
         foreach ($imports as $import) {
             $lines[] = sprintf('use %s;', $import);
         }

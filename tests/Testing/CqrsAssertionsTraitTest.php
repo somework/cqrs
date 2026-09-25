@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 
 #[CoversTrait(CqrsAssertionsTrait::class)]
@@ -37,6 +38,21 @@ final class CqrsAssertionsTraitTest extends TestCase
         $this->expectException(AssertionFailedError::class);
 
         self::assertDispatched($bus, Command::class);
+    }
+
+    public function test_a_failure_names_the_bus_instead_of_exporting_it(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->dispatch(new class implements Command {});
+
+        try {
+            self::assertDispatched($bus, CreateTaskCommand::class);
+            self::fail('The assertion did not fail.');
+        } catch (AssertionFailedError $failure) {
+            self::assertStringStartsWith('Failed asserting that '.FakeCommandBus::class.' has dispatched a message of class "'.CreateTaskCommand::class.'".', $failure->getMessage());
+            self::assertStringContainsString('Actually dispatched: ', $failure->getMessage());
+            self::assertStringNotContainsString('records', $failure->getMessage());
+        }
     }
 
     public function test_assert_not_dispatched_passes_when_message_not_dispatched(): void

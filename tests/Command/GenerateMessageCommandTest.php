@@ -219,7 +219,8 @@ final class GenerateMessageCommandTest extends TestCase
         $this->execute(['type' => 'event', 'name' => 'App\\Event\\SomethingHappened']);
 
         $queryHandler = $this->read('src/Handler/FindSomethingHandler.php');
-        self::assertStringContainsString('use App\\Query\\FindSomething;', $queryHandler);
+        // Imports in alphabetical order, as coding standards expect.
+        self::assertStringContainsString("use App\\Query\\FindSomething;\nuse SomeWork\\CqrsBundle\\Attribute\\AsQueryHandler;", $queryHandler);
         self::assertStringContainsString('#[AsQueryHandler(FindSomething::class)]', $queryHandler);
         self::assertStringContainsString('public function __invoke(FindSomething $query): mixed', $queryHandler);
         self::assertStringContainsString('final class FindSomething implements Query', $this->read('src/Query/FindSomething.php'));

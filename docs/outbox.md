@@ -41,6 +41,22 @@ never write to the outbox.
 composer require doctrine/dbal doctrine/doctrine-bundle symfony/lock
 ```
 
+The Flex recipe of DoctrineBundle writes a `doctrine.orm` section. Without doctrine/orm the
+container then fails with `The doctrine/orm package is required when the doctrine.orm config
+is set`: remove that section, or install the ORM (`composer require symfony/orm-pack`).
+
+## Quick start
+
+1. Enable the outbox (`somework_cqrs.outbox.enabled: true`, see [Configuration](#configuration)).
+2. Create the table: `bin/console somework:cqrs:outbox:setup`, or a Doctrine migration.
+3. Store messages with `OutboxWriter::store()` inside your transaction (see
+   [Writing to the outbox](#writing-to-the-outbox)).
+4. Run `bin/console somework:cqrs:outbox:relay` every minute (see [Relaying](#relaying)) and
+   purge published rows every night (see [Purging published rows](#purging-published-rows)).
+5. Watch `bin/console somework:cqrs:health` (see [Monitoring](#monitoring)).
+
+The rest of this page explains each step and the cases operations need to know.
+
 ## Configuration
 
 ```yaml

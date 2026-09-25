@@ -26,6 +26,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - A query handler declared `: void` or `: never` is a compile error (`ask()` returned `null`).
 - A decorated outbox storage (`#[AsDecorator('somework_cqrs.outbox.storage')]`) keeps `outbox:setup`, `outbox:failed`, the outbox health check and the relay's table report working: they use the DBAL storage behind the decorator (`somework_cqrs.outbox.dbal_storage`, which `DbalOutboxStorage` autowires to).
 - The outbox relay gives up a row stored for a transport that does not exist at once, with an error that says how to fix it; `somework:cqrs:outbox:failed --requeue --transport=<name>` sends given-up rows to another transport.
+- `somework:cqrs:generate` writes the imports of a handler in alphabetical order; a failed `assertDispatched()`/`assertNotDispatched()` names the fake bus instead of dumping it.
 - `somework:cqrs:list` prints a compact table per message type (one table per handler with `--details`), filters with `--message`, and marks retry policies that no transport of `retry_strategy.transports` uses.
 - The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered), and the first `IdempotencyStamp` of a process logs it as a warning.
 

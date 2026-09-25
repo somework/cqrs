@@ -61,6 +61,18 @@ final class DispatchedMessage extends Constraint
         return false;
     }
 
+    /**
+     * Names the bus instead of exporting it (with every record and configured result).
+     */
+    protected function failureDescription(mixed $other): string
+    {
+        if (!$other instanceof RecordsBusDispatches) {
+            return parent::failureDescription($other);
+        }
+
+        return $other::class.' '.$this->toString();
+    }
+
     protected function additionalFailureDescription(mixed $other): string
     {
         if (!$other instanceof RecordsBusDispatches) {
