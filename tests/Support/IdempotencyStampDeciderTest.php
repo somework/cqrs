@@ -53,7 +53,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertFalse($deduplicateStamp->onlyDeduplicateInQueue());
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_problem_is_logged_once_when_a_message_carries_an_idempotency_stamp(): void
     {
         $logger = new RecordingLogger();
@@ -73,6 +72,7 @@ final class IdempotencyStampDeciderTest extends TestCase
         ]], $warnings);
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_uses_the_configured_ttl(): void
     {
         $result = (new IdempotencyStampDecider(60.0))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new IdempotencyStamp('key')]);
