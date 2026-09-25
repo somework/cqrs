@@ -9,8 +9,6 @@ use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
-use Symfony\Component\Messenger\Stamp\HandledStamp;
-use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_map;
@@ -58,18 +56,8 @@ abstract class AbstractMessengerBus
             'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
         ]);
 
-        $envelope = $bus->dispatch($message, $stamps);
-
-        // Messenger handles a message that no transport is routed to right away: an async dispatch
-        // that silently runs in the calling process is almost always a missing transport.
-        if (DispatchMode::ASYNC === $resolvedMode && null === $envelope->last(SentStamp::class) && null !== $envelope->last(HandledStamp::class)) {
-            $this->logger?->warning('{message} was dispatched asynchronously but handled synchronously: no transport is configured for it. Set "somework_cqrs.transports.{bus}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
-                'message' => $message::class,
-                'bus' => static::BUS_NAME,
-            ]);
-        }
-
-        return $envelope;
+        // MessageTransportStampDecider warns when an async dispatch has no transport.
+        return $bus->dispatch($message, $stamps);
     }
 
     final protected function dispatchMessageSync(object $message, StampInterface ...$stamps): Envelope

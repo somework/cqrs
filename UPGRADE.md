@@ -352,7 +352,8 @@ The container build now fails for configuration that used to be silently ignored
 - Service ids (policies, providers, serializers, naming strategies, buses) must be non-empty strings.
 - Keys of every per-message `map` must be existing classes or interfaces. A leading backslash is removed.
   Remove entries for classes that no longer exist.
-- `causation_id.buses` entries must be existing bus services (aliases are resolved).
+- `causation_id.buses` entries must be existing bus services (aliases are resolved), and so must
+  `default_bus` when a command, query or event bus is not configured.
 - The `enabled` flags of `outbox`, `outbox.signing`, `idempotency`, `causation_id`, `sequence` and
   `rate_limiting` decide which services are registered and can no longer use `%env()%`.
 - Rate limiting is inactive while no limiter is configured; configuring a limiter without symfony/rate-limiter

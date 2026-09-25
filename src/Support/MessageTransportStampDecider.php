@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -49,6 +50,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         private readonly TransportResolverMap $queryResolvers,
         private readonly TransportResolverMap $eventResolvers,
         array $routedMessageTypes = [],
+        private readonly ?LoggerInterface $logger = null,
     ) {
         $this->routedMessageTypes = array_fill_keys($routedMessageTypes, true);
     }
@@ -89,6 +91,16 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         }
 
         if (null === $transports || [] === $transports) {
+            // Messenger handles a message that no transport is routed to right away: an async dispatch
+            // that silently runs in the calling process is almost always a missing transport. (Warned
+            // here, before the dispatch: inside a handler it is deferred until the handler finished.)
+            if (DispatchMode::ASYNC === $mode && !$this->isRouted($message)) {
+                $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
+                    'message' => $message::class,
+                    'type' => $message instanceof Event ? 'event' : 'command',
+                ]);
+            }
+
             return $stamps;
         }
 

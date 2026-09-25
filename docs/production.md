@@ -431,9 +431,10 @@ monolog:
             channels: [cqrs]
 ```
 
-Warnings to watch for: an asynchronous dispatch that was handled synchronously (no transport is
-configured for the message), and the outbox relay's failures, paused transports and given-up
-messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
+Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
+message in the calling process), an event a worker received without a handler on its bus (it is
+acknowledged without being handled), and the outbox relay's failures, paused transports and
+given-up messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
 
 ### Correlation and causation ids
 

@@ -35,7 +35,6 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
-use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
@@ -781,39 +780,6 @@ final class CommandBusTest extends TestCase
         $bus->dispatch($command);
 
         self::assertSame(['Dispatching {message} on the {mode} {bus} bus'], $logMessages);
-    }
-
-    public function test_warns_when_an_async_dispatch_was_handled_synchronously(): void
-    {
-        // Messenger handles a message routed to no transport right away.
-        $command = new CreateTaskCommand('123', 'Test');
-        $asyncBus = $this->createMock(MessageBusInterface::class);
-        $asyncBus->method('dispatch')->willReturn((new Envelope($command))->with(new HandledStamp(null, 'handler')));
-
-        $warnings = [];
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
-            $warnings[] = [$message, $context];
-        });
-
-        $bus = new CommandBus($this->createMock(MessageBusInterface::class), $asyncBus, stampsDecider: StampsDecider::withoutDecorators(), logger: $logger);
-        $bus->dispatchAsync($command);
-
-        self::assertCount(1, $warnings);
-        self::assertStringContainsString('dispatched asynchronously but handled synchronously', $warnings[0][0]);
-        self::assertSame(['message' => CreateTaskCommand::class, 'bus' => 'command'], $warnings[0][1]);
-    }
-
-    public function test_an_async_dispatch_sent_to_a_transport_is_not_reported(): void
-    {
-        $command = new CreateTaskCommand('123', 'Test');
-        $asyncBus = $this->createMock(MessageBusInterface::class);
-        $asyncBus->method('dispatch')->willReturn((new Envelope($command))->with(new SentStamp('sender', 'async')));
-
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::never())->method('warning');
-
-        (new CommandBus($this->createMock(MessageBusInterface::class), $asyncBus, stampsDecider: StampsDecider::withoutDecorators(), logger: $logger))->dispatchAsync($command);
     }
 
     public function test_dispatch_log_context_includes_bus_name_command(): void

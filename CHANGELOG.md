@@ -46,7 +46,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 
 **Diagnostics and tooling**
 - The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps.
-- A warning log when an asynchronous dispatch was handled synchronously because no transport is configured.
+- A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event without a handler on its bus.
 - The compilation log explains why idempotency cannot deduplicate, and the first `IdempotencyStamp` of a process logs it as a warning.
 - `somework:cqrs:list` prints a compact table per message type, filters with `--message`, and marks retry policies that no transport uses.
 - `somework:cqrs:generate` writes the imports of a handler in alphabetical order.
@@ -80,7 +80,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
   - a handler attribute whose message the handler method does not accept, or whose type contradicts the message;
   - a query handler declared `: void`;
   - `#[Asynchronous]` without an async bus or transport;
-  - a non-bus id under `buses.*` or `causation_id.buses`;
+  - a non-bus id under `buses.*`, `causation_id.buses`, or `default_bus` when a facade falls back to it;
   - an unknown transport under `retry_strategy.transports`.
 - `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies. Older `doctrine/dbal`, `open-telemetry/api`, `symfony/lock` and `symfony/rate-limiter` versions are declared as conflicts.
 - The bundle registers only its own services. The testing fakes are no longer services.

@@ -45,6 +45,39 @@ final class ValidateBusIdsPassTest extends TestCase
         (new ValidateBusIdsPass())->process($container);
     }
 
+    public function test_rejects_a_default_bus_a_facade_falls_back_to_that_is_not_a_bus(): void
+    {
+        $container = $this->container(['command' => 'command.bus', 'event' => 'command.bus']);
+        $container->setParameter('somework_cqrs.default_bus', 'logger');
+        $container->register('logger', \stdClass::class);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.default_bus" is "logger", which is not a Messenger bus. Known buses: command.bus, event.async_bus.');
+
+        (new ValidateBusIdsPass())->process($container);
+    }
+
+    public function test_rejects_an_unknown_default_bus(): void
+    {
+        $container = $this->container([]);
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.defualt');
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.default_bus" is "messenger.bus.defualt", which is not a Messenger bus.');
+
+        (new ValidateBusIdsPass())->process($container);
+    }
+
+    public function test_ignores_the_default_bus_when_no_facade_uses_it(): void
+    {
+        $container = $this->container(['command' => 'command.bus', 'query' => 'command.bus', 'event' => 'command.bus']);
+        $container->setParameter('somework_cqrs.default_bus', 'mailer.bus');
+
+        (new ValidateBusIdsPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
     public function test_does_nothing_without_the_bundle_configuration(): void
     {
         $container = new ContainerBuilder();

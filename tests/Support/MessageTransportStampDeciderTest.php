@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
@@ -211,6 +212,33 @@ final class MessageTransportStampDeciderTest extends TestCase
         $stamps = $decider->decide($message, DispatchMode::SYNC, [$existing]);
 
         self::assertSame([$existing], $stamps);
+    }
+
+    public function test_warns_when_an_async_dispatch_has_no_transport(): void
+    {
+        // Messenger would handle it in the calling process; also for a dispatch deferred until a handler finished.
+        $warnings = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
+            $warnings[] = [$message, $context];
+        });
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+
+        self::assertSame([], $decider->decide(new TaskCreatedEvent('1'), DispatchMode::ASYNC, []));
+        self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::SYNC, []), 'A sync dispatch needs no transport.');
+
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('is dispatched asynchronously, but no transport is configured for it', $warnings[0][0]);
+        self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
+    }
+
+    public function test_does_not_warn_when_the_routing_sends_an_async_dispatch(): void
+    {
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), ['SomeWork\\CqrsBundle\\Tests\\Fixture\\Message\\*'], $logger);
+
+        self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::ASYNC, []));
     }
 
     private function createDecider(

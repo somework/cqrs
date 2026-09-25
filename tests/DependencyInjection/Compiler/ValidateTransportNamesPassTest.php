@@ -18,6 +18,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\MessageBus;
 
 use function array_map;
 use function sprintf;
@@ -176,7 +177,7 @@ final class ValidateTransportNamesPassTest extends TestCase
     {
         $container = new ContainerBuilder();
 
-        $container->register('messenger.default_bus', \stdClass::class)->setPublic(true);
+        $container->register('messenger.default_bus', MessageBus::class)->addTag('messenger.bus')->setPublic(true);
         $container->register('messenger.default_bus.messenger.handlers_locator', ServiceLocator::class)
             ->setArguments([[]])
             ->setPublic(true);

@@ -20,7 +20,7 @@ use const PHP_EOL;
 /** @internal */
 #[AsCommand(
     name: 'somework:cqrs:debug-transports',
-    description: 'Inspect Messenger transport routing for CQRS messages.',
+    description: 'Show the transports configured for CQRS messages under "somework_cqrs.transports".',
 )]
 final class DebugTransportsCommand extends Command
 {

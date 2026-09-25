@@ -6,7 +6,9 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
 use SomeWork\CqrsBundle\Messenger\Middleware\AllowNoHandlerMiddleware;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Reference;
 
 use function array_filter;
 use function array_merge;
@@ -30,7 +32,9 @@ final class AllowNoHandlerMiddlewareRegistrar
         if (!$container->hasDefinition('somework_cqrs.messenger.middleware.allow_no_handler')) {
             $container->setDefinition(
                 'somework_cqrs.messenger.middleware.allow_no_handler',
-                (new Definition(AllowNoHandlerMiddleware::class))->setPublic(false)
+                (new Definition(AllowNoHandlerMiddleware::class))
+                    ->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+                    ->setPublic(false)
             );
         }
 

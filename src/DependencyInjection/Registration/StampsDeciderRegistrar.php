@@ -152,6 +152,7 @@ final class StampsDeciderRegistrar
                         $this->helper->createResolverReference('transports', 'event'),
                         $this->helper->createOptionalTransportResolverReference('event_async', $buses),
                     ),
+                    '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],
                 // Also resolves the #[Asynchronous] transport; TransportRoutingPass adds $routedMessageTypes.
                 'priority' => 175,
