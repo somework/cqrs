@@ -10,6 +10,7 @@ use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\Attributes\Group;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\OutboxTestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
@@ -66,6 +67,21 @@ final class OutboxRelayKernelTest extends KernelTestCase
         self::assertSame('Write docs', $this->recorder()->task('task-1'));
         self::assertSame([CreateTaskCommand::class], $this->recorder()->handledMessages(CreateTaskHandler::class));
         self::assertSame([], $this->storage()->fetchUnpublished(10));
+    }
+
+    public function test_the_writer_sends_messages_where_an_async_dispatch_would(): void
+    {
+        // "transports.command_async" of the kernel names the "async" transport.
+        $writer = self::getContainer()->get('test.outbox_writer');
+        self::assertInstanceOf(OutboxWriter::class, $writer);
+
+        $this->connection()->transactional(static function () use ($writer): void {
+            $writer->store(new CreateTaskCommand('task-3', 'Stored with the writer'));
+        });
+
+        self::assertSame('async', $this->storage()->fetchUnpublished(10)[0]->transportName);
+        self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:relay')->getStatusCode());
+        self::assertCount(1, $this->transport()->getSent());
     }
 
     public function test_a_poison_row_is_given_up_after_the_configured_attempts_and_can_be_requeued(): void

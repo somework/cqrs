@@ -80,6 +80,7 @@ reports messages that were sent to a transport or deduplicated).
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
+- `OutboxStoragePass` — keeps setup, failed, health and the relay's table report on the DBAL storage when the application decorates `somework_cqrs.outbox.storage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
@@ -90,7 +91,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`.
 
-**Outbox / Health / Retry / Testing** — `src/Outbox/` (DBAL storage, `OutboxMessage::fromEnvelope()`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
+**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, DBAL storage, `OutboxMessage::fromEnvelope()`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 

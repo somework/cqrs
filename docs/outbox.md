@@ -7,14 +7,15 @@ database table **in the same transaction** as the business change. The
 `somework:cqrs:outbox:relay` command later sends the stored messages to Messenger.
 
 !!! note "Stability"
-    `OutboxStorage`, `OutboxMessage` and `DbalOutboxStorage` are part of the public API
-    (`@api`). Type-hint the `OutboxStorage` interface in your code; `DbalOutboxStorage` is
-    public for `addTableToSchema()` in migrations and for the setup and failed-message tools.
+    `OutboxWriter`, `OutboxStorage`, `OutboxMessage` and `DbalOutboxStorage` are part of the
+    public API (`@api`). Write with `OutboxWriter`, or type-hint the `OutboxStorage` interface;
+    `DbalOutboxStorage` is public for `addTableToSchema()` in migrations and for the setup and
+    failed-message tools.
 
 ## How it works
 
-1. Inside your database transaction, you write the business data and call
-   `OutboxStorage::store()` with an `OutboxMessage` built from a Messenger envelope.
+1. Inside your database transaction, you write the business data and store the message with
+   `OutboxWriter::store()`.
 2. The transaction commits. The message row is saved only if the business change is.
 3. `somework:cqrs:outbox:relay` reads due rows, transport by transport, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
@@ -65,9 +66,7 @@ somework_cqrs:
 
 ## Writing to the outbox
 
-Build the row with
-`OutboxMessage::fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null)`
-and pass it to `OutboxStorage::store()` inside your transaction:
+Inject `OutboxWriter` and call `store()` inside your transaction:
 
 ```php
 <?php
@@ -79,21 +78,15 @@ namespace App\Application\Command;
 use App\Application\Event\OrderPlaced;
 use Doctrine\DBAL\Connection;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
-use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\Messenger\Envelope;
-use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 #[AsCommandHandler(command: PlaceOrder::class)]
 final class PlaceOrderHandler
 {
     public function __construct(
         private readonly Connection $connection,
-        private readonly OutboxStorage $outbox,
-        #[Autowire(service: 'somework_cqrs.outbox.serializer')]
-        private readonly SerializerInterface $serializer,
+        private readonly OutboxWriter $outbox,
     ) {
     }
 
@@ -105,11 +98,11 @@ final class PlaceOrderHandler
                 'customer_id' => $command->customerId,
             ]);
 
-            $envelope = new Envelope(new OrderPlaced($command->orderId), [
+            $this->outbox->store(
+                new OrderPlaced($command->orderId),
+                null, // the transports an async dispatch would use
                 MessageMetadataStamp::createWithRandomCorrelationId(),
-            ]);
-
-            $this->outbox->store(OutboxMessage::fromEnvelope($envelope, $this->serializer, 'async'));
+            );
         });
 
         return null;
@@ -117,30 +110,37 @@ final class PlaceOrderHandler
 }
 ```
 
-The main points:
+`OutboxWriter::store(object $message, ?string $transportName = null, StampInterface ...$stamps)`
+returns the stored rows. The main points:
 
-- **Inject `somework_cqrs.outbox.serializer`**, not a transport's serializer. The relay
-  decodes rows with this same service. The alias points to the `outbox.serializer` option
-  (by default `messenger.default_serializer`).
 - **Use the same connection.** `Connection` must be the connection named in
   `outbox.connection`. With Doctrine ORM, call `store()` inside
   `EntityManagerInterface::wrapInTransaction()`. The entity manager of that connection
   shares the same `Connection` instance.
-- **The stamp pipeline does not run.** Neither writing to the outbox nor relaying goes
-  through the CQRS buses, so the bundle adds no metadata, retry, serializer or transport
-  stamps. Add the stamps you need to the envelope yourself. They are serialized with the
-  message.
-- **Choose the transport.** The third argument is the transport name. The relay sends the
-  message there with Messenger's `TransportNamesStamp`, which overrides the routing. With
-  `null`, `framework.messenger.routing` decides.
+- **The transport.** Without a transport name, the writer sends the message where an
+  asynchronous dispatch through the CQRS buses would: the transports of
+  `transports.command_async` or `transports.event_async` for the message, or the one of
+  `#[Asynchronous(transport: ...)]`. It stores one row per transport, so a failing transport
+  is retried alone. When none is configured, the row follows `framework.messenger.routing`
+  when it is relayed. A transport name you pass wins. The relay sends the message there with
+  Messenger's `TransportNamesStamp`.
+- **Only your stamps.** The rest of the stamp pipeline does not run: the bundle adds no
+  metadata, retry or serializer stamps. Pass the stamps you need; they are serialized with
+  the message.
 - **The bus is chosen for you.** The relay dispatches commands on `buses.command_async`
   (or `buses.command`), events on `buses.event_async` (or `buses.event`), queries on
   `buses.query`, and anything else on the default bus. That bus adds its `BusNameStamp`, so
   the worker hands the message to the bus where its handlers are registered. A
   `BusNameStamp` you store yourself is kept.
 
-`fromEnvelope()` gives the row a time-ordered UUIDv7 id. Rows stored in the same
-millisecond by one process keep their order.
+Rows get a time-ordered UUIDv7 id: rows stored in the same millisecond by one process keep
+their order.
+
+Without the writer, build the row yourself with
+`OutboxMessage::fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null)`
+and pass it to `OutboxStorage::store()`. Encode it with the `somework_cqrs.outbox.serializer`
+service (the `outbox.serializer` option, by default `messenger.default_serializer`), which the
+relay decodes rows with, not with a transport's serializer.
 
 ## Creating the table
 

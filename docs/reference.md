@@ -671,8 +671,9 @@ registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
   `somework:cqrs:outbox:setup`. Disable `auto_setup` when migrations manage the
   table. With doctrine/orm installed, the table is also added to the schema of
   the outbox connection, so `doctrine:migrations:diff` picks it up.
-* The relay decodes stored rows with `serializer`; encode them with the same
-  serializer when you call `OutboxMessage::fromEnvelope()`.
+* The relay decodes stored rows with `serializer`. `OutboxWriter` encodes with
+  it; encode with the same serializer when you call `OutboxMessage::fromEnvelope()`
+  yourself.
 
 See [Transactional outbox](outbox.md).
 

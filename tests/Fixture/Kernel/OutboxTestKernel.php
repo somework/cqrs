@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
 use Doctrine\DBAL\Connection;
 use Psr\Log\NullLogger;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
@@ -82,6 +83,8 @@ final class OutboxTestKernel extends Kernel
             ->factory([TestDatabase::class, 'connect'])
             ->public();
         $services->set(TaskRecorder::class)->public();
+        // Private and unused otherwise, so the test container would not have it.
+        $services->alias('test.outbox_writer', OutboxWriter::class)->public();
         $services->set(CreateTaskHandler::class);
         $services->set(AsyncTaskHandler::class);
         $services->set(TaskAuditTrailHandler::class);

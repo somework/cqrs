@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -48,6 +49,14 @@ final class OutboxRegistrar
 
         $serializer = new Reference($config['serializer'] ?? 'messenger.default_serializer');
         $container->setAlias('somework_cqrs.outbox.serializer', (string) $serializer)->setPublic(false);
+
+        $writerDef = new Definition(OutboxWriter::class);
+        $writerDef->setArgument('$storage', new Reference(OutboxStoragePass::STORAGE_ID));
+        $writerDef->setArgument('$serializer', $serializer);
+        $writerDef->setArgument('$transports', new Reference('somework_cqrs.stamp_decider.message_transport', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        $writerDef->setPublic(false);
+        $container->setDefinition('somework_cqrs.outbox.writer', $writerDef);
+        $container->setAlias(OutboxWriter::class, 'somework_cqrs.outbox.writer')->setPublic(false);
 
         $relayDef = new Definition(OutboxRelayCommand::class);
         $relayDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
