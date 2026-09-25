@@ -13,7 +13,7 @@ use function sprintf;
  *
  * @api
  */
-final class MessageSentToTransportException extends \LogicException
+final class MessageSentToTransportException extends \LogicException implements CqrsException
 {
     /**
      * @param list<string> $transportNames

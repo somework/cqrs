@@ -12,7 +12,7 @@ use function sprintf;
  *
  * @api
  */
-final class DuplicateMessageException extends \RuntimeException
+final class DuplicateMessageException extends \RuntimeException implements CqrsException
 {
     public function __construct(
         public readonly string $messageFqcn,

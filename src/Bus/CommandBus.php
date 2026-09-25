@@ -29,6 +29,10 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
 {
     protected const BUS_NAME = 'command';
 
+    /**
+     * @internal Get the bus from the container (autowire the interface); the constructor
+     *           arguments are internal services and change without notice
+     */
     public function __construct(
         MessageBusInterface $syncBus,
         ?MessageBusInterface $asyncBus = null,

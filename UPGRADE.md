@@ -6,8 +6,17 @@ This bundle follows [Semantic Versioning](https://semver.org/). While the major 
 a minor release (0.4 → 0.5) may contain breaking changes; patch releases never do. Every
 breaking change is listed in this guide and in the [changelog](CHANGELOG.md).
 
-The promise applies only to classes, interfaces, traits and enums annotated with `@api` in
-their class-level PHPDoc block.
+The promise covers:
+
+- classes, interfaces, traits and enums annotated with `@api` in their class-level PHPDoc block,
+  including parameter names (named arguments), except members marked `@internal` (the constructors
+  of `CommandBus`, `QueryBus` and `EventBus`: get the buses from the container);
+- the `somework_cqrs` configuration tree;
+- the documented service ids and tags: `somework_cqrs.outbox.storage`,
+  `somework_cqrs.outbox.dbal_storage`, `somework_cqrs.outbox.serializer`,
+  `somework_cqrs.dispatch_stamp_decider` and `somework_cqrs.health_checker`;
+- the priorities of the built-in stamp deciders, console command names, options and exit codes,
+  the OpenTelemetry span names and the `cqrs` log channel.
 
 - **`@api` types**: public methods, constructor signatures and return types only change in a
   release that documents the change here.
@@ -20,14 +29,25 @@ their class-level PHPDoc block.
 - Removing a class, interface or trait
 - Adding required constructor parameters
 - Changing a return type to an incompatible type
-- Adding or removing interface methods
+- Adding or removing methods of interfaces meant to be implemented (the handler, policy, storage
+  and health checker contracts, and the bus interfaces)
+- Adding methods to the classes and traits you extend or use (the abstract handlers,
+  `CqrsTestCase`, `CqrsAssertionsTrait`, `EnvelopeAwareTrait`): they can clash with yours
 
 ### What is not a breaking change
 
 - Adding optional parameters with default values
-- Adding methods to classes, adding classes or interfaces
+- Adding methods to final classes, adding classes or interfaces
+- Adding cases to enums (`DispatchMode`, `CheckSeverity`): give a `match` over them a default arm
 - Bug fixes that change incorrect behaviour (they are still listed below when you may notice them)
 - Adding `@api` or `@internal` annotations
+
+### Deprecations
+
+From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and a
+`trigger_deprecation('somework/cqrs-bundle', …)` notice, listed in this guide) and kept for at
+least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
+releases.
 
 ## Upgrading from 0.4.0 to 0.5.0
 

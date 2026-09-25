@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CountingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
@@ -865,6 +866,29 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertStringContainsString('the relay lock was lost', self::display($tester));
         self::assertCount(1, $this->async->getSent(), 'The run stops right after the lock could not be extended.');
+    }
+
+    public function test_the_lock_is_extended_every_ten_seconds(): void
+    {
+        // Not after every message: with Redis or a database, each extension is a round trip.
+        foreach (['1', '2', '3', '4'] as $id) {
+            $this->store(new CreateTaskCommand($id, 'a'), 'async');
+        }
+        $store = new CountingLockStore();
+        $time = 1000.0;
+        $clock = static function () use (&$time): float {
+            $time += 4.0;
+
+            return $time;
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory($store), clock: $clock));
+        $tester->execute([]);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertCount(4, $this->async->getSent());
+        self::assertLessThan(4, $store->refreshes);
+        self::assertGreaterThan(0, $store->refreshes);
     }
 
     private function store(object $message, ?string $transportName = null): OutboxMessage

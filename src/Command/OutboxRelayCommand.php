@@ -119,6 +119,12 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
     private const STOPPED = 'stopped';
 
+    /** Seconds between two extensions of the relay lock (its TTL is 300 seconds). */
+    private const LOCK_REFRESH_SECONDS = 10;
+
+    /** When the relay lock was last extended. */
+    private ?float $lockRefreshedAt = null;
+
     /** The signal that asked the run to stop after the current message. */
     private ?int $stopSignal = null;
 
@@ -623,13 +629,21 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     }
 
     /**
-     * Extends the relay lock so it cannot expire during a long run and let a second relay in.
+     * Extends the relay lock so it cannot expire during a long run and let a second relay in:
+     * every 10 seconds, not after every message, as that costs a round trip with a lock store on
+     * the network (Redis, a database).
      */
     private function keepLock(SymfonyStyle $io): bool
     {
         if (null === $this->lock) {
             return true;
         }
+
+        $now = $this->now();
+        if (null !== $this->lockRefreshedAt && $now - $this->lockRefreshedAt < self::LOCK_REFRESH_SECONDS) {
+            return true;
+        }
+        $this->lockRefreshedAt = $now;
 
         try {
             $this->lock->refresh();

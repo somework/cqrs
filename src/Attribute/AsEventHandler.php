@@ -15,7 +15,7 @@ use Attribute;
 final class AsEventHandler
 {
     /**
-     * Relaxed from class-string<Event> to support attribute-only handlers (DX-02).
+     * Relaxed from class-string<Event> to support attribute-only handlers.
      *
      * @param class-string          $event
      * @param non-empty-string|null $bus

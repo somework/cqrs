@@ -43,13 +43,20 @@ final class MessageTypeLocator
 
         $messageClass = $message::class;
 
-        $signatureKeys = array_values(array_unique($ignoredKeys));
-        $sortedSignature = $signatureKeys;
-        sort($sortedSignature);
-        $ignoredSignature = implode("\0", $sortedSignature);
+        // Runs on every dispatch: resolvers pass no key or one key, which needs no normalising.
+        if (!isset($ignoredKeys[1])) {
+            $signatureKeys = $ignoredKeys;
+            $ignoredSignature = $ignoredKeys[0] ?? '';
+        } else {
+            $signatureKeys = array_values(array_unique($ignoredKeys));
+            $sortedSignature = $signatureKeys;
+            sort($sortedSignature);
+            $ignoredSignature = implode("\0", $sortedSignature);
+        }
 
-        if (isset(self::$matchCache[$services][$messageClass]) && array_key_exists($ignoredSignature, self::$matchCache[$services][$messageClass])) {
-            $type = self::$matchCache[$services][$messageClass][$ignoredSignature];
+        $cached = self::$matchCache[$services][$messageClass] ?? null;
+        if (null !== $cached && array_key_exists($ignoredSignature, $cached)) {
+            $type = $cached[$ignoredSignature];
 
             return null === $type ? null : new MessageTypeMatch($type, $services->get($type));
         }

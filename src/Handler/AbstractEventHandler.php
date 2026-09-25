@@ -12,7 +12,12 @@ use SomeWork\CqrsBundle\Contract\EventHandler;
 /**
  * @api
  *
- * Base class for event handlers that exposes a typed {@see on()} method.
+ * Base class for event handlers that also receive the Messenger envelope ({@see EnvelopeAware}).
+ *
+ * PHP does not let on() narrow its parameter: it stays Event, and TEvent only
+ * type it for static analysis. As __invoke() is untyped, declare the handled message with
+ * #[AsEventHandler(YourMessage::class)]. For new handlers, prefer implementing EventHandler with a
+ * typed __invoke(YourMessage $message) (and EnvelopeAware when the envelope is needed).
  *
  * @template TEvent of Event
  *

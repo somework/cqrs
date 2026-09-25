@@ -7,6 +7,9 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 
+use function array_key_exists;
+use function implode;
+
 /** @internal */
 abstract class AbstractMessageTypeResolver
 {
@@ -17,10 +20,23 @@ abstract class AbstractMessageTypeResolver
     }
 
     /**
+     * Resolved service per message class and ignored keys: the resolution only depends on the
+     * class, and the locator is immutable (a service defined as not shared is reused as well).
+     *
+     * @var array<string, mixed>
+     */
+    private array $resolved = [];
+
+    /**
      * @param list<string> $ignoredKeys
      */
     final protected function resolveService(object $message, array $ignoredKeys = []): mixed
     {
+        $cacheKey = [] === $ignoredKeys ? $message::class : $message::class."\0".implode("\0", $ignoredKeys);
+        if (array_key_exists($cacheKey, $this->resolved)) {
+            return $this->resolved[$cacheKey];
+        }
+
         $match = MessageTypeLocator::match($this->services, $message, $ignoredKeys);
 
         if (null !== $match) {
@@ -30,7 +46,7 @@ abstract class AbstractMessageTypeResolver
                 'resolver' => static::class,
             ]);
 
-            return $this->assertService($match->type, $match->service);
+            return $this->resolved[$cacheKey] = $this->assertService($match->type, $match->service);
         }
 
         $this->logger?->debug('Resolved {resolver} for {message} via fallback', [
@@ -38,7 +54,7 @@ abstract class AbstractMessageTypeResolver
             'resolver' => static::class,
         ]);
 
-        return $this->resolveFallback($message);
+        return $this->resolved[$cacheKey] = $this->resolveFallback($message);
     }
 
     final protected function hasService(string $key): bool

@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
+use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
+use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
@@ -19,8 +21,8 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 
+use function array_map;
 use function assert;
-use function is_array;
 
 #[CoversNothing]
 final class AttributeOnlyHandlerTest extends KernelTestCase
@@ -35,6 +37,12 @@ final class AttributeOnlyHandlerTest extends KernelTestCase
     protected static function getKernelClass(): string
     {
         return AttributeOnlyTestKernel::class;
+    }
+
+    public function test_the_metadata_parameter_is_not_dumped(): void
+    {
+        // It would live in the main container class, which every request loads.
+        self::assertFalse(static::getContainer()->hasParameter('somework_cqrs.handler_metadata'));
     }
 
     public function test_attribute_only_command_handler_in_metadata(): void
@@ -117,10 +125,21 @@ final class AttributeOnlyHandlerTest extends KernelTestCase
      */
     private function getHandlerMetadata(): array
     {
-        $metadata = static::getContainer()->getParameter('somework_cqrs.handler_metadata');
-        assert(is_array($metadata));
+        // The metadata parameter is removed once the registry received it.
+        $registry = static::getContainer()->get(HandlerRegistry::class);
+        assert($registry instanceof HandlerRegistry);
 
-        /* @var array<string, list<array<string, mixed>>> $metadata */
+        $metadata = [];
+        foreach (['command', 'query', 'event'] as $type) {
+            $metadata[$type] = array_map(static fn (HandlerDescriptor $descriptor): array => [
+                'type' => $descriptor->type,
+                'message' => $descriptor->messageClass,
+                'handler_class' => $descriptor->handlerClass,
+                'service_id' => $descriptor->serviceId,
+                'bus' => $descriptor->bus,
+            ], $registry->byType($type));
+        }
+
         return $metadata;
     }
 

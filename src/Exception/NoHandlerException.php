@@ -10,7 +10,7 @@ use function substr;
 use function ucfirst;
 
 /** @api */
-final class NoHandlerException extends \LogicException
+final class NoHandlerException extends \LogicException implements CqrsException
 {
     public function __construct(
         public readonly string $messageFqcn,

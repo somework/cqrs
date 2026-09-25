@@ -28,6 +28,10 @@ final class QueryBus implements QueryBusInterface
 {
     private const BUS_NAME = 'query';
 
+    /**
+     * @internal Get the bus from the container (autowire the interface); the constructor
+     *           arguments are internal services and change without notice
+     */
     public function __construct(
         private readonly MessageBusInterface $bus,
         private readonly StampsDecider $stampsDecider,

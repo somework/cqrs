@@ -7,7 +7,7 @@ namespace SomeWork\CqrsBundle\Exception;
 use function sprintf;
 
 /** @api */
-final class AsyncBusNotConfiguredException extends \LogicException
+final class AsyncBusNotConfiguredException extends \LogicException implements CqrsException
 {
     public function __construct(
         public readonly string $messageFqcn,

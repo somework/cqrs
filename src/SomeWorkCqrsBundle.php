@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\RemoveHandlerMetadataParameterPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateBusIdsPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
@@ -57,6 +58,8 @@ final class SomeWorkCqrsBundle extends Bundle
         // After every pass of the bundle that adds a service with a logger.
         $container->addCompilerPass(new LoggerChannelPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -9);
         $container->addCompilerPass(new ValidateTransportNamesPass());
+        // Once every pass read it and the registry received it (parameters are resolved by then).
+        $container->addCompilerPass(new RemoveHandlerMetadataParameterPass(), PassConfig::TYPE_AFTER_REMOVING);
         $container->addCompilerPass(new ValidateHandlerCountPass());
     }
 

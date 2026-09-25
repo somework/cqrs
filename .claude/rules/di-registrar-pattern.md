@@ -38,7 +38,10 @@ Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the containe
 | `TransportRoutingPass` | BEFORE_OPTIMIZATION, 0 | Passes the message types routed by `framework.messenger.routing` (keys of `messenger.senders_locator`) to `MessageTransportStampDecider` |
 | `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |
 | `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` | BEFORE_OPTIMIZATION, -8 | Run after `MessengerPass` built the handler locators and bus middleware lists, and before optimization so references to aliases still resolve |
+| `OutboxStoragePass` | BEFORE_OPTIMIZATION, 0 | Keeps setup, failed, health and the relay's table report on the DBAL storage when the application decorates `somework_cqrs.outbox.storage` (decorators are applied during optimization) |
+| `LoggerChannelPass` | BEFORE_OPTIMIZATION, -9 | Moves the bundle's services to the `cqrs` Monolog channel, after every pass that adds a service with a logger |
 | `ValidateTransportNamesPass`, `ValidateHandlerCountPass` | BEFORE_OPTIMIZATION, 0 (default) | Validation of the collected metadata (configured transports, `#[Asynchronous(transport: ...)]` of handled messages, handler counts) |
+| `RemoveHandlerMetadataParameterPass` | AFTER_REMOVING | Drops `somework_cqrs.handler_metadata` once `HandlerRegistry` received it, so it is not dumped into the main container class |
 
 Middleware is inserted with `MessengerMiddlewareInjector`, right after Messenger's `dispatch_after_current_bus` middleware (deferred messages continue with the stack after it). Resolve bus ids with `CqrsBusIds` (aliases such as `messenger.default_bus` are only known in compiler passes).
 

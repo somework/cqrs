@@ -7,7 +7,7 @@ namespace SomeWork\CqrsBundle\Exception;
 use function sprintf;
 
 /** @api */
-final class MultipleHandlersException extends \LogicException
+final class MultipleHandlersException extends \LogicException implements CqrsException
 {
     public function __construct(
         public readonly string $messageFqcn,
