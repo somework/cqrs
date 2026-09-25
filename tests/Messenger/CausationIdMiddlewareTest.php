@@ -182,4 +182,25 @@ final class CausationIdMiddlewareTest extends TestCase
 
         self::assertSame($returnedEnvelope, $result);
     }
+
+    public function test_on_a_bus_outside_causation_id_buses_it_only_hides_the_outer_message(): void
+    {
+        $this->context->push(new MessageMetadataStamp('outer'));
+        $middleware = new CausationIdMiddleware($this->context, track: false);
+
+        $captured = false;
+        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware->method('handle')
+            ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
+                $captured = $this->context->current();
+
+                return $envelope;
+            });
+        $stack = $this->createMock(StackInterface::class);
+        $stack->method('next')->willReturn($nextMiddleware);
+
+        $middleware->handle(new Envelope(new class implements Command {}, [new MessageMetadataStamp('inner')]), $stack);
+
+        self::assertNull($captured);
+    }
 }

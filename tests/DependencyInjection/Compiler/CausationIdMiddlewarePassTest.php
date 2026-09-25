@@ -9,10 +9,12 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CausationIdMiddlewarePass;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_map;
 use function sprintf;
 
 #[CoversClass(CausationIdMiddlewarePass::class)]
@@ -188,20 +190,23 @@ final class CausationIdMiddlewarePassTest extends TestCase
             'CausationIdMiddleware should be in command_async bus',
         );
 
-        // default_bus and event_async should NOT have the middleware
+        // The other CQRS buses (default_bus: the facades fall back to it) only isolate their
+        // handlers' messages from an outer message.
         foreach (['messenger.default_bus', 'messenger.bus.event_async'] as $busId) {
             $busDefinition = $container->getDefinition($busId);
             /** @var IteratorArgument $middlewareArg */
             $middlewareArg = $busDefinition->getArgument(0);
             $middlewares = $middlewareArg->getValues();
 
-            self::assertCount(1, $middlewares, sprintf('Bus "%s" should NOT have CausationIdMiddleware', $busId));
             self::assertSame(
-                'messenger.middleware.some_existing',
-                (string) $middlewares[0],
-                sprintf('Bus "%s" should only have the original middleware', $busId),
+                [CausationIdMiddlewarePass::ISOLATION_MIDDLEWARE_ID, 'messenger.middleware.some_existing'],
+                array_map('strval', $middlewares),
+                sprintf('Bus "%s" should only isolate causation', $busId),
             );
         }
+        $isolation = $container->getDefinition(CausationIdMiddlewarePass::ISOLATION_MIDDLEWARE_ID);
+        self::assertInstanceOf(ChildDefinition::class, $isolation);
+        self::assertFalse($isolation->getArgument('$track'));
     }
 
     public function test_backward_compatible_when_parameters_missing(): void
@@ -256,20 +261,13 @@ final class CausationIdMiddlewarePassTest extends TestCase
             );
         }
 
-        // default_bus and queries should NOT have the middleware
-        foreach (['messenger.default_bus', 'messenger.bus.queries'] as $busId) {
-            $busDefinition = $container->getDefinition($busId);
-            /** @var IteratorArgument $middlewareArg */
-            $middlewareArg = $busDefinition->getArgument(0);
-            $middlewares = $middlewareArg->getValues();
-
-            self::assertCount(1, $middlewares, sprintf('Bus "%s" should NOT have CausationIdMiddleware', $busId));
-            self::assertSame(
-                'messenger.middleware.some_existing',
-                (string) $middlewares[0],
-                sprintf('Bus "%s" should only have the original middleware', $busId),
-            );
-        }
+        // The unlisted CQRS bus isolates; default_bus is no CQRS bus here and stays untouched.
+        $queries = $container->getDefinition('messenger.bus.queries')->getArgument(0);
+        self::assertInstanceOf(IteratorArgument::class, $queries);
+        self::assertSame([CausationIdMiddlewarePass::ISOLATION_MIDDLEWARE_ID, 'messenger.middleware.some_existing'], array_map('strval', $queries->getValues()));
+        $default = $container->getDefinition('messenger.default_bus')->getArgument(0);
+        self::assertInstanceOf(IteratorArgument::class, $default);
+        self::assertSame(['messenger.middleware.some_existing'], array_map('strval', $default->getValues()));
     }
 
     public function test_rejects_scoped_bus_that_is_not_a_messenger_bus(): void

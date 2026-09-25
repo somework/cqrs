@@ -605,8 +605,10 @@ the caller passed its own stamp, its correlation id. With `enabled: false`,
 every message starts its own flow.
 
 `buses` limits the middleware to the listed buses; the empty default means all
-buses used by the bundle (`default_bus` and every configured `buses.*`). Each
-entry must be a Messenger bus:
+buses used by the bundle (`default_bus` and every configured `buses.*`). The
+other CQRS buses get a variant that only hides the outer message: messages
+dispatched by their handlers start a new flow instead of naming an unrelated
+message as their cause. Each entry must be a Messenger bus:
 
 ```
 "somework_cqrs.causation_id.buses" contains "messenger.bus.comands", which is not a Messenger bus service id.

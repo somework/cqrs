@@ -23,6 +23,8 @@ final class CausationIdMiddleware implements MiddlewareInterface
 {
     public function __construct(
         private readonly CausationIdContext $causationIdContext,
+        /** False on buses outside "causation_id.buses": their messages only hide the outer message. */
+        private readonly bool $track = true,
     ) {
     }
 
@@ -31,7 +33,7 @@ final class CausationIdMiddleware implements MiddlewareInterface
         // A message without metadata is pushed too: the messages its handlers dispatch must not
         // refer to an outer message as their cause.
         $metadataStamp = $envelope->last(MessageMetadataStamp::class);
-        $this->causationIdContext->push($metadataStamp instanceof MessageMetadataStamp ? $metadataStamp : null);
+        $this->causationIdContext->push($this->track && $metadataStamp instanceof MessageMetadataStamp ? $metadataStamp : null);
 
         try {
             return $stack->next()->handle($envelope, $stack);

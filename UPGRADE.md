@@ -264,8 +264,8 @@ If your logs or projections used the correlation id to identify a single message
 serialized by 0.4 with Messenger's PHP serializer (messages in a queue or the outbox) are read with their
 correlation id as message id; with the Symfony serializer (JSON), they get a new message id each time they are
 decoded. Create one stamp per dispatch: a stamp passed to several dispatches gives them the same message id
-(a provider must return a new stamp for each call). Forwarding the handled message's own stamp to a child
-(for example `$received->withExtra('tenant', $id)`) is recognised: the child gets a new message id, keeps the
+(a provider must return a new stamp for each call). With `causation_id` enabled (the default), forwarding the
+handled message's own stamp to a child (for example `$received->withExtra('tenant', $id)`) is recognised: the child gets a new message id, keeps the
 correlation id and names the handled message as its cause.
 
 ### `dispatchSync()` and `ask()` errors

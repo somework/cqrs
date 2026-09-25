@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
+use function array_diff;
 use function array_map;
 use function is_array;
 use function is_string;
@@ -23,6 +25,9 @@ use function sprintf;
 final class CausationIdMiddlewarePass implements CompilerPassInterface
 {
     public const MIDDLEWARE_ID = 'somework_cqrs.messenger.middleware.causation_id';
+
+    /** On the CQRS buses "causation_id.buses" leaves out: their handlers' messages start a new flow. */
+    public const ISOLATION_MIDDLEWARE_ID = 'somework_cqrs.messenger.middleware.causation_id_isolation';
 
     public function process(ContainerBuilder $container): void
     {
@@ -45,6 +50,18 @@ final class CausationIdMiddlewarePass implements CompilerPassInterface
 
         foreach ($busIds as $busId) {
             MessengerMiddlewareInjector::inject($container, $busId, self::MIDDLEWARE_ID);
+        }
+
+        // A handler on a bus without the middleware would otherwise look like the nearest outer
+        // message to the messages it dispatches, and name it as their cause.
+        $unlisted = array_diff(CqrsBusIds::resolve($container), $busIds);
+        if ([] === $unlisted) {
+            return;
+        }
+
+        $container->setDefinition(self::ISOLATION_MIDDLEWARE_ID, (new ChildDefinition(self::MIDDLEWARE_ID))->setArgument('$track', false));
+        foreach ($unlisted as $busId) {
+            MessengerMiddlewareInjector::inject($container, $busId, self::ISOLATION_MIDDLEWARE_ID);
         }
     }
 

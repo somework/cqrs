@@ -109,7 +109,11 @@ While a message is handled, pushes its `MessageMetadataStamp` onto the
 `CausationIdContext` stack and pops it afterwards (also when the handler
 throws). The metadata deciders read this stack: a message dispatched from
 inside the handler inherits the parent's correlation id and gets the parent's
-message id as its causation id.
+message id as its causation id. A message without a `MessageMetadataStamp` is
+pushed as "no parent", so the messages its handlers dispatch start a new flow.
+With `buses`, the other CQRS buses get a variant
+(`somework_cqrs.messenger.middleware.causation_id_isolation`) that only pushes
+"no parent".
 
 Configure it under `somework_cqrs.causation_id`:
 
@@ -242,7 +246,10 @@ the aggregate id, the sequence number and the event class. See
 
 When a message is dispatched while another one is being handled with a
 `MessageMetadataStamp` passed by the caller, sets its causation id to the
-parent's message id and keeps the caller's correlation id. It runs after the
+parent's message id and keeps the caller's correlation id. A copy of the
+handled message's own stamp (forwarded, e.g. `$received->withExtra(...)`)
+becomes a new stamp: new message id, same correlation id and extras, the
+handled message as cause. It runs after the
 metadata deciders, so the stamp already exists.
 
 ### IdempotencyStampDecider (50)
