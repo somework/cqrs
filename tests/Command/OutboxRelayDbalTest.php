@@ -14,6 +14,8 @@ use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\QueryLog;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnavailableTransport;
 use Symfony\Component\Console\Command\Command;
@@ -31,10 +33,12 @@ use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_count_values;
+use function array_filter;
 use function array_map;
 use function array_values;
 use function ksort;
 use function preg_replace;
+use function str_contains;
 use function strtr;
 
 /**
@@ -90,38 +94,55 @@ final class OutboxRelayDbalTest extends TestCase
 
     public function test_overlapping_relays_send_each_message_once(): void
     {
+        $beforeClaim = new BeforeQueryMiddleware('SET claim_token');
+        $this->connection = TestDatabase::connect(null, [$beforeClaim]);
+        $this->storage = new DbalOutboxStorage($this->connection);
+        $this->storage->setup();
         for ($i = 1; $i <= 3; ++$i) {
             $this->store('task-'.$i, 'async');
         }
 
         // A second relay (e.g. on another host, with a lock store that only guards one host) runs
-        // while the first one sends its first message: the first relay fetched all three rows before.
+        // after the first one fetched the three rows, and before it claims them.
         $second = null;
-        $bus = new class($this->bus(), function () use (&$second): void {
-            $second ??= $this->relay($this->bus(), 'other-host');
-        }) implements MessageBusInterface {
-            public function __construct(private readonly MessageBusInterface $bus, private readonly \Closure $beforeFirstSend)
-            {
-            }
-
-            public function dispatch(object $message, array $stamps = []): Envelope
-            {
-                ($this->beforeFirstSend)();
-
-                return $this->bus->dispatch($message, $stamps);
-            }
+        $beforeClaim->callback = function () use (&$second): void {
+            $second = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory(new InMemoryStore()), lockName: 'other-host'));
+            $second->execute(['--limit' => '2']);
         };
 
-        $first = $this->relay($bus);
+        $first = $this->relay($this->bus());
 
         self::assertNotNull($second);
         self::assertStringContainsString('Relayed 2 message(s).', self::display($second));
         self::assertStringContainsString('Skipped 2 message(s) that another relay claimed first.', self::display($first));
+        self::assertStringContainsString('Relayed 1 message(s).', self::display($first));
         self::assertSame(Command::SUCCESS, $first->getStatusCode());
         $sent = array_count_values($this->sentTaskIds());
         ksort($sent);
         self::assertSame(['task-1' => 1, 'task-2' => 1, 'task-3' => 1], $sent, 'Each message is sent once.');
         self::assertSame([], $this->storage->fetchUnpublished(10));
+    }
+
+    public function test_a_relay_that_died_during_a_batch_retries_each_interrupted_message_alone(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        $this->storage = new DbalOutboxStorage($this->connection);
+        $this->storage->setup();
+        for ($i = 1; $i <= 3; ++$i) {
+            $this->store('task-'.$i, 'async');
+        }
+        // A relay claimed the batch and died (e.g. killed) before finishing any of it; the retry time has passed.
+        $this->storage->claim($this->storage->fetchUnpublished(10), [0 => new \DateTimeImmutable('-1 second')], 'dead-relay');
+        $queries->flush();
+
+        $tester = $this->relay($this->bus());
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertCount(3, array_filter($queries->flush(), static fn (string $sql): bool => str_contains($sql, 'SET claim_token')), 'One claim per interrupted message: if one kills the process again, only it is blamed.');
+        self::assertSame(['task-1', 'task-2', 'task-3'], $this->sentTaskIds());
+        self::assertSame([], $this->storage->fetchUnpublished(10));
+        self::assertSame(2, (int) $this->connection->fetchOne('SELECT MAX(attempts) FROM somework_cqrs_outbox'), 'The interrupted attempt counts.');
     }
 
     public function test_warns_when_the_table_needs_the_setup_command(): void

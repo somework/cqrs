@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
@@ -35,6 +36,7 @@ use function random_int;
 use function sprintf;
 use function str_contains;
 use function strtolower;
+use function usleep;
 
 /**
  * DBAL-backed implementation of the transactional outbox storage.
@@ -82,11 +84,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function store(OutboxMessage $message): void
     {
-        // Only the table: an upgrade could wait for the transactions on it, writes must not.
-        $this->ensureTableExists(false);
+        // Outside a transaction the automatic setup adds missing columns; inside one, a table of
+        // 0.4 fails the insert with an error that asks for the setup command.
+        $this->ensureTableExists();
 
-        // The failure columns keep their defaults, so storing also works while an existing table
-        // still waits for its upgrade.
         $this->guard(fn () => $this->connection->insert($this->tableName, [
             'id' => $message->id,
             'body' => $message->body,
@@ -94,6 +95,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             'transport_name' => $message->transportName,
             'created_at' => self::utc($message->createdAt),
             'published_at' => null,
+            'signature' => $message->signature,
         ], [
             'created_at' => Types::DATETIME_IMMUTABLE,
             'published_at' => Types::DATETIME_IMMUTABLE,
@@ -128,34 +130,141 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
                 attempts: (int) $row['attempts'],
                 lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
+                claimedAt: null === $row['claimed_at'] ? null : self::readUtc($row['claimed_at'], $platform),
+                availableAt: null === $row['available_at'] ? null : self::readUtc($row['available_at'], $platform),
+                signature: null === $row['signature'] ? null : (string) $row['signature'],
             ),
             $rows,
         );
     }
 
-    public function markPublished(string $id): void
+    public function claim(array $messages, array $retryAt, string $token): array
     {
+        if ([] === $messages) {
+            return [];
+        }
+
         $this->ensureTableExists();
 
-        $updated = $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
-            ->update($this->tableName)
-            ->set('published_at', ':published_at')
-            // The relay records every attempt before it runs: a published message has no failure left.
-            ->set('failed_at', 'NULL')
-            ->set('last_error', 'NULL')
-            ->where('id = :id')
-            ->andWhere('published_at IS NULL')
-            ->setParameter('published_at', self::now(), Types::DATETIME_IMMUTABLE)
-            ->setParameter('id', $id)
-            ->executeStatement());
+        // One statement per group of messages that were fetched with the same attempts and transport.
+        /** @var array<string, non-empty-list<OutboxMessage>> $groups */
+        $groups = [];
+        foreach ($messages as $message) {
+            $groups[$message->attempts.'|'.($message->transportName ?? "\0")][] = $message;
+        }
 
-        if (0 === (int) $updated) {
-            // Already published (e.g. by a concurrent relay): nothing to do. Unknown ids are an error.
-            $this->assertExists($id, 'mark it as published');
+        $now = self::now();
+        $complete = true;
+        foreach ($groups as $group) {
+            $attempts = $group[0]->attempts;
+            if (!isset($retryAt[$attempts])) {
+                throw new \InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
+            }
+
+            $query = $this->connection->createQueryBuilder()
+                ->update($this->tableName)
+                ->set('claim_token', ':token')
+                ->set('claimed_at', ':claimed_at')
+                ->set('available_at', ':available_at')
+                // Last: MySQL evaluates the assignments from left to right.
+                ->set('attempts', 'attempts + 1')
+                ->where('id IN (:ids)')
+                ->andWhere('attempts = :attempts')
+                ->andWhere('published_at IS NULL')
+                ->andWhere('failed_at IS NULL')
+                ->setParameter('token', $token)
+                ->setParameter('claimed_at', $now, Types::DATETIME_IMMUTABLE)
+                ->setParameter('available_at', self::utc($retryAt[$attempts]), Types::DATETIME_IMMUTABLE)
+                ->setParameter('ids', array_map(static fn (OutboxMessage $message): string => $message->id, $group), ArrayParameterType::STRING)
+                ->setParameter('attempts', $attempts, Types::INTEGER);
+            // e.g. "outbox:failed --requeue --transport" moved the message to another transport meanwhile.
+            if (null === $group[0]->transportName) {
+                $query->andWhere('transport_name IS NULL');
+            } else {
+                $query->andWhere('transport_name = :transport')->setParameter('transport', $group[0]->transportName);
+            }
+
+            // The claim token always changes the row, so the count is exact on MySQL too.
+            $claimed = (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+            $complete = $complete && $claimed === count($group);
+        }
+
+        $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
+        if ($complete) {
+            return $ids;
+        }
+
+        // Another relay claimed some of them first: read back which ones carry this claim.
+        $rows = $this->guard(fn (): array => $this->connection->createQueryBuilder()
+            ->select('id', 'attempts')
+            ->from($this->tableName)
+            ->where('id IN (:ids)')
+            ->andWhere('claim_token = :token')
+            ->setParameter('ids', $ids, ArrayParameterType::STRING)
+            ->setParameter('token', $token)
+            ->executeQuery()
+            ->fetchAllAssociative());
+        $claimed = [];
+        foreach ($rows as $row) {
+            $claimed[strtolower((string) $row['id'])] = (int) $row['attempts'];
+        }
+
+        return array_values(array_map(
+            static fn (OutboxMessage $message): string => $message->id,
+            array_filter($messages, static fn (OutboxMessage $message): bool => ($claimed[$message->id] ?? null) === $message->attempts + 1),
+        ));
+    }
+
+    public function release(array $messages, string $token): void
+    {
+        if ([] === $messages) {
+            return;
+        }
+
+        $this->ensureTableExists();
+
+        foreach ($messages as $message) {
+            $this->retryOnce(fn (): int|string => $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
+                ->update($this->tableName)
+                ->set('claim_token', 'NULL')
+                ->set('claimed_at', ':claimed_at')
+                ->set('available_at', ':available_at')
+                ->set('attempts', 'attempts - 1')
+                ->where('id = :id')
+                ->andWhere('claim_token = :token')
+                ->andWhere('published_at IS NULL')
+                ->andWhere('failed_at IS NULL')
+                ->setParameter('claimed_at', null === $message->claimedAt ? null : self::utc($message->claimedAt), Types::DATETIME_IMMUTABLE)
+                ->setParameter('available_at', null === $message->availableAt ? null : self::utc($message->availableAt), Types::DATETIME_IMMUTABLE)
+                ->setParameter('id', $message->id)
+                ->setParameter('token', $token)
+                ->executeStatement()));
         }
     }
 
-    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool
+    public function markPublished(array $ids): void
+    {
+        if ([] === $ids) {
+            return;
+        }
+
+        $this->ensureTableExists();
+
+        $this->retryOnce(fn (): int|string => $this->guard(fn (): int|string => $this->connection->createQueryBuilder()
+            ->update($this->tableName)
+            ->set('published_at', ':published_at')
+            ->set('failed_at', 'NULL')
+            ->set('last_error', 'NULL')
+            ->set('claim_token', 'NULL')
+            ->set('claimed_at', 'NULL')
+            ->where('id IN (:ids)')
+            ->andWhere('published_at IS NULL')
+            ->setParameter('published_at', self::now(), Types::DATETIME_IMMUTABLE)
+            ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING)
+            ->executeStatement()));
+    }
+
+    public function recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool
     {
         $this->ensureTableExists();
 
@@ -165,46 +274,20 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->set('last_error', ':last_error')
             ->set('available_at', ':available_at')
             ->set('failed_at', ':failed_at')
+            ->set('claim_token', 'NULL')
+            ->set('claimed_at', 'NULL')
             ->where('id = :id')
+            ->andWhere('claim_token = :token')
             ->andWhere('published_at IS NULL')
             ->setParameter('attempts', $attempts, Types::INTEGER)
             ->setParameter('last_error', $error)
             ->setParameter('available_at', null === $retryAt ? null : self::utc($retryAt), Types::DATETIME_IMMUTABLE)
             ->setParameter('failed_at', null === $retryAt ? self::now() : null, Types::DATETIME_IMMUTABLE)
-            ->setParameter('id', $id);
+            ->setParameter('id', strtolower($id))
+            ->setParameter('token', $token);
 
-        if (null !== $previousAttempts) {
-            // A claim: nobody else recorded an attempt or gave the message up since the caller read it.
-            $query->andWhere('attempts = :previous_attempts')
-                ->andWhere('failed_at IS NULL')
-                ->setParameter('previous_attempts', $previousAttempts, Types::INTEGER);
-        }
-
-        if (0 !== (int) $this->guard(static fn (): int|string => $query->executeStatement())) {
-            return true;
-        }
-
-        $this->assertExists($id, 'record an attempt');
-
-        // A claim that counts a new attempt or gives the message up always changes the row: it was not matched.
-        if (null !== $previousAttempts && ($previousAttempts !== $attempts || null === $retryAt)) {
-            return false;
-        }
-
-        // MySQL counts changed rows, not matched ones: a row that already holds these values was matched.
-        $row = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
-            ->select('attempts', 'last_error', 'published_at', 'failed_at')
-            ->from($this->tableName)
-            ->where('id = :id')
-            ->setParameter('id', $id)
-            ->executeQuery()
-            ->fetchAssociative());
-
-        return false !== $row
-            && null === $row['published_at']
-            && (null === $retryAt) === (null !== $row['failed_at'])
-            && $attempts === (int) $row['attempts']
-            && $error === $row['last_error'];
+        // Clearing the claim token always changes the row, so the count is exact on MySQL too.
+        return 0 !== (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -344,6 +427,8 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->set('available_at', 'NULL')
             ->set('attempts', '0')
             ->set('last_error', 'NULL')
+            ->set('claim_token', 'NULL')
+            ->set('claimed_at', 'NULL')
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL');
 
@@ -638,7 +723,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     private function pending(): QueryBuilder
     {
         return $this->connection->createQueryBuilder()
-            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'available_at', 'attempts', 'last_error')
+            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'available_at', 'attempts', 'last_error', 'claimed_at', 'signature')
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NULL');
@@ -685,6 +770,31 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     }
 
     /**
+     * Runs a statement of the relay again once after a deadlock or a lock wait timeout (outside a
+     * transaction of the caller, which the database rolled back).
+     *
+     * @template T
+     *
+     * @param \Closure(): T $operation
+     *
+     * @return T
+     */
+    private function retryOnce(\Closure $operation): mixed
+    {
+        try {
+            return $operation();
+        } catch (RetryableException $exception) {
+            if ($this->connection->isTransactionActive()) {
+                throw $exception;
+            }
+
+            usleep(random_int(10_000, 50_000));
+
+            return $operation();
+        }
+    }
+
+    /**
      * @template T
      *
      * @param \Closure(): T $operation
@@ -694,21 +804,6 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     private function guard(\Closure $operation): mixed
     {
         return $this->schema->guard($operation);
-    }
-
-    private function assertExists(string $id, string $action): void
-    {
-        $exists = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
-            ->select('1')
-            ->from($this->tableName)
-            ->where('id = :id')
-            ->setParameter('id', $id)
-            ->executeQuery()
-            ->fetchOne());
-
-        if (false === $exists) {
-            throw new \RuntimeException(sprintf('Outbox message "%s" not found in table "%s" — cannot %s.', $id, $this->tableName, $action));
-        }
     }
 
     private static function now(): DateTimeImmutable

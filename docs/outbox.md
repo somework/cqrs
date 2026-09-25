@@ -248,23 +248,31 @@ on it for the write path.
 | `transport_name` | VARCHAR(190) | Yes | Target transport; `null` follows the Messenger routing |
 | `created_at` | DATETIME_IMMUTABLE | No | When the row was built |
 | `published_at` | DATETIME_IMMUTABLE | Yes | When the relay sent it (`null` = unpublished) |
-| `attempts` | INTEGER, default `0` | No | Attempts to relay the row (counted when an attempt starts) |
+| `attempts` | INTEGER, default `0` | No | Attempts to relay the row (counted when the relay claims it) |
 | `available_at` | DATETIME_IMMUTABLE | Yes | Earliest time of the next attempt (`null` = never attempted, or requeued) |
 | `failed_at` | DATETIME_IMMUTABLE | Yes | When the relay gave up on the row (`null` = still relayed) |
-| `last_error` | TEXT | Yes | Exception class and message of the last failure, or the note of an attempt that did not finish |
+| `last_error` | TEXT | Yes | Exception class and message of the last failure |
+| `claim_token` | VARCHAR(32) | Yes | The relay run that claimed the row for an attempt it has not finished |
+| `claimed_at` | DATETIME_IMMUTABLE | Yes | When that claim was made (set on a due row: its last attempt was interrupted) |
+| `signature` | VARCHAR(64) | Yes | Signature of the id, body and headers (see [Security](#security)) |
 
 An index on `(published_at, failed_at, transport_name, available_at, created_at, id)`, named
 `idx_<table>_pending` (`idx_<hash>_pending` for long table names), serves the relay and the
-purge. `attempts`, `available_at`, `failed_at`, `last_error` and this index were added in 0.5.0;
+purge. `attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`, `claimed_at`,
+`signature` and this index were added in 0.5.0;
 the index replaces `idx_<table>_published_created` of 0.4. [Upgrade](#upgrading-from-04) a table created
 by an earlier version.
 
 ### Upgrading from 0.4
 
-`store()` keeps working on a table of an earlier version, so deploying the new version does
-not break writes. Stop the relays of the old version before the new ones start: an old relay
-ignores the new columns (retry times, given-up rows, claims). The relay needs the new columns,
-and the new index to stay fast. Add them with one of:
+Writes need the new columns (`store()` writes the signature), so upgrade the table before the
+new version takes traffic. Outside a transaction, the automatic setup adds the columns before
+the first write (it gives up after 1 second behind a transaction that holds the table); inside
+one, `store()` fails with `The outbox table "…" lacks columns this version of the bundle needs
+(…). Upgrade it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.` Stop
+the relays of the old version before the new ones start: an old relay ignores the new columns
+(retry times, given-up rows, claims). The relay also needs the new index to stay fast. Add the
+columns and the index with one of:
 
 - `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
   start at the same time wait for each other, except while one builds the index on
@@ -301,12 +309,16 @@ ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL;
 ALTER TABLE somework_cqrs_outbox ADD available_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD failed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD last_error TEXT DEFAULT NULL;
+ALTER TABLE somework_cqrs_outbox ADD claim_token VARCHAR(32) DEFAULT NULL;
+ALTER TABLE somework_cqrs_outbox ADD claimed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
+ALTER TABLE somework_cqrs_outbox ADD signature VARCHAR(64) DEFAULT NULL;
 CREATE INDEX CONCURRENTLY idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
 DROP INDEX CONCURRENTLY idx_somework_cqrs_outbox_published_created;
 
 -- MySQL / MariaDB
 ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL, ADD available_at DATETIME DEFAULT NULL,
-    ADD failed_at DATETIME DEFAULT NULL, ADD last_error LONGTEXT DEFAULT NULL;
+    ADD failed_at DATETIME DEFAULT NULL, ADD last_error LONGTEXT DEFAULT NULL, ADD claim_token VARCHAR(32) DEFAULT NULL,
+    ADD claimed_at DATETIME DEFAULT NULL, ADD signature VARCHAR(64) DEFAULT NULL;
 CREATE INDEX idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
 DROP INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox;
 ```
@@ -331,18 +343,26 @@ bin/console somework:cqrs:outbox:relay --limit=500
 |--------|---------|-------------|
 | `--limit`, `-l` | `100` | Maximum number of rows to process (relay or fail) in this run (positive integer). |
 
-For each due row the relay:
+The relay fetches up to 50 due rows at a time and:
 
-1. claims the row: it counts the attempt and postpones the row until its next retry time,
-   provided that no other relay claimed the row since it was read. A process that dies during
-   the attempt (a PHP fatal error, running out of memory, a killed worker) therefore does not
-   start the next run with the same row, and a relay that overlaps this one skips the row;
-2. decodes the row with the outbox serializer;
+1. claims them, in one statement per group of rows with the same number of attempts: each
+   claim counts the attempt, marks the row with the token of the run and the time, and
+   postpones the row until its next retry time, provided that no other relay claimed the row
+   since it was read. A process that dies during the batch (a PHP fatal error, running out of
+   memory, a killed worker) therefore does not start the next run with the same rows, and a
+   relay that overlaps this one skips them;
+2. for each claimed row, decodes it with the outbox serializer;
 3. adds a `TransportNamesStamp` with the stored transport name, if one was stored;
 4. dispatches the envelope through the bus of the message type: `buses.command_async` (else
    `buses.command`) for commands, `buses.event_async` (else `buses.event`) for events,
    `buses.query` for queries, the default bus for anything else;
-5. marks the row as published.
+5. marks the sent rows as published, every 2 seconds and at the end of the run;
+6. releases the claims of the rows it did not attempt (the run ended, or their transport was
+   paused): their attempt is not counted.
+
+A due row that is still claimed was being sent by a relay that died (its claim was not
+finished before the retry time). The relay claims and sends such a row on its own, before the
+others, so that if the row kills the process again, only that row is blamed.
 
 The transports take turns, the one whose next row has waited longest first (rows stored
 without a transport name count as one transport), so the backlog of one transport, for example
@@ -386,10 +406,10 @@ What happens in special cases:
   is down, the others' rows may wait for the next run too. Store the transport name to keep
   transports apart. A handler that ran inline and failed counts against `max_attempts`, even
   when it failed to send another message: its side effects happened.
-- **A storage failure stops the run.** If the database is down, or a sent row cannot be
-  marked as published, the run stops right away with `Stopping: …` and exit code `1`. A row
-  that was sent but not marked is sent again later (see [Delivery
-  guarantees](#delivery-guarantees)).
+- **A storage failure stops the run.** If the database is down, or sent rows cannot be
+  marked as published, the run stops right away with `Stopping: …` and exit code `1`. Rows
+  that were sent but not marked (at most those of the last 2 seconds) are sent again later
+  (see [Delivery guarantees](#delivery-guarantees)).
 - **Messages handled inline trigger a warning.** If no transport received a message (no
   stored transport name and no routing), the bus of its type handles it synchronously inside
   the relay process. The relay prints and logs a warning and still marks the row as
@@ -399,7 +419,8 @@ What happens in special cases:
   an event without handlers or routing, the relay prints and logs `Message "<id>" (<class>)
   was neither sent to a transport nor handled …` and marks the row as published.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
-  relay finishes the row it is working on, starts no other, prints `Stopped by signal <number>
+  relay finishes the row it is working on, starts no other, marks the sent rows as published,
+  releases the claims of the others, prints `Stopped by signal <number>
   after <count> message(s); the remaining messages wait for the next run.`, releases the lock
   and exits with `1`. A second signal stops it at once. PHP handles signals between
   operations: a send blocked on the network is only interrupted by the transport's own
@@ -463,17 +484,19 @@ its first run, without an attempt: `The transport "<name>" does not exist. Fix t
 stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> <id>".`
 
 When the relay process dies during an attempt (a PHP fatal error, running out of memory, a
-killed process, a lost database connection), the row keeps the error `The relay did not finish
-this attempt (…); the message may have been sent. Previous error: <error of the attempt
-before>`. It is tried again after its retry delay. As the cause of an interrupted attempt is
-unknown (a hanging broker as well as a message that crashes the process), the larger budget
-applies: after three times `max_attempts` attempts, the next run gives the row up without
-another attempt, because the row may be what kills the process. The message may have reached
-its transport: check the consumer before you requeue it. When you lower `max_attempts`, a row
+killed process, a lost database connection), the row keeps its claim (`claimed_at`) and the
+error of the attempt before. It is tried again, on its own, after its retry delay; the rows
+the process had claimed with it but not attempted yet count that attempt too. As the cause of
+an interrupted attempt is unknown (a hanging broker as well as a message that crashes the
+process), the larger budget applies: after three times `max_attempts` attempts, the next run
+gives the row up without another attempt, because the row may be what kills the process, with
+the error `The last attempt did not finish (…); the message may have been sent. Previous
+error: <error of the attempt before>`. The message may have reached its transport: check the
+consumer before you requeue it. When you lower `max_attempts`, a row
 that already had more failed attempts gets one more attempt and, if it fails, is given up with
 its real error.
 
-Publishing a row clears its `failed_at` and `last_error`. `purge` never deletes given-up rows; delete them
+Publishing a row clears its `failed_at`, `last_error` and claim. `purge` never deletes given-up rows; delete them
 with SQL (`DELETE FROM somework_cqrs_outbox WHERE failed_at IS NOT NULL`) if you do not want
 to relay them.
 
@@ -512,9 +535,10 @@ daily.
 ## Delivery guarantees
 
 - **Atomic write.** The row exists only if your transaction commits.
-- **At-least-once delivery.** The relay marks a row as published *after* dispatching it. A
-  crash between the two steps, a failed `markPublished()`, or a send that takes longer than
-  the retry delay while another relay runs can send the same message twice. A message routed
+- **At-least-once delivery.** The relay marks rows as published *after* dispatching them,
+  every 2 seconds. A crash in between (it affects the rows sent in the last 2 seconds), a
+  failed `markPublished()`, or a send that takes longer than the retry delay while another
+  relay runs can send the same message twice. A message routed
   to several transports is sent to all of them again when one of them fails: store one row
   per transport to avoid that. **Consumers must be idempotent**, for example by
   recording processed message ids under a unique constraint. The bundle's
@@ -542,6 +566,18 @@ namespace SomeWork\CqrsBundle\Contract;
 use DateTimeImmutable;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
+/**
+ * Persists messages in a transactional outbox for reliable async dispatch.
+ *
+ * The relay works in claims: it fetches due messages, claims them with a token of its run
+ * (counting the attempt before anything is sent, so an attempt that kills the process still
+ * counts), sends them, and then marks them published, records their failure, or releases the
+ * ones it did not get to. A claim that is never finished leaves claimedAt set: when the message
+ * is due again, the next relay knows that the attempt was interrupted.
+ *
+ * Every message a storage returns must carry the id, body, headers and signature exactly as
+ * they were stored.
+ */
 interface OutboxStorage
 {
     /**
@@ -551,10 +587,10 @@ interface OutboxStorage
 
     /**
      * Returns the messages that are due: neither published nor given up, and either never
-     * attempted (or requeued) or past the retry time of their last attempt. The transports take
-     * turns, the one whose next message has waited longest first (the messages without a transport
-     * name count as one transport); within a transport, the messages never attempted come first, in
-     * the order they were stored, then the others, in the order of their retry time.
+     * attempted (or requeued) or past their retry time. The transports take turns, the one whose
+     * next message has waited longest first (the messages without a transport name count as one
+     * transport); within a transport, the messages never attempted come first, in the order they
+     * were stored, then the others, in the order of their retry time.
      *
      * @param list<string|null> $excludedTransports Transports whose messages are skipped; null
      *                                              stands for messages stored without a transport name
@@ -564,34 +600,47 @@ interface OutboxStorage
     public function fetchUnpublished(int $limit, array $excludedTransports = []): array;
 
     /**
-     * Marks a message as published. Marking an already published message is a no-op.
+     * Claims fetched messages for an attempt, atomically per message: a message is claimed only
+     * while it is neither published nor given up, and its attempts and transport name are still
+     * the fetched ones (so two relays cannot claim the same attempt). A claimed message gets the
+     * token, claimedAt (now), one more attempt, and its retry time: $retryAt[<fetched attempts>].
+     * It is not due before that time, so an attempt that never finishes is retried after it. A
+     * run claims each message at most once (a new run uses a new token).
      *
-     * @throws \RuntimeException when the message does not exist
+     * @param list<OutboxMessage>           $messages As fetchUnpublished() returned them
+     * @param array<int, DateTimeImmutable> $retryAt  Retry times keyed by the fetched number of attempts
+     * @param string                        $token    Identifies the claims of one relay run (not empty)
+     *
+     * @return list<string> The ids of the claimed messages, in the order of $messages
      */
-    public function markPublished(string $id): void;
+    public function claim(array $messages, array $retryAt, string $token): array;
 
     /**
-     * Records an attempt to publish a message: the number of attempts so far, its error, and when
-     * to try again.
+     * Undoes the claims of messages the relay did not attempt (it stopped, or paused their
+     * transport): their attempts, retry time and claimedAt go back to the fetched values. Messages
+     * no longer claimed with $token are left alone.
      *
-     * The relay records each attempt before it sends the message, with an error saying that the
-     * attempt did not finish, so an attempt that kills the process still counts; it records the
-     * actual error when the attempt fails. A message must not be returned by {@see fetchUnpublished()}
-     * before $retryAt; with $retryAt null it is given up and never returned again.
-     *
-     * With $previousAttempts the attempt is only recorded while the message is not given up and
-     * its stored number of attempts still equals it, in one atomic step: two relays that fetched
-     * the same message cannot both claim it, nor both give it up.
-     *
-     * @param int      $attempts         The number of attempts, including this one
-     * @param int|null $previousAttempts The number of attempts the caller read, or null to record unconditionally
-     *
-     * @throws \RuntimeException when the message does not exist
-     *
-     * @return bool false when nothing was recorded: the message is already published, or (with
-     *              $previousAttempts) another relay recorded an attempt or gave it up since the caller read it
+     * @param list<OutboxMessage> $messages As fetchUnpublished() returned them
      */
-    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool;
+    public function release(array $messages, string $token): void;
+
+    /**
+     * Marks sent messages as published and clears their claim and failure. Ids that do not exist
+     * or are already published are ignored.
+     *
+     * @param list<string> $ids
+     */
+    public function markPublished(array $ids): void;
+
+    /**
+     * Records the failure of a claimed message and ends its claim: the number of attempts, the
+     * error, and the retry time; with $retryAt null the message is given up and never returned by
+     * fetchUnpublished() again.
+     *
+     * @return bool false when the message is no longer claimed with $token (e.g. published, or
+     *              claimed by another relay); nothing is recorded then
+     */
+    public function recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool;
 
     /**
      * Deletes messages published before the given date and returns how many were deleted.
@@ -611,15 +660,18 @@ An implementation must meet these rules:
   the excluded transports. The relay excludes a transport after 3 send failures in a row (after 10, or 3 over at least
   10 seconds, once it accepted a message in the run); a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
-- `recordAttempt()` stores the given number of attempts, the error and the retry time as they
-  are; it is called before every attempt and again when the attempt fails. With
-  `$previousAttempts` it must compare and update in one atomic step (e.g. a conditional
-  `UPDATE`) and return `false` when the stored attempts differ, or the message is published or
-  given up.
+- `claim()` updates each message in one atomic step (e.g. a conditional `UPDATE`): only while
+  it is neither published nor given up, and its attempts and transport name are still the
+  fetched ones. It returns the ids it claimed; the relay skips the others. A claimed message is
+  not due before the given retry time.
+- `release()` restores the attempts, the retry time and `claimedAt` of the fetched messages
+  that are still claimed with the token. `recordFailure()` only changes a message that is still
+  claimed with the token, and ends the claim. `markPublished()` also ends the claim.
 - Rebuild each message with
-  `new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null, int $attempts = 0, ?string $lastError = null)`.
-  Keep the values exactly as stored. The relay decides when to give up from `attempts`, and
-  recognises an interrupted attempt by the beginning of `lastError`. `$headers` is the JSON string produced by
+  `new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null, int $attempts = 0, ?string $lastError = null, ?DateTimeImmutable $claimedAt = null, ?DateTimeImmutable $availableAt = null, ?string $signature = null)`.
+  Keep the values exactly as stored, the id, body, headers and signature byte for byte (the
+  relay verifies the signature). The relay decides when to give up from `attempts`, and
+  recognises an interrupted attempt by `claimedAt`. `$headers` is the JSON string produced by
   `fromEnvelope()`, and `$id` and `$body` must not be empty.
 
 Name your implementation under `outbox.storage` (a service id, or a class name, which the

@@ -22,6 +22,7 @@ use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\QueryLog;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
@@ -112,10 +113,10 @@ final class DbalOutboxStorageTest extends TestCase
         }
 
         self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10)));
-        $storage->markPublished('00000000-0000-7000-8000-000000000001');
-        $storage->markPublished('00000000-0000-7000-8000-000000000002');
+        $storage->markPublished(['00000000-0000-7000-8000-000000000001']);
+        $storage->markPublished(['00000000-0000-7000-8000-000000000002']);
         self::assertSame(['00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10)));
-        $storage->markPublished('00000000-0000-7000-8000-000000000003');
+        $storage->markPublished(['00000000-0000-7000-8000-000000000003']);
         // A message larger than the budget is read on its own.
         self::assertSame(['00000000-0000-7000-8000-000000000004'], self::ids($storage->fetchUnpublished(10)));
     }
@@ -126,11 +127,11 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
 
-        $storage->recordAttempt(self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('+1 hour'));
+        OutboxRows::fail($storage, self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('+1 hour'));
 
         self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(10)), 'The failed message is skipped until its retry time.');
 
-        $storage->recordAttempt(self::ID_2, 1, 'RuntimeException: boom', new DateTimeImmutable('-1 second'));
+        OutboxRows::fail($storage, self::ID_2, 1, 'RuntimeException: boom', new DateTimeImmutable('-1 second'));
         $messages = $storage->fetchUnpublished(10);
 
         self::assertSame([self::ID_2], self::ids($messages));
@@ -143,7 +144,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
 
-        $storage->recordAttempt(self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('2026-01-01 10:05:00+00:00'));
+        OutboxRows::fail($storage, self::ID_1, 1, 'RuntimeException: boom', new DateTimeImmutable('2026-01-01 10:05:00+00:00'));
 
         self::assertSame([self::ID_2, self::ID_1], self::ids($storage->fetchUnpublished(10)));
         self::assertSame([self::ID_2], self::ids($storage->fetchUnpublished(1)));
@@ -155,8 +156,8 @@ final class DbalOutboxStorageTest extends TestCase
         foreach (['1', '2', '3', '4'] as $minute) {
             $storage->store(self::message('00000000-0000-7000-8000-00000000000'.$minute, '2026-01-01 10:0'.$minute.':00'));
         }
-        $storage->recordAttempt('00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 11:30:00+00:00'));
-        $storage->recordAttempt('00000000-0000-7000-8000-000000000002', 1, 'boom', new DateTimeImmutable('2026-01-01 11:00:00+00:00'));
+        OutboxRows::fail($storage, '00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 11:30:00+00:00'));
+        OutboxRows::fail($storage, '00000000-0000-7000-8000-000000000002', 1, 'boom', new DateTimeImmutable('2026-01-01 11:00:00+00:00'));
 
         self::assertSame(
             ['00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000001'],
@@ -190,7 +191,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message('00000000-0000-7000-8000-000000000005', '2026-01-01 10:05:00', 'events'));
         $storage->store(self::message('00000000-0000-7000-8000-000000000006', '2026-01-01 10:06:00'));
         $storage->store(self::message('00000000-0000-7000-8000-000000000007', '2026-01-01 10:07:00', 'ext'));
-        $storage->recordAttempt('00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 09:00:00+00:00'));
+        OutboxRows::fail($storage, '00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 09:00:00+00:00'));
 
         // The transport whose next row has waited longest goes first: async (10:02), events (10:05),
         // the rows without a transport name (10:06), ext (10:07).
@@ -219,7 +220,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00', 'async'));
         // The ids are chosen, then another relay claims the first row before it is read in full.
         $beforeFullRead->callback = static function () use ($storage): void {
-            self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'claimed by relay B', new DateTimeImmutable('+1 minute'), 0));
+            self::assertSame([self::ID_1], $storage->claim([self::message(self::ID_1, '2026-01-01 10:00:00', 'async')], [0 => new DateTimeImmutable('+1 minute')], 'relay-b'));
         };
 
         $messages = $storage->fetchUnpublished(10);
@@ -238,7 +239,7 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(['c'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, $storage->fetchUnpublished(1)));
 
         // Once its row is served (here: postponed), the next transport comes first.
-        $storage->recordAttempt('00000000-0000-7000-8000-000000000003', 1, 'boom', new DateTimeImmutable('+1 minute'));
+        OutboxRows::fail($storage, '00000000-0000-7000-8000-000000000003', 1, 'boom', new DateTimeImmutable('+1 minute'));
         self::assertSame(['b', 'a'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, $storage->fetchUnpublished(2)));
     }
 
@@ -258,7 +259,7 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertStringContainsString('INSERT INTO somework_cqrs_outbox', $sql);
     }
 
-    public function test_storing_and_purging_never_change_a_table_of_an_earlier_version(): void
+    public function test_purging_never_changes_a_table_of_an_earlier_version_and_storing_adds_the_columns(): void
     {
         $queries = new QueryLog();
         $this->connection = TestDatabase::connect($queries);
@@ -266,16 +267,34 @@ final class DbalOutboxStorageTest extends TestCase
         $queries->flush();
 
         $storage = new DbalOutboxStorage($this->connection);
-        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
         $storage->purgePublished(new DateTimeImmutable());
 
-        self::assertDoesNotMatchRegularExpression('/ALTER TABLE|CREATE TABLE/', implode("\n", $queries->flush()), 'Writes (and purges) do not wait for an upgrade.');
-        self::assertSame('the columns attempts, available_at, failed_at, last_error are missing', $storage->pendingChanges()[0]);
+        self::assertDoesNotMatchRegularExpression('/ALTER TABLE|CREATE TABLE/', implode("\n", $queries->flush()), 'Purges do not wait for an upgrade.');
+        self::assertSame('the columns attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature are missing', $storage->pendingChanges()[0]);
 
-        // The relay needs the columns: the same process adds them when it fetches.
-        self::assertSame([self::ID_1, self::ID_2], self::ids($storage->fetchUnpublished(10)));
+        // Outside a transaction, the automatic setup adds the columns (not the index) before storing.
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         self::assertStringContainsString('ALTER TABLE', implode("\n", $queries->flush()));
+        self::assertSame([self::ID_1], self::ids($storage->fetchUnpublished(10)));
+    }
+
+    public function test_storing_in_a_transaction_on_a_table_of_an_earlier_version_asks_for_the_setup(): void
+    {
+        TestDatabase::createTableOfVersion04($this->connection);
+        $storage = new DbalOutboxStorage($this->connection);
+        $this->connection->beginTransaction();
+
+        try {
+            $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+            self::fail('Expected storing to fail.');
+        } catch (\LogicException $exception) {
+            self::assertStringContainsString('lacks columns this version of the bundle needs', $exception->getMessage());
+            self::assertStringContainsString('bin/console somework:cqrs:outbox:setup', $exception->getMessage());
+        } finally {
+            if ($this->connection->isTransactionActive()) {
+                $this->connection->rollBack();
+            }
+        }
     }
 
     public function test_without_the_index_of_this_version_one_query_fetches_along_the_index_of_04(): void
@@ -289,7 +308,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message('00000000-0000-7000-8000-000000000003', '2026-01-01 10:00:02'));
         $storage->store(self::message('00000000-0000-7000-8000-000000000004', '2026-01-01 10:00:03', 'a'));
         $storage->fetchUnpublished(1);
-        $storage->recordAttempt('00000000-0000-7000-8000-000000000004', 1, 'boom', new DateTimeImmutable('+1 hour'));
+        OutboxRows::fail($storage, '00000000-0000-7000-8000-000000000004', 1, 'boom', new DateTimeImmutable('+1 hour'));
         $queries->flush();
 
         // The per-transport queries would each read every pending row of a big 0.4 table.
@@ -617,7 +636,7 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([], (new DbalOutboxStorage($this->connection))->pendingChanges());
     }
 
-    public function test_the_automatic_upgrade_gives_up_at_once_behind_a_long_transaction_and_writes_go_on(): void
+    public function test_the_automatic_upgrade_gives_up_at_once_behind_a_long_transaction(): void
     {
         if (TestDatabase::isSqlite($this->connection)) {
             self::markTestSkipped('Needs a second connection to the same database.');
@@ -633,11 +652,11 @@ final class DbalOutboxStorageTest extends TestCase
 
         try {
             $storage = new DbalOutboxStorage($this->connection);
-            $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
 
             $started = microtime(true);
             try {
-                $storage->fetchUnpublished(10);
+                // Writes need the columns of this version (the signature): run the setup command before the deployment.
+                $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
                 self::fail('The columns cannot be added while the transaction holds the table.');
             } catch (\RuntimeException $exception) {
                 self::assertStringContainsString('kept it locked for more than 1 second(s)', $exception->getMessage());
@@ -654,14 +673,14 @@ final class DbalOutboxStorageTest extends TestCase
             } else {
                 self::assertStringContainsString('SET SESSION lock_wait_timeout = 1', $sql);
             }
-
-            $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
         } finally {
             $other->rollBack();
             $other->close();
         }
 
-        self::assertSame([self::ID_1, self::ID_2], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10)));
+        // Once the transaction is over, the next write upgrades the table.
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
+        self::assertSame([self::ID_2], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10)));
     }
 
     public function test_a_process_waiting_for_another_setup_goes_on_once_the_columns_exist(): void
@@ -926,9 +945,9 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
 
         // The relay records an attempt before sending it, and again with the error when it fails.
-        $storage->recordAttempt(self::ID_1, 1, 'interrupted', new DateTimeImmutable('-1 minute'));
-        $storage->recordAttempt(self::ID_1, 1, 'first', new DateTimeImmutable('-1 minute'));
-        $storage->recordAttempt(self::ID_1, 2, 'second', new DateTimeImmutable('-1 minute'));
+        OutboxRows::fail($storage, self::ID_1, 1, 'interrupted', new DateTimeImmutable('-1 minute'));
+        OutboxRows::fail($storage, self::ID_1, 1, 'first', new DateTimeImmutable('-1 minute'));
+        OutboxRows::fail($storage, self::ID_1, 2, 'second', new DateTimeImmutable('-1 minute'));
 
         self::assertSame(2, $storage->fetchUnpublished(1)[0]->attempts);
     }
@@ -938,9 +957,9 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
         $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
-        $storage->recordAttempt(self::ID_1, 1, 'first failure', new DateTimeImmutable('-1 minute'));
-        $storage->recordAttempt(self::ID_1, 2, 'MessageDecodingFailedException: gone', null);
-        $storage->recordAttempt(self::ID_2, 1, 'RuntimeException: boom', null);
+        OutboxRows::fail($storage, self::ID_1, 1, 'first failure', new DateTimeImmutable('-1 minute'));
+        OutboxRows::fail($storage, self::ID_1, 2, 'MessageDecodingFailedException: gone', null);
+        OutboxRows::fail($storage, self::ID_2, 1, 'RuntimeException: boom', null);
 
         self::assertSame([], self::ids($storage->fetchUnpublished(10)), 'Given-up messages are no longer due.');
 
@@ -964,60 +983,134 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([], $storage->fetchFailed(10));
     }
 
-    public function test_record_attempt_rejects_unknown_ids_and_ignores_published_messages(): void
+    public function test_a_claim_counts_the_attempt_and_postpones_the_message(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
-        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        $storage->markPublished(self::ID_1);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        $fetched = $storage->fetchUnpublished(10);
 
-        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'late failure', null));
-        self::assertSame([], $storage->fetchFailed(10));
+        self::assertSame([self::ID_1, self::ID_2], $storage->claim($fetched, [0 => new DateTimeImmutable('+1 minute')], 'relay-a'));
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Outbox message "'.self::UNKNOWN_ID.'" not found in table "somework_cqrs_outbox" — cannot record an attempt.');
-
-        $storage->recordAttempt(self::UNKNOWN_ID, 1, 'error', null);
+        self::assertSame([], $storage->fetchUnpublished(10), 'A claimed message is due again only after the retry time of its attempt.');
+        $row = $this->connection->fetchAssociative('SELECT attempts, claim_token, claimed_at, available_at FROM somework_cqrs_outbox WHERE id = ?', [self::ID_1]);
+        self::assertIsArray($row);
+        self::assertSame([1, 'relay-a'], [(int) $row['attempts'], $row['claim_token']]);
+        self::assertNotNull($row['claimed_at']);
+        self::assertNotNull($row['available_at']);
     }
 
-    public function test_an_attempt_is_only_recorded_while_the_attempts_are_unchanged(): void
+    public function test_only_one_relay_claims_an_attempt(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        $fetchedByA = $storage->fetchUnpublished(10);
+        $fetchedByB = $storage->fetchUnpublished(10);
 
-        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'claimed by relay A', new DateTimeImmutable('-1 minute'), 0));
-        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'claimed by relay B', new DateTimeImmutable('-1 minute'), 0), 'Relay B read the message before relay A claimed it.');
-        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'failed', new DateTimeImmutable('-1 minute'), 1));
+        self::assertSame([self::ID_2], $storage->claim([$fetchedByB[1]], [0 => new DateTimeImmutable('-1 second')], 'relay-b'));
+        self::assertSame([self::ID_1], $storage->claim($fetchedByA, [0 => new DateTimeImmutable('+1 minute')], 'relay-a'), 'Relay A read the second message before relay B claimed it.');
+        self::assertSame([], $storage->claim($fetchedByB, [0 => new DateTimeImmutable('+1 minute')], 'relay-c'));
+    }
+
+    public function test_a_claim_needs_the_fetched_transport(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+
+        // e.g. "outbox:failed --requeue --transport" moved the messages since they were fetched.
+        self::assertSame([], $storage->claim([self::message(self::ID_1, '2026-01-01 10:00:00', 'other'), self::message(self::ID_2, '2026-01-01 10:01:00', 'async')], [0 => new DateTimeImmutable()], 'relay-a'));
+        self::assertSame([self::ID_2, self::ID_1], $storage->claim([self::message(self::ID_2, '2026-01-01 10:01:00'), self::message(self::ID_1, '2026-01-01 10:00:00', 'async')], [0 => new DateTimeImmutable()], 'relay-a'));
+    }
+
+    public function test_messages_with_different_attempts_are_claimed_with_their_own_retry_time(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        OutboxRows::fail($storage, self::ID_2, 2, 'boom', new DateTimeImmutable('-1 minute'));
+
+        $claimed = $storage->claim($storage->fetchUnpublished(10), [0 => new DateTimeImmutable('2030-01-01 10:01:00+00:00'), 2 => new DateTimeImmutable('2030-01-01 10:04:00+00:00')], 'relay-a');
+
+        self::assertSame([self::ID_1, self::ID_2], $claimed);
+        self::assertSame(
+            [[self::ID_1, 1, '2030-01-01 10:01:00'], [self::ID_2, 3, '2030-01-01 10:04:00']],
+            array_map(static fn (array $row): array => [strtolower((string) $row['id']), (int) $row['attempts'], substr((string) $row['available_at'], 0, 19)], $this->connection->fetchAllAssociative('SELECT id, attempts, available_at FROM somework_cqrs_outbox ORDER BY created_at')),
+        );
+    }
+
+    public function test_an_interrupted_attempt_is_fetched_with_its_claim_time(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('-1 second'));
+
+        $messages = $storage->fetchUnpublished(10);
+
+        self::assertSame([self::ID_1], self::ids($messages));
+        self::assertNotNull($messages[0]->claimedAt);
+        self::assertSame(1, $messages[0]->attempts);
+        self::assertSame([self::ID_1], $storage->claim($messages, [1 => new DateTimeImmutable('+1 minute')], 'next-relay'), 'The next relay claims it again.');
+    }
+
+    public function test_release_undoes_the_claim_of_an_unattempted_message(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        OutboxRows::fail($storage, self::ID_2, 2, 'boom', new DateTimeImmutable('2026-01-01 11:00:00+00:00'));
+        $fetched = $storage->fetchUnpublished(10);
+        $storage->claim($fetched, [0 => new DateTimeImmutable('+1 hour'), 2 => new DateTimeImmutable('+1 hour')], 'relay-a');
+
+        $storage->release($fetched, 'relay-b');
+        self::assertSame([], $storage->fetchUnpublished(10), 'Claims of another relay stay.');
+
+        $storage->release($fetched, 'relay-a');
+        $messages = $storage->fetchUnpublished(10);
+        self::assertSame([self::ID_1, self::ID_2], self::ids($messages));
+        self::assertSame([0, 2], array_map(static fn (OutboxMessage $message): int => $message->attempts, $messages));
+        self::assertSame([null, '2026-01-01T11:00:00+00:00'], array_map(static fn (OutboxMessage $message): ?string => $message->availableAt?->format(DATE_ATOM), $messages));
+        self::assertSame([null, null], array_map(static fn (OutboxMessage $message): ?DateTimeImmutable => $message->claimedAt, $messages));
+    }
+
+    public function test_a_failure_is_only_recorded_with_the_claim_token(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $token = OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('+1 minute'));
+
+        self::assertFalse($storage->recordFailure(self::ID_1, 'another-relay', 1, 'boom', null));
+        self::assertTrue($storage->recordFailure(self::ID_1, $token, 1, 'boom', new DateTimeImmutable('-1 second')));
+        self::assertFalse($storage->recordFailure(self::ID_1, $token, 1, 'boom', new DateTimeImmutable('-1 second')), 'Recording the failure ended the claim.');
 
         $messages = $storage->fetchUnpublished(10);
         self::assertSame(1, $messages[0]->attempts);
-        self::assertSame('failed', $messages[0]->lastError);
-
-        $storage->markPublished(self::ID_1);
-        self::assertFalse($storage->recordAttempt(self::ID_1, 2, 'late', null, 1));
+        self::assertSame('boom', $messages[0]->lastError);
+        self::assertNull($messages[0]->claimedAt);
+        self::assertFalse($storage->recordFailure(self::UNKNOWN_ID, $token, 1, 'boom', null));
     }
 
-    public function test_a_given_up_message_cannot_be_claimed_or_given_up_again(): void
+    public function test_a_published_message_records_no_failure(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        self::assertTrue($storage->recordAttempt(self::ID_1, 3, 'interrupted', null, 3 - 3));
+        $token = OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('+1 minute'));
+        $storage->markPublished([self::ID_1]);
 
-        self::assertFalse($storage->recordAttempt(self::ID_1, 3, 'interrupted', null, 3), 'A second relay gives it up again.');
-        self::assertFalse($storage->recordAttempt(self::ID_1, 4, 'claim', new DateTimeImmutable('+1 minute'), 3));
-        self::assertSame(3, $storage->fetchFailed(10)[0]->attempts);
+        self::assertFalse($storage->recordFailure(self::ID_1, $token, 1, 'late failure', null));
+        self::assertSame([], $storage->fetchFailed(10));
     }
 
-    public function test_recording_the_same_values_twice_succeeds_on_every_platform(): void
+    public function test_a_given_up_message_cannot_be_claimed(): void
     {
-        // MySQL reports changed rows, not matched ones.
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        $retryAt = new DateTimeImmutable('2030-01-01 10:00:00+00:00');
+        $fetched = $storage->fetchUnpublished(10);
+        OutboxRows::fail($storage, self::ID_1, 0, 'boom', null);
 
-        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 0));
-        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 1));
-        self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt));
-        self::assertFalse($storage->recordAttempt(self::ID_1, 1, 'boom', $retryAt, 0), 'The attempts changed since the caller read them.');
+        self::assertSame([], $storage->claim($fetched, [0 => new DateTimeImmutable()], 'relay-a'));
+        self::assertSame(0, $storage->fetchFailed(10)[0]->attempts);
     }
 
     public function test_setup_adds_the_failure_columns_to_a_table_of_an_earlier_version(): void
@@ -1044,23 +1137,20 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
 
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-        $storage->recordAttempt(self::ID_1, 1, 'boom', null);
+        OutboxRows::fail($storage, self::ID_1, 1, 'boom', null);
 
         self::assertSame(1, $storage->fetchFailed(10)[0]->attempts);
     }
 
-    public function test_a_table_of_an_earlier_version_accepts_messages_but_asks_for_an_upgrade(): void
+    public function test_a_table_of_an_earlier_version_asks_for_an_upgrade_without_auto_setup(): void
     {
         TestDatabase::createTableOfVersion04($this->connection);
         $storage = new DbalOutboxStorage($this->connection, autoSetup: false);
 
-        // Storing works before the upgrade, so deploying the new version does not break writes.
-        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
-
         $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('The outbox table "somework_cqrs_outbox" lacks columns this version of the bundle needs (attempts, available_at, failed_at, last_error). Upgrade it with "bin/console somework:cqrs:outbox:setup"');
+        $this->expectExceptionMessage('The outbox table "somework_cqrs_outbox" lacks columns this version of the bundle needs (attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature). Upgrade it with "bin/console somework:cqrs:outbox:setup"');
 
-        $storage->fetchUnpublished(10);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
     }
 
     public function test_the_upgrade_never_runs_inside_a_transaction(): void
@@ -1073,7 +1163,7 @@ final class DbalOutboxStorageTest extends TestCase
             $storage->setup();
             self::fail('Expected the upgrade to be refused.');
         } catch (\LogicException $exception) {
-            self::assertStringContainsString('lacks the columns attempts, available_at, failed_at, last_error and cannot be changed inside an open database transaction', $exception->getMessage());
+            self::assertStringContainsString('lacks the columns attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature and cannot be changed inside an open database transaction', $exception->getMessage());
         } finally {
             $this->connection->rollBack();
         }
@@ -1109,23 +1199,24 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
 
-        $storage->markPublished('00000000-0000-7000-8000-000000000001');
+        $storage->markPublished(['00000000-0000-7000-8000-000000000001']);
         // A publication time far in the past shows whether the second call stamps the row again.
         $this->connection->executeStatement("UPDATE somework_cqrs_outbox SET published_at = '2000-01-01 00:00:00'");
-        $storage->markPublished('00000000-0000-7000-8000-000000000001');
+        $storage->markPublished(['00000000-0000-7000-8000-000000000001']);
 
         self::assertSame([], $storage->fetchUnpublished(10));
         self::assertStringStartsWith('2000-01-01 00:00:00', (string) $this->connection->fetchOne('SELECT published_at FROM somework_cqrs_outbox'), 'The first publication time stays (the purge relies on it).');
     }
 
-    public function test_mark_published_rejects_unknown_ids(): void
+    public function test_mark_published_ignores_unknown_ids_and_clears_the_claim(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('+1 minute'));
 
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('Outbox message "'.self::UNKNOWN_ID.'" not found in table "somework_cqrs_outbox"');
+        $storage->markPublished([self::UNKNOWN_ID, strtoupper(self::ID_1)]);
 
-        $storage->markPublished(self::UNKNOWN_ID);
+        self::assertSame([['claim_token' => null, 'claimed_at' => null]], $this->connection->fetchAllAssociative('SELECT claim_token, claimed_at FROM somework_cqrs_outbox WHERE published_at IS NOT NULL'));
     }
 
     public function test_publishing_clears_the_failure_markers(): void
@@ -1133,9 +1224,9 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         // What the relay records before its last attempt.
-        $storage->recordAttempt(self::ID_1, 10, 'interrupted', null);
+        OutboxRows::fail($storage, self::ID_1, 10, 'interrupted', null);
 
-        $storage->markPublished(self::ID_1);
+        $storage->markPublished([self::ID_1]);
 
         self::assertSame([['failed_at' => null, 'last_error' => null]], $this->connection->fetchAllAssociative('SELECT failed_at, last_error FROM somework_cqrs_outbox'));
     }
@@ -1146,7 +1237,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->store(self::message(self::ID_2, '2026-01-01 11:00:00'));
         // Stored long ago, but postponed until a moment ago: it waits since its retry time.
-        $storage->recordAttempt(self::ID_1, 1, 'boom', new DateTimeImmutable('2026-01-01 12:00:00+00:00'));
+        OutboxRows::fail($storage, self::ID_1, 1, 'boom', new DateTimeImmutable('2026-01-01 12:00:00+00:00'));
 
         $status = $storage->status();
 
@@ -1162,8 +1253,8 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
         $storage->store(self::message(self::ID_2, '2026-01-01 11:00:00'));
-        $storage->recordAttempt(self::ID_1, 3, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
-        $storage->recordAttempt(self::ID_2, 10, 'RuntimeException: boom', null);
+        OutboxRows::fail($storage, self::ID_1, 3, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
+        OutboxRows::fail($storage, self::ID_2, 10, 'RuntimeException: boom', null);
 
         $status = $storage->status();
 
@@ -1179,7 +1270,7 @@ final class DbalOutboxStorageTest extends TestCase
         $storage = new DbalOutboxStorage($this->connection);
         $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
         $storage->store(self::message('00000000-0000-7000-8000-000000000002', '2026-01-01 10:00:00'));
-        $storage->markPublished('00000000-0000-7000-8000-000000000001');
+        $storage->markPublished(['00000000-0000-7000-8000-000000000001']);
 
         self::assertSame(0, $storage->purgePublished(new DateTimeImmutable('-1 hour')));
         self::assertSame(1, $storage->purgePublished(new DateTimeImmutable('+1 hour')));

@@ -49,14 +49,24 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
         return $this->inner->fetchUnpublished($limit, $excludedTransports);
     }
 
-    public function markPublished(string $id): void
+    public function claim(array $messages, array $retryAt, string $token): array
     {
-        $this->inner->markPublished($id);
+        return $this->inner->claim($messages, $retryAt, $token);
     }
 
-    public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool
+    public function release(array $messages, string $token): void
     {
-        return $this->inner->recordAttempt($id, $attempts, $error, $retryAt, $previousAttempts);
+        $this->inner->release($messages, $token);
+    }
+
+    public function markPublished(array $ids): void
+    {
+        $this->inner->markPublished($ids);
+    }
+
+    public function recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool
+    {
+        return $this->inner->recordFailure($id, $token, $attempts, $error, $retryAt);
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int

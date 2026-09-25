@@ -43,7 +43,7 @@ final class OutboxPurgeCommandTest extends TestCase
         $storage = new InMemoryOutboxStorage();
         $storage->store(new OutboxMessage('published', 'body', '{}', new DateTimeImmutable()));
         $storage->store(new OutboxMessage('pending', 'body', '{}', new DateTimeImmutable()));
-        $storage->markPublished('published');
+        $storage->markPublished(['published']);
 
         $tester = new CommandTester(new OutboxPurgeCommand($storage));
 

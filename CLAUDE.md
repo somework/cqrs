@@ -44,7 +44,7 @@ Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (lates
 - `somework:cqrs:generate <type> <FQCN>` — scaffolds a message + attribute-based handler following the project's PSR-4 mapping (`--handler=`, `--dir=`, `--force`)
 - `somework:cqrs:debug-transports` — inspects Messenger transport routing for CQRS messages
 - `somework:cqrs:health` — instantiates every handler and Messenger transport; exit code 0/1/2
-- `somework:cqrs:outbox:relay|setup|failed|purge` — transactional outbox operations (registered when `outbox.enabled`); the relay claims each row before sending it, retries failing rows with backoff, gives up after `outbox.max_attempts` (3× for transport failures) and pauses a transport after 3 consecutive send failures
+- `somework:cqrs:outbox:relay|setup|failed|purge` — transactional outbox operations (registered when `outbox.enabled`); the relay claims fetched rows with a run token before sending them (an interrupted claim is retried alone; unattempted claims are released; publish marks are flushed every 2 s), retries failing rows with backoff, gives up after `outbox.max_attempts` (3× for transport failures) and pauses a transport after 3 consecutive send failures
 
 ## Architecture
 

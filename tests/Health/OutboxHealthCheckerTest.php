@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Health;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -20,6 +21,7 @@ use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_map;
@@ -47,7 +49,7 @@ final class OutboxHealthCheckerTest extends TestCase
     {
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours')));
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 hour')));
-        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000002', 10, 'RuntimeException: boom', null);
+        OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000002', 10, 'RuntimeException: boom', null);
 
         self::assertSame([
             [CheckSeverity::WARNING, 'The relay gave up on 1 outbox message(s); see "somework:cqrs:outbox:failed"'],
@@ -58,7 +60,7 @@ final class OutboxHealthCheckerTest extends TestCase
     public function test_a_message_that_became_due_after_its_retry_delay_is_not_reported_as_waiting(): void
     {
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-5 minutes')));
-        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000001', 3, 'RuntimeException: boom', new DateTimeImmutable('-5 seconds'));
+        OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000001', 3, 'RuntimeException: boom', new DateTimeImmutable('-5 seconds'));
 
         self::assertSame([[CheckSeverity::OK, 'Outbox: 1 message(s) due, none waiting for long']], self::summary((new OutboxHealthChecker($this->storage))->check()));
     }
@@ -68,8 +70,8 @@ final class OutboxHealthCheckerTest extends TestCase
         // e.g. their transport is down: each run postpones them again, so they are never due for long.
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 days')));
         $this->storage->store(self::message('00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 hour')));
-        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000001', 20, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
-        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000002', 1, 'TransportException: Connection refused', new DateTimeImmutable('+1 minute'));
+        OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000001', 20, 'TransportException: Connection refused', new DateTimeImmutable('+1 hour'));
+        OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000002', 1, 'TransportException: Connection refused', new DateTimeImmutable('+1 minute'));
 
         self::assertSame([
             [CheckSeverity::WARNING, '2 outbox message(s) failed and wait for another attempt, the oldest was stored 2880 minute(s) ago; see the relay output or the "last_error" column'],
@@ -92,14 +94,14 @@ final class OutboxHealthCheckerTest extends TestCase
 
     public function test_a_table_of_version_04_is_a_warning(): void
     {
-        // Messages are still stored (store() never changes the table); only the upgrade is due.
+        // Messages stored by 0.4 wait; only the upgrade is due.
         $connection = TestDatabase::connect();
         TestDatabase::createTableOfVersion04($connection);
         $storage = new DbalOutboxStorage($connection);
-        $storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-1 minute')));
+        self::storeAsVersion04($connection, '00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-1 minute'));
 
         self::assertSame([
-            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
+            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
         ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
@@ -129,8 +131,8 @@ final class OutboxHealthCheckerTest extends TestCase
         $connection = TestDatabase::connect();
         TestDatabase::createTableOfVersion04($connection);
         $storage = new DbalOutboxStorage($connection);
-        $storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours')));
-        $storage->store(self::message('00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 minute')));
+        self::storeAsVersion04($connection, '00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-2 hours'));
+        self::storeAsVersion04($connection, '00000000-0000-7000-8000-000000000002', new DateTimeImmutable('-1 minute'));
 
         $results = self::summary((new OutboxHealthChecker($storage))->check());
 
@@ -205,6 +207,11 @@ final class OutboxHealthCheckerTest extends TestCase
     private static function summary(array $results): array
     {
         return array_map(static fn (CheckResult $result): array => [$result->severity, $result->message], $results);
+    }
+
+    private static function storeAsVersion04(Connection $connection, string $id, DateTimeImmutable $createdAt): void
+    {
+        $connection->insert('somework_cqrs_outbox', ['id' => $id, 'body' => 'body', 'headers' => '{}', 'created_at' => $createdAt->setTimezone(new \DateTimeZone('UTC'))->format('Y-m-d H:i:s')]);
     }
 
     private static function message(string $id, DateTimeImmutable $createdAt): OutboxMessage

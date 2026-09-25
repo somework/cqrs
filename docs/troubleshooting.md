@@ -442,7 +442,7 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
   `outbox.max_attempts` times (three times as many for transport failures). Fix
   the cause, then list and requeue it with `somework:cqrs:outbox:failed
-  [--requeue]`. A reason of `The relay did not finish this attempt …` means that
+  [--requeue]`. A reason of `The last attempt did not finish …` means that
   the process died during the last attempt: a PHP fatal error or running out of
   memory caused by the row, a killed process, or a lost database connection
   (such rows get three times `outbox.max_attempts`; `Previous error:` shows the

@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -38,7 +39,7 @@ final class OutboxFailedCommandTest extends TestCase
 
         foreach ([self::ID_1, self::ID_2] as $id) {
             $this->storage->store(new OutboxMessage($id, 'body', '{}', new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
-            $this->storage->recordAttempt($id, 3, 'RuntimeException: Connection refused', null);
+            OutboxRows::fail($this->storage, $id, 3, 'RuntimeException: Connection refused', null);
         }
     }
 
@@ -82,7 +83,7 @@ final class OutboxFailedCommandTest extends TestCase
     {
         // A row written by someone else could put escape sequences into the terminal of the operator.
         $this->storage->store(new OutboxMessage('00000000-0000-7000-8000-000000000003', 'body', '{}', new DateTimeImmutable(), "as\e[2Jync"));
-        $this->storage->recordAttempt('00000000-0000-7000-8000-000000000003', 3, "boom \e]8;;http://evil.example\e\\", null);
+        OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000003', 3, "boom \e]8;;http://evil.example\e\\", null);
         $tester = new CommandTester(new OutboxFailedCommand($this->storage));
 
         self::assertSame(Command::SUCCESS, $tester->execute([]));

@@ -317,36 +317,43 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 
 ### Transactional outbox
 
-- **The table gains four columns** (`attempts`, `available_at`, `failed_at`, `last_error`) **and the index
-  `idx_<table>_pending`**, which replaces `idx_<table>_published_created`. `store()` keeps working on the old
-  table, but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the missing columns and
-  the index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait
-  for each other, except while one builds the index on PostgreSQL, where the others stop at once, and changing the table waits at most 5 seconds for open transactions on it; run it over a direct
-  connection, not through PgBouncer in transaction mode; `auto_setup: true` only adds the columns, on the first relay run (storing never changes the
-  table; not while another session holds the table, on MySQL while any transaction of the server has been open for more
-  than a second, and on MySQL and MariaDB only when that takes no time, e.g. not on a compressed table; without
-  `pg_read_all_stats` the relay's role cannot tell autovacuum from a transaction), so the relay usually works before the setup command runs, only slower, and warns until the index exists), generate a Doctrine migration (with doctrine/orm the
-  schema listener includes them; its plain `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the
-  published rows first on a large table), or change the table by hand, see
-  [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they
-  ignore retry times, given-up rows and claims.
-- `OutboxStorage` is now `@api` and changed. Custom implementations must:
+- **The table gains seven columns** (`attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`,
+  `claimed_at`, `signature`) **and the index `idx_<table>_pending`**, which replaces
+  `idx_<table>_published_created`. **Writes need the columns**: run `bin/console somework:cqrs:outbox:setup` (or
+  your migration) before the new version takes traffic (checklist step 4). With `auto_setup: true` a write outside
+  a transaction adds the columns first (giving up after 1 second behind a transaction that holds the table); a
+  write inside a transaction on the old table fails with `The outbox table "…" lacks columns this version of the
+  bundle needs (…). Upgrade it with "bin/console somework:cqrs:outbox:setup" …`. The setup command also builds the
+  index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait for
+  each other, except while one builds the index on PostgreSQL, where the others stop at once, and changing the
+  table waits at most 5 seconds for open transactions on it; run it over a direct connection, not through
+  PgBouncer in transaction mode. The automatic setup never builds the index (not while another session holds the
+  table, on MySQL while any transaction of the server has been open for more than a second, and on MySQL and
+  MariaDB only when that takes no time, e.g. not on a compressed table; without `pg_read_all_stats` the role
+  cannot tell autovacuum from a transaction): the relay works without it, only slower, and warns until it
+  exists. A Doctrine migration works too (with doctrine/orm the schema listener includes the columns; its plain
+  `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the published rows first on a large table),
+  or change the table by hand, see [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays
+  before the new version runs: they ignore retry times, given-up rows and claims.
+- `OutboxStorage` is now `@api` and changed (see [Custom storage](docs/outbox.md#custom-storage)). Custom
+  implementations must:
   - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it
     returns only due messages (unpublished, not given up, retry time passed), the transports taking turns and,
     within a transport, first those never attempted in the order they were stored, then the others in the order
     of their retry time; it skips the messages of the excluded transports (`null` stands for messages without a
     transport name);
-  - add `recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool`.
-    It stores the given number of attempts; the relay calls it before every attempt and again when the attempt
-    fails. With `$previousAttempts` it only records while the message is not given up and the stored attempts
-    still equal it, atomically, and returns `false` when nothing was recorded (published, given up, or claimed
-    by another relay);
+  - add `claim(array $messages, array $retryAt, string $token): array`, which counts an attempt and postpones
+    each fetched message atomically while its attempts and transport are unchanged, and returns the claimed ids;
+    `release(array $messages, string $token): void`, which undoes the claims of unattempted messages; and
+    `recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool`;
+  - change `markPublished(string $id)` to `markPublished(array $ids)`, which ignores unknown or published ids;
   - add `purgePublished(DateTimeImmutable $publishedBefore): int`;
-  - return the stored `attempts` and `last_error` with each message: `OutboxMessage` has the new properties
-    `attempts` and `lastError` (constructor arguments `$attempts = 0` and `$lastError = null`).
+  - return the stored state with each message: `OutboxMessage` has the new properties `attempts`, `lastError`,
+    `claimedAt`, `availableAt` and `signature` (constructor arguments after `$transportName`, all optional).
+    Ids are lowercased.
 
   A decorator of `somework_cqrs.outbox.storage` needs the same methods; `setup`, `failed` and the health
-  check keep using the DBAL storage behind it.
+  check keep using the storage behind it.
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
   that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
   Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the
@@ -363,7 +370,9 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   installed. A row that fails is postponed (1 minute, doubling up to 1 hour) instead of being retried on every
   run, and given up after `outbox.max_attempts` attempts; list and requeue given-up rows with the new
   `somework:cqrs:outbox:failed` command. Every attempt is claimed before the message is sent, so a row that
-  crashes the relay process is not retried forever and overlapping relays skip each other's rows. Rows whose
+  crashes the relay process is retried on its own and not forever, and overlapping relays skip each other's rows.
+  Sent rows are marked as published every 2 seconds and at the end of the run: when the relay dies, the rows of
+  the last 2 seconds are sent again. Rows whose
   transport fails (`TransportException`) get three times `outbox.max_attempts`, and a transport that fails 3
   times in a row is paused until the next run while the other transports are relayed. Rows are relayed in the
   order: the transports take turns; within one, new rows first, in the order they were stored, then the rows due

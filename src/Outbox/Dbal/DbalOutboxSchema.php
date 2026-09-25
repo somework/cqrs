@@ -59,7 +59,7 @@ use const ARRAY_FILTER_USE_KEY;
 final class DbalOutboxSchema
 {
     /** Columns added in 0.5.0: tables created by earlier versions lack them. */
-    public const COLUMNS_SINCE_0_4 = ['attempts', 'available_at', 'failed_at', 'last_error'];
+    public const COLUMNS_SINCE_0_4 = ['attempts', 'available_at', 'failed_at', 'last_error', 'claim_token', 'claimed_at', 'signature'];
 
     /** Seconds a change of an existing table by the setup command waits for the transactions that lock it. */
     private const DDL_LOCK_TIMEOUT = 5;
@@ -1042,6 +1042,11 @@ final class DbalOutboxSchema
                 // When the relay gave up on the message.
                 'failed_at' => $table->addColumn('failed_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
                 'last_error' => $table->addColumn('last_error', Types::TEXT)->setNotnull(false),
+                // The relay run that claimed the message for an attempt it has not finished, and when.
+                'claim_token' => $table->addColumn('claim_token', Types::STRING)->setLength(32)->setNotnull(false),
+                'claimed_at' => $table->addColumn('claimed_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
+                // "v1:" and the base64url HMAC-SHA256 of the id, body and headers (outbox.signing).
+                'signature' => $table->addColumn('signature', Types::STRING)->setLength(64)->setNotnull(false),
                 default => throw new \LogicException(sprintf('Unknown outbox column "%s".', $column)),
             };
         }

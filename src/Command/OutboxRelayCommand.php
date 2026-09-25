@@ -50,12 +50,6 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 {
     use LockableTrait;
 
-    /**
-     * Stored before each attempt (followed by the previous error, if any), so an attempt the
-     * process does not survive still counts.
-     */
-    public const INTERRUPTED = OutboxRelay::INTERRUPTED;
-
     /** Seconds between two extensions of the relay lock (its TTL is 300 seconds). */
     private const LOCK_REFRESH_SECONDS = 10;
 
