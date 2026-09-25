@@ -599,11 +599,17 @@ final class DbalOutboxStorage implements OutboxStorage
         }
 
         try {
-            // trx_started is in the time zone of the server, NOW() in the one of the session.
-            return false !== $this->connection->fetchOne(
-                "SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < CONVERT_TZ(NOW(), @@session.time_zone, 'SYSTEM') - INTERVAL ? SECOND LIMIT 1",
-                [self::AUTO_DDL_LOCK_TIMEOUT],
-            );
+            // Read NOW() in the time zone that trx_started is shown in (the one of the server).
+            $zone = (string) $this->connection->fetchOne('SELECT @@session.time_zone');
+            $this->connection->executeStatement("SET time_zone = 'SYSTEM'");
+            try {
+                return false !== $this->connection->fetchOne(
+                    'SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < NOW() - INTERVAL ? SECOND LIMIT 1',
+                    [self::AUTO_DDL_LOCK_TIMEOUT],
+                );
+            } finally {
+                $this->connection->executeStatement('SET time_zone = '.$this->connection->quote($zone));
+            }
         } catch (DbalException) {
             return false;
         }

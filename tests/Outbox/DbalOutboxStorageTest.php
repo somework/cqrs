@@ -419,9 +419,10 @@ final class DbalOutboxStorageTest extends TestCase
         }
         TestDatabase::createTableOfVersion04($this->connection);
         $other = TestDatabase::connect(keepTables: true);
-        // e.g. a report on another table, or in another database.
-        $other->executeStatement('START TRANSACTION WITH CONSISTENT SNAPSHOT');
-        usleep(1_200_000);
+        // e.g. a report; transaction start times are shown in whole seconds.
+        $other->beginTransaction();
+        $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox');
+        usleep(2_100_000);
 
         try {
             $storage = new DbalOutboxStorage($this->connection);
