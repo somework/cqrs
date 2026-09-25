@@ -49,10 +49,10 @@ final class OutboxSetupCommandTest extends TestCase
         // deployment must not go on as if the table was ready.
         $command = new OutboxSetupCommand(new DbalOutboxStorage(TestDatabase::connect(), 'outbox', autoSetup: false));
         $tester = new CommandTester($command);
-        $tester->execute([]);
+        $tester->execute([], ['capture_stderr_separately' => true]);
 
         self::assertSame(128 + 15, $command->handleSignal(15));
-        self::assertStringContainsString('The outbox table setup was stopped by signal 15; run it again.', $tester->getDisplay());
+        self::assertStringContainsString('The outbox table setup was stopped by signal 15; run it again.', $tester->getErrorOutput());
     }
 
     #[RequiresPhpExtension('pcntl')]

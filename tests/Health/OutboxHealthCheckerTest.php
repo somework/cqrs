@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Health;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
@@ -13,6 +15,7 @@ use SomeWork\CqrsBundle\Health\CheckSeverity;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
@@ -94,6 +97,26 @@ final class OutboxHealthCheckerTest extends TestCase
         self::assertSame([
             [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
         ], self::summary((new OutboxHealthChecker($storage))->check()));
+    }
+
+    public function test_a_table_structure_that_cannot_be_read_is_a_warning(): void
+    {
+        $platform = TestDatabase::connect()->getDatabasePlatform();
+        $introspection = new BeforeQueryMiddleware(match (true) {
+            $platform instanceof PostgreSQLPlatform => 'pg_namespace',
+            $platform instanceof AbstractMySQLPlatform => 'information_schema',
+            default => 'pragma_table_info',
+        });
+        $connection = TestDatabase::connect(null, [$introspection]);
+        $storage = new DbalOutboxStorage($connection);
+        $storage->setup();
+        // e.g. missing privileges on the catalog; the messages themselves can still be read.
+        $introspection->replacement = 'SELECT broken FROM nowhere';
+
+        $results = self::summary((new OutboxHealthChecker(new DbalOutboxStorage($connection)))->check());
+
+        self::assertSame(CheckSeverity::WARNING, $results[0][0]);
+        self::assertStringStartsWith('The outbox table needs "bin/console somework:cqrs:outbox:setup": its structure cannot be read (', $results[0][1]);
     }
 
     public function test_an_unreadable_storage_is_critical(): void

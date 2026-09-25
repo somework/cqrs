@@ -273,9 +273,9 @@ jobs:
         env:
           CQRS_TEST_DATABASE_URL: 'pdo-pgsql://cqrs:cqrs@127.0.0.1:5432/cqrs_test?serverVersion=16'
 
-      # For the test of a "database.table" name.
+      # For the test of a "database.table" name, and the check of the server's transactions (PROCESS).
       - name: Second MySQL database
-        run: mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE cqrs_test_other; GRANT ALL ON cqrs_test_other.* TO 'cqrs'@'%'"
+        run: mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE cqrs_test_other; GRANT ALL ON cqrs_test_other.* TO 'cqrs'@'%'; GRANT PROCESS ON *.* TO 'cqrs'@'%'"
 
       - name: PHPUnit on MySQL 8.4
         run: vendor/bin/phpunit --group database

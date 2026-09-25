@@ -71,7 +71,7 @@ final class OutboxSetupCommand extends Command implements SignalableCommandInter
         }
 
         try {
-            $this->outboxStorage->setup();
+            $this->outboxStorage->setup(static fn () => $io->note('Another process is setting up the outbox table (or the database session of a setup that was stopped is still at work); waiting for it, for at most 10 minutes.'));
         } catch (\Throwable $exception) {
             // e.g. the database is down, or the table cannot be changed: exit with 1 and say why.
             $io->error(sprintf('The outbox table could not be set up: %s', $exception->getMessage()));

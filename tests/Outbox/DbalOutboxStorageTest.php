@@ -30,12 +30,14 @@ use function date_default_timezone_get;
 use function date_default_timezone_set;
 use function implode;
 use function microtime;
+use function preg_match_all;
 use function preg_replace;
 use function sha1;
 use function str_contains;
 use function str_repeat;
 use function substr;
 use function time;
+use function usleep;
 
 use const DATE_ATOM;
 
@@ -273,9 +275,10 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10)));
         self::assertSame(['00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, ['a', null])));
         self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10, ['a'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, [null])));
 
         $sql = $queries->flush();
-        self::assertCount(3, $sql);
+        self::assertCount(4, $sql);
         $leading = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform ? 'published_at ASC, ' : '';
         foreach ($sql as $query) {
             self::assertStringEndsWith('ORDER BY '.$leading.'created_at ASC, id ASC LIMIT 10', $query);
@@ -387,6 +390,84 @@ final class DbalOutboxStorageTest extends TestCase
         } finally {
             $connection->close();
         }
+    }
+
+    public function test_storing_looks_at_the_table_once_per_process(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $queries->flush();
+
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
+
+        self::assertCount(1, $queries->flush(), 'Only the INSERT.');
+    }
+
+    public function test_the_automatic_upgrade_does_not_try_while_a_transaction_of_the_mysql_server_is_old(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        if (!$platform instanceof AbstractMySQLPlatform || $platform instanceof MariaDBPlatform) {
+            self::markTestSkipped('MySQL does not tell which tables a transaction holds (MariaDB alters with NOWAIT instead).');
+        }
+        try {
+            $this->connection->fetchOne('SELECT COUNT(*) FROM information_schema.innodb_trx');
+        } catch (DbalException) {
+            self::markTestSkipped('Needs the PROCESS privilege.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        $other = TestDatabase::connect(keepTables: true);
+        // e.g. a report on another table, or in another database.
+        $other->executeStatement('START TRANSACTION WITH CONSISTENT SNAPSHOT');
+        usleep(1_200_000);
+
+        try {
+            $storage = new DbalOutboxStorage($this->connection);
+            try {
+                $storage->fetchUnpublished(10);
+                self::fail('The columns are not added while a transaction of the server is old.');
+            } catch (\RuntimeException $exception) {
+                self::assertStringContainsString('is not changed while a transaction of the database server has been open for more than 1 second(s)', $exception->getMessage());
+            }
+
+            // A missing table is still created: nobody can hold it.
+            $new = new DbalOutboxStorage($this->connection, 'app_outbox');
+            $new->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+            self::assertSame([self::ID_1], self::ids($new->fetchUnpublished(10)));
+        } finally {
+            $other->rollBack();
+            $other->close();
+        }
+
+        self::assertSame([], (new DbalOutboxStorage($this->connection))->fetchUnpublished(10), 'Once the transaction ended.');
+    }
+
+    public function test_the_setup_says_when_it_waits_for_another_one(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        if (TestDatabase::isSqlite($this->connection)) {
+            self::markTestSkipped('SQLite takes no setup lock.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        $holder = TestDatabase::connect(keepTables: true);
+        $name = 'somework_cqrs_outbox_setup_'.substr(sha1($platform instanceof PostgreSQLPlatform ? 'somework_cqrs_outbox' : $holder->getDatabase().'.somework_cqrs_outbox'), 0, 16);
+        $holder->fetchOne($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_lock(hashtext(?))' : 'SELECT GET_LOCK(?, 0)', [$name]);
+        $waited = 0;
+
+        try {
+            (new DbalOutboxStorage($this->connection))->setup(static function () use (&$waited, $holder): void {
+                ++$waited;
+                // The other setup finishes.
+                $holder->close();
+            });
+        } finally {
+            $holder->close();
+        }
+
+        self::assertSame(1, $waited);
+        self::assertSame([], (new DbalOutboxStorage($this->connection))->pendingChanges());
     }
 
     public function test_the_automatic_upgrade_gives_up_at_once_behind_a_long_transaction_and_writes_go_on(): void
@@ -572,6 +653,7 @@ final class DbalOutboxStorageTest extends TestCase
         // rebuilds the table instead).
         $sql = implode("\n", $queries->flush());
         if (!TestDatabase::isSqlite($this->connection)) {
+            self::assertSame(1, preg_match_all('/DROP INDEX/', $sql), 'Only the index of 0.4 is dropped.');
             self::assertMatchesRegularExpression('/CREATE INDEX (CONCURRENTLY (IF NOT EXISTS )?)?idx_somework_cqrs_outbox_pending.*DROP INDEX (CONCURRENTLY (IF EXISTS )?)?`?idx_somework_cqrs_outbox_published_created/s', $sql);
         }
     }

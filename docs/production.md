@@ -275,8 +275,7 @@ time) and marks each one published after dispatching it.
   makes the command exit with `1`; the rows behind it are not blocked. After
   `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
 * The transports take turns, the one whose next row has waited longest first,
-  so one transport's backlog does not hold up the others (the oldest due rows go
-  first, whatever their transport).
+  so one transport's backlog does not hold up the others.
 * A transport that fails 3 times in a row with a `TransportException` (broker
   down, or rejecting messages) is paused until the next run, while the rows of
   the other transports are relayed (10 times, or 3 times taking more than 10

@@ -129,6 +129,9 @@ final class DbalOutboxStorage implements OutboxStorage
     /** When $pendingIndex was checked (microtime). */
     private float $pendingIndexCheckedAt = 0.0;
 
+    /** @var (\Closure(): void)|null See setup() */
+    private ?\Closure $onWait = null;
+
     public function __construct(
         private readonly Connection $connection,
         private readonly string $tableName = 'somework_cqrs_outbox',
@@ -412,13 +415,21 @@ final class DbalOutboxStorage implements OutboxStorage
      * index it lacks, rebuilds an index an interrupted build left invalid, and drops the index of
      * 0.4. It waits up to 10 minutes for another setup to finish.
      *
+     * @param (\Closure(): void)|null $onWait Called once when another process is setting up the table,
+     *                                        before waiting for it (e.g. to say so)
+     *
      * @throws \LogicException   when the table must be changed inside an open transaction, or when
      *                           the database rejects the table name
      * @throws \RuntimeException when another process keeps the table locked, or builds its index
      */
-    public function setup(): void
+    public function setup(?\Closure $onWait = null): void
     {
-        $this->guard(fn () => $this->prepareTable(true));
+        $this->onWait = $onWait;
+        try {
+            $this->guard(fn () => $this->prepareTable(true));
+        } finally {
+            $this->onWait = null;
+        }
 
         $this->setupDone = true;
     }
@@ -942,8 +953,14 @@ final class DbalOutboxStorage implements OutboxStorage
             if (microtime(true) >= $deadline) {
                 return false;
             }
+            if (null !== $this->onWait) {
+                [$onWait, $this->onWait] = [$this->onWait, null];
+                $onWait();
+            }
             if (!$waits) {
-                usleep(random_int(50_000, 250_000));
+                // Shorter inside a transaction (the automatic setup), which idle_in_transaction_session_timeout may end.
+                $inTransaction = $this->connection->isTransactionActive();
+                usleep(random_int($inTransaction ? 20_000 : 50_000, $inTransaction ? 80_000 : 250_000));
             }
         }
     }

@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\ORM\EntityManagerInterface;
@@ -133,13 +135,32 @@ final class OutboxSchemaSubscriberTest extends TestCase
         self::assertSame([], $schema->getTables(), 'The schema only holds the database of the connection.');
     }
 
-    private function createEventArgs(Schema $schema, ?string $mysqlDatabase = null): GenerateSchemaEventArgs
+    public function test_the_database_of_a_mysql_table_is_compared_case_insensitively(): void
+    {
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('APP.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app'));
+
+        self::assertTrue($schema->hasTable('outbox'));
+    }
+
+    public function test_a_postgresql_table_keeps_its_schema(): void
+    {
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('app.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app', new PostgreSQLPlatform()));
+
+        self::assertTrue($schema->hasTable('app.outbox'));
+        self::assertFalse($schema->hasTable('outbox'));
+    }
+
+    private function createEventArgs(Schema $schema, ?string $database = null, ?AbstractPlatform $platform = null): GenerateSchemaEventArgs
     {
         $entityManager = $this->createMock(EntityManagerInterface::class);
-        if (null !== $mysqlDatabase) {
+        if (null !== $database) {
             $connection = $this->createMock(Connection::class);
-            $connection->method('getDatabasePlatform')->willReturn(new MySQLPlatform());
-            $connection->method('getDatabase')->willReturn($mysqlDatabase);
+            $connection->method('getDatabasePlatform')->willReturn($platform ?? new MySQLPlatform());
+            $connection->method('getDatabase')->willReturn($database);
             $entityManager->method('getConnection')->willReturn($connection);
         }
 

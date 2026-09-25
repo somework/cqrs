@@ -248,7 +248,8 @@ and the new index to stay fast. Add them with one of:
   start at the same time wait for each other with a database lock held by the session, which
   PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
   usually notices it and refuses, or fails afterwards saying that the lock stayed with
-  another server connection). A signal (e.g. a deploy job that is terminated) stops it with the
+  another server connection; under light load it may not notice, so do not rely on it). While
+  another setup holds the lock, it says so and waits for it. A signal (e.g. a deploy job that is terminated) stops it with the
   exit code `128 + signal`, once the running statement returns; the next setup continues. On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
   `statement_timeout`), so writes go on while it runs; it waits for transactions that started
@@ -318,9 +319,10 @@ For each due row the relay:
 
 The transports take turns, the one whose next row has waited longest first (rows stored
 without a transport name count as one transport), so the backlog of one transport, for example
-after an outage, does not hold up the others: the oldest due rows go first, whatever their
-transport. (When more transports have a backlog than a run relays rows, a transport whose rows
-are newer waits until the older rows are relayed.) Within
+after an outage, does not hold up the others: each fetch orders the transports by the age of
+their next row and then takes one row of each in turn. (When more transports have a backlog
+than a fetch has rows, a transport whose next row is newer waits until the older ones are
+relayed.) Within
 a transport the relay takes the new rows first (never attempted, or requeued), in the order
 they were stored, then the rows that failed before and whose retry time has passed, in the order
 of their retry time. Rows that keep failing therefore do not hold up new rows. A relay that
