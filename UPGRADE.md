@@ -13,8 +13,9 @@ The promise covers:
   of `CommandBus`, `QueryBus` and `EventBus`: get the buses from the container);
 - the `somework_cqrs` configuration tree;
 - the documented service ids and tags: `somework_cqrs.outbox.storage`,
-  `somework_cqrs.outbox.dbal_storage`, `somework_cqrs.outbox.serializer`,
-  `somework_cqrs.dispatch_stamp_decider` and `somework_cqrs.health_checker`;
+  `somework_cqrs.outbox.base_storage`, `somework_cqrs.outbox.dbal_storage`,
+  `somework_cqrs.outbox.serializer`, `somework_cqrs.dispatch_stamp_decider` and
+  `somework_cqrs.health_checker`;
 - the priorities of the built-in stamp deciders, console command names, options and exit codes,
   the OpenTelemetry span names and the `cqrs` log channel.
 
@@ -29,16 +30,17 @@ The promise covers:
 - Removing a class, interface or trait
 - Adding required constructor parameters
 - Changing a return type to an incompatible type
-- Adding or removing methods of interfaces meant to be implemented (the handler, policy, storage
-  and health checker contracts, and the bus interfaces)
-- Adding methods to the classes and traits you extend or use (the abstract handlers,
-  `CqrsTestCase`, `CqrsAssertionsTrait`, `EnvelopeAwareTrait`): they can clash with yours
+- Adding or removing methods of interfaces meant to be implemented (the message and handler
+  markers, the policy contracts, `StampDecider` and `MessageTypeAwareStampDecider`, the outbox
+  contracts in `Contract\Outbox`, `HealthChecker`, and the bus interfaces)
+- Adding methods to the classes and traits you extend or use (`CqrsTestCase`,
+  `CqrsAssertionsTrait`, `EnvelopeAwareTrait`): they can clash with yours
 
 ### What is not a breaking change
 
 - Adding optional parameters with default values
 - Adding methods to final classes, adding classes or interfaces
-- Adding cases to enums (`DispatchMode`, `CheckSeverity`): give a `match` over them a default arm
+- Adding cases to enums (`DispatchMode`, `CheckSeverity`, `MessageType`): give a `match` over them a default arm
 - Bug fixes that change incorrect behaviour (they are still listed below when you may notice them)
 - Adding `@api` or `@internal` annotations
 
@@ -53,21 +55,23 @@ releases.
 
 ### Checklist
 
-1. **Code**, before `composer update` (the build or the `cache:clear` script of `composer update` fails
-   otherwise):
+1. **Code**, in the same change as `composer update` (the new classes only exist after it, and the build or
+   the `cache:clear` script of `composer update` fails until the code is adapted):
    - handlers extending the removed abstract handlers ([Abstract handlers removed](#abstract-handlers-removed-classes-moved));
    - imports of moved classes (`Support\StampDecider`, `Support\NullRetryPolicy`, …) and class names in the
      configuration;
    - `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`;
-   - custom `OutboxStorage` implementations and decorators ([Transactional outbox](#transactional-outbox));
+   - custom `OutboxStorage` implementations and decorators, and imports of `Contract\OutboxStorage` (now
+     `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
    - tests that read `getDispatched()` of the fake buses as arrays.
 2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
    deleted classes, and `%env()%` values in compile-time options
    ([Environment variables](#environment-variables-in-the-configuration)).
 3. **Outbox, before the deployment**:
-   - let the 0.4 relay send what is due, then stop it. 0.5 signs rows and only relays signed ones
-     ([Signed rows](docs/outbox.md#signed-rows)); to relay rows of 0.4 after the upgrade, set
-     `outbox.signing.accept_unsigned: true` until they are gone;
+   - 0.5 signs rows and only relays signed ones ([Signed rows](docs/outbox.md#signed-rows)). Rows stored by
+     0.4 are unsigned, including those that 0.4 instances store during a rolling deployment: set
+     `outbox.signing.accept_unsigned: true` for the upgrade, and remove it once those rows are relayed. Stop
+     the 0.4 relay before the 0.5 relay starts;
    - check that every stored transport name exists, because 0.4 ignored it and 0.5 sends to it
      (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
    - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
@@ -167,8 +171,11 @@ typed first parameter and no attribute now fails at compile time with
 
 ### Configuration shape
 
-Every per-message section now has the same shape: an optional global `default`, and per message type a
-`default` and a `map`. Options of 0.4 that moved fail the build with a message naming the new place.
+The per-message sections now share one shape: per message type a `default` and a `map`, plus a global
+`default` where one makes sense (`retry_policies`, `serialization`, `metadata`, `naming`, `rate_limiting`; not
+`dispatch_modes`, `transports` and `dispatch_after_current_bus`, whose global default would also hit
+synchronous messages). `naming` has no `map`: display names are per type. Options of 0.4 that moved fail the
+build with a message naming the new place.
 
 | 0.4 | 0.5 |
 |---|---|
@@ -181,6 +188,8 @@ Every per-message section now has the same shape: an optional global `default`, 
 - A service id or rate limiter name that does not exist now fails the build with the option that names it:
   `The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\…" does not exist.`
   (before: `The service "somework_cqrs.retry.command_resolver" has a dependency on a non-existent service …`).
+- A service that does not implement what its option needs (e.g. a serializer under `retry_policies`) fails the
+  build with the option that names it, instead of a `TypeError` at the first dispatch.
 - A `rate_limiting` `default` is applied per message class: every class gets its own bucket.
 - The container no longer autowires the internal services `DispatchModeDecider`, `DispatchAfterCurrentBusDecider`,
   `TransportMappingProvider`, `CausationIdContext` and the removed `MessageTransportStampFactory` by class name.
@@ -244,14 +253,27 @@ the `DeduplicateStamp` it produces.
 - The async bus is checked before the stamp pipeline runs, so a dispatch failing with
   `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
 
+### Stamp decider priorities and resolution
+
+- `DispatchAfterCurrentBusStampDecider` runs at priority -10 instead of 0, so custom deciders with a priority
+  between -10 and 0 now run before it (and see no `DispatchAfterCurrentBusStamp` yet).
+- Retry policies, serializers, metadata providers and rate limiters are resolved once per message class and
+  reused: they must be stateless, and a service defined as not shared is reused too.
+
+### Log channel
+
+With MonologBundle, the bundle logs on its own `cqrs` channel. Handlers that filter by channel (e.g.
+`channels: ['!event']` or `['app']`) need the `cqrs` channel added or excluded.
+
 ### Middleware order and OpenTelemetry
 
 When `buses.command`, `buses.query` and `buses.event` are all configured, the Messenger default bus is no longer
 treated as a CQRS bus: it gets none of the bundle middleware (useful when it serves the mailer or notifier).
 
-The bundle middleware (causation id, OpenTelemetry, allow-no-handler for events, deduplication lock release)
-is inserted right after Messenger's `dispatch_after_current_bus` middleware instead of at the top of the stack,
-so messages deferred until the current bus finishes pass through it too.
+The bundle middleware (causation id, OpenTelemetry, allow-no-handler for events) is inserted right after
+Messenger's `dispatch_after_current_bus` middleware instead of at the top of the stack, so messages deferred until
+the current bus finishes pass through it too. The deduplication lock release sits right after Messenger's
+`deduplicate_middleware`.
 
 OpenTelemetry now creates one span per pass: `cqrs.dispatch <Message>` (kind PRODUCER) when dispatching and
 `cqrs.consume <Message>` (kind CONSUMER) when a worker handles a received message, linked through the new
@@ -317,8 +339,8 @@ The container build now fails for configuration that used to be silently ignored
 - Keys of every per-message `map` must be existing classes or interfaces. A leading backslash is removed.
   Remove entries for classes that no longer exist.
 - `causation_id.buses` entries must be existing bus services (aliases are resolved).
-- The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` decide which
-  services are registered and can no longer use `%env()%`.
+- The `enabled` flags of `outbox`, `outbox.signing`, `idempotency`, `causation_id`, `sequence` and
+  `rate_limiting` decide which services are registered and can no longer use `%env()%`.
 - Rate limiting is inactive while no limiter is configured; configuring a limiter without symfony/rate-limiter
   installed is an error instead of a silent no-op.
 
@@ -331,25 +353,17 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 ### Transactional outbox
 
 - **The table gains seven columns** (`attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`,
-  `claimed_at`, `signature`) **and the index `idx_<table>_pending`**, which replaces
-  `idx_<table>_published_created`. **Writes need the columns**: run `bin/console somework:cqrs:outbox:setup` (or
-  your migration) before the new version takes traffic (checklist step 4). With `auto_setup: true` a write outside
-  a transaction adds the columns first (giving up after 1 second behind a transaction that holds the table); a
-  write inside a transaction on the old table fails with `The outbox table "…" lacks columns this version of the
-  bundle needs (…). Upgrade it with "bin/console somework:cqrs:outbox:setup" …`. The setup command also builds the
-  index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait for
-  each other, except while one builds the index on PostgreSQL, where the others stop at once, and changing the
-  table waits at most 5 seconds for open transactions on it; run it over a direct connection, not through
-  PgBouncer in transaction mode. The automatic setup never builds the index (not while another session holds the
-  table, on MySQL while any transaction of the server has been open for more than a second, and on MySQL and
-  MariaDB only when that takes no time, e.g. not on a compressed table; without `pg_read_all_stats` the role
-  cannot tell autovacuum from a transaction): the relay works without it, only slower, and warns until it
-  exists. A Doctrine migration works too (with doctrine/orm the schema listener includes the columns; its plain
-  `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the published rows first on a large table),
-  or change the table by hand, see [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays
-  before the new version runs: they ignore retry times, given-up rows and claims.
-- `OutboxStorage` is now `@api` and changed (see [Custom storage](docs/outbox.md#custom-storage)). Custom
-  implementations must:
+  `claimed_at`, `signature`) **and two indexes** (`idx_<table>_pending`, which replaces
+  `idx_<table>_published_created`, and `idx_<table>_claimed`). **Writes need the columns**: run
+  `bin/console somework:cqrs:outbox:setup` (or your migration) before the new version takes traffic (checklist
+  step 5), over a direct connection, not through PgBouncer in transaction mode. Without it, a write inside a
+  transaction fails with `The outbox table "…" lacks columns this version of the bundle needs (…)`; outside one,
+  `auto_setup` adds the columns first, but never the indexes. On a large table, purge the published rows first.
+  The details (locks, timeouts, `CREATE INDEX CONCURRENTLY`, the SQL for a migration of your own) are in
+  [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they
+  ignore retry times, given-up rows and claims.
+- `OutboxStorage` is now `@api`, moved to `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`, and changed (see
+  [Custom storage](docs/outbox.md#custom-storage)). Custom implementations must:
   - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it
     returns only due messages (unpublished, not given up, retry time passed), the transports taking turns and,
     within a transport, first those never attempted in the order they were stored, then the others in the order
@@ -357,6 +371,7 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
     transport name);
   - add `claim(array $messages, array $retryAt, string $token): array`, which counts an attempt and postpones
     each fetched message atomically while its attempts and transport are unchanged, and returns the claimed ids;
+    `renew(array $messages, array $retryAt, string $token): array`, which extends the claims still held;
     `release(array $messages, string $token): void`, which undoes the claims of unattempted messages; and
     `recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool`;
   - change `markPublished(string $id)` to `markPublished(array $ids)`, which ignores unknown or published ids;
@@ -409,8 +424,10 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 - With very long table names the new index is named `idx_<hash>_pending`.
 - **Rows are signed** (`outbox.signing`, on by default, with `framework.secret`): the relay gives up rows
   without a valid signature without decoding them. Store rows through the `OutboxStorage` service or
-  `OutboxWriter` (the signature is added by a decorator of `somework_cqrs.outbox.storage`), not through an
-  injected `DbalOutboxStorage` or SQL. Rows of 0.4 are unsigned: see step 2 of the checklist. Disable signing with
+  `OutboxWriter` (the signature is added by a decorator of `somework_cqrs.outbox.storage`), not through SQL; the
+  autowiring alias of `DbalOutboxStorage` is gone (type-hint `OutboxSchema`, `FailedOutboxMessages` or
+  `OutboxMonitoring` for the table operations). Rows of 0.4 are unsigned: see step 3 of the checklist. An empty
+  `framework.secret` makes every service that stores rows fail to start. Disable signing with
   `outbox.signing.enabled: false` to keep trusting the table as before.
 - A storage of your own is configured with `outbox.storage: App\Outbox\MyStorage` instead of redefining the
   `somework_cqrs.outbox.storage` service (which still works), and no longer needs doctrine/dbal. The setup and

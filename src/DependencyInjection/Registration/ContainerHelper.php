@@ -81,7 +81,7 @@ final class ContainerHelper
         $serviceMap = [];
 
         foreach ($map as $messageClass => $enabled) {
-            $serviceId = sprintf('somework_cqrs.async.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
+            $serviceId = sprintf('somework_cqrs.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
 
             $definition = new Definition('bool');
             $definition->setFactory([self::class, 'createBooleanToggle']);
@@ -93,7 +93,7 @@ final class ContainerHelper
         }
 
         $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
-        $container->setAlias(sprintf('somework_cqrs.async.dispatch_after_current_bus.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+        $container->setAlias(sprintf('somework_cqrs.dispatch_after_current_bus.%s_locator', $type), (string) $locatorReference)->setPublic(false);
 
         return $locatorReference;
     }

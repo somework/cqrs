@@ -49,7 +49,8 @@ final class SomeWorkCqrsBundle extends Bundle
         // Middleware passes run after MessengerPass has built the bus middleware lists, and before
         // the optimization passes so references to aliases (tracer provider, lock factory) resolve.
         // Each inserts right after "dispatch_after_current_bus", so the resulting order is:
-        // OpenTelemetry, CausationId, AllowNoHandler, then Messenger's own middleware.
+        // OpenTelemetry, CausationId, AllowNoHandler, then Messenger's own middleware; the
+        // deduplication lock release goes right after Messenger's "deduplicate_middleware".
         $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CausationIdMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new OpenTelemetryMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);

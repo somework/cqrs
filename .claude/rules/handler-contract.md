@@ -38,7 +38,7 @@ Handler interfaces use `@template` annotations for static analysis type safety. 
 
 If adding a new handler attribute (rare — the three existing ones cover standard CQRS types):
 - Use `#[Attribute(Attribute::TARGET_CLASS | Attribute::IS_REPEATABLE)]` and `final class`
-- First constructor parameter: `public readonly string $message` with `@param class-string<MarkerInterface>` docblock
+- First constructor parameter: the message class, named after the type (`public readonly string $command` / `$query` / `$event`) with a `@param class-string` docblock
 - Second parameter: `public readonly ?string $bus = null` for optional bus override
 - Register via `registerAttributeForAutoconfiguration()` in `CqrsExtension` — Symfony doesn't support attribute inheritance, so each attribute must be registered individually
-- The registration closure adds a `messenger.message_handler` tag with `handles` and `bus` attributes
+- The registration closure adds a `messenger.message_handler` tag built by `CqrsExtension::handlerTag()`: `handles`, `bus`, the `somework_cqrs_type` marker (`CqrsHandlerPass::TYPE_ATTRIBUTE`) and, for events, `priority` and `from_transport`

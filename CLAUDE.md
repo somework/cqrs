@@ -57,14 +57,15 @@ Bus::dispatch(message, mode, ...stamps)
     causation id, idempotency, dispatch-after-current-bus); caller stamps always win
   → Symfony Messenger MessageBusInterface::dispatch() on the sync or async bus
   → bundle middleware right after dispatch_after_current_bus (OpenTelemetry, causation id,
-    allow-no-handler for events, deduplication lock release), then Messenger's handlers/senders
+    allow-no-handler for events), the deduplication lock release right after Messenger's
+    deduplicate middleware, then Messenger's handlers/senders
 ```
 `dispatchSync()` and `ask()` read the result through `SynchronousResult` (unwraps a single handler exception,
 reports messages that were sent to a transport or deduplicated).
 
 ### Key Layers
 
-**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `OutboxStorage` (plus the optional outbox capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
+**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `Contract\Outbox\OutboxStorage` (claim-token contract: `claim`/`renew`/`release`/`markPublished`/`recordFailure`; plus the optional capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
 
 **Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
 
@@ -84,7 +85,7 @@ reports messages that were sent to a transport or deduplicated).
 - `OutboxStoragePass` — keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage`, and checks that a custom storage implements `OutboxStorage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
-- `ValidateConfiguredServicesPass` — every service id and rate limiter named in the configuration exists (the error names the config path)
+- `ValidateConfiguredServicesPass` — every service id and rate limiter named in the configuration exists and implements the interface its option needs (the error names the config path)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 - `RemoveHandlerMetadataParameterPass` — drops the handler metadata parameter after `HandlerRegistry` received it
 

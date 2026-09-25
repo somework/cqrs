@@ -257,9 +257,10 @@ on it for the write path.
 | `signature` | VARCHAR(64) | Yes | Signature of the id, body and headers (see [Security](#security)) |
 
 An index on `(published_at, failed_at, transport_name, available_at, created_at, id)`, named
-`idx_<table>_pending` (`idx_<hash>_pending` for long table names), serves the relay and the
-purge. `attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`, `claimed_at`,
-`signature` and this index were added in 0.5.0;
+`idx_<table>_pending` (`idx_<hash>_pending` for long table names), serves the relay, the
+purge and the counts of the health check; `idx_<table>_claimed` on `claimed_at` finds
+unfinished claims. `attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`,
+`claimed_at`, `signature` and these indexes were added in 0.5.0;
 the index replaces `idx_<table>_published_created` of 0.4. [Upgrade](#upgrading-from-04) a table created
 by an earlier version.
 
@@ -313,6 +314,7 @@ ALTER TABLE somework_cqrs_outbox ADD claim_token VARCHAR(32) DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD claimed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD signature VARCHAR(64) DEFAULT NULL;
 CREATE INDEX CONCURRENTLY idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
+CREATE INDEX CONCURRENTLY idx_somework_cqrs_outbox_claimed ON somework_cqrs_outbox (claimed_at);
 DROP INDEX CONCURRENTLY idx_somework_cqrs_outbox_published_created;
 
 -- MySQL / MariaDB
@@ -320,6 +322,7 @@ ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL, ADD availa
     ADD failed_at DATETIME DEFAULT NULL, ADD last_error LONGTEXT DEFAULT NULL, ADD claim_token VARCHAR(32) DEFAULT NULL,
     ADD claimed_at DATETIME DEFAULT NULL, ADD signature VARCHAR(64) DEFAULT NULL;
 CREATE INDEX idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
+CREATE INDEX idx_somework_cqrs_outbox_claimed ON somework_cqrs_outbox (claimed_at);
 DROP INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox;
 ```
 
@@ -357,8 +360,10 @@ The relay fetches up to 50 due rows at a time and:
    `buses.command`) for commands, `buses.event_async` (else `buses.event`) for events,
    `buses.query` for queries, the default bus for anything else;
 5. marks the sent rows as published, every 2 seconds and at the end of the run;
-6. releases the claims of the rows it did not attempt (the run ended, or their transport was
-   paused): their attempt is not counted.
+6. renews the claims of the batch every 20 seconds, so a slow batch keeps its rows, and skips a
+   row whose claim another relay took over meanwhile;
+7. releases the claims of the rows it did not attempt (the run ended, its storage failed, or
+   their transport was paused): their attempt is not counted.
 
 A due row that is still claimed was being sent by a relay that died (its claim was not
 finished before the retry time). The relay claims and sends such a row on its own, before the
@@ -445,9 +450,10 @@ What happens in special cases:
 - **Relays that overlap anyway skip each other's rows.** Without `symfony/lock`, or with a
   lock store that only guards one host, two relays can run at the same time. The claim keeps
   them from sending the same row twice: a relay that finds a row claimed by the other one
-  skips it and prints `Skipped <n> message(s) that another relay claimed first.` A row is
-  only sent twice when its send takes longer than its retry delay (1 minute on the first
-  attempt), so that the other relay claims it again.
+  skips it and prints `Skipped <n> message(s) that another relay claimed first.` The claims of
+  a batch are renewed every 20 seconds, so a row is only sent twice when a single send takes
+  longer than its claim lasts after the last renewal (at least 40 seconds on the first
+  attempt: the claim holds 1 minute), and the other relay claims it meanwhile.
 
 | Exit code | Meaning |
 |-----------|---------|
@@ -515,8 +521,9 @@ to relay them.
   when rows failed and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
-  their failing transport); when a claim is older than 10 minutes (a relay hangs, e.g. on a
-  send without a timeout, or died: its rows are retried after their retry delay); and when the
+  their failing transport); when a claim made more than 10 minutes ago has run out without a
+  relay taking it over (a relay died, or hangs on a send without a timeout, and no relay runs
+  since); and when the
   table needs `somework:cqrs:outbox:setup` (e.g. its index is missing or invalid). It is
   critical when the table cannot be read, and when messages have waited more than 10 minutes
   on a table that still lacks the columns of this version. The check reads at most 10 000
@@ -549,8 +556,8 @@ daily.
 - **Atomic write.** The row exists only if your transaction commits.
 - **At-least-once delivery.** The relay marks rows as published *after* dispatching them,
   every 2 seconds. A crash in between (it affects the rows sent in the last 2 seconds), a
-  failed `markPublished()`, or a send that takes longer than the retry delay while another
-  relay runs can send the same message twice. A message routed
+  failed `markPublished()`, or a single send that outlasts its claim (at least 40 seconds)
+  while another relay runs can send the same message twice. A message routed
   to several transports is sent to all of them again when one of them fails: store one row
   per transport to avoid that. **Consumers must be idempotent**, for example by
   recording processed message ids under a unique constraint. The bundle's
@@ -688,6 +695,9 @@ An implementation must meet these rules:
   it is neither published nor given up, and its attempts and transport name are still the
   fetched ones. It returns the ids it claimed; the relay skips the others. A claimed message is
   not due before the given retry time.
+- `renew()` moves `claimedAt` to now and the retry time forward for the messages still claimed
+  with the token, and returns their ids: the relay renews the claims of a batch every 20
+  seconds, so they do not run out before it gets to them.
 - `release()` restores the attempts, the retry time and `claimedAt` of the fetched messages
   that are still claimed with the token. `recordFailure()` only changes a message that is still
   claimed with the token, and ends the claim. `markPublished()` also ends the claim.
@@ -719,8 +729,15 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 | Interface | Methods | Used by |
 |---|---|---|
 | `OutboxSchema` | `setup(?\Closure $onWait = null): void`, `pendingChanges(): list<string>` | `somework:cqrs:outbox:setup`; the relay and the health check report what `pendingChanges()` returns |
-| `FailedOutboxMessages` | `fetchFailed(int $limit): list<FailedOutboxMessage>`, `requeueFailed(list<string> $ids = [], ?string $transportName = null): int` | `somework:cqrs:outbox:failed` |
+| `FailedOutboxMessages` | `fetchFailed(int $limit, array $ids = []): list<FailedOutboxMessage>`, `requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int` | `somework:cqrs:outbox:failed` |
 | `OutboxMonitoring` | `status(): OutboxStatus` | the outbox check of `somework:cqrs:health` |
+
+`fetchFailed()` returns only the given ids when there are any. When `requeueFailed()` gets
+`$sign`, it calls `$sign($message)` with each requeued row as stored (id, body, headers) and
+stores the returned string as the row's signature; that is how `--requeue --sign` works.
+`FailedOutboxMessage` may carry `messageType` (the serializer's `type` header), `bodyClass` (the
+class named in a PHP-serialized body, read without unserializing it) and `bodyDigest`, which
+`--sign` shows to the operator.
 
 Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
 health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.
@@ -729,9 +746,11 @@ To add behaviour to the storage instead (logging, metrics), decorate it:
 `#[AsDecorator('somework_cqrs.outbox.storage')]` on a class that implements `OutboxStorage`
 and takes the inner storage. The relay, the purge command and your code then go through the
 decorator, while `setup`, `failed`, the health check and the relay's report of pending
-changes keep working on the configured storage behind it (`somework_cqrs.outbox.base_storage`;
-for the DBAL storage also `somework_cqrs.outbox.dbal_storage`, which `DbalOutboxStorage`
-autowires to), so the decorator does not have to implement the capabilities.
+changes keep working on the configured storage behind it (`somework_cqrs.outbox.base_storage`,
+also `somework_cqrs.outbox.dbal_storage` for the DBAL storage), so the decorator does not have
+to implement the capabilities. Your own services get them by type-hinting `OutboxSchema`,
+`FailedOutboxMessages` or `OutboxMonitoring`, which autowire to that storage when it implements
+them.
 
 ## Security
 
@@ -763,19 +782,27 @@ What signing protects, and what it does not:
 Operating it:
 
 - **Store through the `OutboxStorage` service or `OutboxWriter`.** The signature is added by
-  a decorator of `somework_cqrs.outbox.storage`; rows stored directly through
-  `DbalOutboxStorage` (autowired by that class) or by SQL are not signed.
+  a decorator of `somework_cqrs.outbox.storage`; rows stored by SQL, or through a
+  `DbalOutboxStorage` you create yourself, are not signed. (The bundle offers no autowiring
+  alias of `DbalOutboxStorage` for that reason.)
 - **Rotate the secret** by moving the old one to `outbox.signing.previous_secrets` until the
   rows signed with it are relayed. Rotating `framework.secret` (e.g. `APP_SECRET`) rotates the
   outbox secret too, unless `outbox.signing.secret` is set.
-- **Rows of an earlier version** are not signed. Relay them before you upgrade, or set
-  `outbox.signing.accept_unsigned: true` until they are relayed (rows with a wrong signature
-  are still given up).
+- **Rows of an earlier version** are not signed. During a rolling deployment, instances of 0.4
+  keep storing unsigned rows until the last one is replaced, so set
+  `outbox.signing.accept_unsigned: true` for the upgrade and remove it once those rows are
+  relayed. Meanwhile the relay decodes any unsigned row, forged ones included: keep the window
+  short. Rows with a wrong signature are always given up.
+- **The secret must not be empty.** With an empty `framework.secret` (e.g. an unset
+  `APP_SECRET`), every service that stores outbox rows fails to start: set a secret, or
+  `outbox.signing.secret`.
 - **A row you checked** (e.g. one stored while signing was disabled) is signed with the current
   secret and handed back to the relay with
-  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first (with the
-  message class from the `type` header, when the serializer writes one) and, in an
-  interactive terminal, asks for confirmation. Only sign rows your application stored.
+  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
+  header, the class named in a PHP-serialized body (read as text, never unserialized) and a
+  SHA-256 prefix of the body. It refuses a row whose `type` header does not match the class in
+  its body, and in an interactive terminal it asks for confirmation. Only sign rows your
+  application stored.
 - A storage of your own must return the id, body, headers and signature exactly as stored.
 
 `signing.enabled: false` restores the trust model of Messenger's Doctrine transport: the

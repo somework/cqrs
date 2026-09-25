@@ -59,7 +59,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - `CommandBus` with sync/async dispatch; `dispatchSync()` returns the handler result
 - `QueryBus::ask()` returns the result of the single handler
 - `EventBus` with zero-to-many handlers and fire-and-forget semantics
-- Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`); handler marker interfaces and abstract base handlers are optional alternatives
+- Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`); implementing the handler marker interface (`CommandHandler`, …) with a typed `__invoke()` is the alternative
 - Compile-time check that every command and query has at most one handler per bus, counting handlers of its parent classes and interfaces
 
 **Stamp pipeline**
@@ -200,6 +200,9 @@ namespace App\Task;
 
 use SomeWork\CqrsBundle\Contract\Query;
 
+/**
+ * @implements Query<array{id: string, name: string}> the result type of QueryBus::ask() for static analysis
+ */
 final class FindTask implements Query
 {
     public function __construct(
@@ -219,7 +222,10 @@ use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
 #[AsQueryHandler(FindTask::class)]
 final class FindTaskHandler
 {
-    public function __invoke(FindTask $query): mixed
+    /**
+     * @return array{id: string, name: string}
+     */
+    public function __invoke(FindTask $query): array
     {
         // Load the task from your storage...
         return ['id' => $query->id, 'name' => 'Write the docs'];

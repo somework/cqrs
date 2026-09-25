@@ -540,6 +540,33 @@ final class InvoiceApiController
 }
 ```
 
+Declare the result type on the query, and static analysis (PHPStan, Psalm)
+knows what `ask()` returns; without it the result is `mixed`:
+
+```php
+<?php
+
+namespace App\ReadModel\Query;
+
+use App\ReadModel\InvoiceView;
+use SomeWork\CqrsBundle\Contract\Query;
+
+/**
+ * @implements Query<InvoiceView|null>
+ */
+final class FindInvoice implements Query
+{
+    public function __construct(
+        public readonly string $invoiceId,
+    ) {
+    }
+}
+```
+
+`$this->queryBus->ask(new FindInvoice($id))` is then `InvoiceView|null`, and
+`FakeQueryBus::willReturnFor(FindInvoice::class, $result)` checks the type of
+`$result` the same way.
+
 The query bus enforces exactly one handler per query: a second handler on the
 same bus is rejected at compile time, and `ask()` throws the exceptions listed
 in [Exceptions from dispatchSync() and ask()](#exceptions-from-dispatchsync-and-ask)
