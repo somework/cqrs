@@ -31,6 +31,19 @@ their class-level PHPDoc block.
 
 ## Upgrading from 0.4.0 to 0.5.0
 
+### Checklist
+
+1. Before `composer update`, change the code the new version no longer accepts (the build or the
+   `cache:clear` script of `composer update` fails otherwise): custom `OutboxStorage` implementations,
+   `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`, per-message map keys of deleted classes,
+   `%env()%` values in compile-time options, and the fake buses of your tests (see the sections below).
+2. With the outbox: let the 0.4 relay send what is due, then stop it. Check that every stored transport name
+   exists, because 0.4 ignored it and 0.5 sends to it
+   (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`).
+3. `composer update somework/cqrs-bundle`.
+4. Run `bin/console somework:cqrs:outbox:setup` or your Doctrine migration.
+5. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+
 ### Requirements
 
 - Symfony 7.2 or newer, including Symfony 8.
@@ -244,6 +257,9 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   - add `purgePublished(DateTimeImmutable $publishedBefore): int`;
   - return the stored `attempts` and `last_error` with each message: `OutboxMessage` has the new properties
     `attempts` and `lastError` (constructor arguments `$attempts = 0` and `$lastError = null`).
+
+  A decorator of `somework_cqrs.outbox.storage` needs the same methods; `setup`, `failed` and the health
+  check keep using the DBAL storage behind it.
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
   that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
   Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the

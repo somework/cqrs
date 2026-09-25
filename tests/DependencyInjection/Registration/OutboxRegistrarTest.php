@@ -25,9 +25,9 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar();
 
-        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame(DbalOutboxStorage::class, $definition->getClass());
     }
 
@@ -81,7 +81,7 @@ final class OutboxRegistrarTest extends TestCase
             'auto_setup' => false,
         ], true);
 
-        $storage = $container->getDefinition('somework_cqrs.outbox.storage');
+        $storage = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame('doctrine.dbal.orders_connection', (string) $storage->getArgument('$connection'));
         self::assertFalse($storage->getArgument('$autoSetup'));
         self::assertSame('app.outbox_serializer', (string) $container->getAlias('somework_cqrs.outbox.serializer'));
@@ -102,7 +102,7 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame(OutboxPurgeCommand::class, $container->getDefinition('somework_cqrs.outbox.purge_command')->getClass());
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.setup_command')->hasTag('console.command'));
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.purge_command')->hasTag('console.command'));
-        self::assertSame('somework_cqrs.outbox.storage', (string) $container->getAlias(DbalOutboxStorage::class));
+        self::assertSame('somework_cqrs.outbox.dbal_storage', (string) $container->getAlias(DbalOutboxStorage::class));
     }
 
     public function test_the_relay_lock_is_scoped_to_the_connection_and_table(): void
@@ -127,7 +127,7 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar(['table_name' => 'custom_outbox_table']);
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame('custom_outbox_table', $definition->getArgument('$tableName'));
     }
 
@@ -159,7 +159,7 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar();
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         $connection = $definition->getArgument('$connection');
         self::assertSame('doctrine.dbal.default_connection', (string) $connection);
     }
@@ -169,7 +169,7 @@ final class OutboxRegistrarTest extends TestCase
         $container = $this->createContainerWithRegistrar(schemaToolAvailable: false);
 
         self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
-        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
     }
 
     /**

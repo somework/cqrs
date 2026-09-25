@@ -139,6 +139,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         private readonly int $maxAttempts = 10,
         private readonly ?LoggerInterface $logger = null,
         private readonly ?\Closure $clock = null,
+        private readonly ?DbalOutboxStorage $table = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -299,8 +300,10 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             }
         }
 
-        if ($this->outboxStorage instanceof DbalOutboxStorage) {
-            $this->reportPendingChanges($this->outboxStorage, $io);
+        // The DBAL storage behind a decorated one still tells what the table needs.
+        $table = $this->table ?? ($this->outboxStorage instanceof DbalOutboxStorage ? $this->outboxStorage : null);
+        if (null !== $table) {
+            $this->reportPendingChanges($table, $io);
         }
 
         if ($claimedElsewhere > 0) {

@@ -619,6 +619,13 @@ three caveats:
 - `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:failed` only work with
   `DbalOutboxStorage`; with another storage they exit with `1`.
 
+To add behaviour to the DBAL storage instead (logging, metrics), decorate it:
+`#[AsDecorator('somework_cqrs.outbox.storage')]` on a class that implements `OutboxStorage`
+and takes the inner storage. The relay, the purge command and your code then go through the
+decorator, while `setup`, `failed`, the health check and the relay's report of pending table
+changes keep working on the DBAL storage (`somework_cqrs.outbox.dbal_storage`), which is also
+what `DbalOutboxStorage` autowires to.
+
 ## Security
 
 The relay trusts the outbox table: it decodes every due row with the outbox serializer and

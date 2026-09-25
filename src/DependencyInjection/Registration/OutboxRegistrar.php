@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
@@ -37,15 +38,19 @@ final class OutboxRegistrar
         $storageDef->setArgument('$tableName', $config['table_name']);
         $storageDef->setArgument('$autoSetup', $config['auto_setup'] ?? true);
         $storageDef->setPublic(false);
-        $container->setDefinition('somework_cqrs.outbox.storage', $storageDef);
-        $container->setAlias(OutboxStorage::class, 'somework_cqrs.outbox.storage')->setPublic(false);
-        $container->setAlias(DbalOutboxStorage::class, 'somework_cqrs.outbox.storage')->setPublic(false);
+        // The storage the application uses (decorate or replace it) is an alias of the DBAL
+        // storage, which the setup and failed commands and the health check keep using behind a
+        // decorator (see OutboxStoragePass).
+        $container->setDefinition(OutboxStoragePass::DBAL_STORAGE_ID, $storageDef);
+        $container->setAlias(OutboxStoragePass::STORAGE_ID, OutboxStoragePass::DBAL_STORAGE_ID)->setPublic(false);
+        $container->setAlias(OutboxStorage::class, OutboxStoragePass::STORAGE_ID)->setPublic(false);
+        $container->setAlias(DbalOutboxStorage::class, OutboxStoragePass::DBAL_STORAGE_ID)->setPublic(false);
 
         $serializer = new Reference($config['serializer'] ?? 'messenger.default_serializer');
         $container->setAlias('somework_cqrs.outbox.serializer', (string) $serializer)->setPublic(false);
 
         $relayDef = new Definition(OutboxRelayCommand::class);
-        $relayDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $relayDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $relayDef->setArgument('$serializer', $serializer);
         $relayDef->setArgument('$messageBus', new Reference($defaultBusId));
         $relayDef->setArgument('$lockFactory', new Reference('lock.factory', ContainerInterface::NULL_ON_INVALID_REFERENCE));
@@ -65,25 +70,25 @@ final class OutboxRegistrar
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
 
         $setupDef = new Definition(OutboxSetupCommand::class);
-        $setupDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $setupDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $setupDef->addTag('console.command');
         $setupDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.setup_command', $setupDef);
 
         $failedDef = new Definition(OutboxFailedCommand::class);
-        $failedDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $failedDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $failedDef->addTag('console.command');
         $failedDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.failed_command', $failedDef);
 
         $healthDef = new Definition(OutboxHealthChecker::class);
-        $healthDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $healthDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $healthDef->addTag('somework_cqrs.health_checker');
         $healthDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.health_checker', $healthDef);
 
         $purgeDef = new Definition(OutboxPurgeCommand::class);
-        $purgeDef->setArgument('$outboxStorage', new Reference('somework_cqrs.outbox.storage'));
+        $purgeDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $purgeDef->addTag('console.command');
         $purgeDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.purge_command', $purgeDef);

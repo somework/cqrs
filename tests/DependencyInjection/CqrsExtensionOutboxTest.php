@@ -24,7 +24,7 @@ final class CqrsExtensionOutboxTest extends TestCase
     {
         $container = $this->createContainer();
 
-        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
         self::assertFalse($container->hasDefinition('somework_cqrs.outbox.relay_command'));
     }
 
@@ -37,7 +37,7 @@ final class CqrsExtensionOutboxTest extends TestCase
         ]);
 
         self::assertTrue(
-            $container->hasDefinition('somework_cqrs.outbox.storage'),
+            $container->hasDefinition('somework_cqrs.outbox.dbal_storage'),
             'OutboxStorage should be registered when outbox.enabled=true',
         );
         self::assertTrue(
@@ -89,7 +89,7 @@ final class CqrsExtensionOutboxTest extends TestCase
         (new CqrsExtension(static fn (string $class): bool => ToolEvents::class !== $class && class_exists($class)))
             ->load([['outbox' => ['enabled' => true]]], $container);
 
-        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
         self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
     }
 
