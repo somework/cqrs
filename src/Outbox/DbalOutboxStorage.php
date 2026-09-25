@@ -22,25 +22,34 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 
+use function array_chunk;
 use function array_column;
+use function array_fill_keys;
 use function array_filter;
 use function array_map;
 use function array_slice;
+use function array_sum;
 use function array_values;
+use function ceil;
 use function count;
 use function get_debug_type;
+use function implode;
 use function in_array;
 use function is_array;
 use function is_string;
 use function json_decode;
+use function max;
+use function microtime;
 use function min;
 use function preg_replace;
 use function random_int;
 use function sprintf;
 use function str_contains;
+use function str_replace;
 use function str_starts_with;
 use function strtolower;
 use function usleep;
+use function usort;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -68,8 +77,19 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     private const FETCH_BUDGET = 8 * 1024 * 1024;
 
+    /** Transports whose due rows one statement reads (with UNION ALL). */
+    private const TRANSPORTS_PER_STATEMENT = 50;
+
+    /** Seconds a relay reuses the list of transports that have pending rows. */
+    private const TRANSPORT_LIST_SECONDS = 10;
+
     /** Rotates the order of transports whose next rows tie. */
     private int $ties;
+
+    /** @var list<string|null>|null The transports that had pending rows, for the next fetches of a relay run */
+    private ?array $transports = null;
+
+    private float $transportsListedAt = 0.0;
 
     /** Process-local cache of the "table is up to date" check. */
     private bool $setupDone = false;
@@ -121,9 +141,21 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         // others; each is queried on its own part of the index, a paused one is not even read.
         // Without that index (until the setup command builds it), each of those queries would read
         // every pending row: one query along the index of 0.4 instead, in the order rows were stored.
-        $rows = !$this->schema->hasPendingIndex()
-            ? $this->dueRowsInStoredOrder($limit, $excludedTransports)
-            : $this->dueRows($limit, $this->transportsExcept($excludedTransports));
+        if (!$this->schema->hasPendingIndex()) {
+            $rows = $this->dueRowsInStoredOrder($limit, $excludedTransports);
+        } else {
+            // Listing the transports takes one probe per transport: a relay run reuses the list
+            // while its fetches come back full (a short fetch may mean that a transport is new).
+            if (null === $this->transports || microtime(true) - $this->transportsListedAt >= self::TRANSPORT_LIST_SECONDS) {
+                $this->transports = $this->transportsExcept([]);
+                $this->transportsListedAt = microtime(true);
+            }
+            $transports = array_values(array_filter($this->transports, static fn (?string $transport): bool => !in_array($transport, $excludedTransports, true)));
+            $rows = $this->dueRows($limit, $transports);
+            if (count($rows) < $limit) {
+                $this->transports = null;
+            }
+        }
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -624,16 +656,43 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     private function dueRows(int $limit, array $transports): array
     {
+        // Each transport contributes one row per round: reading limit / transports rows of each
+        // is enough, unless some have fewer; then the ones that may have more are read deeper.
         $queues = [];
-        foreach ($transports as $transport) {
-            $due = $this->dueIds($transport, $limit, 'available_at IS NULL', ['available_at'], ['created_at', 'id'], 'created_at');
-            if (count($due) < $limit) {
-                $due = [...$due, ...$this->dueIds($transport, $limit - count($due), 'available_at <= :now', [], ['available_at', 'created_at', 'id'], 'available_at')];
+        $depth = max(1, (int) ceil($limit / max(1, count($transports))));
+        $pending = array_map(static fn (?string $transport): string => $transport ?? "\0", $transports);
+        while ([] !== $pending) {
+            $new = $this->dueIds(array_fill_keys($pending, $depth), 'available_at IS NULL', ['available_at'], ['created_at', 'id'], 'created_at');
+            $retryLimits = [];
+            foreach ($pending as $key) {
+                $count = count($new[$key] ?? []);
+                if ($count < $depth) {
+                    $retryLimits[$key] = $depth - $count;
+                }
             }
-            if ([] !== $due) {
-                $queues[] = $due;
+            $retries = [] === $retryLimits ? [] : $this->dueIds($retryLimits, 'available_at <= :now', [], ['available_at', 'created_at', 'id'], 'available_at');
+
+            $deeper = [];
+            foreach ($pending as $key) {
+                $due = [...($new[$key] ?? []), ...($retries[$key] ?? [])];
+                unset($queues[$key]);
+                if ([] !== $due) {
+                    $queues[$key] = $due;
+                }
+                if (count($due) === $depth) {
+                    $deeper[] = $key;
+                }
             }
+
+            $available = array_sum(array_map(count(...), $queues));
+            if ($available >= $limit || [] === $deeper || $depth >= $limit) {
+                break;
+            }
+            $depth = min($limit, $depth * 2);
+            $pending = $deeper;
         }
+        // In the order of the transports, as the ties rotate over it.
+        $queues = array_values(array_filter(array_map(static fn (?string $transport): ?array => $queues[$transport ?? "\0"] ?? null, $transports)));
 
         // The transport whose next row has waited longest goes first, so the oldest due rows go out
         // first across transports. When more transports have a backlog than a fetch has rows, one
@@ -740,29 +799,55 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     }
 
     /**
-     * Ids of the due rows of one transport, in index order (the index covers the query), with the
-     * time since which each row is due.
+     * Ids of the due rows of each transport, in index order (the index covers every query), with
+     * the time since which each row is due: one statement for up to 50 transports, whose queries
+     * are combined with UNION ALL.
      *
-     * @param list<string> $nullColumns Index columns after transport_name the condition restricts to NULL
-     * @param list<string> $order
+     * @param array<array-key, int> $limits      Rows to read per transport key ("\0" for the rows without a transport name; PHP turns numeric names into integer keys)
+     * @param list<string>          $nullColumns Index columns after transport_name the condition restricts to NULL
+     * @param list<string>          $order
      *
-     * @return list<array{string, string}>
+     * @return array<array-key, list<array{string, string}>> By transport key
      */
-    private function dueIds(?string $transport, int $limit, string $condition, array $nullColumns, array $order, string $dueSince): array
+    private function dueIds(array $limits, string $condition, array $nullColumns, array $order, string $dueSince): array
     {
-        $query = $this->pending()->select('id', $dueSince.' AS due_since')->andWhere($condition)->setMaxResults($limit);
-        if (null === $transport) {
-            $query->andWhere('transport_name IS NULL');
-        } else {
-            $query->andWhere('transport_name = :transport')->setParameter('transport', $transport);
-        }
-        if (str_contains($condition, ':now')) {
-            $query->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE);
+        $now = self::now();
+        $due = [];
+        foreach (array_chunk($limits, self::TRANSPORTS_PER_STATEMENT, true) as $chunk) {
+            $branches = [];
+            $parameters = [];
+            $types = [];
+            foreach ($chunk as $key => $limit) {
+                $n = count($branches);
+                $query = $this->pending()->select('id', $dueSince.' AS due_since', 'created_at AS stored_at', 'transport_name')->andWhere(str_replace(':now', ':now_'.$n, $condition))->setMaxResults($limit);
+                if ("\0" === (string) $key) {
+                    $query->andWhere('transport_name IS NULL');
+                } else {
+                    $query->andWhere('transport_name = :transport_'.$n)->setParameter('transport_'.$n, (string) $key);
+                }
+                if (str_contains($condition, ':now')) {
+                    $query->setParameter('now_'.$n, $now, Types::DATETIME_IMMUTABLE);
+                }
+                // A derived table per branch: ORDER BY and LIMIT apply to it (also on SQLite).
+                $branches[] = sprintf('SELECT * FROM (%s) due_%d', $this->ordered($query, ['published_at', 'failed_at', 'transport_name', ...$nullColumns], $order)->getSQL(), $n);
+                $parameters += $query->getParameters();
+                $types += $query->getParameterTypes();
+            }
+
+            $rows = $this->guard(fn (): array => $this->connection->fetchAllAssociative(implode(' UNION ALL ', $branches), $parameters, $types));
+            foreach ($rows as $row) {
+                $due[null === $row['transport_name'] ? "\0" : (string) $row['transport_name']][] = [(string) $row['id'], (string) $row['due_since'], (string) $row['stored_at']];
+            }
         }
 
-        $query = $this->ordered($query, ['published_at', 'failed_at', 'transport_name', ...$nullColumns], $order);
+        // UNION ALL keeps no order across branches: restore the index order of each transport.
+        $ordered = [];
+        foreach ($due as $key => $rows) {
+            usort($rows, static fn (array $a, array $b): int => [$a[1], $a[2], $a[0]] <=> [$b[1], $b[2], $b[0]]);
+            $ordered[$key] = array_map(static fn (array $row): array => [$row[0], $row[1]], $rows);
+        }
 
-        return array_map(static fn (array $row): array => [(string) $row['id'], (string) $row['due_since']], $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()));
+        return $ordered;
     }
 
     /**

@@ -29,6 +29,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_filter;
 use function array_map;
+use function array_slice;
 use function array_unique;
 use function array_values;
 use function date_default_timezone_get;
@@ -37,6 +38,7 @@ use function implode;
 use function microtime;
 use function preg_match_all;
 use function preg_replace;
+use function range;
 use function sha1;
 use function sprintf;
 use function str_contains;
@@ -211,6 +213,24 @@ final class DbalOutboxStorageTest extends TestCase
             ['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005', '00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000001'],
             self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, ['ext', null])),
         );
+    }
+
+    public function test_numeric_transport_names_and_many_transports_take_turns(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        // More transports than one statement reads (UNION ALL of 50), with names PHP turns into integer keys.
+        for ($transport = 0; $transport < 60; ++$transport) {
+            foreach ([0, 1] as $row) {
+                $storage->store(self::message(sprintf('00000000-0000-7000-8000-%06d%06d', $transport, $row), sprintf('2026-01-01 10:%02d:%02d', $row, $transport), (string) (100 + $transport)));
+            }
+        }
+
+        $fetched = $storage->fetchUnpublished(70);
+
+        self::assertCount(70, $fetched);
+        self::assertSame(array_map(static fn (int $transport): string => (string) (100 + $transport), range(0, 59)), array_map(static fn (OutboxMessage $message): ?string => $message->transportName, array_slice($fetched, 0, 60)), 'The first row of every transport, oldest first.');
+        self::assertSame(['100', '101'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, array_slice($fetched, 60, 2)));
+        self::assertSame('00000000-0000-7000-8000-000000000001', $fetched[60]->id, 'Then their second rows.');
     }
 
     public function test_a_row_claimed_by_another_relay_between_the_two_fetch_queries_is_left_out(): void

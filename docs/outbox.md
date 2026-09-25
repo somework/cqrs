@@ -455,6 +455,15 @@ What happens in special cases:
 | `1` | At least one row failed (which includes a paused transport), the storage failed (e.g. the database is down), a signal stopped the run, or the lock could not be acquired or was lost |
 | `2` | Invalid `--limit` |
 
+**Throughput.** Each fetch lists the transports with pending rows once per run (again when a
+fetch comes back short, or after 10 seconds), reads as many rows of each transport as the batch
+of 50 needs, and reads up to 50 transports in one statement (`UNION ALL`). Relaying 20 000
+rows took (PHP 8.4, local PostgreSQL 16 and MariaDB 10.11, a bus that only records the
+messages) about 2.5 s with 1 transport, 6 s with 10 and 20 s with 100; with a simulated network
+round trip of 0.5 ms per statement, reading the transports together is 1.5 times (10
+transports) to 2 times (100 transports) faster than reading them one by one. Many transports
+cost more statements per row: prefer a few transports with many rows each.
+
 The relay handles at most `--limit` rows per run and then exits. Run it on a schedule, for
 example from cron:
 
