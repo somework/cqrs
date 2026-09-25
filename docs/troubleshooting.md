@@ -427,7 +427,7 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `The outbox table setup was stopped by signal <number>; run it again.` The
   setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
   it did so far stays.
-* `The outbox table "…" is set up through a pooler in transaction mode …`,
+* `The outbox table "…" is not set up through a pooler in transaction mode …`,
   `… is set up; it ran through a pooler …` or `… was not set up (…); it ran
   through a pooler …` Run the setup command over a direct database connection,
   not through PgBouncer. In the last two cases the setup lock, and possibly a

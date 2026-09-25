@@ -135,6 +135,21 @@ final class OutboxHealthCheckerTest extends TestCase
         self::assertStringEndsWith('; 2 outbox message(s) wait, the oldest for 120 minute(s), and the relay cannot send them until then', $results[0][1]);
     }
 
+    public function test_messages_that_cannot_be_read_are_critical_even_when_only_the_index_is_missing(): void
+    {
+        // e.g. the role lacks a privilege on the new columns: the upgrade is not the problem.
+        $status = new BeforeQueryMiddleware('COUNT(*) AS due');
+        $connection = TestDatabase::connect(null, [$status]);
+        TestDatabase::createTableOfVersion04($connection);
+        (new DbalOutboxStorage($connection))->fetchUnpublished(1);
+        $status->replacement = 'SELECT broken FROM nowhere';
+
+        $results = self::summary((new OutboxHealthChecker(new DbalOutboxStorage($connection)))->check());
+
+        self::assertCount(1, $results);
+        self::assertSame(CheckSeverity::CRITICAL, $results[0][0]);
+    }
+
     public function test_an_unreachable_database_is_critical(): void
     {
         $down = new BeforeQueryMiddleware('');

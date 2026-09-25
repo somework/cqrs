@@ -250,7 +250,9 @@ ignores the new columns (retry times, given-up rows, claims). The relay needs th
 and the new index to stay fast. Add them with one of:
 
 - `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
-  start at the same time wait for each other with a database lock held by the session, which
+  start at the same time wait for each other, except while one builds the index on
+  PostgreSQL: then the others stop at once with `Another process is building the index`, see
+  below; the wait uses a database lock held by the session, which
   PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
   usually notices it and refuses (releasing the lock), or fails saying that the lock stayed
   with another server connection; under light load it may not notice, so do not rely on it). While

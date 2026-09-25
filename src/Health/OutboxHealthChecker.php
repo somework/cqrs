@@ -9,10 +9,11 @@ use DateTimeZone;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 
+use function array_filter;
 use function implode;
-use function in_array;
 use function intdiv;
 use function sprintf;
+use function str_starts_with;
 
 /**
  * Reports whether the outbox relay keeps up: messages the relay gave up on, messages that failed
@@ -53,7 +54,8 @@ final class OutboxHealthChecker implements HealthChecker
         } catch (\Throwable $exception) {
             // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
             // When neither can be read (e.g. the database is down), that is critical.
-            if ($structureRead && null !== $needsSetup && !in_array('the table does not exist', $changes, true)) {
+            $lacksColumns = [] !== array_filter($changes, static fn (string $change): bool => str_starts_with($change, 'the columns '));
+            if ($structureRead && null !== $needsSetup && $lacksColumns) {
                 return [$this->withBacklog($this->outboxStorage, $needsSetup)];
             }
 

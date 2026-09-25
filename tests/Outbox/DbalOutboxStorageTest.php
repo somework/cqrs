@@ -344,7 +344,7 @@ final class DbalOutboxStorageTest extends TestCase
             (new DbalOutboxStorage($connection, autoSetup: false))->setup();
             self::fail('The setup lock would stay with another client.');
         } catch (\RuntimeException $exception) {
-            self::assertStringContainsString('is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients.', $exception->getMessage());
+            self::assertStringContainsString('is not set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients.', $exception->getMessage());
         } finally {
             $connection->close();
         }
@@ -390,7 +390,7 @@ final class DbalOutboxStorageTest extends TestCase
             (new DbalOutboxStorage($connection, autoSetup: false))->setup();
             self::fail('The pooler is refused.');
         } catch (\RuntimeException $exception) {
-            self::assertStringContainsString('is set up through a pooler in transaction mode', $exception->getMessage());
+            self::assertStringContainsString('is not set up through a pooler in transaction mode', $exception->getMessage());
             self::assertNotInstanceOf(SetupLockLeftBehind::class, $exception);
         }
 
@@ -481,9 +481,14 @@ final class DbalOutboxStorageTest extends TestCase
         $this->connection->executeStatement("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass");
         $queries->flush();
 
-        (new DbalOutboxStorage($this->connection, 'public.somework_cqrs_outbox', autoSetup: false))->fetchUnpublished(10);
+        (new DbalOutboxStorage($this->connection, autoSetup: false))->fetchUnpublished(10);
 
         self::assertStringNotContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()), 'The per-transport queries would read every pending row.');
+
+        // A valid one is used.
+        $this->connection->executeStatement("UPDATE pg_index SET indisvalid = true WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass");
+        (new DbalOutboxStorage($this->connection, autoSetup: false))->fetchUnpublished(10);
+        self::assertStringContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()));
     }
 
     public function test_a_mysql_table_of_a_database_is_used_on_a_connection_without_one(): void

@@ -1005,7 +1005,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function pooler(): \RuntimeException
     {
-        return new \RuntimeException(sprintf('The outbox table "%s" is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
+        return new \RuntimeException(sprintf('The outbox table "%s" is not set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
     }
 
     /**
