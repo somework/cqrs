@@ -916,7 +916,9 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function tableLocked(int $seconds, ?\Throwable $previous = null): \RuntimeException
     {
-        return new \RuntimeException(sprintf('The outbox table "%s" could not be changed: another session (a transaction, or an autovacuum that does not give way) kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $seconds), 0, $previous);
+        $holder = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform ? 'another session (a transaction, or an autovacuum that does not give way)' : 'another session (a transaction)';
+
+        return new \RuntimeException(sprintf('The outbox table "%s" could not be changed: %s kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $holder, $seconds), 0, $previous);
     }
 
     /**
@@ -969,7 +971,13 @@ final class DbalOutboxStorage implements OutboxStorage
 
         if ($platform instanceof PostgreSQLPlatform) {
             // A lost connection (e.g. its server process was terminated) took its lock with it.
-            if (!$failure instanceof ConnectionException && !$this->releaseSessionLock()) {
+            try {
+                $released = $failure instanceof ConnectionException || $this->releaseSessionLock();
+            } catch (DbalException $releaseFailure) {
+                // e.g. the connection is gone: the lock went with its session; the first failure matters.
+                throw $failure ?? $releaseFailure;
+            }
+            if (!$released) {
                 // A pooler handed the statements around: the lock stays with the server connection that took it.
                 throw new SetupLockLeftBehind(sprintf('The outbox table "%s" %s; it ran through a pooler in transaction mode (e.g. PgBouncer): the setup lock (and possibly a statement_timeout of 0) stays with another server connection until it closes (e.g. RECONNECT in the admin console of PgBouncer), and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName, null === $failure ? 'is set up' : sprintf('was not set up (%s)', $failure->getMessage())), 0, $failure);
             }
@@ -1411,9 +1419,12 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private function createIndexConcurrently(string $name, array $columns): void
     {
-        // A statement timeout of the role would cancel a long build on every run.
+        // A statement timeout of the role would cancel a long build on every run. The setting must
+        // stay with the server process that holds the setup lock (not with a pooled one).
         $previousTimeout = (string) $this->connection->fetchOne('SHOW statement_timeout');
-        $this->connection->executeStatement('SET statement_timeout = 0');
+        if ((int) $this->connection->fetchOne("SELECT pg_backend_pid() FROM (SELECT set_config('statement_timeout', '0', false)) s") !== $this->lockHolder) {
+            throw $this->pooler();
+        }
 
         try {
             $this->connection->executeStatement(sprintf('CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)', $name, $this->tableName, implode(', ', $columns)));
@@ -1423,7 +1434,11 @@ final class DbalOutboxStorage implements OutboxStorage
 
             throw $exception;
         } finally {
-            $this->connection->executeStatement(sprintf('SET statement_timeout = %s', $this->connection->quote($previousTimeout)));
+            try {
+                $this->connection->executeStatement(sprintf('SET statement_timeout = %s', $this->connection->quote($previousTimeout)));
+            } catch (DbalException) {
+                // e.g. the connection is lost (its settings with it): the failure of the build matters.
+            }
         }
     }
 

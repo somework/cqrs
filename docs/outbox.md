@@ -258,7 +258,9 @@ and the new index to stay fast. Add them with one of:
   usually notices it and refuses (releasing the lock), or fails saying that the lock stayed
   with another server connection; under light load it may not notice, so do not rely on it). While
   another setup holds the lock, it says so and waits for it. A signal (e.g. a deploy job that is terminated) stops it with the
-  exit code `128 + signal`, once the running statement returns; the next setup continues. On
+  exit code `128 + signal`, once the running statement returns (on a network that drops the
+  connection silently, only once libpq notices: set TCP keepalives, e.g. `keepalives_idle`, on the
+  connection); the next setup continues. On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
   `statement_timeout`), so writes go on while it runs; it waits for transactions that started
   before (e.g. a `pg_dump`). It rebuilds an index that an interrupted build left invalid, and

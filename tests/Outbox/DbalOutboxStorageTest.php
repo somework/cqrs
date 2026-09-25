@@ -818,7 +818,7 @@ final class DbalOutboxStorageTest extends TestCase
             self::assertStringNotContainsString('SET lock_timeout', $automatic);
             self::assertSame(0, (int) $this->connection->fetchOne("SELECT COUNT(*) FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid()"));
             // A statement timeout of the role would cancel the build of the index on a big table.
-            self::assertMatchesRegularExpression('/SET statement_timeout = 0\s+CREATE INDEX CONCURRENTLY/', $explicit);
+            self::assertMatchesRegularExpression("/set_config\\('statement_timeout', '0', false\\)\\) s\\s+CREATE INDEX CONCURRENTLY/", $explicit);
         } else {
             self::assertStringContainsString('SET SESSION lock_wait_timeout = 1', $automatic);
             self::assertStringContainsString('SET SESSION lock_wait_timeout = 5', $explicit);

@@ -270,7 +270,9 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   otherwise), the connection and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
   relays of two releases cannot run at the same time.
 - Dates are now stored in UTC. Rows written by earlier versions keep the local time they were written in;
-  this only matters for the relay order and the purge cut-off of rows written in the last hours before the upgrade.
+  this only matters for the relay order, the purge cut-off and the ages the health check reports for rows written in
+  the last hours before the upgrade (west of UTC they look older: a backlog of 0.4 rows can be reported as critical
+  right after the deploy).
 - `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage` are now `@api`.
 - `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores) and not a
   word reserved in MySQL, MariaDB, PostgreSQL or SQLite (`order`, `user`, …), and
