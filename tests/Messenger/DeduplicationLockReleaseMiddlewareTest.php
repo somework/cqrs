@@ -17,6 +17,7 @@ use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\PersistingStoreInterface;
 use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
+use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
@@ -25,6 +26,7 @@ use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
@@ -58,6 +60,33 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
 
         self::assertSame(2, $attempts);
         self::assertSame('done', $envelope->last(HandledStamp::class)?->getResult());
+    }
+
+    public function test_a_failed_attempt_of_a_worker_keeps_the_key(): void
+    {
+        // The key was taken when the message was sent and travels with it; Messenger retries the received message itself.
+        $locks = new LockFactory(new InMemoryStore());
+        $stamp = new DeduplicateStamp('task-1');
+        $locks->createLockFromKey($stamp->getKey(), 300, false)->acquire();
+        $attempts = 0;
+        $bus = $this->bus(static function () use (&$attempts): string {
+            if (1 === ++$attempts) {
+                throw new \RuntimeException('Temporary failure');
+            }
+
+            return 'done';
+        }, $locks);
+
+        try {
+            $bus->dispatch(new Envelope(new CreateTaskCommand('1', 'x'), [$stamp, new ReceivedStamp('async')]));
+            self::fail('Expected the worker attempt to fail.');
+        } catch (HandlerFailedException) {
+        }
+
+        $duplicate = $bus->dispatch(new CreateTaskCommand('1', 'x'), [new DeduplicateStamp('task-1')]);
+
+        self::assertSame(1, $attempts, 'A new dispatch is still deduplicated while the worker retries.');
+        self::assertNull($duplicate->last(HandledStamp::class));
     }
 
     public function test_successful_handling_keeps_deduplicating(): void

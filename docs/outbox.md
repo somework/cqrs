@@ -202,8 +202,8 @@ while autovacuum runs. MySQL and MariaDB only add the columns when that takes no
 that: it does not try while any transaction of the server has been open for more than a
 second (it does not tell which tables a transaction holds; this needs the `PROCESS`
 privilege, without it each attempt holds up the writes to the table for up to 1 second).
-Until the columns exist, every relay run fails with `could not be changed: a transaction kept
-it locked` (MySQL: `is not changed while a transaction of the database server has been
+Until the columns exist, every relay run fails with `could not be changed: another session …
+kept it locked` (MySQL: `is not changed while a transaction of the database server has been
 open`): run the setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
 pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
 a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
@@ -211,8 +211,9 @@ it. Until then (the relay checks for the index every 10 seconds, also with `auto
 it fetches with one query along the index of 0.4, in the order the rows were stored: the
 transports do not take turns, and rows that are not due (retries, given-up rows, paused
 transports) are read past, which slows fetches when many of them are ahead. The health
-check reads all pending rows, which takes seconds with a large backlog, and warns (not
-critical) while the table lacks the columns. It never creates the table inside an open
+check reads all pending rows, which takes seconds with a large backlog, and warns while the table
+lacks the columns, and turns critical once messages have waited there for more than 10 minutes
+(the relay cannot send them until the setup command has run). It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -460,7 +461,9 @@ to relay them.
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
   their failing transport); and when the table needs `somework:cqrs:outbox:setup` (e.g. its
-  index is missing or invalid). It is critical when the table cannot be read.
+  index is missing or invalid). It is critical when the table cannot be read, and when
+  messages have waited more than 10 minutes on a table that still lacks the columns of this
+  version.
 - The relay logs failed attempts, paused transports, messages handled inline or dropped, a
   table that needs the setup command, and
   runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the

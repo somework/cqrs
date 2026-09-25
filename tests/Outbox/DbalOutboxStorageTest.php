@@ -1089,9 +1089,12 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:00:00'));
 
         $storage->markPublished('00000000-0000-7000-8000-000000000001');
+        // A publication time far in the past shows whether the second call stamps the row again.
+        $this->connection->executeStatement("UPDATE somework_cqrs_outbox SET published_at = '2000-01-01 00:00:00'");
         $storage->markPublished('00000000-0000-7000-8000-000000000001');
 
         self::assertSame([], $storage->fetchUnpublished(10));
+        self::assertStringStartsWith('2000-01-01 00:00:00', (string) $this->connection->fetchOne('SELECT published_at FROM somework_cqrs_outbox'), 'The first publication time stays (the purge relies on it).');
     }
 
     public function test_mark_published_rejects_unknown_ids(): void

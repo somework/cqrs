@@ -427,6 +427,10 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `The outbox table setup was stopped by signal <number>; run it again.` The
   setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
   it did so far stays.
+* `Another process is building the index "…" of the outbox table …` (PostgreSQL)
+  Another setup, a migration, or the database session of a setup that was
+  stopped is building the index. Run the setup again once it has finished; the
+  health check says `is being built` meanwhile.
 * `The outbox table "…" is not set up through a pooler in transaction mode …`,
   `… is set up; it ran through a pooler …` or `… was not set up (…); it ran
   through a pooler …` Run the setup command over a direct database connection,
@@ -477,6 +481,11 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   its dependencies fails (often a missing environment variable).
 * `The outbox storage cannot be read: ...` The outbox database or table is not
   usable.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …; N outbox
+  message(s) wait, the oldest for M minute(s), and the relay cannot send them
+  until then` The table still lacks the columns of this version and the relay
+  could not add them (see `Stopping: the outbox storage failed` above): run the
+  setup command.
 * `Transport "..." cannot be created: ...` The transport DSN or options are
   invalid.
 * `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.

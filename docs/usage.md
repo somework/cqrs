@@ -218,7 +218,9 @@ $ bin/console somework:cqrs:list --type=command --type=query
 ```
 
 Pass `--details` to inspect the configuration the bundle resolves for each
-message:
+message (the transports shown come from the `transports` configuration; the
+`#[Asynchronous]` attribute and `framework.messenger.routing` also send
+messages to transports, see `somework:cqrs:debug-transports`):
 
 ```
 $ bin/console somework:cqrs:list --type=command --details
@@ -275,7 +277,10 @@ the class name so that the shell keeps the backslashes:
 bin/console somework:cqrs:generate command 'App\Application\Command\ShipOrder'
 ```
 
-The files are placed according to the PSR-4 mapping in your `composer.json`,
+The files are placed according to the PSR-4 mapping in your `composer.json`
+(a namespace that no PSR-4 prefix covers is refused unless `--dir` is given:
+Composer could not load the classes, and the service import of `src/` would
+fail),
 so `App\Application\Command\ShipOrder` becomes
 `src/Application/Command/ShipOrder.php` and
 `src/Application/Command/ShipOrderHandler.php`. The generated message
@@ -477,7 +482,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 |---|---|
 | `NoHandlerException` | No handler handled the message on the bus (Messenger's `NoHandlerForMessageException` is converted and kept as the previous exception). A missing handler of a message dispatched *inside* a handler is not converted. |
 | `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry. |
-| `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. |
+| `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. It is queued and a worker will handle it: do not dispatch it again. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |
 

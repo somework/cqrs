@@ -89,12 +89,22 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertFileExists($this->projectDir.'/lib/Command/DoSomethingHandler.php');
     }
 
-    public function test_without_a_psr4_mapping_the_full_class_path_is_used_and_a_warning_shown(): void
+    public function test_a_namespace_without_a_psr4_mapping_is_refused(): void
     {
+        // A class in "src/" that Composer cannot load would break the service import of the directory.
         $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething']);
 
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertFileDoesNotExist($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertStringContainsString('is not covered by a PSR-4 prefix in composer.json', self::display($tester));
+    }
+
+    public function test_with_a_directory_a_namespace_without_a_psr4_mapping_is_generated_with_a_warning(): void
+    {
+        $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething', '--dir' => 'lib']);
+
         self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode());
-        self::assertFileExists($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertFileExists($this->projectDir.'/lib/App/Command/DoSomething.php');
         self::assertStringContainsString('not covered by a PSR-4 prefix', self::display($tester));
     }
 

@@ -138,6 +138,11 @@ final class GenerateMessageCommand extends SymfonyCommand
             foreach ([$messagePath, $handlerPath] as $path) {
                 self::assertWithinProject($path, $projectDir);
             }
+
+            // In "src/", a class Composer cannot load breaks the service import of the directory (and the whole application).
+            if (null === $baseDir && (!$messageAutoloaded || !$handlerAutoloaded)) {
+                throw new InvalidArgumentException(sprintf('The namespace of "%s" is not covered by a PSR-4 prefix in composer.json, so Composer could not autoload the class. Use a namespace of your "autoload.psr-4" entries, add one, or choose the directory with --dir.', $messageAutoloaded ? $handlerClass : $messageClass));
+            }
         } catch (InvalidArgumentException $exception) {
             $io->error($exception->getMessage());
 

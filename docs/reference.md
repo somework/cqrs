@@ -731,7 +731,8 @@ and `<name>`, the fully-qualified message class. The handler class defaults to
 `<name>Handler`; change it with `--handler`.
 
 Files follow the PSR-4 mapping in the project's `composer.json`
-(`App\Command\ShipOrder` becomes `src/Command/ShipOrder.php` for `"App\\": "src/"`).
+(`App\Command\ShipOrder` becomes `src/Command/ShipOrder.php` for `"App\\": "src/"`); a
+namespace that no prefix covers is refused unless `--dir` is given.
 `--dir` is relative to the project directory and replaces the directory mapped
 to the namespace prefix. Existing files are only overwritten with `--force`.
 The generated handler uses the attribute and a typed `__invoke()`.

@@ -351,7 +351,8 @@ rows keep failing, long before they are given up.
   rows, when failed rows wait for another attempt and the oldest was stored more
   than 10 minutes ago, when due rows have waited more than 10 minutes, or when
   the table needs `somework:cqrs:outbox:setup` (e.g. its index is missing);
-  `CRITICAL` when the table cannot be read.
+  `CRITICAL` when the table cannot be read, or when messages have waited more
+  than 10 minutes on a table that still lacks the columns of this version.
 
 The command prints a table of results and exits with the highest severity:
 `0` OK, `1` warnings, `2` critical. A checker that throws is reported as

@@ -218,7 +218,7 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `idx_<table>_pending`**, which replaces `idx_<table>_published_created`. `store()` keeps working on the old
   table, but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the missing columns and
   the index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait
-  for each other, and changing the table waits at most 5 seconds for open transactions on it; run it over a direct
+  for each other, except while one builds the index on PostgreSQL, where the others stop at once, and changing the table waits at most 5 seconds for open transactions on it; run it over a direct
   connection, not through PgBouncer in transaction mode; `auto_setup: true` only adds the columns, on the first relay run (storing never changes the
   table; not while another session holds the table, on MySQL while any transaction of the server has been open for more
   than a second, and on MySQL and MariaDB only when that takes no time, e.g. not on a compressed table; without
@@ -285,7 +285,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   now pass.
 - `somework:cqrs:generate` places files according to the PSR-4 mapping of your `composer.json`
   (`App\Command\ShipOrder` → `src/Command/ShipOrder.php`, previously `src/App/Command/ShipOrder.php`). `--dir`
-  is resolved against the project directory and replaces the directory mapped to the namespace prefix.
+  is resolved against the project directory and replaces the directory mapped to the namespace prefix; a namespace
+  that no prefix covers is refused unless `--dir` is given.
   Handlers are generated with the attribute and a typed `__invoke()`. Invalid input exits with code 2.
 - `somework:cqrs:list --type=<unknown>` exits with code 2.
 
