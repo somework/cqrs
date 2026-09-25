@@ -135,6 +135,24 @@ final class InMemoryOutboxStorage implements OutboxStorage
         return $claimed;
     }
 
+    /** @var list<list<string>> Ids of every renew() call */
+    public array $renewCalls = [];
+
+    public function renew(array $messages, array $retryAt, string $token): array
+    {
+        $this->renewCalls[] = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
+        $held = [];
+        foreach ($messages as $fetched) {
+            if (($this->tokens[$fetched->id] ?? null) !== $token || isset($this->published[$fetched->id]) || isset($this->givenUp[$fetched->id])) {
+                continue;
+            }
+            $this->messages[$fetched->id] = self::with($this->messages[$fetched->id], claimedAt: new DateTimeImmutable(), availableAt: $retryAt[$fetched->attempts]);
+            $held[] = $fetched->id;
+        }
+
+        return $held;
+    }
+
     public function release(array $messages, string $token): void
     {
         foreach ($messages as $fetched) {

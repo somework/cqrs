@@ -26,6 +26,7 @@ use function array_chunk;
 use function array_column;
 use function array_fill_keys;
 use function array_filter;
+use function array_flip;
 use function array_map;
 use function array_slice;
 use function array_sum;
@@ -33,6 +34,7 @@ use function array_values;
 use function ceil;
 use function count;
 use function get_debug_type;
+use function hash;
 use function implode;
 use function in_array;
 use function is_array;
@@ -41,13 +43,16 @@ use function json_decode;
 use function max;
 use function microtime;
 use function min;
+use function preg_match;
 use function preg_replace;
 use function random_int;
 use function sprintf;
 use function str_contains;
 use function str_replace;
 use function str_starts_with;
+use function stripslashes;
 use function strtolower;
+use function substr;
 use function usleep;
 use function usort;
 
@@ -253,6 +258,58 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         ));
     }
 
+    public function renew(array $messages, array $retryAt, string $token): array
+    {
+        if ([] === $messages) {
+            return [];
+        }
+
+        $this->ensureTableExists();
+
+        /** @var array<int, non-empty-list<OutboxMessage>> $groups */
+        $groups = [];
+        foreach ($messages as $message) {
+            $groups[$message->attempts][] = $message;
+        }
+
+        $now = self::now();
+        foreach ($groups as $attempts => $group) {
+            if (!isset($retryAt[$attempts])) {
+                throw new \InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
+            }
+            $query = $this->connection->createQueryBuilder()
+                ->update($this->tableName)
+                ->set('claimed_at', ':claimed_at')
+                ->set('available_at', ':available_at')
+                ->where('id IN (:ids)')
+                ->andWhere('claim_token = :token')
+                ->andWhere('published_at IS NULL')
+                ->andWhere('failed_at IS NULL')
+                ->setParameter('claimed_at', $now, Types::DATETIME_IMMUTABLE)
+                ->setParameter('available_at', self::utc($retryAt[$attempts]), Types::DATETIME_IMMUTABLE)
+                ->setParameter('ids', array_map(static fn (OutboxMessage $message): string => $message->id, $group), ArrayParameterType::STRING)
+                ->setParameter('token', $token);
+            $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+        }
+
+        // MySQL counts changed rows only (a renewal within the same second changes nothing): read back.
+        $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
+        $held = $this->guard(fn (): array => $this->connection->createQueryBuilder()
+            ->select('id')
+            ->from($this->tableName)
+            ->where('id IN (:ids)')
+            ->andWhere('claim_token = :token')
+            ->andWhere('published_at IS NULL')
+            ->andWhere('failed_at IS NULL')
+            ->setParameter('ids', $ids, ArrayParameterType::STRING)
+            ->setParameter('token', $token)
+            ->executeQuery()
+            ->fetchFirstColumn());
+        $held = array_flip(array_map(static fn (mixed $id): string => strtolower((string) $id), $held));
+
+        return array_values(array_filter($ids, static fn (string $id): bool => isset($held[$id])));
+    }
+
     public function release(array $messages, string $token): void
     {
         if ([] === $messages) {
@@ -387,31 +444,56 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     public function status(): OutboxStatus
     {
         // Monitoring only reads: it never changes the table (an upgrade may be running elsewhere).
-        // Counts stop at OutboxStatus::COUNT_CAP, so a backlog of millions of rows is not read.
+        // Counts stop at OutboxStatus::COUNT_CAP, and every query reads along an index: the
+        // pending rows are restricted to the listed transports, so the conditions on available_at
+        // become ranges of the index instead of a filter over every pending row.
         $now = self::now();
         $capped = false;
         $count = function (QueryBuilder $query) use (&$capped): int {
-            $counted = $this->capped($query, 'COUNT(*)');
+            $counted = (int) $this->capped($query, 'COUNT(*)');
             $capped = $capped || $counted > OutboxStatus::COUNT_CAP;
 
-            return min((int) $counted, OutboxStatus::COUNT_CAP);
+            return min($counted, OutboxStatus::COUNT_CAP);
+        };
+        $indexed = $this->schema->hasPendingIndex();
+        $transports = $indexed ? $this->transportsExcept([]) : [];
+        $pending = function () use ($indexed, $transports): QueryBuilder {
+            $query = $this->pending();
+            if (!$indexed) {
+                return $query;
+            }
+            $names = array_values(array_filter($transports, static fn (?string $transport): bool => null !== $transport));
+            if ([] === $names) {
+                return $query->andWhere('transport_name IS NULL');
+            }
+
+            return $query->andWhere(in_array(null, $transports, true) ? 'transport_name IN (:transports) OR transport_name IS NULL' : 'transport_name IN (:transports)')
+                ->setParameter('transports', $names, ArrayParameterType::STRING);
         };
 
-        $due = $count($this->pending()->andWhere('available_at IS NULL'))
-            + $count($this->pending()->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
+        $due = $count($pending()->andWhere('available_at IS NULL'))
+            + $count($pending()->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
         $capped = $capped || $due > OutboxStatus::COUNT_CAP;
 
-        // Rows whose last attempt failed; the oldest among the first COUNT_CAP of them.
-        $failing = $this->pending()->andWhere('last_error IS NOT NULL');
+        // Rows whose last attempt failed: postponed, and not claimed right now.
+        $failing = $pending()->andWhere('available_at IS NOT NULL')->andWhere('claim_token IS NULL');
         $retrying = $count(clone $failing);
         $oldestRetrying = $this->capped($failing, 'MIN(created_at)');
 
         $failed = $count($this->connection->createQueryBuilder()->from($this->tableName)->where('published_at IS NULL')->andWhere('failed_at IS NOT NULL'));
 
-        // Claims of attempts that have not finished: in flight, or interrupted (their relay died).
-        $claims = $this->pending()->andWhere('claim_token IS NOT NULL');
-        $inFlight = $count((clone $claims)->andWhere('available_at > :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
-        $oldestClaim = $this->capped($claims, 'MIN(claimed_at)');
+        // Claims of attempts that have not finished (published and given-up rows have none).
+        $inFlight = $count($this->connection->createQueryBuilder()->from($this->tableName)->where('claimed_at IS NOT NULL')->andWhere('available_at > :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
+        $expiredClaim = $this->guard(fn (): mixed => $this->connection->createQueryBuilder()
+            ->select('claimed_at')
+            ->from($this->tableName)
+            ->where('claimed_at IS NOT NULL')
+            ->andWhere('available_at <= :now')
+            ->orderBy('claimed_at', 'ASC')
+            ->setMaxResults(1)
+            ->setParameter('now', $now, Types::DATETIME_IMMUTABLE)
+            ->executeQuery()
+            ->fetchOne());
 
         $platform = $this->connection->getDatabasePlatform();
         $date = static fn (mixed $value): ?DateTimeImmutable => null === $value || false === $value ? null : self::readUtc($value, $platform);
@@ -423,7 +505,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             oldestRetrying: $date($oldestRetrying),
             failed: $failed,
             inFlight: $inFlight,
-            oldestClaim: $date($oldestClaim),
+            oldestClaim: $date($expiredClaim),
             capped: $capped,
         );
     }
@@ -479,7 +561,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         $this->ensureTableExists();
 
         $query = $this->connection->createQueryBuilder()
-            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error', 'headers')
+            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error', 'headers', 'body')
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL')
@@ -501,6 +583,8 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             attempts: (int) $row['attempts'],
             lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
             messageType: self::messageType((string) $row['headers']),
+            bodyClass: self::serializedMessageClass((string) $row['body']),
+            bodyDigest: substr(hash('sha256', (string) $row['body']), 0, 16),
         ), $rows);
     }
 
@@ -554,6 +638,15 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         }
 
         return $requeued;
+    }
+
+    /**
+     * The class of the message in a body of Messenger's PHP serializer (an escaped serialize() of
+     * the envelope), found in the text: the body is never unserialized.
+     */
+    private static function serializedMessageClass(string $body): ?string
+    {
+        return 1 === preg_match('/\x00message";O:\d+:"([^"]+)"/', stripslashes($body), $match) ? $match[1] : null;
     }
 
     /**
@@ -815,11 +908,15 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         $due = [];
         foreach (array_chunk($limits, self::TRANSPORTS_PER_STATEMENT, true) as $chunk) {
             $branches = [];
+            $keys = [];
             $parameters = [];
             $types = [];
             foreach ($chunk as $key => $limit) {
                 $n = count($branches);
-                $query = $this->pending()->select('id', $dueSince.' AS due_since', 'created_at AS stored_at', 'transport_name')->andWhere(str_replace(':now', ':now_'.$n, $condition))->setMaxResults($limit);
+                $keys[$n] = $key;
+                // Rows are assigned to their branch, not to their transport_name: under a
+                // case-insensitive collation (MySQL), "async" also matches "ASYNC".
+                $query = $this->pending()->select('id', $dueSince.' AS due_since', 'created_at AS stored_at', $n.' AS branch')->andWhere(str_replace(':now', ':now_'.$n, $condition))->setMaxResults($limit);
                 if ("\0" === (string) $key) {
                     $query->andWhere('transport_name IS NULL');
                 } else {
@@ -836,7 +933,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
             $rows = $this->guard(fn (): array => $this->connection->fetchAllAssociative(implode(' UNION ALL ', $branches), $parameters, $types));
             foreach ($rows as $row) {
-                $due[null === $row['transport_name'] ? "\0" : (string) $row['transport_name']][] = [(string) $row['id'], (string) $row['due_since'], (string) $row['stored_at']];
+                $due[$keys[(int) $row['branch']]][] = [(string) $row['id'], (string) $row['due_since'], (string) $row['stored_at']];
             }
         }
 

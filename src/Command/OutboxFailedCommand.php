@@ -155,8 +155,28 @@ final class OutboxFailedCommand extends Command
             return self::FAILURE;
         }
 
-        $io->text('These rows will be signed with the current secret, so the relay decodes them. Only sign rows your application stored:');
-        $this->table($io, $failed);
+        $io->text('These rows will be signed with the current secret, so the relay decodes them (with the PHP serializer: unserializes them). Only sign rows your application stored:');
+        $io->table(
+            ['Id', 'Type header', 'Class in the body', 'Body', 'Transport', 'Last error'],
+            array_map(static fn (FailedOutboxMessage $message): array => [
+                self::printable($message->id),
+                self::printable($message->messageType ?? '-'),
+                self::printable($message->bodyClass ?? '-'),
+                null === $message->bodyDigest ? '?' : 'sha256 '.$message->bodyDigest,
+                self::printable($message->transportName ?? '(routing)'),
+                self::printable($message->lastError ?? ''),
+            ], $failed),
+        );
+
+        // A forged row may carry a plausible header: it must agree with the body.
+        foreach ($failed as $message) {
+            if (null !== $message->messageType && null !== $message->bodyClass && $message->messageType !== $message->bodyClass) {
+                $io->error(sprintf('The type header of message "%s" (%s) does not match the class in its body (%s): the row was not stored by this application. Nothing was signed.', self::printable($message->id), self::printable($message->messageType), self::printable($message->bodyClass)));
+
+                return self::FAILURE;
+            }
+        }
+
         if ($input->isInteractive() && !$io->confirm('Sign and requeue them?', false)) {
             $io->note('Nothing was signed.');
 

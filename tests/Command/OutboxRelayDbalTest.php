@@ -170,7 +170,7 @@ final class OutboxRelayDbalTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->getStatusCode(), 'The table works without the index, only slower.');
         self::assertSame(['task-1'], $this->sentTaskIds());
         self::assertStringContainsString('The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing;', self::display($tester));
-        self::assertSame(['The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there.'], $logger->warnings);
+        self::assertSame(['The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_claimed" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there.'], $logger->warnings);
     }
 
     private function store(string $taskId, string $transportName): void

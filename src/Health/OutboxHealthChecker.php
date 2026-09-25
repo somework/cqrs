@@ -77,10 +77,10 @@ final class OutboxHealthChecker implements HealthChecker
 
         $now = (new DateTimeImmutable('now', new DateTimeZone('UTC')))->getTimestamp();
 
-        // A relay that hangs (e.g. on a send without a timeout) or died holds its claims.
+        // Claims run out at the retry time of their attempt; the next relay run takes them over.
         $claimedFor = null === $status->oldestClaim ? 0 : $now - $status->oldestClaim->getTimestamp();
         if ($claimedFor > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('An outbox relay claimed messages %d minute(s) ago and has not finished them: it hangs, or it died (then they are retried after their retry delay)', intdiv($claimedFor, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('An outbox relay claimed messages %d minute(s) ago and did not finish them (it died, or hangs on a send), and no relay has taken them over since their retry time: check that "somework:cqrs:outbox:relay" runs', intdiv($claimedFor, 60)));
         }
         $oldestRetrying = $status->oldestRetrying;
         $failingFor = null === $oldestRetrying ? 0 : $now - $oldestRetrying->getTimestamp();

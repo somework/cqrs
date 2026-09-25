@@ -650,6 +650,81 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertFalse($this->storage->isClaimed($this->storage->released[0]));
     }
 
+    public function test_the_claims_of_a_long_batch_are_renewed_and_lost_ones_are_skipped(): void
+    {
+        foreach (['1', '2', '3'] as $taskId) {
+            $this->store(new CreateTaskCommand($taskId, 'x'), 'async');
+        }
+        $ids = $this->storage->unpublishedIds();
+        $time = 1000.0;
+        $sent = [];
+        // Each send takes 25 seconds; during the first one, another relay takes over the third message.
+        $bus = new CallbackBus(function (object $message) use (&$time, &$sent, $ids): void {
+            self::assertInstanceOf(CreateTaskCommand::class, $message);
+            $time += 25.0;
+            $sent[] = $message->id;
+            if ('1' === $message->id) {
+                $this->storage->interrupt($ids[2], 1, new DateTimeImmutable('+1 minute'));
+            }
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks, clock: static function () use (&$time): float {
+            return $time;
+        }));
+        $tester->execute([]);
+
+        self::assertSame(['1', '2'], $sent, 'The third message is not sent twice.');
+        self::assertNotSame([], $this->storage->renewCalls);
+        self::assertStringContainsString('Skipped 1 message(s) that another relay claimed first.', self::display($tester));
+    }
+
+    public function test_sent_messages_are_marked_published_while_other_sends_fail(): void
+    {
+        $this->store(new CreateTaskCommand('ok', 'x'), 'async');
+        $this->store(new CreateTaskCommand('bad-1', 'x'), 'async');
+        $this->store(new CreateTaskCommand('bad-2', 'x'), 'async');
+        $okId = $this->storage->unpublishedIds()[0];
+        $time = 1000.0;
+        $publishedBeforeLastSend = null;
+        $bus = new CallbackBus(function (object $message) use (&$time, &$publishedBeforeLastSend, $okId): void {
+            self::assertInstanceOf(CreateTaskCommand::class, $message);
+            $time += 3.0;
+            if ('bad-2' === $message->id) {
+                $publishedBeforeLastSend = $this->storage->isPublished($okId);
+            }
+            if ('ok' !== $message->id) {
+                throw new TransportException('Timeout');
+            }
+        });
+
+        (new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks, clock: static function () use (&$time): float {
+            return $time;
+        })))->execute([]);
+
+        self::assertTrue($publishedBeforeLastSend, 'The first message is marked while later sends keep failing.');
+    }
+
+    public function test_the_claims_not_attempted_are_released_when_the_storage_fails(): void
+    {
+        foreach (['1', '2', '3'] as $taskId) {
+            $this->store(new CreateTaskCommand($taskId, 'x'), 'async');
+        }
+        $bus = new CallbackBus(function (): void {
+            // The database goes down: the failure cannot be recorded.
+            $this->storage->failRecordingAttempts = true;
+
+            throw new TransportException('Connection refused');
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        [, $second, $third] = $this->storage->unpublishedIds();
+        self::assertSame([$second, $third], $this->storage->released);
+        self::assertSame(0, $this->storage->attempts($third));
+    }
+
     public function test_sent_messages_are_marked_published_in_batches(): void
     {
         for ($i = 1; $i <= 5; ++$i) {
@@ -794,6 +869,11 @@ final class OutboxRelayCommandTest extends TestCase
             public function claim(array $messages, array $retryAt, string $token): array
             {
                 return $this->storage->claim($messages, $retryAt, $token);
+            }
+
+            public function renew(array $messages, array $retryAt, string $token): array
+            {
+                return $this->storage->renew($messages, $retryAt, $token);
             }
 
             public function release(array $messages, string $token): void

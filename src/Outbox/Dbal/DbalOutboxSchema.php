@@ -77,6 +77,8 @@ final class DbalOutboxSchema
      */
     private const INDEXES = [
         'pending' => ['published_at', 'failed_at', 'transport_name', 'available_at', 'created_at', 'id'],
+        // Monitoring finds unfinished claims without reading the pending rows.
+        'claimed' => ['claimed_at'],
     ];
 
     /** Seconds the setup command waits for another setup to finish. */

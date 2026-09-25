@@ -215,6 +215,20 @@ final class DbalOutboxStorageTest extends TestCase
         );
     }
 
+    public function test_transport_names_that_a_collation_treats_as_equal_are_all_fetched(): void
+    {
+        // MySQL's default collations compare "async", "ASYNC" and "async " as equal.
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01', 'ASYNC'));
+        $storage->store(self::message(self::UNKNOWN_ID, '2026-01-01 10:00:02', 'async '));
+
+        $fetched = $storage->fetchUnpublished(10);
+
+        self::assertEqualsCanonicalizing([self::ID_1, self::ID_2, self::UNKNOWN_ID], self::ids($fetched));
+        self::assertSame(3, $storage->status()->due);
+    }
+
     public function test_numeric_transport_names_and_many_transports_take_turns(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
@@ -382,6 +396,7 @@ final class DbalOutboxStorageTest extends TestCase
 
         self::assertSame([
             'the index "idx_somework_cqrs_outbox_pending" is missing',
+            'the index "idx_somework_cqrs_outbox_claimed" is missing',
             'the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there',
         ], $storage->pendingChanges());
         self::assertSame([], $queries->flush(), 'The first use of the process just looked.');
@@ -829,6 +844,7 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertDoesNotMatchRegularExpression('/(CREATE|DROP) INDEX|ADD INDEX/', implode("\n", $queries->flush()), 'Building an index takes long on a big table.');
         self::assertSame([
             'the index "idx_somework_cqrs_outbox_pending" is missing',
+            'the index "idx_somework_cqrs_outbox_claimed" is missing',
             'the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there',
         ], $storage->pendingChanges());
 
@@ -1094,6 +1110,21 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([0, 2], array_map(static fn (OutboxMessage $message): int => $message->attempts, $messages));
         self::assertSame([null, '2026-01-01T11:00:00+00:00'], array_map(static fn (OutboxMessage $message): ?string => $message->availableAt?->format(DATE_ATOM), $messages));
         self::assertSame([null, null], array_map(static fn (OutboxMessage $message): ?DateTimeImmutable => $message->claimedAt, $messages));
+    }
+
+    public function test_renew_extends_only_the_claims_of_the_token(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        $fetched = $storage->fetchUnpublished(10);
+        $storage->claim($fetched, [0 => new DateTimeImmutable('-1 second')], 'relay-a');
+        // The claim of the second message ran out and another relay took it over.
+        $storage->claim([$storage->fetchUnpublished(10)[1]], [1 => new DateTimeImmutable('+1 minute')], 'relay-b');
+
+        self::assertSame([self::ID_1], $storage->renew($fetched, [0 => new DateTimeImmutable('+1 hour')], 'relay-a'));
+        self::assertSame([self::ID_1], $storage->renew($fetched, [0 => new DateTimeImmutable('+1 hour')], 'relay-a'), 'Renewing twice within a second still reports the claim.');
+        self::assertSame([], $storage->fetchUnpublished(10), 'The renewed claim holds until its new retry time.');
     }
 
     public function test_a_failure_is_only_recorded_with_the_claim_token(): void

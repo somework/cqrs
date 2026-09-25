@@ -12,16 +12,23 @@ use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_map;
+use function json_encode;
 use function preg_replace;
 use function strtoupper;
+
+use const JSON_THROW_ON_ERROR;
 
 #[Group('database')]
 #[CoversClass(OutboxFailedCommand::class)]
@@ -54,6 +61,31 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertStringContainsString('2026-01-01T10:00:00+00:00', $display);
         self::assertStringContainsString('RuntimeException: Connection refused', $display);
         self::assertStringContainsString('--requeue', $display);
+    }
+
+    public function test_signing_shows_the_class_in_the_body_and_refuses_a_misleading_type_header(): void
+    {
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('1', 'a')), new PhpSerializer(), 'async');
+        // A forged row: a harmless-looking type header in front of another class.
+        $forged = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($forged, $encoded->body, json_encode(['type' => 'App\Message\Harmless'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $forged, 1, 'not signed', null);
+        $genuine = '00000000-0000-7000-8000-000000000004';
+        $this->storage->store(new OutboxMessage($genuine, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $genuine, 1, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+
+        $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$forged]], ['interactive' => false]));
+        self::assertStringContainsString('does not match the class in its body ('.CreateTaskCommand::class.')', self::display($refused));
+        self::assertSame([$forged], array_map(static fn (FailedOutboxMessage $message): string => $message->id, $this->storage->fetchFailed(10, [$forged])), 'Nothing was requeued.');
+
+        $signed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::SUCCESS, $signed->execute(['--requeue' => true, '--sign' => true, 'ids' => [$genuine]], ['interactive' => false]));
+        self::assertStringContainsString(CreateTaskCommand::class, self::display($signed));
+        self::assertMatchesRegularExpression('/sha256 [0-9a-f]{16}/', self::display($signed));
+        $requeued = OutboxRows::due($this->storage, $genuine);
+        self::assertTrue($signer->verify($requeued));
     }
 
     public function test_requeues_to_another_transport(): void

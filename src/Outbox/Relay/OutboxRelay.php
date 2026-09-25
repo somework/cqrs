@@ -28,6 +28,7 @@ use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_filter;
 use function array_flip;
+use function array_shift;
 use function array_values;
 use function bin2hex;
 use function count;
@@ -78,6 +79,9 @@ final class OutboxRelay
 
     /** Rows fetched at once: bodies can be large. */
     private const BATCH_SIZE = 50;
+
+    /** Seconds after which the claims of a batch are renewed; a claim holds at least 60 seconds. */
+    private const RENEW_SECONDS = 20;
 
     /** Seconds between two markPublished() calls for the messages sent in the meantime. */
     private const FLUSH_SECONDS = 2;
@@ -257,34 +261,57 @@ final class OutboxRelay
         }
 
         $claimed = array_flip($this->claim($messages));
+        $claimedAt = $this->now();
+        $pending = array_values(array_filter($messages, static fn (OutboxMessage $message): bool => isset($claimed[$message->id])));
+        // Published, or claimed by a relay that overlaps this one (e.g. a lock store that is local to one host).
+        $this->claimedElsewhere += count($messages) - count($pending);
         $unattempted = [];
         $end = null;
 
-        foreach ($messages as $message) {
-            if (!isset($claimed[$message->id])) {
-                // Published, or claimed by a relay that overlaps this one (e.g. a lock store that is local to one host).
-                ++$this->claimedElsewhere;
+        try {
+            while (null === $end && [] !== $pending) {
+                $message = array_shift($pending);
+                if (in_array($message->transportName, $this->pausedTransports, true)) {
+                    $unattempted[] = $message;
 
-                continue;
+                    continue;
+                }
+
+                // A claim holds until the retry time of its attempt: renew the claims of the batch
+                // before they run out, and skip what another relay took over meanwhile.
+                if ($this->now() - $claimedAt >= self::RENEW_SECONDS) {
+                    $held = array_flip($this->renew([$message, ...$pending]));
+                    $claimedAt = $this->now();
+                    $kept = array_values(array_filter($pending, static fn (OutboxMessage $other): bool => isset($held[$other->id])));
+                    $this->claimedElsewhere += count($pending) - count($kept) + (isset($held[$message->id]) ? 0 : 1);
+                    $pending = $kept;
+                    if (!isset($held[$message->id])) {
+                        continue;
+                    }
+                }
+
+                $started = $this->now();
+                $outcome = $this->process($message, $reporter);
+                $this->count($message, $outcome, $started, $reporter);
+
+                if (!$reporter->continueAfterMessage()) {
+                    $end = self::ABORT;
+                } elseif ($this->processed >= $limit || $reporter->stopRequested()) {
+                    $end = self::END;
+                }
             }
-            if (null !== $end || in_array($message->transportName, $this->pausedTransports, true)) {
-                $unattempted[] = $message;
-
-                continue;
+        } catch (\Throwable $exception) {
+            // The run stops: the claims not attempted go back, if the storage still works.
+            try {
+                $this->release([...$unattempted, ...$pending]);
+            } catch (\Throwable) {
+                // They are retried as interrupted attempts; the first failure matters.
             }
 
-            $started = $this->now();
-            $outcome = $this->process($message, $reporter);
-            $this->count($message, $outcome, $started, $reporter);
-
-            if (!$reporter->continueAfterMessage()) {
-                $end = self::ABORT;
-            } elseif ($this->processed >= $limit || $reporter->stopRequested()) {
-                $end = self::END;
-            }
+            throw $exception;
         }
 
-        $this->release($unattempted);
+        $this->release([...$unattempted, ...$pending]);
 
         return $end;
     }
@@ -294,6 +321,11 @@ final class OutboxRelay
      */
     private function count(OutboxMessage $message, string $outcome, float $started, RelayReporter $reporter): void
     {
+        // After every outcome, failures included: a run of failing sends must not hold back the marks.
+        if ($this->now() - $this->flushedAt >= self::FLUSH_SECONDS) {
+            $this->flush();
+        }
+
         $key = $message->transportName ?? '';
 
         if (self::CLAIMED_ELSEWHERE === $outcome) {
@@ -376,9 +408,6 @@ final class OutboxRelay
         }
 
         $this->sent[] = $message->id;
-        if ($this->now() - $this->flushedAt >= self::FLUSH_SECONDS) {
-            $this->flush();
-        }
 
         return self::RELAYED;
     }
@@ -470,6 +499,27 @@ final class OutboxRelay
             return $this->outboxStorage->claim($messages, $retryAt, $this->token);
         } catch (\Throwable $exception) {
             throw new \RuntimeException(sprintf('Could not claim %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
+        }
+    }
+
+    /**
+     * @param non-empty-list<OutboxMessage> $messages
+     *
+     * @throws \RuntimeException when the storage fails, which stops the run
+     *
+     * @return list<string> The ids still claimed by this run
+     */
+    private function renew(array $messages): array
+    {
+        $retryAt = [];
+        foreach ($messages as $message) {
+            $retryAt[$message->attempts] ??= self::inSeconds($this->delayFor($message->attempts + 1));
+        }
+
+        try {
+            return $this->outboxStorage->renew($messages, $retryAt, $this->token);
+        } catch (\Throwable $exception) {
+            throw new \RuntimeException(sprintf('Could not renew the claims of %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
         }
     }
 

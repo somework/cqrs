@@ -32,6 +32,11 @@ final class DecoratingOutboxStorage implements OutboxStorage
         return $this->inner->claim($messages, $retryAt, $token);
     }
 
+    public function renew(array $messages, array $retryAt, string $token): array
+    {
+        return $this->inner->renew($messages, $retryAt, $token);
+    }
+
     public function release(array $messages, string $token): void
     {
         $this->inner->release($messages, $token);

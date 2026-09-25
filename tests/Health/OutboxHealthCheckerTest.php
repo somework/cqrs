@@ -88,7 +88,7 @@ final class OutboxHealthCheckerTest extends TestCase
         $storage->fetchUnpublished(1);
 
         self::assertSame([
-            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
+            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_claimed" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
         ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
@@ -101,7 +101,7 @@ final class OutboxHealthCheckerTest extends TestCase
         self::storeAsVersion04($connection, '00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-1 minute'));
 
         self::assertSame([
-            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
+            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error, claim_token, claimed_at, signature are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_claimed" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
         ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
@@ -187,7 +187,7 @@ final class OutboxHealthCheckerTest extends TestCase
         $storage->status = new OutboxStatus(due: 0, oldestDue: null, retrying: 0, oldestRetrying: null, failed: 0, inFlight: 3, oldestClaim: new DateTimeImmutable('-15 minutes'));
 
         self::assertSame([
-            [CheckSeverity::WARNING, 'An outbox relay claimed messages 15 minute(s) ago and has not finished them: it hangs, or it died (then they are retried after their retry delay)'],
+            [CheckSeverity::WARNING, 'An outbox relay claimed messages 15 minute(s) ago and did not finish them (it died, or hangs on a send), and no relay has taken them over since their retry time: check that "somework:cqrs:outbox:relay" runs'],
         ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
