@@ -7,11 +7,14 @@ namespace SomeWork\CqrsBundle\Tests\Retry;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
 use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Retry\RetryStrategyInterface;
@@ -392,6 +395,25 @@ final class CqrsRetryStrategyTest extends TestCase
         }
 
         self::assertGreaterThan(1, count($delays), 'Capped delays must not all be identical.');
+    }
+
+    public function test_each_message_uses_the_policies_of_its_own_type(): void
+    {
+        // A transport mapped to "command" that also carries events.
+        $strategy = new CqrsRetryStrategy(
+            new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(1, 100, 1.0), new ServiceLocator([])),
+            byType: [
+                Command::class => new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(1, 100, 1.0), new ServiceLocator([])),
+                Event::class => new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(5, 700, 1.0), new ServiceLocator([])),
+            ],
+        );
+
+        $event = Envelope::wrap(new TaskCreatedEvent('1'))->with(new RedeliveryStamp(2));
+        self::assertTrue($strategy->isRetryable($event));
+        self::assertSame(700, $strategy->getWaitingTime($event));
+
+        $command = Envelope::wrap(new CreateTaskCommand('1', 'a'))->with(new RedeliveryStamp(2));
+        self::assertFalse($strategy->isRetryable($command));
     }
 
     private function createStrategy(

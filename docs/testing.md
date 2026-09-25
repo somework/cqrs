@@ -85,7 +85,9 @@ final class TaskServiceTest extends TestCase
 
         $records = $commandBus->getDispatched();
         self::assertCount(1, $records);
-        self::assertSame('task-1', $records[0]->message->id);
+        $message = $records[0]->message;
+        self::assertInstanceOf(CreateTask::class, $message);
+        self::assertSame('task-1', $message->id);
     }
 
     public function test_dispatch_sync_returns_the_configured_result(): void

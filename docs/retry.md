@@ -132,10 +132,10 @@ original strategy is kept as the fallback. Keep the following in mind:
   `async-events` must be listed as `async-events`, not `async_events`.
 - **Unknown transports are rejected.** Compilation fails with
   `Transport "<name>" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "..."`.
-- **One type per transport.** Every message on the transport is resolved against that
-  type's section. A message of another type finds no entry in the map and gets that
-  section's `default` policy. Give commands and events separate transports if they need
-  different policies.
+- **Each message uses its own type.** A command received from the transport is resolved
+  against `retry_policies.command`, an event against `retry_policies.event`, whatever type
+  the transport is mapped to; commands and events can share a transport. The mapped type
+  only applies to messages that are neither commands, queries nor events.
 
 ## How CqrsRetryStrategy decides
 

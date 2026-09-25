@@ -53,7 +53,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 
 **Testing and API**
 - `Testing\RecordedDispatch`, `FakeCommandBus::willReturnFor()`, and `willThrow()` on the command and query fakes. A failed `assertDispatched()` names the fake bus.
-- `FakeQueryBus::willReturnFor()` is typed by the query's `@implements Query<…>`, and both `willReturnFor()` refuse an interface or abstract class (results are matched by the concrete class).
+- `FakeQueryBus::willReturnFor()` and `FakeCommandBus::willReturnFor()` refuse an interface or abstract class (results are matched by the concrete class).
 - `Registry\MessageType` for `HandlerRegistry::byType()`.
 - The backward compatibility promise (UPGRADE.md) covers the configuration tree, documented service ids and tags, decider priorities, console commands and span names, and has a deprecation policy.
 - Part of the public API (`@api`): the health checker types, the outbox contracts and DTOs, `DbalOutboxStorage`, `HandlerRegistry` and `HandlerDescriptor`, the default policies and `SomeWorkCqrsBundle`.
@@ -98,7 +98,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware. It is only added to the default bus when a facade falls back to it.
 - OpenTelemetry records one span per pass: `cqrs.dispatch <Message>` (PRODUCER) and `cqrs.consume <Message>` (CONSUMER).
 - `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever, and caps delays before and after jitter.
-- `retry_strategy.transports` keys are kept as written.
+- `retry_strategy.transports` keys are kept as written, and each message received from such a transport uses the retry policies of its own type (commands and events can share a transport).
 - Rate limiting stays inactive until a limiter is configured. `RateLimitResolver` accepts any `RateLimiterFactoryInterface`.
 - `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services.
 - A handler of several handler interfaces registers each union member under its own type.

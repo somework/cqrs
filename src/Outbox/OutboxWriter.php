@@ -26,7 +26,12 @@ use function array_values;
 final class OutboxWriter
 {
     /**
+     * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
+     * OutboxWriter): the constructor takes internal services and may change in any release.
+     *
      * @param StampDecider|null $transports The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     *
+     * @internal
      */
     public function __construct(
         private readonly OutboxStorage $storage,

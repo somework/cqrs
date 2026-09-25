@@ -32,8 +32,11 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
     private readonly RetryStrategyInterface $fallback;
 
     /**
-     * @param RetryStrategyInterface|null $fallback Strategy for messages whose policy exposes no RetryConfiguration;
-     *                                              defaults to Messenger's MultiplierRetryStrategy (3 retries)
+     * @param RetryPolicyResolver                      $resolver Resolver for messages that match none of $byType
+     * @param RetryStrategyInterface|null              $fallback Strategy for messages whose policy exposes no RetryConfiguration;
+     *                                                           defaults to Messenger's MultiplierRetryStrategy (3 retries)
+     * @param array<class-string, RetryPolicyResolver> $byType   Resolvers per message type (Command, Query, Event): a transport
+     *                                                           that carries commands and events uses the policies of each
      */
     public function __construct(
         private readonly RetryPolicyResolver $resolver,
@@ -41,6 +44,7 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
         private readonly ?LoggerInterface $logger = null,
         private readonly float $jitter = 0.0,
         private readonly int $maxDelay = 0,
+        private readonly array $byType = [],
     ) {
         $this->fallback = $fallback ?? new MultiplierRetryStrategy();
 
@@ -55,7 +59,7 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
 
     public function isRetryable(Envelope $message, ?\Throwable $throwable = null): bool
     {
-        $policy = $this->resolver->resolveFor($message->getMessage());
+        $policy = $this->resolverFor($message->getMessage())->resolveFor($message->getMessage());
 
         if ($policy instanceof RetryConfiguration) {
             $retryCount = RedeliveryStamp::getRetryCountFromEnvelope($message);
@@ -82,7 +86,7 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
 
     public function getWaitingTime(Envelope $message, ?\Throwable $throwable = null): int
     {
-        $policy = $this->resolver->resolveFor($message->getMessage());
+        $policy = $this->resolverFor($message->getMessage())->resolveFor($message->getMessage());
 
         if (!$policy instanceof RetryConfiguration) {
             return $this->fallback->getWaitingTime($message, $throwable);
@@ -112,5 +116,16 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
         }
 
         return $delay >= (float) PHP_INT_MAX ? PHP_INT_MAX : (int) $delay;
+    }
+
+    private function resolverFor(object $message): RetryPolicyResolver
+    {
+        foreach ($this->byType as $type => $resolver) {
+            if ($message instanceof $type) {
+                return $resolver;
+            }
+        }
+
+        return $this->resolver;
     }
 }

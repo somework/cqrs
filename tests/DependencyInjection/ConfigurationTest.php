@@ -10,9 +10,13 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
 
+use function array_values;
 use function sprintf;
 
 #[CoversClass(Configuration::class)]
@@ -287,6 +291,24 @@ final class ConfigurationTest extends TestCase
         $this->expectExceptionMessage(sprintf('Invalid configuration for path "%s": "App\\Command\\CreateTaks" is not an existing class or interface', $path));
 
         $this->processConfiguration($config);
+    }
+
+    public function test_rejects_map_keys_of_another_message_type(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('Invalid configuration for path "somework_cqrs.dispatch_modes.command.map": "%s" is a query, not a command: it never matches here.', FindTaskQuery::class));
+
+        $this->processConfiguration(['dispatch_modes' => ['command' => ['map' => [FindTaskQuery::class => 'async']]]]);
+    }
+
+    public function test_accepts_map_keys_of_the_section_type_and_other_interfaces(): void
+    {
+        $config = $this->processConfiguration([
+            'retry_policies' => ['event' => ['map' => [TaskCreatedEvent::class => 'app.retry', RetryAwareMessage::class => 'app.retry']]],
+            'transports' => ['command_async' => ['map' => [CreateTaskCommand::class => 'async']]],
+        ]);
+
+        self::assertSame(['app.retry', 'app.retry'], array_values($config['retry_policies']['event']['map']));
     }
 
     /**

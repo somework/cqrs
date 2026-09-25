@@ -72,6 +72,14 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
         $metadata = $container->hasParameter('somework_cqrs.handler_metadata') ? $container->getParameter('somework_cqrs.handler_metadata') : [];
         $checked = [];
 
+        // Queries are always handled synchronously: the attribute would be silently ignored.
+        foreach (is_array($metadata) && is_array($metadata['query'] ?? null) ? $metadata['query'] : [] as $entry) {
+            $messageClass = is_array($entry) ? ($entry['message'] ?? null) : null;
+            if (is_string($messageClass) && [] !== ($container->getReflectionClass($messageClass, false)?->getAttributes(Asynchronous::class) ?? [])) {
+                throw new InvalidConfigurationException(sprintf('"%s" is a query and carries #[Asynchronous]: queries are always handled synchronously. Remove the attribute.', $messageClass));
+            }
+        }
+
         foreach (['command', 'event'] as $type) {
             $entries = is_array($metadata) ? ($metadata[$type] ?? []) : [];
 

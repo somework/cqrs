@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TransportBoundHandlers;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AsynchronousQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -91,6 +92,17 @@ final class ValidateTransportNamesPassTest extends TestCase
         $container->compile();
 
         $this->addToAssertionCount(1);
+    }
+
+    public function test_it_rejects_an_asynchronous_attribute_on_a_query(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['query' => [['message' => AsynchronousQuery::class]]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" is a query and carries #[Asynchronous]: queries are always handled synchronously.', AsynchronousQuery::class));
+
+        (new ValidateTransportNamesPass())->process($container);
     }
 
     public function test_it_rejects_an_unknown_transport_of_an_asynchronous_attribute(): void

@@ -10,11 +10,12 @@ The promise covers:
 
 - classes, interfaces, traits and enums annotated with `@api` in their class-level PHPDoc block,
   including parameter names (named arguments), except members marked `@internal` (the constructors
-  of `CommandBus`, `QueryBus` and `EventBus`: get the buses from the container);
+  of `CommandBus`, `QueryBus`, `EventBus` and `OutboxWriter`: get them from the container);
 - the `somework_cqrs` configuration tree;
 - the documented service ids and tags: `somework_cqrs.outbox.storage`,
   `somework_cqrs.outbox.base_storage`, `somework_cqrs.outbox.dbal_storage`,
-  `somework_cqrs.outbox.serializer`, `somework_cqrs.dispatch_stamp_decider` and
+  `somework_cqrs.outbox.serializer`, `somework_cqrs.outbox.writer`,
+  `somework_cqrs.exponential_backoff_retry_policy`, `somework_cqrs.dispatch_stamp_decider` and
   `somework_cqrs.health_checker`;
 - the priorities of the built-in stamp deciders, console command names, options and exit codes,
   the OpenTelemetry span names and the `cqrs` log channel.
@@ -55,6 +56,9 @@ releases.
 
 ### Checklist
 
+Steps 1 to 4 are one change: the new classes only exist after the update, and the configuration tree of 0.4
+rejects the new options.
+
 1. **Code**, in the same change as `composer update` (the new classes only exist after it, and the build or
    the `cache:clear` script of `composer update` fails until the code is adapted):
    - handlers extending the removed abstract handlers ([Abstract handlers removed](#abstract-handlers-removed-classes-moved));
@@ -76,7 +80,7 @@ releases.
      (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
    - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
      value in `outbox.signing.previous_secrets` until the rows signed with it are relayed.
-4. `composer update somework/cqrs-bundle`.
+4. `composer update somework/cqrs-bundle`, committed together with steps 1 to 3.
 5. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
    migration): writes need the new columns.
 6. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
@@ -344,6 +348,9 @@ Stamps returned by a `RetryPolicy` no longer override a stamp of the same class 
 - Delays are capped by `max_delay` before and after jitter.
 - `retry_strategy.transports` keys are no longer normalised (`my-transport` stays `my-transport`) and must be
   existing Messenger transports.
+- Each message received from such a transport uses the `retry_policies` section of its own type. In 0.4 every
+  message used the section the transport was mapped to (events on a transport mapped to `command` got the
+  command policies).
 
 ### Configuration validation
 

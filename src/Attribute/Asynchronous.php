@@ -21,7 +21,8 @@ use Attribute;
 final class Asynchronous
 {
     /**
-     * @param non-empty-string|null $transport Transport name (defaults to 'async' when null)
+     * @param non-empty-string|null $transport Transport name; null uses the configured transports, then
+     *                                         framework.messenger.routing, then the "async" transport
      */
     public function __construct(
         public readonly ?string $transport = null,

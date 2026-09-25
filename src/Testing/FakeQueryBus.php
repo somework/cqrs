@@ -66,10 +66,10 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
     /**
      * Configures the result {@see ask()} returns for queries of exactly the given class.
      *
-     * @template TResult
+     * The result is not checked against the query's `@implements Query<…>`: static analysis
+     * infers the template from both arguments.
      *
-     * @param class-string<Query<TResult>> $queryClass
-     * @param TResult                      $result
+     * @param class-string<Query> $queryClass
      */
     public function willReturnFor(string $queryClass, mixed $result): void
     {

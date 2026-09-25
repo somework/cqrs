@@ -373,7 +373,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 
 $commandBus->dispatch($command);                     // Uses the resolved mode
 $commandBus->dispatch($command, DispatchMode::ASYNC);
-$commandBus->dispatchAsync($command);                // Always asynchronous
+$commandBus->dispatchAsync($command);                // Always on the async bus (sent to a transport when one is configured or routed)
 $result = $commandBus->dispatchSync($command);       // Always synchronous, returns the handler result
 ```
 
@@ -386,7 +386,8 @@ The asynchronous bus only decides which Messenger bus handles the message. To
 actually send it to a transport, configure `transports.command_async` /
 `transports.event_async` (or use `#[Asynchronous]`, which names a transport);
 without a transport name or a `framework.messenger.routing` entry the message
-is handled right away on the asynchronous bus.
+is handled right away on the asynchronous bus, in the calling process, and the
+bundle logs a warning.
 
 ### Toggling DispatchAfterCurrentBusStamp
 

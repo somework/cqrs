@@ -75,8 +75,14 @@ somework_cqrs:
         table_name: somework_cqrs_outbox
         connection: default
         serializer: messenger.default_serializer
+        storage: null
         auto_setup: true
         max_attempts: 10
+        signing:
+            enabled: true
+            secret: null
+            previous_secrets: []
+            accept_unsigned: false
 ```
 
 ## Rules that apply to every section
@@ -128,7 +134,8 @@ rejected:
 
 **Environment variables.** Only options read at runtime accept `%env(...)%`:
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
-`outbox.auto_setup`, `outbox.max_attempts` and the
+`outbox.auto_setup`, `outbox.max_attempts`, `outbox.signing.secret`,
+`outbox.signing.previous_secrets`, `outbox.signing.accept_unsigned` and the
 `dispatch_after_current_bus` flags. Every other option names services,
 buses, transports, dispatch modes or message classes that the container
 compilation needs, and rejects an environment variable:
@@ -336,10 +343,9 @@ which applies the per-message `RetryConfiguration` described above.
   Transport "async_comands" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "async_commands", "failed".
   ```
 
-* The value selects which `retry_policies` section resolves the policies of
-  messages received from that transport. A transport carries one type: if
-  commands and events share a transport mapped to `command`, the events are
-  resolved against `retry_policies.command`.
+* Each message received from the transport uses the `retry_policies` section of
+  its own type, so commands and events can share a transport. The value is the
+  section used for messages that are neither commands, queries nor events.
 * For a message whose policy implements `RetryConfiguration`, the message is
   retried while its retry count is below `getMaxRetries()`, with a delay of
   `initialDelay * multiplier ^ retryCount`. The delay is capped at `max_delay`,
@@ -727,9 +733,9 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 | `somework:cqrs:generate` | `<type> <name> [--handler=FQCN] [--dir=DIR] [--force]` | `0`; `1` when a file exists (without `--force`) or cannot be written; `2` for an invalid type, class name or path |
 | `somework:cqrs:debug-transports` | none | `0` |
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
-| `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage other than `DbalOutboxStorage` |
-| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed; `2` for an invalid limit |
-| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME]] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage other than `DbalOutboxStorage`; `2` for ids or `--transport` without `--requeue`, or an invalid limit |
+| `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage that does not implement `OutboxSchema`, or when the database fails; `128 + signal` when stopped by a signal |
+| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed, the storage failed, a signal stopped the run, or the lock could not be acquired or was lost; `2` for an invalid limit |
+| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME] [--sign]] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage that does not implement `FailedOutboxMessages`, when the database fails, when a given id was not requeued, or when `--sign` refused or was not confirmed; `2` for ids without `--requeue`, `--transport` or `--sign` without ids, or an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list

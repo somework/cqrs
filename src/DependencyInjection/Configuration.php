@@ -5,6 +5,9 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Outbox\ReservedTableNames;
 use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
@@ -26,6 +29,7 @@ use function array_keys;
 use function class_exists;
 use function explode;
 use function interface_exists;
+use function is_a;
 use function is_array;
 use function is_string;
 use function ltrim;
@@ -38,6 +42,8 @@ use function trim;
 /** @internal */
 final class Configuration implements ConfigurationInterface
 {
+    private const MARKERS = ['command' => Command::class, 'query' => Query::class, 'event' => Event::class];
+
     private const TYPES = ['command', 'query', 'event'];
 
     public function getConfigTreeBuilder(): TreeBuilder
@@ -374,7 +380,7 @@ final class Configuration implements ConfigurationInterface
                 ->defaultValue([])
                 ->info(sprintf('Message-specific %s service ids, keyed by message class or interface.', $contract));
             self::requireName($map->scalarPrototype());
-            self::messageKeyedMap($map);
+            self::messageKeyedMap($map, $type);
         }
 
         $children->end();
@@ -407,7 +413,7 @@ final class Configuration implements ConfigurationInterface
                 ->end()
             ->end()
             ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));
-        self::messageKeyedMap($map);
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -434,7 +440,7 @@ final class Configuration implements ConfigurationInterface
             ->booleanPrototype()
             ->end()
             ->info(sprintf('Message-specific overrides for DispatchAfterCurrentBusStamp on async %s messages.', $type));
-        self::messageKeyedMap($map);
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -458,7 +464,7 @@ final class Configuration implements ConfigurationInterface
             ->defaultValue([])
             ->info('Map of message classes or interfaces to Symfony rate limiter names (as configured under framework.rate_limiter).');
         self::requireName($map->scalarPrototype());
-        self::messageKeyedMap($map);
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -507,7 +513,7 @@ final class Configuration implements ConfigurationInterface
                 ->then(static fn (string $value): array => [$value])
             ->end();
         self::requireName($transportList->scalarPrototype());
-        self::messageKeyedMap($map);
+        self::messageKeyedMap($map, $baseType);
         $map->end();
 
         $children->end();
@@ -542,7 +548,10 @@ final class Configuration implements ConfigurationInterface
      * Keys of per-message maps are message classes or interfaces. A leading backslash is dropped,
      * and unknown names (typos, removed classes) are rejected instead of silently never matching.
      */
-    private static function messageKeyedMap(ArrayNodeDefinition $map): void
+    /**
+     * @param string $type "command", "query" or "event": a key of another message type never matches
+     */
+    private static function messageKeyedMap(ArrayNodeDefinition $map, string $type): void
     {
         $map->beforeNormalization()
             ->ifArray()
@@ -557,10 +566,18 @@ final class Configuration implements ConfigurationInterface
         ->end();
 
         $map->validate()
-            ->always(static function (array $entries): array {
+            ->always(static function (array $entries) use ($type): array {
                 foreach (array_keys($entries) as $class) {
                     if (!class_exists((string) $class) && !interface_exists((string) $class)) {
                         throw new \InvalidArgumentException(sprintf('"%s" is not an existing class or interface; keys must be message class or interface names.', $class));
+                    }
+
+                    // Classes and interfaces of another message type are never dispatched on these buses.
+                    $marker = self::MARKERS[$type] ?? null;
+                    foreach (self::MARKERS as $otherType => $other) {
+                        if (null !== $marker && $otherType !== $type && is_a((string) $class, $other, true) && !is_a((string) $class, $marker, true)) {
+                            throw new \InvalidArgumentException(sprintf('"%s" is a %s, not a %s: it never matches here.', $class, $otherType, $type));
+                        }
                     }
                 }
 
