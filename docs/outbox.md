@@ -16,7 +16,7 @@ database table **in the same transaction** as the business change. The
 1. Inside your database transaction, you write the business data and call
    `OutboxStorage::store()` with an `OutboxMessage` built from a Messenger envelope.
 2. The transaction commits. The message row is saved only if the business change is.
-3. `somework:cqrs:outbox:relay` reads due rows, new ones first, decodes each one, and
+3. `somework:cqrs:outbox:relay` reads due rows, transport by transport, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
    goes to the transport stored with the row, or follows the Messenger routing when no
    transport was stored. Then the relay marks the row as published. A row that fails is
@@ -60,7 +60,7 @@ somework_cqrs:
 | `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table`. A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
-| `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Set it to `false` when migrations manage the table. |
+| `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns and indexes a table of an earlier version lacks, but never inside an open transaction. Set it to `false` when migrations manage the table. |
 | `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See [Failures](#failures). |
 
 ## Writing to the outbox
@@ -147,7 +147,7 @@ millisecond by one process keep their order.
 The table has to exist before the first `store()`. There are three ways to create it:
 
 **Setup command.** Run it once per environment, for example in your deployment script. It
-creates the table if it is missing, adds the columns that a table created by an earlier
+creates the table if it is missing, adds the columns and indexes that a table created by an earlier
 version lacks, and does nothing otherwise:
 
 ```bash
@@ -211,20 +211,23 @@ on it for the write path.
 | `failed_at` | DATETIME_IMMUTABLE | Yes | When the relay gave up on the row (`null` = still relayed) |
 | `last_error` | TEXT | Yes | Exception class and message of the last failure, or the note of an attempt that did not finish |
 
-An index on `(published_at, failed_at, available_at, created_at, id)`, named
-`idx_<table>_due` (`idx_<hash>_due` for long table names), serves the relay and the purge.
-`attempts`, `available_at`, `failed_at`, `last_error` and this index were added in 0.5.0; it
-replaces the index `idx_<table>_published_created` of 0.4. [Upgrade](#upgrading-from-04) a
-table created by an earlier version.
+An index on `(published_at, failed_at, transport_name, available_at, created_at, id)`, named
+`idx_<table>_pending` (`idx_<hash>_pending` for long table names), serves the relay and the
+purge. `attempts`, `available_at`, `failed_at`, `last_error` and this index were added in 0.5.0;
+the index replaces `idx_<table>_published_created` of 0.4. [Upgrade](#upgrading-from-04) a table created
+by an earlier version.
 
 ### Upgrading from 0.4
 
 `store()` keeps working on a table of an earlier version, so deploying the new version does
 not break writes. Stop the relays of the old version before the new ones start: an old relay
 ignores the new columns (retry times, given-up rows, claims). The relay needs the new columns
-and index. Add them with one of:
+and indexes. Add them with one of:
 
-- `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction);
+- `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction). On
+  PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY`, so writes go on while it
+  runs; MySQL and MariaDB build it online. The old index is dropped only once the new one
+  exists, and processes that start at the same time wait for each other (a database lock);
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
   the new columns and index);
 - a migration of your own:
@@ -235,15 +238,22 @@ ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL;
 ALTER TABLE somework_cqrs_outbox ADD available_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD failed_at TIMESTAMP(0) WITHOUT TIME ZONE DEFAULT NULL;
 ALTER TABLE somework_cqrs_outbox ADD last_error TEXT DEFAULT NULL;
-CREATE INDEX idx_somework_cqrs_outbox_due ON somework_cqrs_outbox (published_at, failed_at, available_at, created_at, id);
-DROP INDEX idx_somework_cqrs_outbox_published_created;
+CREATE INDEX CONCURRENTLY idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
+DROP INDEX CONCURRENTLY idx_somework_cqrs_outbox_published_created;
 
 -- MySQL / MariaDB
 ALTER TABLE somework_cqrs_outbox ADD attempts INT DEFAULT 0 NOT NULL, ADD available_at DATETIME DEFAULT NULL,
     ADD failed_at DATETIME DEFAULT NULL, ADD last_error LONGTEXT DEFAULT NULL;
-CREATE INDEX idx_somework_cqrs_outbox_due ON somework_cqrs_outbox (published_at, failed_at, available_at, created_at, id);
+CREATE INDEX idx_somework_cqrs_outbox_pending ON somework_cqrs_outbox (published_at, failed_at, transport_name, available_at, created_at, id);
 DROP INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox;
 ```
+
+`CREATE INDEX CONCURRENTLY` cannot run inside a transaction: Doctrine migrations need
+`isTransactional()` to return `false` for it. 0.4 had no purge command, so its table may hold
+every message ever relayed. Building the indexes then takes a while, and a migration generated
+by `doctrine:migrations:diff` uses a plain `CREATE INDEX`, which blocks writes on PostgreSQL
+until it is done. Purge the published rows first (with `auto_setup: false`,
+`somework:cqrs:outbox:purge` works on the 0.4 table), or use the statements above.
 
 ## Relaying
 
@@ -269,14 +279,13 @@ For each due row the relay:
    `buses.query` for queries, the default bus for anything else;
 5. marks the row as published.
 
-Each run takes the new rows first (never attempted, or requeued), in the order they were
-stored; then the rows that failed before and whose retry time has passed, in the order of their
-retry time. Rows that keep failing therefore do not hold up new rows. (A burst of new rows
-that the broker rejects one by one, such as messages over its size limit, is only told apart
-from an outage by trying them: each run tries 3 of them before it pauses their transport, so the
-burst delays the other rows of that transport once, by one run per 3 rejected rows.) A relay that
-cannot keep up with the new rows retries failed rows only once it catches up; the health check
-reports both (see [Monitoring](#monitoring)).
+The transports take turns (rows stored without a transport name count as one transport), so
+the backlog of one transport, for example after an outage, does not hold up the others. Within
+a transport the relay takes the new rows first (never attempted, or requeued), in the order
+they were stored, then the rows that failed before and whose retry time has passed, in the order
+of their retry time. Rows that keep failing therefore do not hold up new rows. A relay that
+cannot keep up with the new rows of a transport retries its failed rows only once it catches
+up; the health check reports both (see [Monitoring](#monitoring)).
 
 What happens in special cases:
 
@@ -295,6 +304,11 @@ What happens in special cases:
   and skips the rows of that transport for the rest of the run instead of walking its whole
   backlog. The rows of the other transports are relayed as usual. As new rows come first,
   3 new rows are enough to detect an outage, and the attempts of older rows are not used up.
+  A transport that accepted a message earlier in the run is up: single messages it rejects
+  (e.g. too large) do not pause it before 10 failures in a row. A burst of new rows that the
+  broker rejects before any row of the run went through is only told apart from an outage by
+  trying them: each run tries 3 of them, so the burst delays the other rows of that transport
+  once, by one run per 3 rejected rows.
   Rows stored without a transport name share one such counter (`Messages without a transport
   name failed to be sent 3 times in a row …`): when one of the transports they are routed to
   is down, the others' rows may wait for the next run too. Store the transport name to keep
@@ -453,9 +467,11 @@ interface OutboxStorage
     public function store(OutboxMessage $message): void;
 
     /**
-     * Returns the messages that are due: unpublished, not given up, and past the retry time of
-     * their last attempt. They are ordered by the time since which they are due (the time they
-     * were stored, or the retry time of a message that failed before), oldest first.
+     * Returns the messages that are due: neither published nor given up, and either never
+     * attempted (or requeued) or past the retry time of their last attempt. The transports take
+     * turns (the messages without a transport name count as one transport); within a transport,
+     * the messages never attempted come first, in the order they were stored, then the others, in
+     * the order of their retry time.
      *
      * @param list<string|null> $excludedTransports Transports whose messages are skipped; null
      *                                              stands for messages stored without a transport name
@@ -480,16 +496,17 @@ interface OutboxStorage
      * actual error when the attempt fails. A message must not be returned by {@see fetchUnpublished()}
      * before $retryAt; with $retryAt null it is given up and never returned again.
      *
-     * With $previousAttempts the attempt is only recorded while the stored number of attempts
-     * still equals it: two relays that fetched the same message cannot both claim it.
+     * With $previousAttempts the attempt is only recorded while the message is not given up and
+     * its stored number of attempts still equals it, in one atomic step: two relays that fetched
+     * the same message cannot both claim it, nor both give it up.
      *
      * @param int      $attempts         The number of attempts, including this one
      * @param int|null $previousAttempts The number of attempts the caller read, or null to record unconditionally
      *
-     * @return bool false when nothing was recorded: the message is already published, or another
-     *              relay recorded an attempt since the caller read it
-     *
      * @throws \RuntimeException when the message does not exist
+     *
+     * @return bool false when nothing was recorded: the message is already published, or (with
+     *              $previousAttempts) another relay recorded an attempt or gave it up since the caller read it
      */
     public function recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool;
 
@@ -505,8 +522,9 @@ An implementation must meet these rules:
 - `store()` must write through the same transaction as your business data. Otherwise the
   outbox guarantees nothing.
 - `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
-  passed): first the messages never attempted, in the order they were stored, then the
-  others, in the order of their retry time. It skips the excluded transports. The relay excludes a transport after 3 send failures in a row; a storage that
+  passed). The transports take turns; within a transport, first the messages never attempted,
+  in the order they were stored, then the others, in the order of their retry time. It skips
+  the excluded transports. The relay excludes a transport after 3 send failures in a row; a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
 - `recordAttempt()` stores the given number of attempts, the error and the retry time as they
   are; it is called before every attempt and again when the attempt fails. With

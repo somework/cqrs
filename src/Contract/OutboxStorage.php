@@ -21,9 +21,10 @@ interface OutboxStorage
 
     /**
      * Returns the messages that are due: neither published nor given up, and either never
-     * attempted (or requeued) or past the retry time of their last attempt. The messages never
-     * attempted come first, in the order they were stored; then the others, in the order of their
-     * retry time.
+     * attempted (or requeued) or past the retry time of their last attempt. The transports take
+     * turns (the messages without a transport name count as one transport); within a transport,
+     * the messages never attempted come first, in the order they were stored, then the others, in
+     * the order of their retry time.
      *
      * @param list<string|null> $excludedTransports Transports whose messages are skipped; null
      *                                              stands for messages stored without a transport name

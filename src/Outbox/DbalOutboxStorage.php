@@ -13,6 +13,7 @@ use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\InvalidFieldNameException;
 use Doctrine\DBAL\Exception\SyntaxErrorException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
+use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
@@ -25,6 +26,7 @@ use Doctrine\DBAL\Types\Types;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 
 use function array_filter;
+use function array_keys;
 use function array_map;
 use function array_values;
 use function class_exists;
@@ -37,11 +39,15 @@ use function is_string;
 use function method_exists;
 use function min;
 use function sha1;
+use function sleep;
 use function sprintf;
+use function str_contains;
 use function str_replace;
 use function strlen;
 use function strtolower;
 use function substr;
+
+use const ARRAY_FILTER_USE_KEY;
 
 /**
  * DBAL-backed implementation of the transactional outbox storage.
@@ -63,6 +69,21 @@ final class DbalOutboxStorage implements OutboxStorage
     private const FAILURE_COLUMNS = ['attempts', 'available_at', 'failed_at', 'last_error'];
 
     private const PURGE_BATCH_SIZE = 1000;
+
+    /**
+     * Indexes by name suffix. "pending" serves the relay: per transport, the pending rows
+     * (published_at and failed_at NULL), new ones by created_at (available_at NULL), retries by
+     * available_at. The purge uses its first column. (0.4 had an index on published_at and
+     * created_at instead.).
+     *
+     * @var array<string, list<string>>
+     */
+    private const INDEXES = [
+        'pending' => ['published_at', 'failed_at', 'transport_name', 'available_at', 'created_at', 'id'],
+    ];
+
+    /** Seconds a MySQL setup waits for another one to finish. */
+    private const SETUP_LOCK_TIMEOUT = 600;
 
     /** Process-local cache of the "table is up to date" check. */
     private bool $setupDone = false;
@@ -102,18 +123,9 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $this->ensureTableExists();
 
-        // New rows first (never attempted, or requeued), in the order they were stored; then the rows
-        // whose retry time has passed. Two queries, so that both orders can use the "due" index.
-        $new = $this->ordered($this->pending($excludedTransports)->andWhere('available_at IS NULL'), ['published_at', 'failed_at', 'available_at'], ['created_at', 'id'])
-            ->setMaxResults($limit);
-        $rows = $this->guard(static fn (): array => $new->executeQuery()->fetchAllAssociative());
-
-        if (count($rows) < $limit) {
-            $retries = $this->ordered($this->pending($excludedTransports)->andWhere('available_at <= :now'), ['published_at', 'failed_at'], ['available_at', 'created_at', 'id'])
-                ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE)
-                ->setMaxResults($limit - count($rows));
-            $rows = [...$rows, ...$this->guard(static fn (): array => $retries->executeQuery()->fetchAllAssociative())];
-        }
+        // Transports take turns, so the backlog of one (e.g. after an outage) does not hold up the
+        // others; each is queried on its own part of the index, a paused one is not even read.
+        $rows = $this->dueRows($limit, $this->transportsExcept($excludedTransports));
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -246,8 +258,7 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     public function status(): array
     {
-        $this->ensureTableExists();
-
+        // Monitoring only reads: it never changes the table (an upgrade may be running elsewhere).
         $new = $this->guard(fn (): array|false => $this->pending()
             ->select('COUNT(*) AS due', 'MIN(created_at) AS since')
             ->andWhere('available_at IS NULL')
@@ -356,7 +367,7 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     public function setup(): void
     {
-        $this->guard(function (): void {
+        $this->guard(fn () => $this->whileLocked(function (): void {
             if ($this->tableExists()) {
                 $this->upgradeTable();
             } else {
@@ -375,9 +386,57 @@ final class DbalOutboxStorage implements OutboxStorage
 
             // Schema tools quote reserved words, plain queries do not: fail here, not on the first message.
             $this->connection->createQueryBuilder()->select('id')->from($this->tableName)->where('1 = 0')->executeQuery()->free();
-        });
+        }));
 
         $this->setupDone = true;
+    }
+
+    private function acquireSetupLock(AbstractPlatform $platform, string $name): bool
+    {
+        if (!$platform instanceof PostgreSQLPlatform) {
+            return 1 === (int) $this->connection->fetchOne('SELECT GET_LOCK(?, ?)', [$name, self::SETUP_LOCK_TIMEOUT]);
+        }
+
+        // Polled, not waited for: CREATE INDEX CONCURRENTLY waits for every running statement, so a
+        // process blocked in pg_advisory_lock() would deadlock with the one holding the lock.
+        for ($waited = 0; $waited < self::SETUP_LOCK_TIMEOUT; ++$waited) {
+            if (true === $this->connection->fetchOne('SELECT pg_try_advisory_lock(hashtext(?))', [$name])) {
+                return true;
+            }
+            sleep(1);
+        }
+
+        return false;
+    }
+
+    /**
+     * Runs the setup while holding a database lock, so processes that start at the same time
+     * (relay, purge, workers) do not change the table concurrently: the others wait, then find it
+     * up to date. Inside a transaction, where the setup cannot change the table anyway, and on
+     * SQLite no lock is taken.
+     *
+     * @param \Closure(): void $setup
+     */
+    private function whileLocked(\Closure $setup): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        $name = 'somework_cqrs_outbox_setup_'.substr(sha1($this->tableName), 0, 16);
+
+        if ($this->connection->isTransactionActive() || !($platform instanceof PostgreSQLPlatform || $platform instanceof AbstractMySQLPlatform)) {
+            $setup();
+
+            return;
+        }
+
+        if (!$this->acquireSetupLock($platform, $name)) {
+            throw new \RuntimeException(sprintf('Another process has been setting up the outbox table "%s" for more than %d seconds.', $this->tableName, self::SETUP_LOCK_TIMEOUT));
+        }
+
+        try {
+            $setup();
+        } finally {
+            $this->connection->executeQuery($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$name])->free();
+        }
     }
 
     /**
@@ -395,36 +454,143 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Messages that are neither published nor given up, except those of the excluded transports.
+     * The due rows of the given transports, taking turns between them. For each transport: the new
+     * rows first, in the order they were stored, then the rows whose retry time has passed, in the
+     * order of their retry time.
      *
-     * @param list<string|null> $excludedTransports
+     * @param list<string|null> $transports null stands for the rows without a transport name
+     *
+     * @return list<array<string, mixed>>
      */
-    private function pending(array $excludedTransports = []): QueryBuilder
+    private function dueRows(int $limit, array $transports): array
     {
-        $query = $this->connection->createQueryBuilder()
-            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'attempts', 'last_error')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NULL');
-
-        if (in_array(null, $excludedTransports, true)) {
-            $query->andWhere('transport_name IS NOT NULL');
+        $queues = [];
+        foreach ($transports as $transport) {
+            $ids = $this->dueIds($transport, $limit, 'available_at IS NULL', ['available_at'], ['created_at', 'id']);
+            if (count($ids) < $limit) {
+                $ids = [...$ids, ...$this->dueIds($transport, $limit - count($ids), 'available_at <= :now', [], ['available_at', 'created_at', 'id'])];
+            }
+            if ([] !== $ids) {
+                $queues[] = $ids;
+            }
         }
 
-        $excludedNames = array_values(array_filter($excludedTransports, is_string(...)));
-        if ([] !== $excludedNames) {
-            $query->andWhere('transport_name IS NULL OR transport_name NOT IN (:excluded)')
-                ->setParameter('excluded', $excludedNames, ArrayParameterType::STRING);
+        $ids = [];
+        for ($position = 0; count($ids) < $limit; ++$position) {
+            $taken = false;
+            foreach ($queues as $queue) {
+                if (isset($queue[$position])) {
+                    $ids[] = $queue[$position];
+                    $taken = true;
+                    if (count($ids) === $limit) {
+                        break 2;
+                    }
+                }
+            }
+            if (!$taken) {
+                break;
+            }
         }
 
-        return $query;
+        if ([] === $ids) {
+            return [];
+        }
+
+        // Only the chosen rows are read in full (bodies can be large).
+        $query = $this->pending()->andWhere('id IN (:ids)')->setParameter('ids', $ids, ArrayParameterType::STRING);
+        $rows = [];
+        foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
+            $rows[strtolower((string) $row['id'])] = $row;
+        }
+
+        $due = [];
+        foreach ($ids as $id) {
+            // Published or given up by another relay in the meantime: skipped.
+            if (isset($rows[strtolower($id)])) {
+                $due[] = $rows[strtolower($id)];
+            }
+        }
+
+        return $due;
     }
 
     /**
-     * Orders by the "due" index. MySQL treats columns filtered with IS NULL as constant and sorts
+     * Ids of the due rows of one transport, in index order (the index covers the query).
+     *
+     * @param list<string> $nullColumns Index columns after transport_name the condition restricts to NULL
+     * @param list<string> $order
+     *
+     * @return list<string>
+     */
+    private function dueIds(?string $transport, int $limit, string $condition, array $nullColumns, array $order): array
+    {
+        $query = $this->pending()->select('id')->andWhere($condition)->setMaxResults($limit);
+        if (null === $transport) {
+            $query->andWhere('transport_name IS NULL');
+        } else {
+            $query->andWhere('transport_name = :transport')->setParameter('transport', $transport);
+        }
+        if (str_contains($condition, ':now')) {
+            $query->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE);
+        }
+
+        $query = $this->ordered($query, ['published_at', 'failed_at', 'transport_name', ...$nullColumns], $order);
+
+        return array_map(static fn (mixed $id): string => (string) $id, $this->guard(static fn (): array => $query->executeQuery()->fetchFirstColumn()));
+    }
+
+    /**
+     * The transports that have pending rows, except the excluded ones; null stands for the rows
+     * without a transport name. Found by skipping through the index, one probe per transport,
+     * instead of reading the pending rows.
+     *
+     * @param list<string|null> $excludedTransports
+     *
+     * @return list<string|null>
+     */
+    private function transportsExcept(array $excludedTransports): array
+    {
+        $transports = in_array(null, $excludedTransports, true) ? [] : [null];
+        $previous = null;
+
+        while (true) {
+            $query = $this->ordered($this->pending()->select('transport_name')->andWhere('transport_name IS NOT NULL'), ['published_at', 'failed_at'], ['transport_name'])
+                ->setMaxResults(1);
+            if (null !== $previous) {
+                $query->andWhere('transport_name > :previous')->setParameter('previous', $previous);
+            }
+
+            $name = $this->guard(static fn (): mixed => $query->executeQuery()->fetchOne());
+            if (!is_string($name)) {
+                break;
+            }
+
+            if (!in_array($name, $excludedTransports, true)) {
+                $transports[] = $name;
+            }
+            $previous = $name;
+        }
+
+        return $transports;
+    }
+
+    /**
+     * Messages that are neither published nor given up.
+     */
+    private function pending(): QueryBuilder
+    {
+        return $this->connection->createQueryBuilder()
+            ->select('id', 'body', 'headers', 'transport_name', 'created_at', 'available_at', 'attempts', 'last_error')
+            ->from($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NULL');
+    }
+
+    /**
+     * Orders by an index. MySQL treats columns filtered with IS NULL or "=" as constant and sorts
      * when they appear in ORDER BY; PostgreSQL only walks the index when they do.
      *
-     * @param list<string> $nullColumns Leading index columns the query restricts to NULL
+     * @param list<string> $nullColumns Leading index columns the query restricts to one value
      * @param list<string> $columns     The order
      */
     private function ordered(QueryBuilder $query, array $nullColumns, array $columns): QueryBuilder
@@ -450,48 +616,108 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Adds the columns and the index that a table of an earlier version lacks, and drops the
-     * index of 0.4 that the new one replaces (PostgreSQL would still pick it and sort).
+     * Adds the columns and indexes that a table of an earlier version lacks, and drops the index
+     * of 0.4 that they replace (PostgreSQL would still pick it and sort). On PostgreSQL the
+     * indexes are built with CONCURRENTLY, so writes to a large table go on meanwhile.
      */
     private function upgradeTable(): void
     {
         $schemaManager = $this->connection->createSchemaManager();
         $current = $this->introspectTable($schemaManager);
-        $missing = array_values(array_filter(self::FAILURE_COLUMNS, static fn (string $column): bool => !$current->hasColumn($column)));
-        $dueIndex = self::indexName($this->tableName, 'due');
-        $missingIndex = !$current->hasIndex($dueIndex);
-        $legacyIndex = self::indexName($this->tableName, 'published_created');
-        $hasLegacyIndex = $current->hasIndex($legacyIndex);
+        $missingColumns = array_values(array_filter(self::FAILURE_COLUMNS, static fn (string $column): bool => !$current->hasColumn($column)));
+        $missingIndexes = array_filter(self::INDEXES, fn (string $suffix): bool => !$current->hasIndex(self::indexName($this->tableName, $suffix)), ARRAY_FILTER_USE_KEY);
+        $legacyIndex = $this->legacyIndexName($current);
 
-        if ([] === $missing && !$missingIndex && !$hasLegacyIndex) {
+        if ([] === $missingColumns && [] === $missingIndexes && null === $legacyIndex) {
             return;
         }
 
-        $this->assertNoTransaction([] === $missing ? sprintf('needs the index %s instead of %s', $dueIndex, $legacyIndex) : sprintf('lacks the columns %s', implode(', ', $missing)));
+        $this->assertNoTransaction([] === $missingColumns ? 'needs the indexes of this version' : sprintf('lacks the columns %s', implode(', ', $missingColumns)));
 
+        $concurrently = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
         $upgraded = clone $current;
-        self::addColumns($upgraded, $missing);
-        if ($missingIndex) {
-            self::addDueIndex($upgraded, $this->tableName);
-        }
-        if ($hasLegacyIndex) {
-            $upgraded->dropIndex($legacyIndex);
+        self::addColumns($upgraded, $missingColumns);
+        if (!$concurrently) {
+            foreach ($missingIndexes as $suffix => $columns) {
+                $upgraded->addIndex($columns, self::indexName($this->tableName, $suffix));
+            }
         }
 
         try {
             $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded));
+
+            if ($concurrently) {
+                foreach ($missingIndexes as $suffix => $columns) {
+                    $this->createIndexConcurrently(self::indexName($this->tableName, $suffix), $columns);
+                }
+            }
+
+            // Only once the new index exists: a failed build must not leave the relay without an index.
+            if (null !== $legacyIndex) {
+                if ($concurrently) {
+                    $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($legacyIndex)));
+                } else {
+                    $withoutLegacyIndex = clone $upgraded;
+                    $withoutLegacyIndex->dropIndex($legacyIndex);
+                    $schemaManager->alterTable($schemaManager->createComparator()->compareTables($upgraded, $withoutLegacyIndex));
+                }
+            }
         } catch (DbalException $exception) {
             // Another process may have upgraded the table in the meantime.
             $now = $this->introspectTable($schemaManager);
-            foreach ($missing as $column) {
+            foreach ($missingColumns as $column) {
                 if (!$now->hasColumn($column)) {
                     throw $exception;
                 }
             }
-            if (!$now->hasIndex($dueIndex)) {
-                throw $exception;
+            foreach (array_keys($missingIndexes) as $suffix) {
+                if (!$now->hasIndex(self::indexName($this->tableName, $suffix))) {
+                    throw $exception;
+                }
             }
         }
+    }
+
+    /**
+     * @param list<string> $columns
+     */
+    private function createIndexConcurrently(string $name, array $columns): void
+    {
+        try {
+            $this->connection->executeStatement(sprintf('CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)', $name, $this->tableName, implode(', ', $columns)));
+        } catch (DbalException $exception) {
+            // A failed concurrent build leaves an invalid index behind, which the next setup would take for done.
+            $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($name)));
+
+            throw $exception;
+        }
+    }
+
+    /**
+     * Indexes live in the schema of their table.
+     */
+    private function qualifiedIndexName(string $index): string
+    {
+        $parts = explode('.', $this->tableName, 2);
+
+        return isset($parts[1]) ? $parts[0].'.'.$index : $index;
+    }
+
+    /**
+     * The index of 0.4 on (published_at, created_at), if the table still has it. 0.4 named it
+     * "idx_<table>_published_created", which PostgreSQL cut to 63 characters.
+     */
+    private function legacyIndexName(Table $table): ?string
+    {
+        $name = 'idx_'.str_replace('.', '_', $this->tableName).'_published_created';
+
+        foreach ([$name, substr($name, 0, 63)] as $candidate) {
+            if ($table->hasIndex($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -660,17 +886,9 @@ final class DbalOutboxStorage implements OutboxStorage
             $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
         }
 
-        self::addDueIndex($table, $tableName);
-    }
-
-    /**
-     * Serves the relay: both of its queries select pending rows (published_at and failed_at NULL),
-     * new ones by created_at (available_at NULL), retries by available_at. The purge uses its
-     * first column. (0.4 had an index on published_at and created_at instead.).
-     */
-    private static function addDueIndex(Table $table, string $tableName): void
-    {
-        $table->addIndex(['published_at', 'failed_at', 'available_at', 'created_at', 'id'], self::indexName($tableName, 'due'));
+        foreach (self::INDEXES as $suffix => $columns) {
+            $table->addIndex($columns, self::indexName($tableName, $suffix));
+        }
     }
 
     /**

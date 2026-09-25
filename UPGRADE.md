@@ -215,17 +215,21 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 ### Transactional outbox
 
 - **The table gains four columns** (`attempts`, `available_at`, `failed_at`, `last_error`) **and the index
-  `idx_<table>_due`**, which replaces `idx_<table>_published_created`. `store()` keeps working on the old table,
-  but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the missing columns and index
-  and drops the old index; `auto_setup: true` does the same outside a transaction), generate a Doctrine
-  migration (with doctrine/orm the schema listener includes them), or change the table by hand, see
+  `idx_<table>_pending`**, which replaces `idx_<table>_published_created`. `store()` keeps working on the old
+  table, but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the missing columns and
+  the index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait
+  for each other;
+  `auto_setup: true` does the same outside a transaction), generate a Doctrine migration (with doctrine/orm the
+  schema listener includes them; its plain `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the
+  published rows first on a large table), or change the table by hand, see
   [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they
   ignore retry times, given-up rows and claims.
 - `OutboxStorage` is now `@api` and changed. Custom implementations must:
   - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it
-    returns only due messages (unpublished, not given up, retry time passed), first those never attempted in
-    the order they were stored, then the others in the order of their retry time, and skips the messages of the
-    excluded transports (`null` stands for messages without a transport name);
+    returns only due messages (unpublished, not given up, retry time passed), the transports taking turns and,
+    within a transport, first those never attempted in the order they were stored, then the others in the order
+    of their retry time; it skips the messages of the excluded transports (`null` stands for messages without a
+    transport name);
   - add `recordAttempt(string $id, int $attempts, string $error, ?DateTimeImmutable $retryAt, ?int $previousAttempts = null): bool`.
     It stores the given number of attempts; the relay calls it before every attempt and again when the attempt
     fails. With `$previousAttempts` it only records while the message is not given up and the stored attempts
@@ -253,7 +257,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   crashes the relay process is not retried forever and overlapping relays skip each other's rows. Rows whose
   transport fails (`TransportException`) get three times `outbox.max_attempts`, and a transport that fails 3
   times in a row is paused until the next run while the other transports are relayed. Rows are relayed in the
-  order: new rows first, in the order they were stored, then the rows due for a retry. The relay exits
+  order: the transports take turns; within one, new rows first, in the order they were stored, then the rows due
+  for a retry. The relay exits
   with code 1 when any row failed, the storage failed or a signal (SIGTERM, SIGINT) stopped it after the current
   row (monitor the exit code, or the new outbox check of `somework:cqrs:health`); an invalid `--limit` now exits
   with 2 instead of 1. `--limit` counts processed rows, failed ones included. The relay logs failures to the
@@ -268,7 +273,7 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   word reserved in MySQL, MariaDB, PostgreSQL or SQLite (`order`, `user`, …), and
   `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
-- With very long table names the new index is named `idx_<hash>_due`.
+- With very long table names the new index is named `idx_<hash>_pending`.
 
 ### Console commands
 

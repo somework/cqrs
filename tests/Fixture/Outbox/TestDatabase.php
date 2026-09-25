@@ -4,18 +4,22 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Outbox;
 
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
+use Doctrine\DBAL\Logging\Middleware as LoggingMiddleware;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
+use Psr\Log\LoggerInterface;
 
 use function class_exists;
 use function getenv;
 use function is_string;
 use function method_exists;
+use function substr;
 
 /**
  * The database of the outbox tests: in-memory SQLite, or the database named by the
@@ -27,17 +31,27 @@ final class TestDatabase
     public const URL_VARIABLE = 'CQRS_TEST_DATABASE_URL';
 
     /** Tables the tests create; they are dropped before each test on a real database. */
-    private const TABLES = ['somework_cqrs_outbox', 'app_outbox', 'outbox', 'order'];
+    private const TABLES = ['somework_cqrs_outbox', 'app_outbox', 'outbox', 'order', self::LONG_TABLE_NAME];
 
-    public static function connect(): Connection
+    /** Long enough for PostgreSQL to have cut the name of its 0.4 index to 63 characters. */
+    public const LONG_TABLE_NAME = 'app_messaging_transactional_outbox_messages_x';
+
+    /**
+     * @param LoggerInterface|null $queryLogger Receives every executed SQL statement
+     */
+    public static function connect(?LoggerInterface $queryLogger = null): Connection
     {
         $url = getenv(self::URL_VARIABLE);
-
-        if (!is_string($url) || '' === $url) {
-            return DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+        $configuration = new Configuration();
+        if (null !== $queryLogger) {
+            $configuration->setMiddlewares([new LoggingMiddleware($queryLogger)]);
         }
 
-        $connection = DriverManager::getConnection((new DsnParser())->parse($url));
+        if (!is_string($url) || '' === $url) {
+            return DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true], $configuration);
+        }
+
+        $connection = DriverManager::getConnection((new DsnParser())->parse($url), $configuration);
         $platform = $connection->getDatabasePlatform();
 
         foreach (self::TABLES as $table) {
@@ -86,7 +100,8 @@ final class TestDatabase
             $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
         }
 
-        $table->addIndex(['published_at', 'created_at'], 'idx_'.$tableName.'_published_created');
+        // PostgreSQL cuts longer names to 63 characters (MySQL rejects them).
+        $table->addIndex(['published_at', 'created_at'], substr('idx_'.$tableName.'_published_created', 0, 63));
 
         $connection->createSchemaManager()->createTable($table);
     }

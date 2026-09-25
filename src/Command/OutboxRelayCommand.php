@@ -75,6 +75,12 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     /** Consecutive send failures after which the other messages of that transport wait for the next run. */
     private const MAX_CONSECUTIVE_TRANSPORT_FAILURES = 3;
 
+    /**
+     * The same for a transport that accepted a message in this run: it is up, and failures are
+     * more likely rejections of single messages (e.g. too large) than an outage.
+     */
+    private const MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT = 10;
+
     /** A message whose transport fails (unreachable, or rejecting it) gets this many times max_attempts. */
     private const TRANSPORT_ATTEMPTS_FACTOR = 3;
 
@@ -211,6 +217,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         $seen = [];
         /** @var array<string, int> $consecutiveTransportFailures Keyed by transport name, "" for messages without one */
         $consecutiveTransportFailures = [];
+        /** @var array<string, true> $workingTransports Transports that accepted a message in this run */
+        $workingTransports = [];
         /** @var list<string|null> $pausedTransports Transports that failed too often in a row: their messages wait for the next run */
         $pausedTransports = [];
 
@@ -243,6 +251,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 if (self::RELAYED === $outcome) {
                     ++$relayed;
                     $consecutiveTransportFailures[$key] = 0;
+                    $workingTransports[$key] = true;
                 } elseif (self::FAILED === $outcome) {
                     ++$failed;
                 } elseif (self::TRANSPORT_FAILED === $outcome) {
@@ -250,9 +259,10 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                     $consecutiveTransportFailures[$key] = ($consecutiveTransportFailures[$key] ?? 0) + 1;
 
                     // The transport is probably down: do not walk its whole backlog, but keep relaying the other transports.
-                    if (self::MAX_CONSECUTIVE_TRANSPORT_FAILURES === $consecutiveTransportFailures[$key]) {
+                    $maxFailures = isset($workingTransports[$key]) ? self::MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT : self::MAX_CONSECUTIVE_TRANSPORT_FAILURES;
+                    if ($maxFailures === $consecutiveTransportFailures[$key]) {
                         $pausedTransports[] = $message->transportName;
-                        $this->reportPausedTransport($message->transportName, $io);
+                        $this->reportPausedTransport($message->transportName, $maxFailures, $io);
                     }
                 }
 
@@ -411,15 +421,15 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         return false;
     }
 
-    private function reportPausedTransport(?string $transportName, SymfonyStyle $io): void
+    private function reportPausedTransport(?string $transportName, int $failures, SymfonyStyle $io): void
     {
         if (null === $transportName) {
-            $io->warning(sprintf('Messages without a transport name failed to be sent %d times in a row; the other ones wait for the next run.', self::MAX_CONSECUTIVE_TRANSPORT_FAILURES));
+            $io->warning(sprintf('Messages without a transport name failed to be sent %d times in a row; the other ones wait for the next run.', $failures));
         } else {
-            $io->warning(sprintf('Transport "%s" failed %d times in a row; its other messages wait for the next run.', $transportName, self::MAX_CONSECUTIVE_TRANSPORT_FAILURES));
+            $io->warning(sprintf('Transport "%s" failed %d times in a row; its other messages wait for the next run.', $transportName, $failures));
         }
 
-        $this->logger?->warning('The outbox relay paused transport {transport} for this run after {count} consecutive failures.', ['transport' => $transportName ?? '(routing)', 'count' => self::MAX_CONSECUTIVE_TRANSPORT_FAILURES]);
+        $this->logger?->warning('The outbox relay paused transport {transport} for this run after {count} consecutive failures.', ['transport' => $transportName ?? '(routing)', 'count' => $failures]);
     }
 
     /**

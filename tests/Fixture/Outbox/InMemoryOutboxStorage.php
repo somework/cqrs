@@ -11,6 +11,8 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use function array_map;
 use function array_slice;
 use function in_array;
+use function ksort;
+use function max;
 use function sprintf;
 use function usort;
 
@@ -52,27 +54,42 @@ final class InMemoryOutboxStorage implements OutboxStorage
         }
 
         $now = new DateTimeImmutable();
-        $new = [];
-        $retries = [];
+        /** @var array<string, array{new: list<array{DateTimeImmutable, OutboxMessage}>, retries: list<array{DateTimeImmutable, OutboxMessage}>}> $queues */
+        $queues = [];
         foreach ($this->messages as $id => $message) {
             $failure = $this->failures[$id] ?? null;
             if (isset($this->published[$id]) || in_array($message->transportName, $excludedTransports, true)) {
                 continue;
             }
+            // Rows without a transport name first, then the transports by name.
+            $key = null === $message->transportName ? '' : '~'.$message->transportName;
+            $queues[$key] ??= ['new' => [], 'retries' => []];
             if (null === $failure) {
-                $new[] = [$message->createdAt, $message];
+                $queues[$key]['new'][] = [$message->createdAt, $message];
             } elseif (!$this->postponeFailures || (null !== $failure['retryAt'] && $failure['retryAt'] <= $now)) {
-                $retries[] = [$failure['retryAt'] ?? $now, $message];
+                $queues[$key]['retries'][] = [$failure['retryAt'] ?? $now, $message];
+            }
+        }
+        ksort($queues);
+
+        // Per transport: new messages in the order they were stored, then retries in the order of
+        // their retry time (stable sorts keep the insertion order); the transports take turns.
+        $lists = [];
+        foreach ($queues as $queue) {
+            usort($queue['new'], static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+            usort($queue['retries'], static fn (array $a, array $b): int => $a[0] <=> $b[0]);
+            $lists[] = array_map(static fn (array $entry): OutboxMessage => $entry[1], [...$queue['new'], ...$queue['retries']]);
+        }
+        $due = [];
+        for ($position = 0; [] !== $lists && $position < max(array_map(count(...), $lists)); ++$position) {
+            foreach ($lists as $list) {
+                if (isset($list[$position])) {
+                    $due[] = $list[$position];
+                }
             }
         }
 
-        // New messages in the order they were stored, then retries in the order of their retry time
-        // (stable sorts keep the insertion order).
-        usort($new, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
-        usort($retries, static fn (array $a, array $b): int => $a[0] <=> $b[0]);
-        $due = [...$new, ...$retries];
-
-        $batch = array_slice(array_map(static fn (array $entry): OutboxMessage => $entry[1], $due), 0, $limit);
+        $batch = array_slice($due, 0, $limit);
 
         if (null !== $this->afterFetch) {
             ($this->afterFetch)($batch);

@@ -757,12 +757,14 @@ checks.
 ### Outbox commands
 
 * `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
-  and adds the columns a table of an earlier version lacks.
-* `somework:cqrs:outbox:relay` sends due rows (new ones first, then retries) and
+  and adds the columns and indexes a table of an earlier version lacks.
+* `somework:cqrs:outbox:relay` sends due rows (transports take turns; new rows
+  first, then retries) and
   marks them published. A row that fails is retried later (1 minute, doubling up
   to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
   (three times as many for transport failures) it is given up. A transport that
-  fails 3 times in a row is paused until the next run.
+  fails 3 times in a row (10 times after a successful send) is paused until the
+  next run.
 * `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
   `--requeue` hands all of them, or the given ids, back to the relay.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.

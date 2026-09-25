@@ -159,7 +159,7 @@ final class OutboxRelayCommandTest extends TestCase
     public function test_failing_messages_at_the_head_do_not_block_the_queue(): void
     {
         foreach (['p1', 'p2', 'p3', 'p4', 'p5', 'p6'] as $id) {
-            $this->storage->store(new OutboxMessage($id, 'not a serialized envelope', '{}', new DateTimeImmutable('2026-01-01')));
+            $this->storage->store(new OutboxMessage($id, 'not a serialized envelope', '{}', new DateTimeImmutable('2026-01-01'), 'async'));
         }
         $this->store(new CreateTaskCommand('1', 'ok'), 'async');
         $this->store(new CreateTaskCommand('2', 'ok'), 'async');
@@ -583,6 +583,27 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertCount(4, $this->storage->failures);
     }
 
+    public function test_a_transport_that_accepted_a_message_is_paused_only_after_ten_failures_in_a_row(): void
+    {
+        // Many messages are rejected by the broker (e.g. too large), but the transport is up.
+        $rows = [];
+        foreach (['ok1', 'r1', 'r2', 'r3', 'ok2', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11', 'r12', 'r13', 'ok3'] as $taskId) {
+            $rows[$taskId] = $this->store(new CreateTaskCommand($taskId, 'x'), 'async')->id;
+        }
+        $bus = new CallbackBus(static function (object $message): void {
+            if ($message instanceof CreateTaskCommand && str_starts_with($message->id, 'r')) {
+                throw new TransportException('Message too large');
+            }
+        });
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
+        $tester->execute([]);
+
+        self::assertTrue($this->storage->isPublished($rows['ok2']), 'Three rejections in a row do not pause a transport that works.');
+        self::assertStringContainsString('Transport "async" failed 10 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertFalse($this->storage->isPublished($rows['ok3']));
+    }
+
     public function test_new_messages_are_relayed_before_retries(): void
     {
         // Rejected by the broker before (e.g. too large); they are due again, and older than the new messages.
@@ -606,9 +627,8 @@ final class OutboxRelayCommandTest extends TestCase
         $tester->execute([]);
 
         self::assertSame(['n1', 'n2', 'n3'], $sent, 'The rejected messages do not hold up the new ones.');
-        self::assertStringContainsString('Transport "async" failed 3 times in a row', self::display($tester));
-        self::assertSame(2, $this->storage->attempts('r3'));
-        self::assertSame(1, $this->storage->attempts('r4'), 'The transport is paused: the other retries wait for the next run.');
+        self::assertStringNotContainsString('times in a row', self::display($tester), 'The transport accepted the new messages: it is not paused.');
+        self::assertSame(2, $this->storage->attempts('r5'));
     }
 
     public function test_a_signal_during_a_fetch_starts_no_further_message(): void

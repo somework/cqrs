@@ -417,7 +417,8 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   are relayed; the command exits with `1`. The maximum is three times
   `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
 * `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
-  The broker is down or rejects the messages. The rows of the other transports
+  The broker is down or rejects the messages (`failed 10 times in a row` when it
+  accepted a message earlier in the run). The rows of the other transports
   are still relayed; the paused ones are tried again by the next run.
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
   `outbox.max_attempts` times (three times as many for transport failures). Fix
@@ -430,8 +431,8 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   requeuing it.
 * `Skipped <n> message(s) that another relay claimed first.` Two relays ran at
   the same time (no `symfony/lock`, or a lock store that only guards one host).
-  Each skipped row was sent by the other relay; only a send that outlasts the
-  retry delay can be sent twice. Configure a shared lock store.
+  The other relay claimed each skipped row and made the attempt; only a send
+  that outlasts the retry delay can be sent twice. Configure a shared lock store.
 * `Stopped by signal <number> after <count> message(s) …` The process received
   SIGTERM or SIGINT and stopped after the current row; the next run continues.
 * `Failed to relay message "<id>", but another relay claimed it in the meantime: <reason>`
