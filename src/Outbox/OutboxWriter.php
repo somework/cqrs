@@ -15,7 +15,6 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
-use function count;
 
 /**
  * Stores messages in the outbox: call it inside the database transaction of the business change.
@@ -56,12 +55,13 @@ final class OutboxWriter
         $envelope = new Envelope($message, array_values($stamps));
         $stored = [];
         $transports = null !== $transportName ? [$transportName] : $this->transportsFor($message);
-        // One row per transport: rows sharing a deduplication key would drop each other when relayed.
-        $deduplicate = count($transports) > 1 ? $envelope->last(DeduplicateStamp::class) : null;
+        // The deduplication key is scoped to the row's transport: the rows of one message for several
+        // transports (stored at once or one by one) would otherwise drop each other when relayed.
+        $deduplicate = $envelope->last(DeduplicateStamp::class);
 
         foreach ($transports as $transport) {
             $row = OutboxMessage::fromEnvelope(
-                $deduplicate instanceof DeduplicateStamp
+                $deduplicate instanceof DeduplicateStamp && null !== $transport
                     ? $envelope->withoutAll(DeduplicateStamp::class)->with(new DeduplicateStamp((string) $deduplicate->getKey().'@'.$transport, $deduplicate->getTtl(), $deduplicate->onlyDeduplicateInQueue()))
                     : $envelope,
                 $this->serializer,

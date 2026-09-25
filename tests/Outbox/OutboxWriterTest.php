@@ -70,8 +70,12 @@ final class OutboxWriterTest extends TestCase
         }, $rows);
         self::assertSame(['task-1@async', 'task-1@audit'], $keys);
 
-        $single = (new OutboxWriter($this->storage, new PhpSerializer()))->store(new CreateTaskCommand('2', 'b'), 'async', new DeduplicateStamp('task-2'));
-        self::assertSame('task-2', (string) (new PhpSerializer())->decode(['body' => $single[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
+        // Also for rows stored one by one per transport; a row that follows the routing keeps the key.
+        $writer = new OutboxWriter($this->storage, new PhpSerializer());
+        $single = $writer->store(new CreateTaskCommand('2', 'b'), 'async', new DeduplicateStamp('task-2'));
+        self::assertSame('task-2@async', (string) (new PhpSerializer())->decode(['body' => $single[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
+        $routed = $writer->store(new CreateTaskCommand('3', 'c'), null, new DeduplicateStamp('task-3'));
+        self::assertSame('task-3', (string) (new PhpSerializer())->decode(['body' => $routed[0]->body, 'headers' => []])->last(DeduplicateStamp::class)?->getKey());
     }
 
     public function test_without_a_configured_transport_the_row_follows_the_routing(): void

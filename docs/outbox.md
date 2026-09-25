@@ -438,9 +438,11 @@ What happens in special cases:
   deduplication dropped this retry …` and is retried after the backoff, when the lock has
   usually expired. A lock without a TTL never expires: release it, or the relay gives the row
   up after `max_attempts`. Release the lock (or wait for its TTL) before you requeue such a
-  row: a requeued row starts again at its first attempt. `OutboxWriter` gives the rows of a
-  message stored for several transports their own key (`<key>@<transport>`), so they do not
-  drop each other.
+  row: a requeued row starts again at its first attempt. `OutboxWriter` scopes the key to the
+  transport of the row (`<key>@<transport>`), so the rows of a message stored for several
+  transports, at once or one by one, do not drop each other; a row that follows the Messenger
+  routing keeps the key. Rows you store with `OutboxStorage::store()` yourself need distinct
+  keys per transport.
 - **SIGTERM and SIGINT stop the run after the current row.** With the `pcntl` extension, the
   relay finishes the row it is working on, starts no other, marks the sent rows as published,
   releases the claims of the others, prints `Stopped by signal <number>

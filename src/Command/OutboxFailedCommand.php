@@ -200,17 +200,24 @@ final class OutboxFailedCommand extends Command
         }
 
         $signed = 0;
+        $changed = null;
         try {
-            return $this->requeue($io, $storage, $ids, $transport, static function (OutboxMessage $message) use ($signer, $reviewed, &$signed): string {
+            return $this->requeue($io, $storage, $ids, $transport, static function (OutboxMessage $message) use ($signer, $reviewed, &$signed, &$changed): string {
                 if (!array_key_exists($message->id, $reviewed) || (null !== $reviewed[$message->id] && !hash_equals($reviewed[$message->id], FailedOutboxMessage::digest($message->body, $message->headers)))) {
-                    throw new \UnexpectedValueException($message->id);
+                    $changed = $message->id;
+
+                    throw new \RuntimeException(sprintf('Message "%s" changed after it was listed.', $message->id));
                 }
                 ++$signed;
 
                 return $signer->sign($message);
             });
-        } catch (\UnexpectedValueException $changed) {
-            $io->error(sprintf('Message "%s" changed after it was listed: it was not signed, nor were the messages after it%s. Run the command again.', self::printable($changed->getMessage()), 0 === $signed ? '' : sprintf(' (%d message(s) before it were signed and requeued)', $signed)));
+        } catch (\Throwable $exception) {
+            if (null === $changed) {
+                throw $exception;
+            }
+
+            $io->error(sprintf('Message "%s" changed after it was listed: it was not signed, nor were the messages after it%s. Run the command again.', self::printable($changed), 0 === $signed ? '' : sprintf(' (%d message(s) before it were signed and requeued)', $signed)));
 
             return self::FAILURE;
         }

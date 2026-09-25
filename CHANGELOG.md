@@ -27,7 +27,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A service id or rate limiter that does not exist, or a service that does not implement the interface its option needs, fails the build with the configuration path that names it.
 
 **Transactional outbox**
-- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (a `DeduplicateStamp` gets a key per transport); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
+- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (the key of a `DeduplicateStamp` is scoped to the row's transport); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
 - The commands `somework:cqrs:outbox:setup`, `…:failed` (list, `--requeue`, `--transport`, `--sign`) and `…:purge`; the options `outbox.storage`, `connection`, `serializer`, `auto_setup`, `max_attempts` and `signing`.
 - Retries with an exponential backoff (1 minute up to 1 hour); a row is given up after `outbox.max_attempts` attempts, or three times as many when its transport fails.
 - The relay claims each fetched batch with a token of its run before sending, and renews the claims of its batch every 20 seconds, so a slow send does not let another relay take them over. A row whose attempt was interrupted (the process died) is retried on its own, keeps the error of the attempt before, and is given up after three times `max_attempts`. Unattempted claims are released, also when a send throws, and sent rows are marked as published at most 2 seconds later, also while a slow send is running.
