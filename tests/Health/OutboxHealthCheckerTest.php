@@ -119,6 +119,20 @@ final class OutboxHealthCheckerTest extends TestCase
         self::assertStringStartsWith('The outbox table needs "bin/console somework:cqrs:outbox:setup": its structure cannot be read (', $results[0][1]);
     }
 
+    public function test_an_unreachable_database_is_critical(): void
+    {
+        $down = new BeforeQueryMiddleware('');
+        $connection = TestDatabase::connect(null, [$down]);
+        // Every statement fails, e.g. the database is down.
+        $down->replacement = 'SELECT broken FROM nowhere';
+
+        $results = self::summary((new OutboxHealthChecker(new DbalOutboxStorage($connection)))->check());
+
+        self::assertCount(1, $results);
+        self::assertSame(CheckSeverity::CRITICAL, $results[0][0]);
+        self::assertStringStartsWith('The outbox storage cannot be read: ', $results[0][1]);
+    }
+
     public function test_an_unreadable_storage_is_critical(): void
     {
         $storage = new DbalOutboxStorage(TestDatabase::connect(), autoSetup: false);

@@ -49,6 +49,7 @@ use function sha1;
 use function sprintf;
 use function str_contains;
 use function str_replace;
+use function str_starts_with;
 use function strlen;
 use function strtolower;
 use function substr;
@@ -98,8 +99,11 @@ final class DbalOutboxStorage implements OutboxStorage
     /** Seconds the setup command waits for another setup to finish. */
     private const SETUP_LOCK_TIMEOUT = 600;
 
-    /** Seconds after which a process looks at the table again (e.g. whether the setup command built the index meanwhile). */
+    /** Seconds after which a process looks at the table again (e.g. whether the setup command changed it meanwhile). */
     private const RECHECK_SECONDS = 60;
+
+    /** The same for the index of the relay while it is missing: the setup command drops the one of 0.4 that the relay then uses. */
+    private const INDEX_RECHECK_SECONDS = 10;
 
     /** Seconds a process that finds the table unusable (e.g. the relay) waits for another setup to finish. */
     private const AUTO_SETUP_LOCK_TIMEOUT = 30;
@@ -131,6 +135,9 @@ final class DbalOutboxStorage implements OutboxStorage
 
     /** @var (\Closure(): void)|null See setup() */
     private ?\Closure $onWait = null;
+
+    /** What the last taken setup lock returned (on PostgreSQL the server process that holds it). */
+    private int $lockHolder = 0;
 
     public function __construct(
         private readonly Connection $connection,
@@ -645,8 +652,24 @@ final class DbalOutboxStorage implements OutboxStorage
         // The change must not queue behind a transaction on the table: the writes would queue behind it.
         if ($platform instanceof PostgreSQLPlatform) {
             $this->lockWithoutQueueing(self::AUTO_DDL_LOCK_TIMEOUT);
-        } elseif ($platform instanceof MariaDBPlatform) {
-            $this->alterWithoutQueueing($platform->getAlterTableSQL($diff), self::AUTO_DDL_LOCK_TIMEOUT);
+        } elseif ($platform instanceof AbstractMySQLPlatform) {
+            // Only a change that takes no time (not a rebuild of a big table, e.g. with ROW_FORMAT=COMPRESSED).
+            $statements = array_map(static fn (string $sql): string => str_starts_with($sql, 'ALTER TABLE') ? $sql.', ALGORITHM=INSTANT' : $sql, $platform->getAlterTableSQL($diff));
+            try {
+                if ($platform instanceof MariaDBPlatform) {
+                    $this->alterWithoutQueueing($statements, self::AUTO_DDL_LOCK_TIMEOUT);
+                } else {
+                    foreach ($statements as $sql) {
+                        $this->connection->executeStatement($sql);
+                    }
+                }
+            } catch (DriverException $exception) {
+                if ('0A000' !== $exception->getSQLState()) {
+                    throw $exception;
+                }
+
+                throw new \RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version, which this database cannot add without rebuilding the table. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName), 0, $exception);
+            }
 
             return;
         }
@@ -683,16 +706,19 @@ final class DbalOutboxStorage implements OutboxStorage
             usleep(50_000);
         }
 
+        // Only an autovacuum that gives way (after deadlock_timeout; one that prevents a wraparound
+        // does not)? Other sessions count as clients when their details are hidden (without
+        // pg_read_all_stats): the upgrade is then left to the setup command.
         $clients = (int) $this->connection->fetchOne(
-            "SELECT COUNT(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = to_regclass(?) AND l.granted AND l.pid <> pg_backend_pid() AND a.backend_type IS DISTINCT FROM 'autovacuum worker'",
+            "SELECT COUNT(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = to_regclass(?) AND l.granted AND l.pid <> pg_backend_pid() AND (a.backend_type IS DISTINCT FROM 'autovacuum worker' OR a.query LIKE '%(to prevent wraparound)%')",
             [$this->tableName],
         );
         if (0 !== $clients) {
             throw $this->tableLocked($seconds);
         }
 
-        // Only autovacuum, which is cancelled once the request has waited for deadlock_timeout (1 second by default).
-        $this->connection->executeStatement(sprintf("SET LOCAL lock_timeout = '%ds'", $seconds + 2));
+        // The writes of the table wait behind this request until autovacuum is cancelled.
+        $this->connection->executeStatement("SELECT set_config('lock_timeout', (EXTRACT(EPOCH FROM current_setting('deadlock_timeout')::interval) * 1000 + 500)::int || 'ms', true)");
         $this->connection->executeStatement(sprintf('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', $this->tableName));
     }
 
@@ -890,13 +916,16 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
-        $backend = $platform instanceof PostgreSQLPlatform ? $this->assertDirectConnection(null) : null;
+        if ($platform instanceof PostgreSQLPlatform) {
+            $this->assertDirectConnection();
+        }
 
         // Polled, not waited for: on PostgreSQL, CREATE INDEX CONCURRENTLY waits for every running
         // statement, so a process blocked in pg_advisory_lock() would deadlock with the one holding
-        // the lock. On MySQL, in short waits, so that a second signal stops the process.
+        // the lock. On MySQL, in short waits, so that a second signal stops the process. The
+        // PostgreSQL lock returns the server process that holds it.
         $locked = $platform instanceof PostgreSQLPlatform
-            ? $this->pollLock('SELECT pg_try_advisory_lock(hashtext(?))', $timeout, false, $stillNeeded)
+            ? $this->pollLock('SELECT CASE WHEN pg_try_advisory_lock(hashtext(?)) THEN pg_backend_pid() ELSE 0 END', $timeout, false, $stillNeeded)
             : $this->pollLock('SELECT GET_LOCK(?, 1)', $timeout, true, $stillNeeded);
         if (false === $locked) {
             throw $this->setupRunsElsewhere($timeout);
@@ -905,40 +934,67 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
+        $failure = null;
         try {
-            if (null !== $backend) {
-                $this->assertDirectConnection($backend);
+            if ($platform instanceof PostgreSQLPlatform && (int) $this->connection->fetchOne('SELECT pg_backend_pid()') !== $this->lockHolder) {
+                throw $this->pooler();
             }
             $setup();
-        } finally {
-            $released = $this->connection->fetchOne($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$this->setupLockName()]);
+        } catch (\Throwable $exception) {
+            $failure = $exception;
         }
 
-        // Another server connection took the lock: a pooler handed the statements around, and the
-        // lock now stays with it (until that connection closes).
-        if ($platform instanceof PostgreSQLPlatform && true !== $released) {
-            throw new \RuntimeException(sprintf('The outbox table "%s" was set up, but through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection until it closes, and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
+        if ($platform instanceof PostgreSQLPlatform) {
+            if (!$this->releaseSessionLock()) {
+                // A pooler handed the statements around: the lock stays with the server connection that took it.
+                throw new SetupLockLeftBehind(sprintf('The outbox table "%s" %s through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection until it closes (e.g. RECONNECT in the admin console of PgBouncer), and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName, null === $failure ? 'is set up, but was set up' : 'was not set up'), 0, $failure);
+            }
+        } else {
+            $this->connection->executeQuery('SELECT RELEASE_LOCK(?)', [$this->setupLockName()])->free();
         }
+
+        if (null !== $failure) {
+            throw $failure;
+        }
+    }
+
+    /**
+     * Releases the PostgreSQL session lock on the server process that holds it; behind a pooler, a
+     * statement may run on another one, so it tries a few times.
+     */
+    private function releaseSessionLock(): bool
+    {
+        for ($try = 0; $try < 20; ++$try) {
+            $released = $this->connection->fetchOne('SELECT CASE WHEN pg_backend_pid() = ? THEN pg_advisory_unlock(hashtext(?)) END', [$this->lockHolder, $this->setupLockName()]);
+            if (null !== $released && false !== $released) {
+                return (bool) $released;
+            }
+            usleep(20_000);
+        }
+
+        return false;
+    }
+
+    private function pooler(): \RuntimeException
+    {
+        return new \RuntimeException(sprintf('The outbox table "%s" is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
     }
 
     /**
      * A pooler in transaction mode (PgBouncer) hands every statement to any server connection: the
-     * session lock and settings of the setup would stay with other clients. Returns the backend.
+     * session lock and settings of the setup would stay with other clients. Not every pooler is
+     * noticed (e.g. without other traffic, the same server connection serves every statement).
      */
-    private function assertDirectConnection(?int $backend): int
+    private function assertDirectConnection(): void
     {
-        $current = (int) $this->connection->fetchOne('SELECT pg_backend_pid()');
-        $backend ??= (int) $this->connection->fetchOne('SELECT pg_backend_pid()');
-
-        if ($current !== $backend) {
-            throw new \RuntimeException(sprintf('The outbox table "%s" is set up through a pooler in transaction mode (e.g. PgBouncer), which would hand the setup lock to other clients. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
+        if ($this->connection->fetchOne('SELECT pg_backend_pid()') !== $this->connection->fetchOne('SELECT pg_backend_pid()')) {
+            throw $this->pooler();
         }
-
-        return $backend;
     }
 
     /**
-     * Runs $sql, which returns true or 1 once it got the setup lock, until $timeout seconds passed.
+     * Runs $sql, which returns true, 1 or the holding server process once it got the setup lock,
+     * until $timeout seconds passed.
      *
      * @param bool                    $waits       Whether $sql waits for the lock itself
      * @param (\Closure(): bool)|null $stillNeeded Checked after every try: false ends the wait
@@ -950,7 +1006,10 @@ final class DbalOutboxStorage implements OutboxStorage
         $deadline = microtime(true) + $timeout;
 
         while (true) {
-            if (1 === (int) $this->connection->fetchOne($sql, [$this->setupLockName()])) {
+            $locked = (int) $this->connection->fetchOne($sql, [$this->setupLockName()]);
+            if ($locked > 0) {
+                $this->lockHolder = $locked;
+
                 return true;
             }
             if (null !== $stillNeeded && !$stillNeeded()) {
@@ -1068,12 +1127,12 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Whether the relay's index exists and is usable; checked again once a minute while it is not
+     * Whether the relay's index exists and is usable; checked again every 10 seconds while it is not
      * (the setup command may build it meanwhile). When the check fails, the index is assumed.
      */
     private function hasPendingIndex(): bool
     {
-        if (true === $this->pendingIndex || (null !== $this->pendingIndex && microtime(true) - $this->pendingIndexCheckedAt < self::RECHECK_SECONDS)) {
+        if (true === $this->pendingIndex || (null !== $this->pendingIndex && microtime(true) - $this->pendingIndexCheckedAt < self::INDEX_RECHECK_SECONDS)) {
             return $this->pendingIndex;
         }
 

@@ -18,6 +18,7 @@ use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\QueryLog;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
@@ -357,18 +358,106 @@ final class DbalOutboxStorageTest extends TestCase
         TestDatabase::createTableOfVersion04($this->connection);
         // The statement that releases the lock ran on another server connection, which does not hold it.
         $pooler = new BeforeQueryMiddleware('pg_advisory_unlock');
-        $pooler->replacement = 'SELECT false WHERE CAST(? AS text) IS NOT NULL OR true';
+        $pooler->replacement = 'SELECT NULL WHERE CAST(? AS text) IS NOT NULL AND CAST(? AS text) IS NOT NULL';
         $connection = TestDatabase::connect(null, [$pooler], keepTables: true);
 
         try {
             (new DbalOutboxStorage($connection, autoSetup: false))->setup();
             self::fail('The setup lock stays with another client.');
-        } catch (\RuntimeException $exception) {
-            self::assertStringContainsString('was set up, but through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection', $exception->getMessage());
+        } catch (SetupLockLeftBehind $exception) {
+            self::assertStringContainsString('is set up, but was set up through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection', $exception->getMessage());
         } finally {
             $connection->close();
         }
         self::assertSame([], (new DbalOutboxStorage($this->connection))->pendingChanges(), 'The setup itself was done.');
+    }
+
+    public function test_a_setup_refused_after_taking_the_lock_releases_it(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('The setup takes a session lock of PostgreSQL.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        // After the lock, the pooler hands the next statement to another server connection.
+        $otherServerConnection = new BeforeQueryMiddleware('SELECT pg_backend_pid()');
+        $lock = new BeforeQueryMiddleware('pg_try_advisory_lock');
+        $lock->callback = static function () use ($otherServerConnection): void {
+            $otherServerConnection->replacement = 'SELECT 0';
+        };
+        $connection = TestDatabase::connect(null, [$otherServerConnection, $lock], keepTables: true);
+
+        try {
+            (new DbalOutboxStorage($connection, autoSetup: false))->setup();
+            self::fail('The pooler is refused.');
+        } catch (\RuntimeException $exception) {
+            self::assertStringContainsString('is set up through a pooler in transaction mode', $exception->getMessage());
+            self::assertNotInstanceOf(SetupLockLeftBehind::class, $exception);
+        }
+
+        self::assertTrue($this->connection->fetchOne('SELECT pg_try_advisory_lock(hashtext(?))', ['somework_cqrs_outbox_setup_'.substr(sha1('somework_cqrs_outbox'), 0, 16)]), 'The lock was released.');
+        $connection->close();
+    }
+
+    public function test_the_mysql_setup_lock_belongs_to_the_database_of_the_table(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            self::markTestSkipped('MySQL names its locks for the whole server.');
+        }
+        try {
+            $this->connection->executeStatement('DROP TABLE IF EXISTS cqrs_test_other.somework_cqrs_outbox');
+        } catch (DbalException $exception) {
+            self::markTestSkipped('Needs the database "cqrs_test_other": '.$exception->getMessage());
+        }
+        $holder = TestDatabase::connect(keepTables: true);
+        $holder->fetchOne('SELECT GET_LOCK(?, 0)', ['somework_cqrs_outbox_setup_'.substr(sha1('cqrs_test_other.somework_cqrs_outbox'), 0, 16)]);
+        $waited = 0;
+
+        try {
+            (new DbalOutboxStorage($this->connection, 'cqrs_test_other.somework_cqrs_outbox'))->setup(static function () use (&$waited, $holder): void {
+                ++$waited;
+                $holder->close();
+            });
+        } finally {
+            $holder->close();
+        }
+
+        self::assertSame(1, $waited, 'The setup of that table in another database waited.');
+    }
+
+    public function test_the_automatic_upgrade_of_mysql_only_adds_columns_instantly(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+            self::markTestSkipped('MySQL and MariaDB can rebuild a table to add columns.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        // A compressed table is rebuilt to add columns, which takes long on a big one.
+        $this->connection->executeStatement('ALTER TABLE somework_cqrs_outbox ROW_FORMAT=COMPRESSED');
+
+        try {
+            (new DbalOutboxStorage($this->connection))->fetchUnpublished(10);
+            self::fail('The table is not rebuilt by the relay.');
+        } catch (\RuntimeException $exception) {
+            self::assertStringContainsString('which this database cannot add without rebuilding the table. Run "bin/console somework:cqrs:outbox:setup".', $exception->getMessage());
+        }
+
+        (new DbalOutboxStorage($this->connection))->setup();
+        self::assertSame([], (new DbalOutboxStorage($this->connection))->fetchUnpublished(10));
+    }
+
+    public function test_an_invalid_index_is_not_used(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('Invalid indexes exist only on PostgreSQL (CREATE INDEX CONCURRENTLY).');
+        }
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        (new DbalOutboxStorage($this->connection))->setup();
+        $this->connection->executeStatement("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass");
+        $queries->flush();
+
+        (new DbalOutboxStorage($this->connection, 'public.somework_cqrs_outbox', autoSetup: false))->fetchUnpublished(10);
+
+        self::assertStringNotContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()), 'The per-transport queries would read every pending row.');
     }
 
     public function test_a_mysql_table_of_a_database_is_used_on_a_connection_without_one(): void
@@ -418,6 +507,8 @@ final class DbalOutboxStorageTest extends TestCase
             self::markTestSkipped('Needs the PROCESS privilege.');
         }
         TestDatabase::createTableOfVersion04($this->connection);
+        // Start times are shown in the time zone of the server (CI runs it in another one than UTC).
+        $this->connection->executeStatement("SET time_zone = '+00:00'");
         $other = TestDatabase::connect(keepTables: true);
         // e.g. a report; transaction start times are shown in whole seconds.
         $other->beginTransaction();
@@ -432,6 +523,7 @@ final class DbalOutboxStorageTest extends TestCase
             } catch (\RuntimeException $exception) {
                 self::assertStringContainsString('is not changed while a transaction of the database server has been open for more than 1 second(s)', $exception->getMessage());
             }
+            self::assertSame('+00:00', $this->connection->fetchOne('SELECT @@session.time_zone'), 'The time zone of the session is restored.');
 
             // A missing table is still created: nobody can hold it.
             $new = new DbalOutboxStorage($this->connection, 'app_outbox');

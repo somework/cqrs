@@ -191,9 +191,14 @@ whether the table exists and has the columns of this version (without locking an
 the table is missing, it creates it. Storing never changes an existing table (writes keep
 working on a table of 0.4); the relay and the `failed` command add the columns they need.
 Processes that start at the same time wait for each other (at most 30 seconds, less once
-another one has added the columns). Adding the columns never waits in the lock queue of the
+another one has added the columns). Adding the columns does not wait in the lock queue of the
 table, where the writes would queue behind it: PostgreSQL tries `LOCK TABLE … NOWAIT` and
-MariaDB `ALTER TABLE … NOWAIT` for up to 1 second (autovacuum gives way). MySQL cannot do
+MariaDB `ALTER TABLE … NOWAIT` for up to 1 second. An autovacuum of the table gives way to a
+waiting lock after `deadlock_timeout`, so while only autovacuum holds the table, PostgreSQL waits
+that long (writes wait too), unless it prevents a wraparound, which does not give way; this needs
+a role that sees the sessions of other roles (`pg_read_all_stats`), otherwise the upgrade fails
+while autovacuum runs. MySQL and MariaDB only add the columns when that takes no time
+(`ALGORITHM=INSTANT`; a compressed table, for example, would be rebuilt). MySQL cannot do
 that: it does not try while any transaction of the server has been open for more than a
 second (it does not tell which tables a transaction holds; this needs the `PROCESS`
 privilege, without it each attempt holds up the writes to the table for up to 1 second).
@@ -202,7 +207,7 @@ it locked` (MySQL: `is not changed while a transaction of the database server ha
 open`): run the setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
 pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
 a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
-it. Until then (the relay checks for the index once a minute, also with `auto_setup: false`)
+it. Until then (the relay checks for the index every 10 seconds, also with `auto_setup: false`)
 it fetches with one query along the index of 0.4, in the order the rows were stored: the
 transports do not take turns, and rows that are not due (retries, given-up rows, paused
 transports) are read past, which slows fetches when many of them are ahead. The health
@@ -247,8 +252,8 @@ and the new index to stay fast. Add them with one of:
 - `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
   start at the same time wait for each other with a database lock held by the session, which
   PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
-  usually notices it and refuses, or fails afterwards saying that the lock stayed with
-  another server connection; under light load it may not notice, so do not rely on it). While
+  usually notices it and refuses (releasing the lock), or fails saying that the lock stayed
+  with another server connection; under light load it may not notice, so do not rely on it). While
   another setup holds the lock, it says so and waits for it. A signal (e.g. a deploy job that is terminated) stops it with the
   exit code `128 + signal`, once the running statement returns; the next setup continues. On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's

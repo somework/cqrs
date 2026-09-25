@@ -236,6 +236,8 @@ jobs:
       mysql:
         image: mysql:8.4
         env:
+          # Not UTC: the check of old transactions reads their start times in the server's time zone.
+          TZ: Asia/Kolkata
           MYSQL_ROOT_PASSWORD: root
           MYSQL_DATABASE: cqrs_test
           MYSQL_USER: cqrs

@@ -38,10 +38,12 @@ final class OutboxHealthChecker implements HealthChecker
             return [new CheckResult(CheckSeverity::OK, 'outbox', sprintf('The outbox storage (%s) is not checked', $this->outboxStorage::class))];
         }
 
+        $structureRead = true;
         try {
             $changes = $this->outboxStorage->pendingChanges();
         } catch (\Throwable $exception) {
             $changes = [sprintf('its structure cannot be read (%s)', $exception->getMessage())];
+            $structureRead = false;
         }
         // e.g. the index of this version, which the automatic setup leaves to the setup command.
         $needsSetup = [] === $changes ? null : new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
@@ -50,7 +52,8 @@ final class OutboxHealthChecker implements HealthChecker
             $status = $this->outboxStorage->status();
         } catch (\Throwable $exception) {
             // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
-            if (null !== $needsSetup && !in_array('the table does not exist', $changes, true)) {
+            // When neither can be read (e.g. the database is down), that is critical.
+            if ($structureRead && null !== $needsSetup && !in_array('the table does not exist', $changes, true)) {
                 return [$needsSetup];
             }
 
