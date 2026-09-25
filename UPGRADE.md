@@ -53,21 +53,29 @@ releases.
 
 ### Checklist
 
-1. Before `composer update`, change the code the new version no longer accepts (the build or the
-   `cache:clear` script of `composer update` fails otherwise): custom `OutboxStorage` implementations,
-   `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`, per-message map keys of deleted classes,
-   `%env()%` values in compile-time options, the moved configuration options (see
-   [Configuration shape](#configuration-shape)) and the fake buses of your tests (see the sections below).
-2. With the outbox: let the 0.4 relay send what is due, then stop it: 0.5 signs rows and only relays signed ones
-   (see [Signed rows](docs/outbox.md#signed-rows); to relay rows of 0.4 after the upgrade, set
-   `outbox.signing.accept_unsigned: true` until they are gone). Check that every stored transport name exists,
-   because 0.4 ignored it and 0.5 sends to it
-   (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`). Outbox signing
-   uses `framework.secret`: when you rotate it, keep the old value in `outbox.signing.previous_secrets` until
-   the rows signed with it are relayed.
-3. `composer update somework/cqrs-bundle`.
-4. Run `bin/console somework:cqrs:outbox:setup` or your Doctrine migration.
-5. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+1. **Code**, before `composer update` (the build or the `cache:clear` script of `composer update` fails
+   otherwise):
+   - handlers extending the removed abstract handlers ([Abstract handlers removed](#abstract-handlers-removed-classes-moved));
+   - imports of moved classes (`Support\StampDecider`, `Support\NullRetryPolicy`, …) and class names in the
+     configuration;
+   - `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`;
+   - custom `OutboxStorage` implementations and decorators ([Transactional outbox](#transactional-outbox));
+   - tests that read `getDispatched()` of the fake buses as arrays.
+2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
+   deleted classes, and `%env()%` values in compile-time options
+   ([Environment variables](#environment-variables-in-the-configuration)).
+3. **Outbox, before the deployment**:
+   - let the 0.4 relay send what is due, then stop it. 0.5 signs rows and only relays signed ones
+     ([Signed rows](docs/outbox.md#signed-rows)); to relay rows of 0.4 after the upgrade, set
+     `outbox.signing.accept_unsigned: true` until they are gone;
+   - check that every stored transport name exists, because 0.4 ignored it and 0.5 sends to it
+     (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
+   - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
+     value in `outbox.signing.previous_secrets` until the rows signed with it are relayed.
+4. `composer update somework/cqrs-bundle`.
+5. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
+   migration): writes need the new columns.
+6. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
 
 ### Requirements
 
@@ -421,13 +429,17 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   is resolved against the project directory and replaces the directory mapped to the namespace prefix; a namespace
   that no prefix covers is refused unless `--dir` is given.
   Handlers are generated with the attribute and a typed `__invoke()`. Invalid input exits with code 2.
+- `somework:cqrs:outbox:failed` lists the message class (from the serializer's `type` header) and gains `--sign`
+  (with `--requeue` and ids) to sign rows you checked.
 - `somework:cqrs:list --type=<unknown>` exits with code 2. Without `--details` it prints one compact table per
   message type (message class, handler, bus); `--details` keeps one table per handler.
 
 ### Testing helpers
 
 `FakeQueryBus` returns a configured `null` result instead of falling back, and the fake buses return envelopes
-carrying the stamps passed to them.
+carrying the stamps passed to them. `getDispatched()` returns `SomeWork\CqrsBundle\Testing\RecordedDispatch`
+objects (`$record->message`, `->mode`, `->stamps`) instead of arrays. New: `FakeCommandBus::willReturnFor()` and
+`willThrow()` on the command and query fakes.
 
 ## Upgrading from 0.3.0 to 0.4.0
 
