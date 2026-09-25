@@ -452,6 +452,24 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertNull($sent->last(HandledStamp::class));
     }
 
+    public function test_a_message_for_a_transport_that_does_not_exist_is_given_up_at_once(): void
+    {
+        // A typo or a renamed transport fails every attempt: requeue it with the right name instead.
+        $message = $this->store(new CreateTaskCommand('1', 'a'), 'async_events');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+        $transports = new ServiceLocator(['async' => fn (): SenderInterface => $this->async]);
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, transports: $transports));
+        $tester->execute([]);
+
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertSame(1, $this->storage->attempts($message->id));
+        self::assertNull($this->storage->failures[$message->id]['retryAt']);
+        self::assertStringContainsString('The transport "async_events" does not exist.', $this->storage->failures[$message->id]['error']);
+        self::assertStringContainsString('--requeue --transport=<name> '.$message->id, self::display($tester));
+        self::assertCount(1, $this->async->getSent(), 'The other messages are relayed.');
+    }
+
     public function test_rejects_less_than_one_attempt(): void
     {
         $this->expectException(\InvalidArgumentException::class);

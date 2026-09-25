@@ -19,9 +19,11 @@ use function array_values;
 use function count;
 use function filter_var;
 use function is_array;
+use function is_string;
 use function preg_match;
 use function sprintf;
 use function strtolower;
+use function trim;
 
 use const DATE_ATOM;
 use const FILTER_VALIDATE_INT;
@@ -47,6 +49,7 @@ final class OutboxFailedCommand extends Command
         $this
             ->addArgument('ids', InputArgument::IS_ARRAY, 'Ids of the messages to requeue (with --requeue); all given-up messages when omitted')
             ->addOption('requeue', null, InputOption::VALUE_NONE, 'Requeue the messages with a fresh attempt counter instead of listing them')
+            ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue: send the messages to this transport instead of the stored one')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to list', '50');
     }
 
@@ -73,8 +76,15 @@ final class OutboxFailedCommand extends Command
             }
         }
 
+        $transport = $input->getOption('transport');
+        if (null !== $transport && (!is_string($transport) || '' === trim($transport) || true !== $input->getOption('requeue'))) {
+            $io->error('--transport needs a transport name and --requeue.');
+
+            return self::INVALID;
+        }
+
         try {
-            return true === $input->getOption('requeue') ? $this->requeue($io, $storage, $ids) : $this->list($io, $input, $storage, $ids);
+            return true === $input->getOption('requeue') ? $this->requeue($io, $storage, $ids, $transport) : $this->list($io, $input, $storage, $ids);
         } catch (\Throwable $exception) {
             // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
             $io->error(sprintf('The outbox storage failed: %s', $exception->getMessage()));
@@ -86,10 +96,10 @@ final class OutboxFailedCommand extends Command
     /**
      * @param list<string> $ids
      */
-    private function requeue(SymfonyStyle $io, DbalOutboxStorage $storage, array $ids): int
+    private function requeue(SymfonyStyle $io, DbalOutboxStorage $storage, array $ids, ?string $transport): int
     {
-        $requeued = $storage->requeueFailed($ids);
-        $io->success(sprintf('Requeued %d message(s); the next relay run sends them.', $requeued));
+        $requeued = $storage->requeueFailed($ids, $transport);
+        $io->success(sprintf('Requeued %d message(s)%s; the next relay run sends them.', $requeued, null === $transport ? '' : sprintf(' to the transport "%s"', $transport)));
 
         if ([] !== $ids && $requeued < count($ids)) {
             $io->warning(sprintf('%d of the %d given message(s) were not requeued: they do not exist, were published, or have not been given up.', count($ids) - $requeued, count($ids)));

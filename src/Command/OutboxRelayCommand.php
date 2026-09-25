@@ -128,6 +128,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      * @param ContainerInterface|null  $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
      * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
      * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
+     * @param DbalOutboxStorage|null   $table       The DBAL storage behind a decorated $outboxStorage, for the report of pending table changes
+     * @param ContainerInterface|null  $transports  Messenger's transports by name; a message stored for another transport is given up at once
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -140,6 +142,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         private readonly ?LoggerInterface $logger = null,
         private readonly ?\Closure $clock = null,
         private readonly ?DbalOutboxStorage $table = null,
+        private readonly ?ContainerInterface $transports = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -375,6 +378,18 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 return self::CLAIMED_ELSEWHERE;
             }
             $this->reportGivenUp($message, $message->attempts, $message->lastError, $io);
+
+            return self::FAILED;
+        }
+
+        // A stored transport that does not exist (a typo, a renamed transport) fails every attempt:
+        // give the message up at once, to be requeued with the right transport name.
+        if (null !== $message->transportName && null !== $this->transports && !$this->transports->has($message->transportName)) {
+            $error = sprintf('The transport "%s" does not exist. Fix the code that stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> %s".', $message->transportName, $message->id);
+            if (!$this->recordAttempt($message, $message->attempts + 1, $error, null, $message->attempts)) {
+                return self::CLAIMED_ELSEWHERE;
+            }
+            $this->reportGivenUp($message, $message->attempts + 1, $error, $io);
 
             return self::FAILED;
         }

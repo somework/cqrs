@@ -109,7 +109,7 @@ final class PlaceOrderHandler
                 MessageMetadataStamp::createWithRandomCorrelationId(),
             ]);
 
-            $this->outbox->store(OutboxMessage::fromEnvelope($envelope, $this->serializer, 'async_events'));
+            $this->outbox->store(OutboxMessage::fromEnvelope($envelope, $this->serializer, 'async'));
         });
 
         return null;
@@ -437,9 +437,14 @@ bin/console somework:cqrs:outbox:failed                    # id, transport, date
 bin/console somework:cqrs:outbox:failed --limit=200
 bin/console somework:cqrs:outbox:failed --requeue          # every given-up row
 bin/console somework:cqrs:outbox:failed --requeue <id> <id>
+bin/console somework:cqrs:outbox:failed --requeue --transport=async <id>   # and send it to another transport
 ```
 
 Requeued rows start again with `attempts = 0` and no `last_error`.
+
+A row stored for a transport that does not exist (a typo, a renamed transport) is given up on
+its first run, without an attempt: `The transport "<name>" does not exist. Fix the code that
+stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> <id>".`
 
 When the relay process dies during an attempt (a PHP fatal error, running out of memory, a
 killed process, a lost database connection), the row keeps the error `The relay did not finish

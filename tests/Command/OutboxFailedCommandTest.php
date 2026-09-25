@@ -53,6 +53,29 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertStringContainsString('--requeue', $display);
     }
 
+    public function test_requeues_to_another_transport(): void
+    {
+        // e.g. a row stored with a misspelt or renamed transport, which the relay gave up on.
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--requeue' => true, '--transport' => 'orders', 'ids' => [self::ID_1]]));
+        self::assertStringContainsString('Requeued 1 message(s) to the transport "orders"', self::display($tester));
+
+        $due = $this->storage->fetchUnpublished(10);
+        self::assertCount(1, $due);
+        self::assertSame('orders', $due[0]->transportName);
+        self::assertSame(0, $due[0]->attempts);
+    }
+
+    public function test_a_transport_needs_requeue_and_a_name(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::INVALID, $tester->execute(['--transport' => 'orders']));
+        self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--transport' => ' ']));
+        self::assertStringContainsString('--transport needs a transport name and --requeue.', self::display($tester));
+    }
+
     public function test_stored_text_is_listed_without_control_characters(): void
     {
         // A row written by someone else could put escape sequences into the terminal of the operator.

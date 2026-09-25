@@ -65,6 +65,8 @@ final class OutboxRegistrar
         $relayDef->setArgument('$lockName', sprintf('%s.%s', $connection, $config['table_name']));
         $relayDef->setArgument('$maxAttempts', $config['max_attempts'] ?? 10);
         $relayDef->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        // Messenger's transports by name: a row stored for a transport that does not exist is given up at once.
+        $relayDef->setArgument('$transports', new Reference('messenger.receiver_locator', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);

@@ -422,11 +422,12 @@ final class DbalOutboxStorage implements OutboxStorage
     /**
      * Hands messages the relay gave up on back to it, with a fresh attempt counter and no last error.
      *
-     * @param list<string> $ids The messages to requeue; all given-up messages when empty
+     * @param list<string> $ids           The messages to requeue; all given-up messages when empty
+     * @param string|null  $transportName A transport to send them to instead of the stored one (e.g. after a renamed transport)
      *
      * @return int The number of requeued messages
      */
-    public function requeueFailed(array $ids = []): int
+    public function requeueFailed(array $ids = [], ?string $transportName = null): int
     {
         $this->ensureTableExists();
 
@@ -438,6 +439,10 @@ final class DbalOutboxStorage implements OutboxStorage
             ->set('last_error', 'NULL')
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL');
+
+        if (null !== $transportName) {
+            $query->set('transport_name', ':transport_name')->setParameter('transport_name', $transportName);
+        }
 
         if ([] !== $ids) {
             $query->andWhere('id IN (:ids)')->setParameter('ids', $ids, ArrayParameterType::STRING);

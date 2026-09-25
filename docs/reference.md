@@ -698,7 +698,7 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
 | `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage other than `DbalOutboxStorage` |
 | `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed; `2` for an invalid limit |
-| `somework:cqrs:outbox:failed` | `[--requeue] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage other than `DbalOutboxStorage`; `2` for ids without `--requeue` or an invalid limit |
+| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME]] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage other than `DbalOutboxStorage`; `2` for ids or `--transport` without `--requeue`, or an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list
@@ -772,7 +772,9 @@ checks.
   fails 3 times in a row (10 times, or 3 over 10 seconds, after a successful
   send) is paused until the next run.
 * `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
-  `--requeue` hands all of them, or the given ids, back to the relay.
+  `--requeue` hands all of them, or the given ids, back to the relay, to another
+  transport with `--transport`. A row stored for a transport that does not exist
+  is given up on its first run.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.
 
 See [Production: outbox operations](production.md#outbox-operations).
