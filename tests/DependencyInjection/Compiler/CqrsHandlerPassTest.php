@@ -407,6 +407,24 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertSame([], $metadata['event']);
     }
 
+    public function test_a_query_handler_without_a_result_is_rejected(): void
+    {
+        // QueryBus::ask() would return null for every query.
+        $handler = new class {
+            public function __invoke(PlainQuery $query): void
+            {
+            }
+        };
+        $container = new ContainerBuilder();
+        $container->register('app.void_query_handler', $handler::class)
+            ->addTag('messenger.message_handler', ['somework_cqrs_type' => 'query']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('declares '.$handler::class.'::__invoke(): void, but a query handler must return the result of the query.');
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
     public function test_attribute_only_event_handler_discovered(): void
     {
         $container = new ContainerBuilder();

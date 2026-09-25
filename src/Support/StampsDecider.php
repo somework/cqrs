@@ -107,15 +107,17 @@ final class StampsDecider implements StampDecider
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
         foreach ($this->pipelineFor($message) as $decider) {
-            $stampCountBefore = count($stamps);
+            $before = $stamps;
             $stamps = $decider->decide($message, $mode, $stamps);
 
-            $this->logger?->debug('Stamp decider processed', [
-                'message' => $message::class,
-                'decider' => $decider::class,
-                'stamps_before' => $stampCountBefore,
-                'stamps_after' => count($stamps),
-            ]);
+            if ($stamps !== $before) {
+                $this->logger?->debug('{decider} changed the stamps of {message}', [
+                    'message' => $message::class,
+                    'decider' => $decider::class,
+                    'stamps_before' => count($before),
+                    'stamps_after' => count($stamps),
+                ]);
+            }
         }
 
         return array_values($stamps);

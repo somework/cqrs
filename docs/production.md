@@ -415,6 +415,25 @@ final class FailedMessagesChecker implements HealthChecker
 
 ## Observability
 
+### Logs
+
+The bundle logs through the `logger` service, on its own `cqrs` channel when MonologBundle is
+installed. Route or silence it like any channel:
+
+```yaml
+# config/packages/monolog.yaml
+monolog:
+    handlers:
+        cqrs:
+            type: stream
+            path: '%kernel.logs_dir%/cqrs.log'
+            channels: [cqrs]
+```
+
+Warnings to watch for: an asynchronous dispatch that was handled synchronously (no transport is
+configured for the message), and the outbox relay's failures, paused transports and given-up
+messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
+
 ### Correlation and causation ids
 
 Every message dispatched through the facades gets a `MessageMetadataStamp` with a

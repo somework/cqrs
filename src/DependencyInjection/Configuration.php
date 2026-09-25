@@ -414,7 +414,7 @@ final class Configuration implements ConfigurationInterface
             ->scalarPrototype()
                 ->validate()
                     ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
-                    ->thenInvalid('Invalid dispatch mode "%s". Expected "sync" or "async".')
+                    ->thenInvalid('Invalid dispatch mode %s. Expected "sync" or "async".')
                 ->end()
             ->end()
             ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));

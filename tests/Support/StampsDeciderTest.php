@@ -237,40 +237,21 @@ final class StampsDeciderTest extends TestCase
         self::assertSame(3, $logContexts[0]['stamps_after']);
     }
 
-    public function test_decide_logs_once_per_matching_decider(): void
+    public function test_decide_logs_the_deciders_that_changed_the_stamps(): void
     {
         $message = new CreateTaskCommand('1', 'Test');
 
-        $decider1 = new class implements StampDecider {
+        $unchanged = new class implements StampDecider {
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
                 return $stamps;
             }
         };
 
-        $decider2 = new class implements StampDecider {
+        $adding = new class implements StampDecider {
             public function decide(object $message, DispatchMode $mode, array $stamps): array
             {
-                return $stamps;
-            }
-        };
-
-        $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(2))
-            ->method('debug');
-
-        $stampsDecider = new StampsDecider([$decider1, $decider2], $logger);
-        $stampsDecider->decide($message, DispatchMode::SYNC, []);
-    }
-
-    public function test_decide_log_context_includes_decider_class(): void
-    {
-        $message = new CreateTaskCommand('1', 'Test');
-
-        $decider = new class implements StampDecider {
-            public function decide(object $message, DispatchMode $mode, array $stamps): array
-            {
-                return $stamps;
+                return [...$stamps, new DummyStamp('added')];
             }
         };
 
@@ -282,12 +263,13 @@ final class StampsDeciderTest extends TestCase
                 $logContexts[] = $context;
             });
 
-        $stampsDecider = new StampsDecider([$decider], $logger);
+        $stampsDecider = new StampsDecider([$unchanged, $adding], $logger);
         $stampsDecider->decide($message, DispatchMode::SYNC, []);
 
-        self::assertArrayHasKey('decider', $logContexts[0]);
-        self::assertSame($decider::class, $logContexts[0]['decider']);
+        self::assertSame($adding::class, $logContexts[0]['decider']);
         self::assertSame(CreateTaskCommand::class, $logContexts[0]['message']);
+        self::assertSame(0, $logContexts[0]['stamps_before']);
+        self::assertSame(1, $logContexts[0]['stamps_after']);
     }
 
     /**

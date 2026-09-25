@@ -16,9 +16,10 @@ final class AsyncBusNotConfiguredException extends \LogicException
     ) {
         parent::__construct(
             sprintf(
-                'Asynchronous %s bus is not configured. Cannot dispatch "%s" in async mode.',
+                'Asynchronous %s bus is not configured. Cannot dispatch "%s" in async mode. Set "somework_cqrs.buses.%s_async" to a Messenger bus.',
                 $busName,
                 $messageFqcn,
+                $busName,
             ),
             0,
             $previous,

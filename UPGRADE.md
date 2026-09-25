@@ -82,6 +82,7 @@ sync bus, so a worker consuming messages sent through the async bus failed with 
 
 If you worked around this by declaring the async bus explicitly (`#[AsCommandHandler(CreateTask::class, bus: 'command.async_bus')]`),
 the handler now lives only on that bus, as before; you can remove the `bus` argument to register it on both.
+`HandlerRegistry` and `somework:cqrs:list` report one entry per handler and bus, so such a handler appears twice.
 
 ### Compile-time handler validation per bus
 
@@ -163,7 +164,8 @@ route. Before, these mistakes surfaced at the first dispatch.
 ### Environment variables in the configuration
 
 Options the container compilation needs (dispatch modes, transport names, bus ids, service ids,
-`retry_strategy.transports`) reject `%env(...)%` with a clear message; before, they failed with
+`retry_strategy.transports`, and `outbox.table_name`, `outbox.connection` and `outbox.serializer`) reject
+`%env(...)%` with a clear message; before, they failed with
 "Incompatible use of dynamic environment variables" or an invalid enum value. Environment variables still work in
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup`, `outbox.max_attempts`
 and the `async.dispatch_after_current_bus` flags.
@@ -171,7 +173,8 @@ and the `async.dispatch_after_current_bus` flags.
 ### Handler attributes must match the handler method
 
 `#[AsCommandHandler(ShipOrder::class)]` on a handler whose `__invoke()` accepts another message is now a compile
-error; before, every dispatch failed with a `TypeError`.
+error; before, every dispatch failed with a `TypeError`. A query handler whose method is declared `: void` or
+`: never` is a compile error too; before, `ask()` returned `null`.
 
 ### Per-message configuration through interfaces
 

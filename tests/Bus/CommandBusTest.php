@@ -36,6 +36,7 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\HandledStamp;
+use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
@@ -702,9 +703,7 @@ final class CommandBusTest extends TestCase
         $logger->expects(self::atLeastOnce())
             ->method('debug')
             ->with(
-                self::callback(static fn (string $message): bool => str_contains($message, 'Dispatch mode resolved')
-                        || str_contains($message, 'Stamps decided')
-                        || str_contains($message, 'Dispatching via')),
+                self::callback(static fn (string $message): bool => str_contains($message, 'Dispatching {message}')),
                 self::callback(static fn (array $context): bool => isset($context['message']) && isset($context['bus']))
             );
 
@@ -733,7 +732,7 @@ final class CommandBusTest extends TestCase
         self::assertSame($envelope, $bus->dispatch($command));
     }
 
-    public function test_dispatch_logs_exactly_three_debug_messages(): void
+    public function test_dispatch_logs_one_debug_message(): void
     {
         $command = new CreateTaskCommand('123', 'Test');
         $envelope = new Envelope($command);
@@ -744,7 +743,7 @@ final class CommandBusTest extends TestCase
             ->willReturn($envelope);
 
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug');
 
         $bus = new CommandBus(
@@ -768,7 +767,7 @@ final class CommandBusTest extends TestCase
 
         $logMessages = [];
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug')
             ->willReturnCallback(static function (string $message, array $context) use (&$logMessages): void {
                 $logMessages[] = $message;
@@ -782,9 +781,40 @@ final class CommandBusTest extends TestCase
 
         $bus->dispatch($command);
 
-        self::assertSame('Dispatch mode resolved', $logMessages[0]);
-        self::assertSame('Stamps decided', $logMessages[1]);
-        self::assertSame('Dispatching via {mode} bus', $logMessages[2]);
+        self::assertSame(['Dispatching {message} on the {mode} {bus} bus'], $logMessages);
+    }
+
+    public function test_warns_when_an_async_dispatch_was_handled_synchronously(): void
+    {
+        // Messenger handles a message routed to no transport right away.
+        $command = new CreateTaskCommand('123', 'Test');
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->method('dispatch')->willReturn((new Envelope($command))->with(new HandledStamp(null, 'handler')));
+
+        $warnings = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
+            $warnings[] = [$message, $context];
+        });
+
+        $bus = new CommandBus($this->createMock(MessageBusInterface::class), $asyncBus, stampsDecider: StampsDecider::withoutDecorators(), logger: $logger);
+        $bus->dispatchAsync($command);
+
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('dispatched asynchronously but handled synchronously', $warnings[0][0]);
+        self::assertSame(['message' => CreateTaskCommand::class, 'bus' => 'command'], $warnings[0][1]);
+    }
+
+    public function test_an_async_dispatch_sent_to_a_transport_is_not_reported(): void
+    {
+        $command = new CreateTaskCommand('123', 'Test');
+        $asyncBus = $this->createMock(MessageBusInterface::class);
+        $asyncBus->method('dispatch')->willReturn((new Envelope($command))->with(new SentStamp('sender', 'async')));
+
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+
+        (new CommandBus($this->createMock(MessageBusInterface::class), $asyncBus, stampsDecider: StampsDecider::withoutDecorators(), logger: $logger))->dispatchAsync($command);
     }
 
     public function test_dispatch_log_context_includes_bus_name_command(): void
@@ -799,7 +829,7 @@ final class CommandBusTest extends TestCase
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug')
             ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
                 $logContexts[] = $context;

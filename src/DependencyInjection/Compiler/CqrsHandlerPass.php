@@ -151,6 +151,10 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
                 $routes = array_values($routes);
 
+                if (in_array('query', $cqrsMessages, true)) {
+                    $this->assertReturnsAResult($serviceId, $handlerClass, $attributes);
+                }
+
                 // Every member belongs to another interface of the handler (e.g. QueryHandler next to
                 // CommandHandler and EventHandler): this tag has nothing left to route.
                 if ([] === $routes && $coveredElsewhere > 0) {
@@ -365,6 +369,34 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         return array_keys($routes);
+    }
+
+    /**
+     * QueryBus::ask() returns the result of the handler: a query handler declared ": void" or
+     * ": never" would make every query return null.
+     *
+     * @param array<string, mixed> $attributes
+     */
+    private function assertReturnsAResult(string $serviceId, string $handlerClass, array $attributes): void
+    {
+        // Per-message options (e.g. ['Msg' => ['method' => 'onMsg']]) may route to different methods.
+        if (isset($attributes['handles']) && is_array($attributes['handles']) && !array_is_list($attributes['handles'])) {
+            return;
+        }
+
+        /** @var class-string $handlerClass */
+        $reflection = new ReflectionClass($handlerClass);
+        $methodName = is_string($attributes['method'] ?? null) ? $attributes['method'] : '__invoke';
+
+        if (!$reflection->hasMethod($methodName)) {
+            return;
+        }
+
+        $type = $reflection->getMethod($methodName)->getReturnType();
+
+        if ($type instanceof ReflectionNamedType && in_array($type->getName(), ['void', 'never'], true)) {
+            throw new InvalidArgumentException(sprintf('Query handler "%s" (service "%s") declares %s::%s(): %s, but a query handler must return the result of the query.', $handlerClass, $serviceId, $handlerClass, $methodName, $type->getName()));
+        }
     }
 
     /**

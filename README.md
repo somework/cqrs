@@ -87,7 +87,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 
 **Observability**
 - OpenTelemetry middleware (spans for dispatching and for consuming messages in workers, trace context carried across transports)
-- PSR-3 logging across buses, deciders, and resolvers
+- PSR-3 logging on a `cqrs` Monolog channel, with a warning when an async dispatch ran synchronously
 
 **Integration**
 - `CommandBusInterface`, `QueryBusInterface`, `EventBusInterface` for dependency injection and test doubles

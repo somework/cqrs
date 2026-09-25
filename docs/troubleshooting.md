@@ -12,7 +12,7 @@ problems appear when a message is dispatched or handled.
 **Symptom.** `CommandBus::dispatchSync()` and `QueryBus::ask()` throw
 
 ```
-SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus.
+SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus. Register one with #[AsCommandHandler(CreateTask::class)] or by implementing CommandHandler; "bin/console somework:cqrs:list" shows the registered handlers.
 ```
 
 (the previous exception is Messenger's `NoHandlerForMessageException`). Other
@@ -173,7 +173,7 @@ Check the result with `bin/console somework:cqrs:list --details` (the
 **Symptom.** At runtime:
 
 ```
-SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode.
+SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode. Set "somework_cqrs.buses.command_async" to a Messenger bus.
 ```
 
 or, when the configuration asks for async delivery, during compilation:

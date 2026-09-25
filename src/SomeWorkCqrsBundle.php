@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\DeduplicationLockReleasePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
@@ -51,6 +52,8 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new TransportRoutingPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new OutboxRelayLockPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
+        // After every pass of the bundle that adds a service with a logger.
+        $container->addCompilerPass(new LoggerChannelPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -9);
         $container->addCompilerPass(new ValidateTransportNamesPass());
         $container->addCompilerPass(new ValidateHandlerCountPass());
     }

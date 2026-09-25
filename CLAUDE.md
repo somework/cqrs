@@ -81,6 +81,7 @@ reports messages that were sent to a transport or deduplicated).
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
+- `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
 - `ValidateHandlerCountPass`, `ValidateTransportNamesPass`, `ValidateIdempotencyDependenciesPass` — validation
 
 **Stamp Pipeline** (`src/Support/`) — `StampsDecider` aggregates `StampDecider` implementations sorted by priority (see `.claude/rules/stamp-decider-pipeline.md`). Resolver-backed deciders walk class hierarchy + interfaces to find message-specific config (exact match → parent classes → interfaces → type default → global default).

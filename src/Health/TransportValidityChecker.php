@@ -34,7 +34,7 @@ final class TransportValidityChecker implements HealthChecker
         foreach (array_keys($this->transports->getProvidedServices()) as $transportName) {
             try {
                 $this->transports->get($transportName);
-                $results[] = new CheckResult(CheckSeverity::OK, 'transport', sprintf('Transport "%s" is valid', $transportName));
+                $results[] = new CheckResult(CheckSeverity::OK, 'transport', sprintf('Transport "%s" can be created (the connection is not tested)', $transportName));
             } catch (\Throwable $exception) {
                 $results[] = new CheckResult(CheckSeverity::CRITICAL, 'transport', sprintf('Transport "%s" cannot be created: %s', $transportName, $exception->getMessage()));
             }

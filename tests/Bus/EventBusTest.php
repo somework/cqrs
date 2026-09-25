@@ -621,7 +621,7 @@ final class EventBusTest extends TestCase
         $bus->dispatch($event);
     }
 
-    public function test_dispatch_logs_exactly_three_debug_messages(): void
+    public function test_dispatch_logs_one_debug_message(): void
     {
         $event = new TaskCreatedEvent('123');
         $envelope = new Envelope($event);
@@ -632,7 +632,7 @@ final class EventBusTest extends TestCase
             ->willReturn($envelope);
 
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug');
 
         $bus = new EventBus(
@@ -656,7 +656,7 @@ final class EventBusTest extends TestCase
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug')
             ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
                 $logContexts[] = $context;

@@ -27,7 +27,7 @@ final class TransportValidityCheckerTest extends TestCase
         self::assertCount(2, $results);
         self::assertSame(CheckSeverity::OK, $results[0]->severity);
         self::assertSame('transport', $results[0]->category);
-        self::assertSame('Transport "async" is valid', $results[0]->message);
+        self::assertSame('Transport "async" can be created (the connection is not tested)', $results[0]->message);
         self::assertSame(CheckSeverity::CRITICAL, $results[1]->severity);
         self::assertStringContainsString('Transport "broken" cannot be created: No transport supports', $results[1]->message);
     }

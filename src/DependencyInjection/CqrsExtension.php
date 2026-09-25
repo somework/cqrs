@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\AllowNoHandlerMiddlewareRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusInterfaceRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusWiringRegistrar;
@@ -39,6 +40,7 @@ use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
+use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\Lock\Key;
@@ -55,7 +57,7 @@ use function sprintf;
 use function str_starts_with;
 
 /** @internal */
-final class CqrsExtension extends Extension
+final class CqrsExtension extends Extension implements PrependExtensionInterface
 {
     /** @var Closure(string): bool */
     private readonly Closure $classExists;
@@ -178,6 +180,16 @@ final class CqrsExtension extends Extension
 
         $container->setParameter('somework_cqrs.outbox.enabled', $config['outbox']['enabled']);
         $container->setParameter('somework_cqrs.outbox.table_name', $config['outbox']['table_name']);
+    }
+
+    /**
+     * Declares the "cqrs" log channel, so the bundle's log records can be routed on their own.
+     */
+    public function prepend(ContainerBuilder $container): void
+    {
+        if ($container->hasExtension('monolog')) {
+            $container->prependExtensionConfig('monolog', ['channels' => [LoggerChannelPass::CHANNEL]]);
+        }
     }
 
     public function getAlias(): string
