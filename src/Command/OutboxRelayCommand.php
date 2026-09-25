@@ -45,6 +45,7 @@ use function json_decode;
 use function max;
 use function mb_scrub;
 use function mb_substr;
+use function microtime;
 use function min;
 use function register_shutdown_function;
 use function sprintf;
@@ -80,6 +81,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      * more likely rejections of single messages (e.g. too large) than an outage.
      */
     private const MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT = 10;
+
+    /** Seconds of consecutive failures after which even a transport that worked earlier in the run is paused (e.g. it went down and every send waits for a timeout). */
+    private const MAX_FAILING_SECONDS = 10;
 
     /** A message whose transport fails (unreachable, or rejecting it) gets this many times max_attempts. */
     private const TRANSPORT_ATTEMPTS_FACTOR = 3;
@@ -219,6 +223,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         $consecutiveTransportFailures = [];
         /** @var array<string, true> $workingTransports Transports that accepted a message in this run */
         $workingTransports = [];
+        /** @var array<string, float> $failingSince When the current series of failures of a transport began */
+        $failingSince = [];
         /** @var list<string|null> $pausedTransports Transports that failed too often in a row: their messages wait for the next run */
         $pausedTransports = [];
 
@@ -236,6 +242,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 $seen[$message->id] = true;
                 ++$fresh;
 
+                $started = microtime(true);
                 $outcome = $this->process($message, $io);
                 if (self::STOPPED === $outcome) {
                     break 2;
@@ -252,6 +259,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                     ++$relayed;
                     $consecutiveTransportFailures[$key] = 0;
                     $workingTransports[$key] = true;
+                    unset($failingSince[$key]);
                 } elseif (self::FAILED === $outcome) {
                     ++$failed;
                 } elseif (self::TRANSPORT_FAILED === $outcome) {
@@ -259,10 +267,14 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                     $consecutiveTransportFailures[$key] = ($consecutiveTransportFailures[$key] ?? 0) + 1;
 
                     // The transport is probably down: do not walk its whole backlog, but keep relaying the other transports.
-                    $maxFailures = isset($workingTransports[$key]) ? self::MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT : self::MAX_CONSECUTIVE_TRANSPORT_FAILURES;
-                    if ($maxFailures === $consecutiveTransportFailures[$key]) {
+                    $failingSince[$key] ??= $started;
+                    $failures = $consecutiveTransportFailures[$key];
+                    $pause = isset($workingTransports[$key])
+                        ? self::MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT <= $failures || (self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures && microtime(true) - $failingSince[$key] >= self::MAX_FAILING_SECONDS)
+                        : self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures;
+                    if ($pause) {
                         $pausedTransports[] = $message->transportName;
-                        $this->reportPausedTransport($message->transportName, $maxFailures, $io);
+                        $this->reportPausedTransport($message->transportName, $failures, $io);
                     }
                 }
 
@@ -275,7 +287,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 }
             }
 
-            if (0 === $fresh || count($batch) < $requested) {
+            // A short batch does not mean that nothing else is due: the storage leaves out the rows an
+            // overlapping relay claimed after they were chosen. Only a batch without new rows ends the run.
+            if (0 === $fresh) {
                 break;
             }
         }

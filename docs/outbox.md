@@ -187,7 +187,12 @@ final class Version20260101000000 extends AbstractMigration
 ```
 
 **`auto_setup: true` (default).** The first time a process uses the storage, it checks
-whether the table exists and is up to date, and creates or upgrades it if needed. It never creates the table inside an open
+whether the table exists and is up to date (without locking anything), and creates or upgrades
+it if needed. Processes that find the table missing or lacking columns wait for each other (at
+most 30 seconds; the setup command waits 10 minutes); a
+missing index is only built by a process that finds no other setup running, and a failure to
+build it does not fail the process (the table works, only slower; `somework:cqrs:outbox:setup`
+reports the error). It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -225,9 +230,16 @@ ignores the new columns (retry times, given-up rows, claims). The relay needs th
 and indexes. Add them with one of:
 
 - `bin/console somework:cqrs:outbox:setup` (or `auto_setup: true`, outside a transaction). On
-  PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY`, so writes go on while it
-  runs; MySQL and MariaDB build it online. The old index is dropped only once the new one
-  exists, and processes that start at the same time wait for each other (a database lock);
+  PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
+  `statement_timeout`), so writes go on while it runs, and rebuilds an index that a killed
+  build left invalid. The old index is dropped only
+  once the new one exists, and setups that start at the same time wait for each other (a
+  database lock, held by the database session: run the setup over a direct connection, not
+  through PgBouncer in transaction mode). Changing the table needs a moment without open
+  transactions on it: adding
+  the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
+  fails with `could not be changed: a transaction kept it locked` instead of blocking every
+  write behind it; run the setup again when the table is less busy;
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
   the new columns and index);
 - a migration of your own:
@@ -252,8 +264,10 @@ DROP INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox;
 `isTransactional()` to return `false` for it. 0.4 had no purge command, so its table may hold
 every message ever relayed. Building the indexes then takes a while, and a migration generated
 by `doctrine:migrations:diff` uses a plain `CREATE INDEX`, which blocks writes on PostgreSQL
-until it is done. Purge the published rows first (with `auto_setup: false`,
-`somework:cqrs:outbox:purge` works on the 0.4 table), or use the statements above.
+until it is done. It also drops the old index before it creates the new one, so the relay has
+no index while the migration runs; put the `DROP INDEX` last. Purge the published rows first
+(with `auto_setup: false`, `somework:cqrs:outbox:purge` works on the 0.4 table), or use the
+statements above.
 
 ## Relaying
 
@@ -279,8 +293,9 @@ For each due row the relay:
    `buses.query` for queries, the default bus for anything else;
 5. marks the row as published.
 
-The transports take turns (rows stored without a transport name count as one transport), so
-the backlog of one transport, for example after an outage, does not hold up the others. Within
+The transports take turns, the one whose next row has waited longest first (rows stored
+without a transport name count as one transport), so the backlog of one transport, for example
+after an outage, does not hold up the others. Within
 a transport the relay takes the new rows first (never attempted, or requeued), in the order
 they were stored, then the rows that failed before and whose retry time has passed, in the order
 of their retry time. Rows that keep failing therefore do not hold up new rows. A relay that
@@ -305,10 +320,13 @@ What happens in special cases:
   backlog. The rows of the other transports are relayed as usual. As new rows come first,
   3 new rows are enough to detect an outage, and the attempts of older rows are not used up.
   A transport that accepted a message earlier in the run is up: single messages it rejects
-  (e.g. too large) do not pause it before 10 failures in a row. A burst of new rows that the
-  broker rejects before any row of the run went through is only told apart from an outage by
-  trying them: each run tries 3 of them, so the burst delays the other rows of that transport
-  once, by one run per 3 rejected rows.
+  (e.g. too large) do not pause it before 10 failures in a row, or 3 failures in a row that
+  took more than 10 seconds (a transport that went down during the run and makes every send
+  wait for a timeout). A burst of new rows that the broker rejects before any row of
+  the run went through is only told apart from an outage by trying them: each run tries 3 of
+  them, so the burst delays the other rows of that transport, by one run per 3 rejected rows.
+  When most of a transport's traffic is rejected (say 9 rows out of 10), the other rows keep
+  waiting behind such bursts: fix what the broker rejects (the given-up rows show the error).
   Rows stored without a transport name share one such counter (`Messages without a transport
   name failed to be sent 3 times in a row …`): when one of the transports they are routed to
   is down, the others' rows may wait for the next run too. Store the transport name to keep
@@ -469,9 +487,9 @@ interface OutboxStorage
     /**
      * Returns the messages that are due: neither published nor given up, and either never
      * attempted (or requeued) or past the retry time of their last attempt. The transports take
-     * turns (the messages without a transport name count as one transport); within a transport,
-     * the messages never attempted come first, in the order they were stored, then the others, in
-     * the order of their retry time.
+     * turns, the one whose next message has waited longest first (the messages without a transport
+     * name count as one transport); within a transport, the messages never attempted come first, in
+     * the order they were stored, then the others, in the order of their retry time.
      *
      * @param list<string|null> $excludedTransports Transports whose messages are skipped; null
      *                                              stands for messages stored without a transport name
@@ -522,9 +540,10 @@ An implementation must meet these rules:
 - `store()` must write through the same transaction as your business data. Otherwise the
   outbox guarantees nothing.
 - `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
-  passed). The transports take turns; within a transport, first the messages never attempted,
+  passed). The transports take turns, the one whose next message has waited longest first;
+  within a transport, first the messages never attempted,
   in the order they were stored, then the others, in the order of their retry time. It skips
-  the excluded transports. The relay excludes a transport after 3 send failures in a row; a storage that
+  the excluded transports. The relay excludes a transport after 3 (or 10) send failures in a row; a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
 - `recordAttempt()` stores the given number of attempts, the error and the retry time as they
   are; it is called before every attempt and again when the attempt fails. With

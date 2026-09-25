@@ -15,6 +15,7 @@ use PHPUnit\Framework\TestCase;
 use Psr\Log\AbstractLogger;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_map;
@@ -143,11 +144,11 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message('00000000-0000-7000-8000-000000000002', '2026-01-01 10:01:00', 'async'));
         $storage->store(self::message('00000000-0000-7000-8000-000000000003', '2026-01-01 10:02:00', 'ext'));
 
-        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, ['ext'])));
-        self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids($storage->fetchUnpublished(10, [null])));
-        self::assertSame(['00000000-0000-7000-8000-000000000002'], self::ids($storage->fetchUnpublished(10, [null, 'ext'])));
-        self::assertSame(['00000000-0000-7000-8000-000000000001'], self::ids($storage->fetchUnpublished(10, ['async', 'ext'])));
-        self::assertSame([], self::ids($storage->fetchUnpublished(10, ['async', null, 'ext'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000001', '00000000-0000-7000-8000-000000000002'], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, ['ext'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000003'], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, [null])));
+        self::assertSame(['00000000-0000-7000-8000-000000000002'], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, [null, 'ext'])));
+        self::assertSame(['00000000-0000-7000-8000-000000000001'], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, ['async', 'ext'])));
+        self::assertSame([], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, ['async', null, 'ext'])));
     }
 
     public function test_transports_take_turns_and_each_relays_its_new_messages_before_its_retries(): void
@@ -162,20 +163,125 @@ final class DbalOutboxStorageTest extends TestCase
         $storage->store(self::message('00000000-0000-7000-8000-000000000007', '2026-01-01 10:07:00', 'ext'));
         $storage->recordAttempt('00000000-0000-7000-8000-000000000001', 1, 'boom', new DateTimeImmutable('2026-01-01 09:00:00+00:00'));
 
+        // The transport whose next row has waited longest goes first: async (10:02), events (10:05),
+        // the rows without a transport name (10:06), ext (10:07).
         self::assertSame(
             [
-                '00000000-0000-7000-8000-000000000006', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005', '00000000-0000-7000-8000-000000000007',
+                '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005', '00000000-0000-7000-8000-000000000006', '00000000-0000-7000-8000-000000000007',
                 '00000000-0000-7000-8000-000000000003',
                 '00000000-0000-7000-8000-000000000004',
                 '00000000-0000-7000-8000-000000000001',
             ],
-            self::ids($storage->fetchUnpublished(10)),
+            self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10)),
         );
-        self::assertSame(['00000000-0000-7000-8000-000000000006', '00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005'], self::ids($storage->fetchUnpublished(3)));
+        self::assertSame(['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005', '00000000-0000-7000-8000-000000000006'], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(3)));
         self::assertSame(
             ['00000000-0000-7000-8000-000000000002', '00000000-0000-7000-8000-000000000005', '00000000-0000-7000-8000-000000000003', '00000000-0000-7000-8000-000000000004', '00000000-0000-7000-8000-000000000001'],
-            self::ids($storage->fetchUnpublished(10, ['ext', null])),
+            self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10, ['ext', null])),
         );
+    }
+
+    public function test_a_row_claimed_by_another_relay_between_the_two_fetch_queries_is_left_out(): void
+    {
+        $beforeFullRead = new BeforeQueryMiddleware(' IN (');
+        $this->connection = TestDatabase::connect(null, [$beforeFullRead]);
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00', 'async'));
+        // The ids are chosen, then another relay claims the first row before it is read in full.
+        $beforeFullRead->callback = static function () use ($storage): void {
+            self::assertTrue($storage->recordAttempt(self::ID_1, 1, 'claimed by relay B', new DateTimeImmutable('+1 minute'), 0));
+        };
+
+        $messages = $storage->fetchUnpublished(10);
+
+        self::assertNull($beforeFullRead->callback, 'The claim ran between the two queries.');
+        self::assertSame([self::ID_2], self::ids($messages), 'Relay A must not claim the row again with its new attempt count.');
+    }
+
+    public function test_the_transport_whose_next_row_has_waited_longest_goes_first(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message('00000000-0000-7000-8000-000000000001', '2026-01-01 10:02:00', 'a'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000002', '2026-01-01 10:01:00', 'b'));
+        $storage->store(self::message('00000000-0000-7000-8000-000000000003', '2026-01-01 10:00:00', 'c'));
+
+        self::assertSame(['c'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, $storage->fetchUnpublished(1)));
+
+        // Once its row is served (here: postponed), the next transport comes first.
+        $storage->recordAttempt('00000000-0000-7000-8000-000000000003', 1, 'boom', new DateTimeImmutable('+1 minute'));
+        self::assertSame(['b', 'a'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, $storage->fetchUnpublished(2)));
+    }
+
+    public function test_a_table_that_is_up_to_date_is_used_without_taking_the_setup_lock(): void
+    {
+        $queries = new class extends AbstractLogger {
+            /** @var list<string> */
+            private array $sql = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                if (is_string($context['sql'] ?? null)) {
+                    $this->sql[] = $context['sql'];
+                }
+            }
+
+            /**
+             * @return list<string>
+             */
+            public function flush(): array
+            {
+                [$sql, $this->sql] = [$this->sql, []];
+
+                return $sql;
+            }
+        };
+        $this->connection = TestDatabase::connect($queries);
+        (new DbalOutboxStorage($this->connection))->setup();
+        $queries->flush();
+
+        // A new process (e.g. every PHP-FPM request) with the default auto setup.
+        (new DbalOutboxStorage($this->connection))->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+        $sql = implode("\n", $queries->flush());
+        self::assertStringNotContainsString('advisory_lock', $sql);
+        self::assertStringNotContainsString('GET_LOCK', $sql);
+        self::assertStringContainsString('INSERT INTO somework_cqrs_outbox', $sql);
+    }
+
+    public function test_setup_rebuilds_an_index_that_a_killed_build_left_invalid(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('Invalid indexes exist only on PostgreSQL (CREATE INDEX CONCURRENTLY).');
+        }
+
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->setup();
+        // What a CREATE INDEX CONCURRENTLY that was killed leaves behind.
+        $this->connection->executeStatement("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass");
+
+        (new DbalOutboxStorage($this->connection))->setup();
+
+        self::assertTrue($this->connection->fetchOne("SELECT indisvalid FROM pg_index WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass"));
+    }
+
+    public function test_a_qualified_table_name_works(): void
+    {
+        $qualifier = match (true) {
+            $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform => 'public',
+            TestDatabase::isSqlite($this->connection) => null,
+            default => $this->connection->getDatabase(),
+        };
+        if (null === $qualifier) {
+            self::markTestSkipped('SQLite has no schemas to qualify the table name with.');
+        }
+
+        $storage = new DbalOutboxStorage($this->connection, $qualifier.'.app_outbox');
+        $storage->setup();
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+        self::assertSame([self::ID_1], self::ids($storage->fetchUnpublished(10)));
+        self::assertNull((new DbalOutboxStorage($this->connection, $qualifier.'.app_outbox'))->status()['oldest_retrying']);
     }
 
     public function test_fetch_queries_are_ordered_along_an_index(): void
@@ -271,8 +377,8 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertNull($requeued[0]->lastError);
 
         self::assertSame(1, $storage->requeueFailed());
-        // Transports take turns, starting with the rows without a transport name.
-        self::assertSame([self::ID_2, self::ID_1], self::ids($storage->fetchUnpublished(10)));
+        // Transports take turns, the one whose next row has waited longest first.
+        self::assertSame([self::ID_1, self::ID_2], self::ids($storage->fetchUnpublished(10)));
         self::assertSame([], $storage->fetchFailed(10));
     }
 

@@ -218,7 +218,7 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `idx_<table>_pending`**, which replaces `idx_<table>_published_created`. `store()` keeps working on the old
   table, but the relay needs them: run `bin/console somework:cqrs:outbox:setup` (it adds the missing columns and
   the index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait
-  for each other;
+  for each other, and changing the table waits at most 5 seconds for open transactions on it;
   `auto_setup: true` does the same outside a transaction), generate a Doctrine migration (with doctrine/orm the
   schema listener includes them; its plain `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the
   published rows first on a large table), or change the table by hand, see

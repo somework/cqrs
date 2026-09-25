@@ -11,6 +11,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\DBAL\Exception\DriverException;
 use Doctrine\DBAL\Exception\InvalidFieldNameException;
+use Doctrine\DBAL\Exception\LockWaitTimeoutException;
 use Doctrine\DBAL\Exception\SyntaxErrorException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
@@ -25,9 +26,10 @@ use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Types;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 
+use function array_column;
 use function array_filter;
-use function array_keys;
 use function array_map;
+use function array_slice;
 use function array_values;
 use function class_exists;
 use function count;
@@ -37,15 +39,17 @@ use function implode;
 use function in_array;
 use function is_string;
 use function method_exists;
+use function microtime;
 use function min;
+use function random_int;
 use function sha1;
-use function sleep;
 use function sprintf;
 use function str_contains;
 use function str_replace;
 use function strlen;
 use function strtolower;
 use function substr;
+use function usleep;
 
 use const ARRAY_FILTER_USE_KEY;
 
@@ -70,20 +74,29 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private const PURGE_BATCH_SIZE = 1000;
 
+    /** Seconds a change of an existing table waits for the transactions that lock it. */
+    private const DDL_LOCK_TIMEOUT = 5;
+
     /**
      * Indexes by name suffix. "pending" serves the relay: per transport, the pending rows
      * (published_at and failed_at NULL), new ones by created_at (available_at NULL), retries by
      * available_at. The purge uses its first column. (0.4 had an index on published_at and
      * created_at instead.).
      *
-     * @var array<string, list<string>>
+     * @var array<string, non-empty-list<string>>
      */
     private const INDEXES = [
         'pending' => ['published_at', 'failed_at', 'transport_name', 'available_at', 'created_at', 'id'],
     ];
 
-    /** Seconds a MySQL setup waits for another one to finish. */
+    /** Seconds the setup command waits for another setup to finish. */
     private const SETUP_LOCK_TIMEOUT = 600;
+
+    /** Seconds a process that finds the table unusable (e.g. the relay) waits for another setup to finish. */
+    private const AUTO_SETUP_LOCK_TIMEOUT = 30;
+
+    /** Rotates the order of transports whose next rows tie. */
+    private int $ties;
 
     /** Process-local cache of the "table is up to date" check. */
     private bool $setupDone = false;
@@ -93,6 +106,7 @@ final class DbalOutboxStorage implements OutboxStorage
         private readonly string $tableName = 'somework_cqrs_outbox',
         private readonly bool $autoSetup = true,
     ) {
+        $this->ties = random_int(0, 1 << 20);
     }
 
     public function store(OutboxMessage $message): void
@@ -367,57 +381,189 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     public function setup(): void
     {
-        $this->guard(fn () => $this->whileLocked(function (): void {
-            if ($this->tableExists()) {
-                $this->upgradeTable();
-            } else {
-                $this->assertNoTransaction('does not exist');
-
-                try {
-                    $this->connection->createSchemaManager()->createTable(self::buildTableDefinition($this->tableName));
-                } catch (DbalException $exception) {
-                    // Created concurrently by another process? PostgreSQL may report the clash on its
-                    // catalog as a unique constraint violation or a duplicate type.
-                    if (!$this->tableExists()) {
-                        throw $exception;
-                    }
-                }
-            }
-
-            // Schema tools quote reserved words, plain queries do not: fail here, not on the first message.
-            $this->connection->createQueryBuilder()->select('id')->from($this->tableName)->where('1 = 0')->executeQuery()->free();
-        }));
+        $this->guard(fn () => $this->prepareTable(true));
 
         $this->setupDone = true;
     }
 
-    private function acquireSetupLock(AbstractPlatform $platform, string $name): bool
+    /**
+     * Creates or upgrades the table. The usual case, a table that is up to date, takes no lock.
+     *
+     * @param bool $explicit True for the setup command: it waits for another setup to finish and
+     *                       fails when an index cannot be built. The auto setup only waits when the
+     *                       table cannot be used as it is (missing, or lacking columns); it builds a
+     *                       missing index only when no other setup runs, and a failed index build
+     *                       does not fail the caller (the table works, only slower).
+     */
+    private function prepareTable(bool $explicit): void
     {
-        if (!$platform instanceof PostgreSQLPlatform) {
-            return 1 === (int) $this->connection->fetchOne('SELECT GET_LOCK(?, ?)', [$name, self::SETUP_LOCK_TIMEOUT]);
-        }
+        $plan = $this->plan();
 
-        // Polled, not waited for: CREATE INDEX CONCURRENTLY waits for every running statement, so a
-        // process blocked in pg_advisory_lock() would deadlock with the one holding the lock.
-        for ($waited = 0; $waited < self::SETUP_LOCK_TIMEOUT; ++$waited) {
-            if (true === $this->connection->fetchOne('SELECT pg_try_advisory_lock(hashtext(?))', [$name])) {
-                return true;
+        if (null !== $plan) {
+            if ($explicit || $plan['create'] || [] !== $plan['columns']) {
+                $this->whileLocked(fn () => $this->apply(), $explicit ? self::SETUP_LOCK_TIMEOUT : self::AUTO_SETUP_LOCK_TIMEOUT);
+            } else {
+                try {
+                    $this->whileLocked(fn () => $this->apply(), 0);
+                } catch (DbalException) {
+                    // e.g. a statement timeout: the next setup builds the index.
+                }
             }
-            sleep(1);
         }
 
-        return false;
+        // Schema tools quote reserved words, plain queries do not: fail here, not on the first message.
+        $this->connection->createQueryBuilder()->select('id')->from($this->tableName)->where('1 = 0')->executeQuery()->free();
     }
 
     /**
-     * Runs the setup while holding a database lock, so processes that start at the same time
-     * (relay, purge, workers) do not change the table concurrently: the others wait, then find it
-     * up to date. Inside a transaction, where the setup cannot change the table anyway, and on
-     * SQLite no lock is taken.
+     * What the table lacks, or null when it is up to date.
+     *
+     * @return array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<string>>, invalid: list<string>, legacy: string|null}|null
+     */
+    private function plan(): ?array
+    {
+        if (!$this->tableExists()) {
+            return ['create' => true, 'columns' => [], 'indexes' => [], 'invalid' => [], 'legacy' => null];
+        }
+
+        $table = $this->introspectTable($this->connection->createSchemaManager());
+        $invalid = $this->invalidIndexes();
+        $plan = [
+            'create' => false,
+            'columns' => array_values(array_filter(self::FAILURE_COLUMNS, static fn (string $column): bool => !$table->hasColumn($column))),
+            'indexes' => array_filter(self::INDEXES, fn (string $suffix): bool => !$table->hasIndex(self::indexName($this->tableName, $suffix)) || in_array(strtolower(self::indexName($this->tableName, $suffix)), $invalid, true), ARRAY_FILTER_USE_KEY),
+            'invalid' => $invalid,
+            'legacy' => $this->legacyIndexName($table),
+        ];
+
+        return [] === $plan['columns'] && [] === $plan['indexes'] && null === $plan['legacy'] ? null : $plan;
+    }
+
+    /**
+     * Brings the table up to date; runs while holding the setup lock.
+     */
+    private function apply(): void
+    {
+        // Another process may have done it while this one waited for the lock.
+        $plan = $this->plan();
+        if (null === $plan) {
+            return;
+        }
+
+        if ($plan['create']) {
+            $this->assertNoTransaction('does not exist');
+            $this->connection->createSchemaManager()->createTable(self::buildTableDefinition($this->tableName));
+
+            return;
+        }
+
+        $this->assertNoTransaction([] === $plan['columns'] ? 'needs the index of this version' : sprintf('lacks the columns %s', implode(', ', $plan['columns'])));
+
+        $schemaManager = $this->connection->createSchemaManager();
+        $current = $this->introspectTable($schemaManager);
+        $concurrently = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
+
+        $upgraded = clone $current;
+        self::addColumns($upgraded, $plan['columns']);
+        if (!$concurrently) {
+            foreach ($plan['indexes'] as $suffix => $columns) {
+                $upgraded->addIndex($columns, self::indexName($this->tableName, $suffix));
+            }
+        }
+        $this->withLockTimeout(static fn () => $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded)));
+
+        if ($concurrently) {
+            foreach ($plan['indexes'] as $suffix => $columns) {
+                $name = self::indexName($this->tableName, $suffix);
+                // A build that was killed leaves an invalid index behind, which PostgreSQL does not use.
+                if (in_array(strtolower($name), $plan['invalid'], true)) {
+                    $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($name)));
+                }
+                $this->createIndexConcurrently($name, $columns);
+            }
+        }
+
+        // Only now that the new index exists: the relay is never left without one.
+        if (null !== $plan['legacy']) {
+            if ($concurrently) {
+                $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($plan['legacy'])));
+            } else {
+                $withoutLegacyIndex = clone $upgraded;
+                $withoutLegacyIndex->dropIndex($plan['legacy']);
+                $this->withLockTimeout(static fn () => $schemaManager->alterTable($schemaManager->createComparator()->compareTables($upgraded, $withoutLegacyIndex)));
+            }
+        }
+    }
+
+    /**
+     * The names (lower case) of the indexes of this table that a killed CREATE INDEX CONCURRENTLY
+     * left invalid (PostgreSQL only).
+     *
+     * @return list<string>
+     */
+    private function invalidIndexes(): array
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            return [];
+        }
+
+        $parts = explode('.', $this->tableName, 2);
+
+        return array_map(static fn (mixed $name): string => strtolower((string) $name), $this->connection->fetchFirstColumn(
+            'SELECT c.relname FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid JOIN pg_class t ON t.oid = i.indrelid JOIN pg_namespace n ON n.oid = t.relnamespace'
+            .' WHERE NOT i.indisvalid AND lower(t.relname) = lower(?) AND n.nspname = COALESCE(lower(?), current_schema())',
+            [$parts[1] ?? $parts[0], isset($parts[1]) ? $parts[0] : null],
+        ));
+    }
+
+    /**
+     * Changes the table only if its lock can be taken within a few seconds: waiting behind a long
+     * transaction on the table would block every write queued behind the change.
+     *
+     * @param \Closure(): void $change
+     */
+    private function withLockTimeout(\Closure $change): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+
+        if ($platform instanceof PostgreSQLPlatform) {
+            [$read, $set] = ['SHOW lock_timeout', 'SET lock_timeout = %s'];
+        } elseif ($platform instanceof AbstractMySQLPlatform) {
+            [$read, $set] = ['SELECT @@SESSION.lock_wait_timeout', 'SET SESSION lock_wait_timeout = %s'];
+        } else {
+            $change();
+
+            return;
+        }
+
+        $previous = (string) $this->connection->fetchOne($read);
+        $this->connection->executeStatement(sprintf($set, $platform instanceof PostgreSQLPlatform ? "'".self::DDL_LOCK_TIMEOUT."s'" : (string) self::DDL_LOCK_TIMEOUT));
+
+        try {
+            $change();
+        } catch (DriverException $exception) {
+            // MySQL reports lock_wait_timeout as such; DBAL does not convert PostgreSQL's lock_not_available (55P03).
+            if (!$exception instanceof LockWaitTimeoutException && '55P03' !== $exception->getSQLState()) {
+                throw $exception;
+            }
+
+            throw new \RuntimeException(sprintf('The outbox table "%s" could not be changed: a transaction kept it locked for more than %d seconds. Run "bin/console somework:cqrs:outbox:setup" again when the table is less busy.', $this->tableName, self::DDL_LOCK_TIMEOUT), 0, $exception);
+        } finally {
+            $this->connection->executeStatement(sprintf($set, $platform instanceof PostgreSQLPlatform ? $this->connection->quote($previous) : $previous));
+        }
+    }
+
+    /**
+     * Holds a database lock while $setup runs, so processes that start at the same time do not
+     * change the table concurrently. It is a session lock: run the setup over a direct connection,
+     * not through a pooler in transaction mode (PgBouncer). With a $timeout of 0, $setup is skipped
+     * when another process holds the lock. Inside a transaction, where the table cannot be changed
+     * anyway, and on SQLite no lock is taken.
      *
      * @param \Closure(): void $setup
+     * @param int              $timeout Seconds to wait for another setup to finish
      */
-    private function whileLocked(\Closure $setup): void
+    private function whileLocked(\Closure $setup, int $timeout): void
     {
         $platform = $this->connection->getDatabasePlatform();
         $name = 'somework_cqrs_outbox_setup_'.substr(sha1($this->tableName), 0, 16);
@@ -428,8 +574,12 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
-        if (!$this->acquireSetupLock($platform, $name)) {
-            throw new \RuntimeException(sprintf('Another process has been setting up the outbox table "%s" for more than %d seconds.', $this->tableName, self::SETUP_LOCK_TIMEOUT));
+        if (!$this->acquireSetupLock($platform, $name, $timeout)) {
+            if ($timeout > 0) {
+                throw new \RuntimeException(sprintf('Another process has been setting up the outbox table "%s" for more than %d seconds. Run "bin/console somework:cqrs:outbox:setup" to wait for it.', $this->tableName, $timeout));
+            }
+
+            return;
         }
 
         try {
@@ -437,6 +587,25 @@ final class DbalOutboxStorage implements OutboxStorage
         } finally {
             $this->connection->executeQuery($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$name])->free();
         }
+    }
+
+    private function acquireSetupLock(AbstractPlatform $platform, string $name, int $timeout): bool
+    {
+        if (!$platform instanceof PostgreSQLPlatform) {
+            return 1 === (int) $this->connection->fetchOne('SELECT GET_LOCK(?, ?)', [$name, $timeout]);
+        }
+
+        // Polled, not waited for: CREATE INDEX CONCURRENTLY waits for every running statement, so a
+        // process blocked in pg_advisory_lock() would deadlock with the one holding the lock.
+        $deadline = microtime(true) + $timeout;
+        do {
+            if (true === $this->connection->fetchOne('SELECT pg_try_advisory_lock(hashtext(?))', [$name])) {
+                return true;
+            }
+            usleep(random_int(50_000, 250_000));
+        } while (microtime(true) < $deadline);
+
+        return false;
     }
 
     /**
@@ -466,14 +635,29 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $queues = [];
         foreach ($transports as $transport) {
-            $ids = $this->dueIds($transport, $limit, 'available_at IS NULL', ['available_at'], ['created_at', 'id']);
-            if (count($ids) < $limit) {
-                $ids = [...$ids, ...$this->dueIds($transport, $limit - count($ids), 'available_at <= :now', [], ['available_at', 'created_at', 'id'])];
+            $due = $this->dueIds($transport, $limit, 'available_at IS NULL', ['available_at'], ['created_at', 'id'], 'created_at');
+            if (count($due) < $limit) {
+                $due = [...$due, ...$this->dueIds($transport, $limit - count($due), 'available_at <= :now', [], ['available_at', 'created_at', 'id'], 'available_at')];
             }
-            if ([] !== $ids) {
-                $queues[] = $ids;
+            if ([] !== $due) {
+                $queues[] = $due;
             }
         }
+
+        // The transport whose next row has waited longest goes first: a transport that was just
+        // served goes to the back, so all of them are served even when there are more transports
+        // than rows per fetch, also across runs. Dates come back in one fixed format, so they
+        // compare as strings.
+        // Rows stored within the same second tie: their transports take turns too, starting at a
+        // different one in every fetch (and in every process).
+        if ([] !== $queues) {
+            $start = $this->ties % count($queues);
+            // The next fetch starts after the transports this one serves first.
+            $this->ties += min($limit, count($queues));
+            $queues = [...array_slice($queues, $start), ...array_slice($queues, 0, $start)];
+        }
+        usort($queues, static fn (array $a, array $b): int => $a[0][1] <=> $b[0][1]);
+        $queues = array_map(static fn (array $queue): array => array_column($queue, 0), $queues);
 
         $ids = [];
         for ($position = 0; count($ids) < $limit; ++$position) {
@@ -496,8 +680,13 @@ final class DbalOutboxStorage implements OutboxStorage
             return [];
         }
 
-        // Only the chosen rows are read in full (bodies can be large).
-        $query = $this->pending()->andWhere('id IN (:ids)')->setParameter('ids', $ids, ArrayParameterType::STRING);
+        // Only the chosen rows are read in full (bodies can be large); a row that another relay
+        // claimed in the meantime is no longer due and is left out.
+        $query = $this->pending()
+            ->andWhere('id IN (:ids)')
+            ->andWhere('available_at IS NULL OR available_at <= :now')
+            ->setParameter('ids', $ids, ArrayParameterType::STRING)
+            ->setParameter('now', self::now(), Types::DATETIME_IMMUTABLE);
         $rows = [];
         foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
             $rows[strtolower((string) $row['id'])] = $row;
@@ -505,7 +694,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
         $due = [];
         foreach ($ids as $id) {
-            // Published or given up by another relay in the meantime: skipped.
+            // Published, given up or claimed by another relay in the meantime: skipped.
             if (isset($rows[strtolower($id)])) {
                 $due[] = $rows[strtolower($id)];
             }
@@ -515,16 +704,17 @@ final class DbalOutboxStorage implements OutboxStorage
     }
 
     /**
-     * Ids of the due rows of one transport, in index order (the index covers the query).
+     * Ids of the due rows of one transport, in index order (the index covers the query), with the
+     * time since which each row is due.
      *
      * @param list<string> $nullColumns Index columns after transport_name the condition restricts to NULL
      * @param list<string> $order
      *
-     * @return list<string>
+     * @return list<array{string, string}>
      */
-    private function dueIds(?string $transport, int $limit, string $condition, array $nullColumns, array $order): array
+    private function dueIds(?string $transport, int $limit, string $condition, array $nullColumns, array $order, string $dueSince): array
     {
-        $query = $this->pending()->select('id')->andWhere($condition)->setMaxResults($limit);
+        $query = $this->pending()->select('id', $dueSince.' AS due_since')->andWhere($condition)->setMaxResults($limit);
         if (null === $transport) {
             $query->andWhere('transport_name IS NULL');
         } else {
@@ -536,7 +726,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
         $query = $this->ordered($query, ['published_at', 'failed_at', 'transport_name', ...$nullColumns], $order);
 
-        return array_map(static fn (mixed $id): string => (string) $id, $this->guard(static fn (): array => $query->executeQuery()->fetchFirstColumn()));
+        return array_map(static fn (array $row): array => [(string) $row['id'], (string) $row['due_since']], $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()));
     }
 
     /**
@@ -612,70 +802,8 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
-        $this->setup();
-    }
-
-    /**
-     * Adds the columns and indexes that a table of an earlier version lacks, and drops the index
-     * of 0.4 that they replace (PostgreSQL would still pick it and sort). On PostgreSQL the
-     * indexes are built with CONCURRENTLY, so writes to a large table go on meanwhile.
-     */
-    private function upgradeTable(): void
-    {
-        $schemaManager = $this->connection->createSchemaManager();
-        $current = $this->introspectTable($schemaManager);
-        $missingColumns = array_values(array_filter(self::FAILURE_COLUMNS, static fn (string $column): bool => !$current->hasColumn($column)));
-        $missingIndexes = array_filter(self::INDEXES, fn (string $suffix): bool => !$current->hasIndex(self::indexName($this->tableName, $suffix)), ARRAY_FILTER_USE_KEY);
-        $legacyIndex = $this->legacyIndexName($current);
-
-        if ([] === $missingColumns && [] === $missingIndexes && null === $legacyIndex) {
-            return;
-        }
-
-        $this->assertNoTransaction([] === $missingColumns ? 'needs the indexes of this version' : sprintf('lacks the columns %s', implode(', ', $missingColumns)));
-
-        $concurrently = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
-        $upgraded = clone $current;
-        self::addColumns($upgraded, $missingColumns);
-        if (!$concurrently) {
-            foreach ($missingIndexes as $suffix => $columns) {
-                $upgraded->addIndex($columns, self::indexName($this->tableName, $suffix));
-            }
-        }
-
-        try {
-            $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded));
-
-            if ($concurrently) {
-                foreach ($missingIndexes as $suffix => $columns) {
-                    $this->createIndexConcurrently(self::indexName($this->tableName, $suffix), $columns);
-                }
-            }
-
-            // Only once the new index exists: a failed build must not leave the relay without an index.
-            if (null !== $legacyIndex) {
-                if ($concurrently) {
-                    $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($legacyIndex)));
-                } else {
-                    $withoutLegacyIndex = clone $upgraded;
-                    $withoutLegacyIndex->dropIndex($legacyIndex);
-                    $schemaManager->alterTable($schemaManager->createComparator()->compareTables($upgraded, $withoutLegacyIndex));
-                }
-            }
-        } catch (DbalException $exception) {
-            // Another process may have upgraded the table in the meantime.
-            $now = $this->introspectTable($schemaManager);
-            foreach ($missingColumns as $column) {
-                if (!$now->hasColumn($column)) {
-                    throw $exception;
-                }
-            }
-            foreach (array_keys($missingIndexes) as $suffix) {
-                if (!$now->hasIndex(self::indexName($this->tableName, $suffix))) {
-                    throw $exception;
-                }
-            }
-        }
+        $this->guard(fn () => $this->prepareTable(false));
+        $this->setupDone = true;
     }
 
     /**
@@ -683,6 +811,10 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private function createIndexConcurrently(string $name, array $columns): void
     {
+        // A statement timeout of the role would cancel a long build on every run.
+        $previousTimeout = (string) $this->connection->fetchOne('SHOW statement_timeout');
+        $this->connection->executeStatement('SET statement_timeout = 0');
+
         try {
             $this->connection->executeStatement(sprintf('CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON %s (%s)', $name, $this->tableName, implode(', ', $columns)));
         } catch (DbalException $exception) {
@@ -690,6 +822,8 @@ final class DbalOutboxStorage implements OutboxStorage
             $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($name)));
 
             throw $exception;
+        } finally {
+            $this->connection->executeStatement(sprintf('SET statement_timeout = %s', $this->connection->quote($previousTimeout)));
         }
     }
 
@@ -725,12 +859,14 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private function introspectTable(AbstractSchemaManager $schemaManager): Table
     {
-        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
-        if (method_exists($schemaManager, 'introspectTableByUnquotedName')) { // @phpstan-ignore function.alreadyNarrowedType
-            $parts = explode('.', $this->tableName, 2);
-            $table = $parts[1] ?? $parts[0];
-            $schema = isset($parts[1]) ? $parts[0] : null;
+        $parts = explode('.', $this->tableName, 2);
+        $table = $parts[1] ?? $parts[0];
+        $schema = isset($parts[1]) ? $parts[0] : null;
 
+        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
+        // It rejects a schema on MySQL, where "database.table" is the qualified name instead.
+        if (method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType
+            && (null === $schema || !$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform)) {
             // The configuration only allows "table" and "schema.table".
             if ('' === $table || '' === $schema) {
                 throw new \LogicException(sprintf('Invalid outbox table name "%s".', $this->tableName));

@@ -11,7 +11,6 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use function array_map;
 use function array_slice;
 use function in_array;
-use function ksort;
 use function max;
 use function sprintf;
 use function usort;
@@ -61,7 +60,6 @@ final class InMemoryOutboxStorage implements OutboxStorage
             if (isset($this->published[$id]) || in_array($message->transportName, $excludedTransports, true)) {
                 continue;
             }
-            // Rows without a transport name first, then the transports by name.
             $key = null === $message->transportName ? '' : '~'.$message->transportName;
             $queues[$key] ??= ['new' => [], 'retries' => []];
             if (null === $failure) {
@@ -70,16 +68,22 @@ final class InMemoryOutboxStorage implements OutboxStorage
                 $queues[$key]['retries'][] = [$failure['retryAt'] ?? $now, $message];
             }
         }
-        ksort($queues);
 
         // Per transport: new messages in the order they were stored, then retries in the order of
-        // their retry time (stable sorts keep the insertion order); the transports take turns.
+        // their retry time (stable sorts keep the insertion order); the transports take turns, the
+        // one whose next message has waited longest first.
         $lists = [];
         foreach ($queues as $queue) {
             usort($queue['new'], static fn (array $a, array $b): int => $a[0] <=> $b[0]);
             usort($queue['retries'], static fn (array $a, array $b): int => $a[0] <=> $b[0]);
-            $lists[] = array_map(static fn (array $entry): OutboxMessage => $entry[1], [...$queue['new'], ...$queue['retries']]);
+            $entries = [...$queue['new'], ...$queue['retries']];
+            if ([] !== $entries) {
+                $lists[] = $entries;
+            }
         }
+        usort($lists, static fn (array $a, array $b): int => $a[0][0] <=> $b[0][0]);
+        $lists = array_map(static fn (array $entries): array => array_map(static fn (array $entry): OutboxMessage => $entry[1], $entries), $lists);
+
         $due = [];
         for ($position = 0; [] !== $lists && $position < max(array_map(count(...), $lists)); ++$position) {
             foreach ($lists as $list) {

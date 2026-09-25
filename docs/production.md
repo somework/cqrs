@@ -248,6 +248,10 @@ If Doctrine migrations manage your schema, set `outbox.auto_setup: false`. With
 doctrine/orm installed, `doctrine:migrations:diff` includes the outbox table of
 the configured connection.
 
+Run `somework:cqrs:outbox:setup` over a direct database connection: it holds a
+session lock, which a pooler in transaction mode (PgBouncer) would move to
+another client.
+
 ### Relay
 
 `somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new
@@ -266,14 +270,13 @@ time) and marks each one published after dispatching it.
 * A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
   makes the command exit with `1`; the rows behind it are not blocked. After
   `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
-* The transports take turns, so one transport's backlog does not hold up the
-  others.
-* The transports take turns, so one transport's backlog does not hold up the
-  others.
+* The transports take turns, the one whose next row has waited longest first,
+  so one transport's backlog does not hold up the others.
 * A transport that fails 3 times in a row with a `TransportException` (broker
   down, or rejecting messages) is paused until the next run, while the rows of
-  the other transports are relayed (10 times when it accepted a message earlier
-  in the run: it is up and only rejects some messages). Its rows get three times `max_attempts`
+  the other transports are relayed (10 times, or 3 times taking more than 10
+  seconds, when it accepted a message earlier in the run: it is up and only
+  rejects some messages). Its rows get three times `max_attempts`
   (about a day) before they are given up. If the database fails, the run stops
   right away.
 * Delivery is at least once: if the process stops between dispatching a row and

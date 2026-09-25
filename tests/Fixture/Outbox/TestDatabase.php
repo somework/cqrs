@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Fixture\Outbox;
 
 use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Driver\Middleware;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Logging\Middleware as LoggingMiddleware;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
@@ -38,14 +39,16 @@ final class TestDatabase
 
     /**
      * @param LoggerInterface|null $queryLogger Receives every executed SQL statement
+     * @param list<Middleware>     $middlewares
      */
-    public static function connect(?LoggerInterface $queryLogger = null): Connection
+    public static function connect(?LoggerInterface $queryLogger = null, array $middlewares = []): Connection
     {
         $url = getenv(self::URL_VARIABLE);
         $configuration = new Configuration();
         if (null !== $queryLogger) {
-            $configuration->setMiddlewares([new LoggingMiddleware($queryLogger)]);
+            $middlewares[] = new LoggingMiddleware($queryLogger);
         }
+        $configuration->setMiddlewares($middlewares);
 
         if (!is_string($url) || '' === $url) {
             return DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true], $configuration);
