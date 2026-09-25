@@ -13,8 +13,10 @@ use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Contract\Command as CommandContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -22,10 +24,8 @@ use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
@@ -876,7 +876,7 @@ final class CommandBusTest extends TestCase
             self::fail('Expected AsyncBusNotConfiguredException');
         } catch (AsyncBusNotConfiguredException $e) {
             self::assertSame('command', $e->busName);
-            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $e->messageClass);
         }
     }
 
@@ -897,7 +897,7 @@ final class CommandBusTest extends TestCase
             self::fail('Expected NoHandlerException');
         } catch (NoHandlerException $e) {
             self::assertSame('command', $e->busName);
-            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $e->messageClass);
         }
     }
 

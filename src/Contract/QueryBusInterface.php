@@ -25,11 +25,17 @@ interface QueryBusInterface
      * Handles the query synchronously and returns the result of its handler; the exception of a
      * failing handler is rethrown as is.
      *
+     * @template TResult
+     *
+     * @param Query<TResult> $query
+     *
      * @throws NoHandlerException              when no handler handled the query
      * @throws MultipleHandlersException       when more than one handler handled it
      * @throws MessageSentToTransportException when the routing sent it to a transport instead
      * @throws DuplicateMessageException       when deduplication dropped it
      * @throws RateLimitExceededException      when the rate limiter of the message rejects it
+     *
+     * @return TResult
      */
     public function ask(Query $query, StampInterface ...$stamps): mixed;
 }

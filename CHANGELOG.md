@@ -25,6 +25,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - Diagnostics: a warning log when an asynchronous dispatch was handled synchronously because no transport is configured for the message; the bundle logs on its own `cqrs` channel when MonologBundle is installed, with one debug line per dispatch (and one per stamp decider that changed the stamps) instead of three plus one per decider; `NoHandlerException` and `AsyncBusNotConfiguredException` say how to fix the problem; the health check says that a transport can be created instead of calling it valid (the connection is not tested).
 - A query handler declared `: void` or `: never` is a compile error (`ask()` returned `null`).
 - `CqrsException`, implemented by every exception of the bundle; the bus interfaces document what they throw.
+- `@implements Query<ResultType>` types the result of `QueryBusInterface::ask()` for static analysis; the handler and query interfaces have template defaults.
+- `FakeCommandBus::willReturnFor()`, `willThrow()` on the command and query fakes.
+- `#[AsEventHandler(priority: …, fromTransport: …)]` and `#[AsCommandHandler(fromTransport: …)]`.
 - The backward compatibility promise (UPGRADE.md) covers the configuration tree, documented service ids and tags, decider priorities, console commands and span names, and gains a deprecation policy; the constructors of `CommandBus`, `QueryBus` and `EventBus` are `@internal`.
 - Faster dispatch: resolvers resolve the retry policy, serializer, metadata provider, rate limiter and transports once per message class (policies are resolved once, so they must be stateless); the outbox relay extends its lock every 10 seconds instead of after every row; only buses with an `EnvelopeAware` handler get the envelope-aware handlers locator; the handler metadata is no longer dumped into the main container class.
 - A decorated outbox storage (`#[AsDecorator('somework_cqrs.outbox.storage')]`) keeps `outbox:setup`, `outbox:failed`, the outbox health check and the relay's table report working: they use the DBAL storage behind the decorator (`somework_cqrs.outbox.dbal_storage`, which `DbalOutboxStorage` autowires to).
@@ -34,6 +37,9 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered), and the first `IdempotencyStamp` of a process logs it as a warning.
 
 ### Changed
+- **Breaking:** the abstract handlers (`AbstractCommandHandler`, `AbstractQueryHandler`, `AbstractEventHandler`) are removed; implement the marker interface with a typed `__invoke()`, plus `EnvelopeAware` and `EnvelopeAwareTrait` for the envelope.
+- **Breaking:** `StampDecider` and `MessageTypeAwareStampDecider` moved to `SomeWork\CqrsBundle\Contract`, the default policies (`NullRetryPolicy`, `ExponentialBackoffRetryPolicy`, `NullMessageSerializer`, `RandomCorrelationMetadataProvider`, `ClassNameMessageNamingStrategy`) to `SomeWork\CqrsBundle\Policy`.
+- **Breaking:** `HandlerRegistry::byType()` takes the new `MessageType` enum and `HandlerDescriptor::$type` is one; exceptions expose `$messageClass` instead of `$messageFqcn`; the fake buses record `RecordedDispatch` objects.
 - Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus when one is configured.
 - `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces without `__invoke()`, so handlers can type-hint the concrete message.
 - `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Resolution order: exact `dispatch_modes` map entry, then the attribute, then parent class/interface map entries, then the default.

@@ -8,9 +8,9 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\SequenceAware;
 use SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 

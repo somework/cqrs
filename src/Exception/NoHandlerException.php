@@ -13,17 +13,17 @@ use function ucfirst;
 final class NoHandlerException extends \LogicException implements CqrsException
 {
     public function __construct(
-        public readonly string $messageFqcn,
+        public readonly string $messageClass,
         public readonly string $busName,
         ?\Throwable $previous = null,
     ) {
         parent::__construct(
             sprintf(
                 'No handler found for "%s" dispatched on the %s bus. Register one with #[As%sHandler(%s::class)] or by implementing %sHandler; "bin/console somework:cqrs:list" shows the registered handlers.',
-                $messageFqcn,
+                $messageClass,
                 $busName,
                 ucfirst($busName),
-                self::shortName($messageFqcn),
+                self::shortName($messageClass),
                 ucfirst($busName),
             ),
             0,

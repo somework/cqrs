@@ -8,6 +8,7 @@ use ReflectionClass;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 
 /**
  * Resolves the effective dispatch mode for a message requested with DispatchMode::DEFAULT.
@@ -36,9 +37,6 @@ final class DispatchModeDecider
     {
         return new self(DispatchMode::SYNC, DispatchMode::SYNC);
     }
-
-    /** @var array<string, int> */
-    private array $interfaceDepthCache = [];
 
     /** @var array<class-string<Command>, DispatchMode> */
     private array $commandModeCache = [];
@@ -90,84 +88,19 @@ final class DispatchModeDecider
             return DispatchMode::ASYNC;
         }
 
-        foreach ($this->getClassHierarchy($message) as $class) {
-            if (isset($map[$class])) {
-                return $map[$class];
-            }
-        }
-
-        foreach ($this->getInterfaceHierarchy($message) as $interface) {
-            if (isset($map[$interface])) {
-                return $map[$interface];
+        // Parent classes, then interfaces, most specific first.
+        foreach (MessageTypeLocator::typesOf($message::class) as $type) {
+            if (isset($map[$type])) {
+                return $map[$type];
             }
         }
 
         return $default;
     }
 
-    /**
-     * @return list<class-string>
-     */
-    private function getClassHierarchy(object $message): array
-    {
-        $classes = [$message::class];
-        $parents = class_parents($message);
-        $classes = [...$classes, ...array_values($parents)];
-
-        return $classes;
-    }
-
-    /**
-     * @return list<class-string>
-     */
-    private function getInterfaceHierarchy(object $message): array
-    {
-        $interfaces = class_implements($message);
-
-        if ([] === $interfaces) {
-            return [];
-        }
-
-        $interfaces = array_values($interfaces);
-        usort(
-            $interfaces,
-            fn (string $a, string $b): int => $this->getInterfaceDepth($b) <=> $this->getInterfaceDepth($a)
-        );
-
-        return $interfaces;
-    }
-
-    private function getInterfaceDepth(string $interface): int
-    {
-        if (isset($this->interfaceDepthCache[$interface])) {
-            return $this->interfaceDepthCache[$interface];
-        }
-
-        if (!interface_exists($interface)) {
-            return $this->interfaceDepthCache[$interface] = 0;
-        }
-
-        $reflection = new ReflectionClass($interface);
-        $parents = $reflection->getInterfaceNames();
-
-        if ([] === $parents) {
-            return $this->interfaceDepthCache[$interface] = 0;
-        }
-
-        $depth = 1;
-        foreach ($parents as $parent) {
-            $depth = max($depth, 1 + $this->getInterfaceDepth($parent));
-        }
-
-        $this->interfaceDepthCache[$interface] = $depth;
-
-        return $depth;
-    }
-
     public function reset(): void
     {
         $this->commandModeCache = [];
         $this->eventModeCache = [];
-        $this->interfaceDepthCache = [];
     }
 }

@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function get_debug_type;

@@ -7,7 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Registration;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
-use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
+use SomeWork\CqrsBundle\Support\AbstractMessageTypeResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
@@ -34,10 +34,10 @@ final class ContainerHelperTest extends TestCase
         $container = new ContainerBuilder();
         $helper = new ContainerHelper();
 
-        self::assertSame(AbstractCommandHandler::class, $helper->ensureServiceExists($container, AbstractCommandHandler::class));
+        self::assertSame(AbstractMessageTypeResolver::class, $helper->ensureServiceExists($container, AbstractMessageTypeResolver::class));
         self::assertSame('app.not_a_class', $helper->ensureServiceExists($container, 'app.not_a_class'));
 
-        self::assertFalse($container->hasDefinition(AbstractCommandHandler::class));
+        self::assertFalse($container->hasDefinition(AbstractMessageTypeResolver::class));
         self::assertFalse($container->hasDefinition('app.not_a_class'));
     }
 

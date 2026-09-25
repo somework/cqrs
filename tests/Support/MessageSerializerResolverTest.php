@@ -9,8 +9,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 #[CoversClass(MessageSerializerResolver::class)]

@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\ChargePaymentHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
@@ -544,7 +545,7 @@ final class CqrsHandlerPassTest extends TestCase
         $container->setAlias('app.query_bus', 'messenger.default_bus');
         $container->register('handler.create_task', CreateTaskHandler::class)
             ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command']);
-        $container->register('handler.find_task', CreateTaskHandler::class)
+        $container->register('handler.find_task', FindTaskHandler::class)
             ->addTag('messenger.message_handler', ['handles' => FindTaskQuery::class, 'somework_cqrs_type' => 'query', 'bus' => 'app.query_bus']);
 
         (new CqrsHandlerPass())->process($container);

@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Testing\FakeQueryBus;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
 #[CoversClass(FakeQueryBus::class)]
@@ -32,8 +33,8 @@ final class FakeQueryBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame($query, $dispatched[0]['message']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame($query, $dispatched[0]->message);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_ask_returns_null_by_default(): void
@@ -138,9 +139,9 @@ final class FakeQueryBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(3, $dispatched);
-        self::assertSame($query1, $dispatched[0]['message']);
-        self::assertSame($query2, $dispatched[1]['message']);
-        self::assertSame($query3, $dispatched[2]['message']);
+        self::assertSame($query1, $dispatched[0]->message);
+        self::assertSame($query2, $dispatched[1]->message);
+        self::assertSame($query3, $dispatched[2]->message);
     }
 
     public function test_ask_without_stamps_records_empty_stamps_array(): void
@@ -151,7 +152,7 @@ final class FakeQueryBusTest extends TestCase
         $bus->ask($query);
 
         $dispatched = $bus->getDispatched();
-        self::assertSame([], $dispatched[0]['stamps']);
+        self::assertSame([], $dispatched[0]->stamps);
     }
 
     public function test_ask_with_multiple_stamps(): void
@@ -164,9 +165,9 @@ final class FakeQueryBusTest extends TestCase
         $bus->ask($query, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        self::assertCount(2, $dispatched[0]['stamps']);
-        self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
+        self::assertCount(2, $dispatched[0]->stamps);
+        self::assertSame($stamp1, $dispatched[0]->stamps[0]);
+        self::assertSame($stamp2, $dispatched[0]->stamps[1]);
     }
 
     public function test_will_return_overwrites_previous_default(): void
@@ -204,5 +205,23 @@ final class FakeQueryBusTest extends TestCase
 
         $bus->willReturn(['a', 'b']);
         self::assertSame(['a', 'b'], $bus->ask($query));
+    }
+
+    public function test_will_throw_records_the_query_then_throws(): void
+    {
+        $bus = new FakeQueryBus();
+        $bus->willReturn('result');
+        $bus->willThrow(new \DomainException('Not found'), FindTaskQuery::class);
+
+        self::assertSame('result', $bus->ask(new class implements Query {}));
+
+        try {
+            $bus->ask(new FindTaskQuery('task-1'));
+            self::fail('The configured exception was not thrown.');
+        } catch (\DomainException $exception) {
+            self::assertSame('Not found', $exception->getMessage());
+        }
+        self::assertCount(2, $bus->getDispatched());
+        self::assertNull($bus->getDispatched()[1]->mode, 'Queries have no dispatch mode.');
     }
 }

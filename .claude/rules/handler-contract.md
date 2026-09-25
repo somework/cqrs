@@ -1,6 +1,5 @@
 ---
 paths:
-  - src/Handler/**
   - src/Attribute/**
   - src/Contract/*Handler*
   - src/Contract/EnvelopeAware*
@@ -10,18 +9,9 @@ paths:
 
 ## Implementation Paths
 
-**Extend the abstract base class** (preferred) — `AbstractCommandHandler`, `AbstractQueryHandler`, `AbstractEventHandler`. These provide `EnvelopeAware` support automatically via trait inclusion and enforce the setup flow via `final __invoke()`. Use this path unless the handler already extends another base class.
+There are no base classes (the abstract handlers were removed in 0.5: PHP cannot narrow their `handle(Command $command)` parameter).
 
 **Plain class with a typed `__invoke()`** — registered by the attribute alone, or by implementing the marker interface `CommandHandler` / `QueryHandler` / `EventHandler`. The interfaces declare NO methods on purpose: PHP forbids narrowing a parameter type, so a declared `__invoke(Command $command)` would make `__invoke(CreateTask $command)` a fatal error. Never add `__invoke()` to these interfaces. Optionally implement `EnvelopeAware` + use `EnvelopeAwareTrait` if envelope access is needed.
-
-## Method Names
-
-Each abstract handler delegates to a domain-language method:
-- **Commands** → `abstract protected function handle(Command $command): mixed`
-- **Queries** → `abstract protected function fetch(Query $query): mixed`
-- **Events** → `abstract protected function on(Event $event): void`
-
-These names are intentional — they describe the handler's relationship to the message type. Do not rename them.
 
 ## Attribute Declaration
 
@@ -38,13 +28,11 @@ Attributes are repeatable: a single class can handle multiple message types by s
 
 ## EnvelopeAware Access
 
-When extending abstract handlers, use `$this->getEnvelope()` (inherited from trait) to access stamps, metadata, or correlation IDs. `EnvelopeAwareHandlersLocator` (one decorator per bus, registered by `EnvelopeAwareHandlersLocatorPass`) calls `setEnvelope()` right before yielding the original handler descriptor — no null checks needed inside `handle()`/`fetch()`/`on()`. Never wrap handlers in closures there: Messenger identifies handlers by descriptor name, and identical names make it skip the second handler of a message.
-
-When implementing the interface directly and needing envelope access: implement `EnvelopeAware`, use `EnvelopeAwareTrait`, and call `$this->getEnvelope()` in your `__invoke()` method.
+Implement `EnvelopeAware` and use `EnvelopeAwareTrait`; `$this->getEnvelope()` gives stamps, metadata or correlation IDs. `EnvelopeAwareHandlersLocator` (one decorator per bus, registered by `EnvelopeAwareHandlersLocatorPass`) calls `setEnvelope()` right before yielding the original handler descriptor — no null checks needed inside `__invoke()`. Only buses with an `EnvelopeAware` handler get the decorator. Never wrap handlers in closures there: Messenger identifies handlers by descriptor name, and identical names make it skip the second handler of a message.
 
 ## Template Generics
 
-Handler interfaces use `@template` annotations for static analysis type safety. When creating concrete handlers, annotate the class with `@extends AbstractCommandHandler<ConcreteCommand>` (or `@implements CommandHandler<ConcreteCommand>`) so PHPStan can verify type consistency.
+Handler interfaces use `@template` annotations for static analysis type safety. When creating concrete handlers, annotate the class with `@implements CommandHandler<ConcreteCommand>` so PHPStan can verify type consistency.
 
 ## Creating New Attribute Classes
 

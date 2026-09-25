@@ -9,8 +9,8 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
-use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 #[CoversClass(MessageMetadataProviderResolver::class)]

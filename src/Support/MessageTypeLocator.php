@@ -13,7 +13,6 @@ use function array_values;
 use function class_implements;
 use function get_parent_class;
 use function implode;
-use function iterator_to_array;
 use function max;
 use function sort;
 use function usort;
@@ -31,6 +30,9 @@ final class MessageTypeLocator
 
     /** @var array<string, int> */
     private static array $interfaceDepths = [];
+
+    /** @var array<class-string, list<class-string>> */
+    private static array $types = [];
 
     /**
      * @param list<string> $ignoredKeys
@@ -67,9 +69,7 @@ final class MessageTypeLocator
             $ignored[$key] = true;
         }
 
-        $classHierarchy = iterator_to_array(self::classHierarchy($messageClass), false);
-
-        foreach ($classHierarchy as $type) {
+        foreach (self::typesOf($messageClass) as $type) {
             if (isset($ignored[$type])) {
                 continue;
             }
@@ -78,20 +78,6 @@ final class MessageTypeLocator
                 self::storeMatch($services, $messageClass, $ignoredSignature, $type);
 
                 return new MessageTypeMatch($type, $services->get($type));
-            }
-        }
-
-        // Most specific interface first (same order as DispatchModeDecider), independent of the
-        // order in which the class happens to declare its interfaces.
-        foreach (self::interfacesByDepth($messageClass) as $interface) {
-            if (isset($ignored[$interface])) {
-                continue;
-            }
-
-            if ($services->has($interface)) {
-                self::storeMatch($services, $messageClass, $ignoredSignature, $interface);
-
-                return new MessageTypeMatch($interface, $services->get($interface));
             }
         }
 
@@ -123,6 +109,20 @@ final class MessageTypeLocator
         }
 
         self::$matchCache[$services][$messageClass][$ignoredSignature] = $type;
+    }
+
+    /**
+     * The types a per-message configuration can name for a class, in the order they are looked
+     * up: the class, its parent classes, then its interfaces, most specific first (independent of
+     * the order in which the class declares them). Shared with DispatchModeDecider.
+     *
+     * @param class-string $class
+     *
+     * @return list<class-string>
+     */
+    public static function typesOf(string $class): array
+    {
+        return self::$types[$class] ??= [...iterator_to_array(self::classHierarchy($class), false), ...self::interfacesByDepth($class)];
     }
 
     /**

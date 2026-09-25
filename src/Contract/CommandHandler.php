@@ -16,7 +16,7 @@ namespace SomeWork\CqrsBundle\Contract;
  *
  * Handlers SHOULD be stateless services and MUST NOT mutate the command.
  *
- * @template TCommand of Command
+ * @template TCommand of Command = Command
  *
  * @api
  */

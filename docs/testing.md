@@ -29,8 +29,8 @@ test suite runs on PHPUnit 11.5. The fake buses have no PHPUnit dependency.
 
 | Class | Methods it records | Configuring results | Other methods |
 |-------|--------------------|---------------------|---------------|
-| `FakeCommandBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | `willReturn(mixed $result)`: the value `dispatchSync()` returns (default `null`) | `getDispatched()`, `reset()` |
-| `FakeQueryBus` | `ask()` | `willReturn(mixed $result)`: the default result; `willReturnFor(string $queryClass, mixed $result)`: the result for one query class | `getDispatched()`, `reset()` |
+| `FakeCommandBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | `willReturn(mixed $result)`: the value `dispatchSync()` returns (default `null`); `willReturnFor(string $commandClass, mixed $result)`: the result for one command class; `willThrow(Throwable $exception, ?string $commandClass = null)`: `dispatchSync()` throws it | `getDispatched()`, `reset()` |
+| `FakeQueryBus` | `ask()` | `willReturn(mixed $result)`: the default result; `willReturnFor(string $queryClass, mixed $result)`: the result for one query class; `willThrow(Throwable $exception, ?string $queryClass = null)`: `ask()` throws it | `getDispatched()`, `reset()` |
 | `FakeEventBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | none | `getDispatched()`, `reset()` |
 
 A fake handles nothing. It does not run the stamp pipeline or resolve dispatch modes, and it
@@ -39,15 +39,12 @@ built from the stamps you passed.
 
 ### What `getDispatched()` returns
 
-`getDispatched()` returns one **array per call**, in call order. The entries are neither
-envelopes nor bare messages:
+`getDispatched()` returns one `SomeWork\CqrsBundle\Testing\RecordedDispatch` per call, in
+call order, with the read-only properties `message`, `mode` (a `DispatchMode`, `null` for
+queries, which are always synchronous) and `stamps` (the stamps you passed). A message is
+recorded before a configured exception is thrown.
 
-| Fake | Shape of each record |
-|------|----------------------|
-| `FakeCommandBus`, `FakeEventBus` | `['message' => object, 'mode' => DispatchMode, 'stamps' => list<StampInterface>]` |
-| `FakeQueryBus` | `['message' => object, 'stamps' => list<StampInterface>]` (no `mode`: queries are always synchronous) |
-
-The `mode` entry records the method that was called:
+The `mode` records the method that was called:
 
 - `dispatchSync()` records `DispatchMode::SYNC`.
 - `dispatchAsync()` records `DispatchMode::ASYNC`.
@@ -56,7 +53,7 @@ The `mode` entry records the method that was called:
   `#[Asynchronous]`.
 
 `reset()` clears the records. On `FakeCommandBus` and `FakeQueryBus` it also clears any
-results set with `willReturn()` or `willReturnFor()`.
+results and exceptions set with `willReturn()`, `willReturnFor()` or `willThrow()`.
 
 ### FakeCommandBus
 
@@ -88,7 +85,7 @@ final class TaskServiceTest extends TestCase
 
         $records = $commandBus->getDispatched();
         self::assertCount(1, $records);
-        self::assertSame('task-1', $records[0]['message']->id);
+        self::assertSame('task-1', $records[0]->message->id);
     }
 
     public function test_dispatch_sync_returns_the_configured_result(): void
@@ -180,8 +177,8 @@ final class TaskCreatedEventTest extends TestCase
         );
 
         $record = $eventBus->getDispatched()[0];
-        self::assertSame(DispatchMode::ASYNC, $record['mode']);
-        self::assertInstanceOf(IdempotencyStamp::class, $record['stamps'][0]);
+        self::assertSame(DispatchMode::ASYNC, $record->mode);
+        self::assertInstanceOf(IdempotencyStamp::class, $record->stamps[0]);
     }
 }
 ```
@@ -318,10 +315,8 @@ final class TaskHandlersTest extends TestCase
 }
 ```
 
-Handlers that extend `AbstractCommandHandler`, `AbstractQueryHandler` or
-`AbstractEventHandler` are `EnvelopeAware`. When you call them directly, first pass an
-envelope with `$handler->setEnvelope(new Envelope($message))` if `handle()`, `fetch()` or
-`on()` reads `$this->getEnvelope()`.
+When you call an `EnvelopeAware` handler directly and it reads `$this->getEnvelope()`,
+first pass an envelope with `$handler->setEnvelope(new Envelope($message))`.
 
 ## Swapping the buses for fakes in the test container
 
@@ -500,6 +495,6 @@ final class AsyncEventTest extends KernelTestCase
 - **Unit-test handlers without buses.** Call `__invoke()` directly. Use the fakes to test the
   code that dispatches.
 - **Check message properties** with the `assertDispatched()` callback, or read
-  `getDispatched()[n]['message']`.
+  `getDispatched()[n]->message`.
 - **Check the dispatch mode** through the `mode` entry of a record, not by relying on
   `dispatch_modes` configuration: the fakes record the mode the caller passed.

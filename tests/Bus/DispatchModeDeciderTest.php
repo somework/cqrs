@@ -145,14 +145,10 @@ final class DispatchModeDeciderTest extends TestCase
         self::assertArrayHasKey($message::class, $cachedModes);
         self::assertSame(DispatchMode::ASYNC, $cachedModes[$message::class]);
 
-        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
-        $interfaceCache->setAccessible(true);
-        $interfaceCache->setValue($decider, []);
+        // The cached mode is returned without another lookup.
+        $commandCache->setValue($decider, [$message::class => DispatchMode::SYNC]);
 
-        $secondResult = $decider->resolve($message, DispatchMode::DEFAULT);
-
-        self::assertSame($firstResult, $secondResult);
-        self::assertSame([], $interfaceCache->getValue($decider));
+        self::assertSame(DispatchMode::SYNC, $decider->resolve($message, DispatchMode::DEFAULT));
     }
 
     public function test_reset_clears_all_caches(): void
@@ -172,17 +168,14 @@ final class DispatchModeDeciderTest extends TestCase
 
         $commandCache = new ReflectionProperty($decider, 'commandModeCache');
         $eventCache = new ReflectionProperty($decider, 'eventModeCache');
-        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
 
         self::assertNotEmpty($commandCache->getValue($decider));
         self::assertNotEmpty($eventCache->getValue($decider));
-        self::assertNotEmpty($interfaceCache->getValue($decider));
 
         $decider->reset();
 
         self::assertSame([], $commandCache->getValue($decider));
         self::assertSame([], $eventCache->getValue($decider));
-        self::assertSame([], $interfaceCache->getValue($decider));
     }
 
     public function test_reset_allows_re_resolution_with_fresh_state(): void

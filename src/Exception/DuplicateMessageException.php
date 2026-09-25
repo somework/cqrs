@@ -15,13 +15,13 @@ use function sprintf;
 final class DuplicateMessageException extends \RuntimeException implements CqrsException
 {
     public function __construct(
-        public readonly string $messageFqcn,
+        public readonly string $messageClass,
         public readonly string $busName,
         public readonly string $deduplicationKey,
         ?\Throwable $previous = null,
     ) {
         parent::__construct(
-            sprintf('Message "%s" dispatched on the %s bus was dropped as a duplicate (deduplication key "%s").', $messageFqcn, $busName, $deduplicationKey),
+            sprintf('Message "%s" dispatched on the %s bus was dropped as a duplicate (deduplication key "%s").', $messageClass, $busName, $deduplicationKey),
             0,
             $previous,
         );

@@ -255,7 +255,7 @@ For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
 
 ## Creating custom stamp deciders
 
-Implement `SomeWork\CqrsBundle\Support\StampDecider` (`@api`) to add your own
+Implement `SomeWork\CqrsBundle\Contract\StampDecider` (`@api`) to add your own
 stamps to every dispatch through the facades.
 
 ### 1. Implement the interface
@@ -268,7 +268,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 
@@ -335,7 +335,7 @@ or with Symfony's attribute on the class:
 ```php
 <?php
 
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\DependencyInjection\Attribute\AsTaggedItem;
 
 #[AsTaggedItem(priority: 130)]
@@ -349,7 +349,7 @@ Without autoconfiguration, add the tag (with its priority) yourself.
 
 ### 3. Restrict it to message types (optional)
 
-Implement `SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider` (`@api`) to
+Implement `SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider` (`@api`) to
 run the decider only for some messages. `messageTypes()` returns classes or
 interfaces; the decider is called only for messages that are an instance of one
 of them:
@@ -363,7 +363,7 @@ namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 final class CommandAuditStampDecider implements MessageTypeAwareStampDecider

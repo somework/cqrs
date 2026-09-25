@@ -19,7 +19,7 @@ final class MessageSentToTransportException extends \LogicException implements C
      * @param list<string> $transportNames
      */
     public function __construct(
-        public readonly string $messageFqcn,
+        public readonly string $messageClass,
         public readonly string $busName,
         public readonly array $transportNames,
         ?\Throwable $previous = null,
@@ -27,7 +27,7 @@ final class MessageSentToTransportException extends \LogicException implements C
         parent::__construct(
             sprintf(
                 'Message "%s" dispatched on the %s bus was sent to transport(s) "%s" instead of being handled synchronously, so no result is available. Remove it from the async routing (framework.messenger.routing / somework_cqrs.transports) or dispatch it asynchronously.',
-                $messageFqcn,
+                $messageClass,
                 $busName,
                 implode('", "', $transportNames),
             ),

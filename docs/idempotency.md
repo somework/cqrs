@@ -170,7 +170,7 @@ time.
 
 | Call | Result |
 |------|--------|
-| `CommandBus::dispatchSync()`, `QueryBus::ask()` | Throw `SomeWork\CqrsBundle\Exception\DuplicateMessageException`, because no handler result exists. Its public read-only properties are `messageFqcn`, `busName` and `deduplicationKey`. |
+| `CommandBus::dispatchSync()`, `QueryBus::ask()` | Throw `SomeWork\CqrsBundle\Exception\DuplicateMessageException`, because no handler result exists. Its public read-only properties are `messageClass`, `busName` and `deduplicationKey`. |
 | `EventBus::dispatchSync()`, or `dispatch()` resolving to sync on either bus | No exception. No handler runs, and the returned envelope has no `HandledStamp`. |
 | `dispatchAsync()`, or `dispatch()` resolving to async | No exception. The message is not sent, and the returned envelope has no `SentStamp`. |
 
@@ -206,6 +206,6 @@ somework_cqrs:
   data (for example, a Redis restart) forgets the locks.
 
 For guarantees that do not expire, check on the consuming side as well. For example, record
-processed keys in a table with a unique constraint. An `EnvelopeAware` handler, such as any
-subclass of `AbstractCommandHandler`, can read the key with
+processed keys in a table with a unique constraint. An `EnvelopeAware` handler (see
+[Receiving the envelope](usage.md#receiving-the-envelope)) can read the key with
 `$this->getEnvelope()->last(IdempotencyStamp::class)?->getKey()`.

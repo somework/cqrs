@@ -63,7 +63,7 @@ final class SynchronousDispatchTest extends TestCase
             (new CommandBus($this->bus([])))->dispatchSync(new CreateTaskCommand('1', 'x'));
             self::fail('Expected a NoHandlerException.');
         } catch (NoHandlerException $exception) {
-            self::assertSame(CreateTaskCommand::class, $exception->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $exception->messageClass);
             self::assertInstanceOf(NoHandlerForMessageException::class, $exception->getPrevious());
         }
 
@@ -144,7 +144,7 @@ final class SynchronousDispatchTest extends TestCase
             $bus->dispatchSync(new CreateTaskCommand('1', 'x'));
             self::fail('Expected the ambiguous result to be reported.');
         } catch (MultipleHandlersException $exception) {
-            self::assertSame(CreateTaskCommand::class, $exception->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $exception->messageClass);
             self::assertSame(2, $exception->handlerCount);
         }
     }

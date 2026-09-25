@@ -16,7 +16,7 @@ somework_cqrs:
 
     # Message naming strategies
     # naming:
-    #     default: SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy
+    #     default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
     #     command: ~                  # Override for commands
     #     query: ~                    # Override for queries
     #     event: ~                    # Override for events
@@ -24,14 +24,14 @@ somework_cqrs:
     # Retry policies (per-type default + per-message map)
     # retry_policies:
     #     command:
-    #         default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
     #         map:
     #             App\Message\MyCommand: app.my_retry_policy   # keys must be existing classes or interfaces
     #     query:
-    #         default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
     #         map: {}
     #     event:
-    #         default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+    #         default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
     #         map: {}
 
     # Transport-level retry strategy using per-message RetryPolicy
@@ -42,7 +42,7 @@ somework_cqrs:
 
     # Serializer services that provide SerializerStamp instances
     # serialization:
-    #     default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+    #     default: SomeWork\CqrsBundle\Policy\NullMessageSerializer
     #     command:
     #         default: ~
     #         map: {}
@@ -55,7 +55,7 @@ somework_cqrs:
 
     # Metadata providers that supply MessageMetadataStamp instances
     # metadata:
-    #     default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
+    #     default: SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider
     #     command:
     #         default: ~
     #         map: {}

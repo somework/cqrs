@@ -11,7 +11,7 @@ final class HandlerDescriptor
 {
     /** @param class-string $messageClass */
     public function __construct(
-        public readonly string $type,
+        public readonly MessageType $type,
         public readonly string $messageClass,
         public readonly string $handlerClass,
         public readonly string $serviceId,

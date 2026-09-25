@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\AllowNoHandlerMiddlewareRegistrar;
@@ -33,7 +34,6 @@ use SomeWork\CqrsBundle\DependencyInjection\Registration\TransportRegistrar;
 use SomeWork\CqrsBundle\Health\HealthChecker;
 use SomeWork\CqrsBundle\Messenger\CausationIdMiddleware;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\ChildDefinition;
@@ -109,7 +109,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         $container->setAlias(
             'somework_cqrs.exponential_backoff_retry_policy',
-            \SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy::class,
+            \SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy::class,
         )->setPublic(false);
 
         $container->registerForAutoconfiguration(StampDecider::class)
@@ -289,7 +289,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         $container->registerAttributeForAutoconfiguration(
             AsCommandHandler::class,
             static function (ChildDefinition $definition, AsCommandHandler $attribute): void {
-                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->command, $attribute->bus, 'command'));
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->command, $attribute->bus, 'command', fromTransport: $attribute->fromTransport));
             }
         );
 
@@ -303,7 +303,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         $container->registerAttributeForAutoconfiguration(
             AsEventHandler::class,
             static function (ChildDefinition $definition, AsEventHandler $attribute): void {
-                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->event, $attribute->bus, 'event'));
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->event, $attribute->bus, 'event', $attribute->priority, $attribute->fromTransport));
             }
         );
 
@@ -314,9 +314,12 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
     }
 
     /**
-     * @return array<string, string>
+     * Messenger's handler tag: "priority" orders the handlers of a message, "from_transport"
+     * restricts a handler to the messages received from that transport.
+     *
+     * @return array<string, string|int>
      */
-    private static function handlerTag(string $message, ?string $bus, string $type): array
+    private static function handlerTag(string $message, ?string $bus, string $type, int $priority = 0, ?string $fromTransport = null): array
     {
         $tag = [
             'handles' => $message,
@@ -325,6 +328,14 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         if (null !== $bus && '' !== $bus) {
             $tag['bus'] = $bus;
+        }
+
+        if (0 !== $priority) {
+            $tag['priority'] = $priority;
+        }
+
+        if (null !== $fromTransport && '' !== $fromTransport) {
+            $tag['from_transport'] = $fromTransport;
         }
 
         return $tag;

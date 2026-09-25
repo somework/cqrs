@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Contract\Event as EventContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -21,7 +22,6 @@ use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
@@ -704,7 +704,7 @@ final class EventBusTest extends TestCase
             self::fail('Expected AsyncBusNotConfiguredException');
         } catch (AsyncBusNotConfiguredException $e) {
             self::assertSame('event', $e->busName);
-            self::assertSame(TaskCreatedEvent::class, $e->messageFqcn);
+            self::assertSame(TaskCreatedEvent::class, $e->messageClass);
         }
     }
 

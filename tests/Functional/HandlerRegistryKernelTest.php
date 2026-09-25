@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Functional;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
@@ -37,7 +38,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $commands = $registry->byType('command');
+        $commands = $registry->byType(MessageType::Command);
 
         $actual = array_map(
             static fn (HandlerDescriptor $descriptor): array => [
@@ -67,7 +68,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $queries = $registry->byType('query');
+        $queries = $registry->byType(MessageType::Query);
 
         $actual = array_map(
             static fn (HandlerDescriptor $descriptor): array => [
@@ -94,7 +95,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $events = $registry->byType('event');
+        $events = $registry->byType(MessageType::Event);
 
         self::assertCount(2, $events);
 
@@ -119,7 +120,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         assert($registry instanceof HandlerRegistry);
 
         $descriptor = null;
-        foreach ($registry->byType('command') as $candidate) {
+        foreach ($registry->byType(MessageType::Command) as $candidate) {
             if (CreateTaskCommand::class === $candidate->messageClass) {
                 $descriptor = $candidate;
 

@@ -447,7 +447,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 

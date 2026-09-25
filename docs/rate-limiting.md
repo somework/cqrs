@@ -142,7 +142,7 @@ final class NotificationController
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `messageFqcn` | `string` | Class of the throttled message. |
+| `messageClass` | `string` | Class of the throttled message. |
 | `retryAfter` | `DateTimeImmutable` | When the limiter will accept a token again. |
 | `remainingTokens` | `int` | Tokens left in the current window (normally `0`). |
 | `limit` | `int` | Capacity of the limiter. |

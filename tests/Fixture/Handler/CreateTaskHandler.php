@@ -5,22 +5,22 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Fixture\Handler;
 
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
+use SomeWork\CqrsBundle\Contract\CommandHandler;
+use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 
-/**
- * @extends AbstractCommandHandler<CreateTaskCommand>
- */
 #[AsCommandHandler(command: CreateTaskCommand::class)]
-final class CreateTaskHandler extends AbstractCommandHandler
+final class CreateTaskHandler implements CommandHandler, EnvelopeAware
 {
+    use EnvelopeAwareTrait;
+
     public function __construct(private readonly TaskRecorder $recorder)
     {
     }
 
-    protected function handle(Command $command): mixed
+    public function __invoke(CreateTaskCommand $command): mixed
     {
         $this->recorder->recordTask($command->id, $command->name);
         $this->recorder->recordEnvelopeMessage(self::class, $this->getEnvelope());

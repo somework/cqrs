@@ -62,6 +62,11 @@ argument:
   configuration.
 * With `bus: 'my.bus'`, the handler is registered on that Messenger bus only.
 
+`#[AsEventHandler]` also accepts `priority` (handlers of the same event with a
+higher priority run first) and `fromTransport`, and `#[AsCommandHandler]`
+accepts `fromTransport`: the handler then only runs for messages a worker
+received from that transport. Both are passed to Messenger's handler tag.
+
 Commands and queries must have exactly one handler. Two handlers for the same
 command or query on the same bus make the container compilation fail, and so
 does a handler registered for a parent class or interface of the message next
@@ -158,35 +163,29 @@ compilation); for a message that implements none of them, the attribute type
 decides. When a class has both the attribute and a handler marker interface,
 the attribute defines the registration.
 
-## Abstract base handlers
+## Receiving the envelope
 
-`SomeWork\CqrsBundle\Handler` provides base classes that implement the marker
-interface and `EnvelopeAware` for you:
-
-* `AbstractCommandHandler` -- implement `protected function handle(Command $command): mixed`.
-* `AbstractQueryHandler` -- implement `protected function fetch(Query $query): mixed`.
-* `AbstractEventHandler` -- implement `protected function on(Event $event): void`.
-
-Their `__invoke()` is untyped, so combine them with the attribute to declare the
-handled message. `$this->getEnvelope()` returns the Messenger envelope of the
-message being handled.
+A handler that needs the Messenger envelope of the message it handles (stamps, metadata,
+the idempotency key) implements `EnvelopeAware` and uses `EnvelopeAwareTrait`. The bundle
+passes the envelope right before it calls the handler; `$this->getEnvelope()` returns it.
 
 ```php
 <?php
 
 namespace App\Application\Command;
 
-use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
+use SomeWork\CqrsBundle\Contract\CommandHandler;
+use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 
-/** @extends AbstractCommandHandler<CancelOrder> */
-#[AsCommandHandler(command: CancelOrder::class)]
-final class CancelOrderHandler extends AbstractCommandHandler
+final class CancelOrderHandler implements CommandHandler, EnvelopeAware
 {
-    protected function handle(Command $command): mixed
+    use EnvelopeAwareTrait;
+
+    public function __invoke(CancelOrder $command): mixed
     {
-        \assert($command instanceof CancelOrder);
+        $correlationId = $this->getEnvelope()->last(MessageMetadataStamp::class)?->getCorrelationId();
 
         // Cancel the order…
         return null;
@@ -240,9 +239,9 @@ Commands
 ║ Async Defers      │ yes                                                           ║
 ║ Sync Transports   │ None                                                          ║
 ║ Async Transports  │ async                                                         ║
-║ Retry Policy      │ SomeWork\CqrsBundle\Support\NullRetryPolicy                   ║
-║ Serializer        │ SomeWork\CqrsBundle\Support\NullMessageSerializer             ║
-║ Metadata Provider │ SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider ║
+║ Retry Policy      │ SomeWork\CqrsBundle\Policy\NullRetryPolicy                   ║
+║ Serializer        │ SomeWork\CqrsBundle\Policy\NullMessageSerializer             ║
+║ Metadata Provider │ SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider ║
 ╚═══════════════════╧═══════════════════════════════════════════════════════════════╝
 ```
 

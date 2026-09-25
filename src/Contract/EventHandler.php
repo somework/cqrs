@@ -14,7 +14,7 @@ namespace SomeWork\CqrsBundle\Contract;
  *
  * Handlers SHOULD be stateless services and MUST NOT mutate the event.
  *
- * @template TEvent of Event
+ * @template TEvent of Event = Event
  *
  * @api
  */

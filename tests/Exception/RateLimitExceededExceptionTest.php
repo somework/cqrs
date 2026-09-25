@@ -18,7 +18,7 @@ final class RateLimitExceededExceptionTest extends TestCase
         $retryAfter = new \DateTimeImmutable('2026-03-22T12:00:00+00:00');
         $exception = new RateLimitExceededException('App\Command\Foo', $retryAfter, 0, 10);
 
-        self::assertSame('App\Command\Foo', $exception->messageFqcn);
+        self::assertSame('App\Command\Foo', $exception->messageClass);
         self::assertSame($retryAfter, $exception->retryAfter);
         self::assertSame(0, $exception->remainingTokens);
         self::assertSame(10, $exception->limit);
@@ -91,7 +91,7 @@ final class RateLimitExceededExceptionTest extends TestCase
 
         $reflection = new \ReflectionClass($exception);
 
-        foreach (['messageFqcn', 'retryAfter', 'remainingTokens', 'limit'] as $property) {
+        foreach (['messageClass', 'retryAfter', 'remainingTokens', 'limit'] as $property) {
             self::assertTrue(
                 $reflection->getProperty($property)->isReadOnly(),
                 sprintf('Property "%s" should be readonly', $property),

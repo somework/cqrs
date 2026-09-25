@@ -7,13 +7,14 @@ namespace SomeWork\CqrsBundle\Command;
 use ReflectionClass;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -185,7 +186,7 @@ final class ListHandlersCommand extends Command
 
         $rowsByType = [];
         foreach ($types as $type) {
-            $descriptors = $this->registry->byType($type);
+            $descriptors = $this->registry->byType(MessageType::from($type));
             $rows = [];
             foreach ($descriptors as $descriptor) {
                 if (null !== $filter && false === stripos($descriptor->messageClass, $filter) && false === stripos($this->registry->getDisplayName($descriptor), $filter)) {
@@ -262,7 +263,7 @@ final class ListHandlersCommand extends Command
     private function formatDescriptor(HandlerDescriptor $descriptor, bool $showDetails): array
     {
         $row = [
-            'Type' => ucfirst($descriptor->type),
+            'Type' => ucfirst($descriptor->type->value),
             'Message' => $this->registry->getDisplayName($descriptor),
             'Class' => $descriptor->messageClass,
             'Handler' => $descriptor->handlerClass,
@@ -290,25 +291,25 @@ final class ListHandlersCommand extends Command
             : 'n/a';
 
         $dispatchMode = $this->describeDispatchMode($message);
-        $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
-        $syncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, false);
-        $asyncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, true);
+        $asyncDefers = $this->describeAsyncDeferral($descriptor->type->value, $message);
+        $syncTransports = $this->describeTransports($descriptor->type->value, $descriptor->messageClass, $message, false);
+        $asyncTransports = $this->describeTransports($descriptor->type->value, $descriptor->messageClass, $message, true);
 
-        $retryResolver = $this->retryResolvers[$descriptor->type] ?? null;
+        $retryResolver = $this->retryResolvers[$descriptor->type->value];
         $retry = $this->describeResolvedService(
             $retryResolver,
             $message,
             static fn (RetryPolicyResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        $serializerResolver = $this->serializerResolvers[$descriptor->type] ?? null;
+        $serializerResolver = $this->serializerResolvers[$descriptor->type->value];
         $serializer = $this->describeResolvedService(
             $serializerResolver,
             $message,
             static fn (MessageSerializerResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        $metadataResolver = $this->metadataResolvers[$descriptor->type] ?? null;
+        $metadataResolver = $this->metadataResolvers[$descriptor->type->value];
         $metadata = $this->describeResolvedService(
             $metadataResolver,
             $message,

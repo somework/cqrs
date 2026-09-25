@@ -23,7 +23,7 @@ final class AsyncBusNotConfiguredExceptionTest extends TestCase
     {
         $exception = new AsyncBusNotConfiguredException('App\Command\Foo', 'command');
 
-        self::assertSame('App\Command\Foo', $exception->messageFqcn);
+        self::assertSame('App\Command\Foo', $exception->messageClass);
         self::assertSame('command', $exception->busName);
     }
 

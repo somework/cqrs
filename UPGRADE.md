@@ -107,6 +107,51 @@ type against the concrete handler or a callable instead. A handler that implemen
 typed first parameter and no attribute now fails at compile time with
 `Cannot determine the message handled by "..."`: add the type or the attribute.
 
+### Abstract handlers removed, classes moved
+
+- `AbstractCommandHandler`, `AbstractQueryHandler` and `AbstractEventHandler` are removed: PHP could not
+  let their `handle()`, `fetch()` and `on()` narrow the message parameter. Implement the marker interface
+  with a typed `__invoke()` instead, plus `EnvelopeAware` and `EnvelopeAwareTrait` when the handler reads
+  the envelope:
+
+  ```php
+  // Before
+  #[AsCommandHandler(CancelOrder::class)]
+  final class CancelOrderHandler extends AbstractCommandHandler
+  {
+      protected function handle(Command $command): mixed { /* $this->getEnvelope() */ }
+  }
+
+  // After
+  final class CancelOrderHandler implements CommandHandler, EnvelopeAware
+  {
+      use EnvelopeAwareTrait;
+
+      public function __invoke(CancelOrder $command): mixed { /* $this->getEnvelope() */ }
+  }
+  ```
+
+- Classes moved (update imports and class names in your configuration):
+
+  | Before | After |
+  |---|---|
+  | `SomeWork\CqrsBundle\Support\StampDecider` | `SomeWork\CqrsBundle\Contract\StampDecider` |
+  | `SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider` | `SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider` |
+  | `SomeWork\CqrsBundle\Support\NullRetryPolicy` | `SomeWork\CqrsBundle\Policy\NullRetryPolicy` |
+  | `SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy` | `SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy` |
+  | `SomeWork\CqrsBundle\Support\NullMessageSerializer` | `SomeWork\CqrsBundle\Policy\NullMessageSerializer` |
+  | `SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider` | `SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider` |
+  | `SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy` | `SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy` |
+
+- `HandlerRegistry::byType()` takes a `SomeWork\CqrsBundle\Registry\MessageType` (`byType(MessageType::Command)`),
+  and `HandlerDescriptor::$type` is a `MessageType`.
+- The exceptions expose `$messageClass` instead of `$messageFqcn`.
+- The fake buses' `getDispatched()` returns `RecordedDispatch` objects (`$record->message`, `->mode`,
+  `->stamps`) instead of arrays.
+- `Query`, `QueryHandler`, `CommandHandler` and `EventHandler` have template defaults, so PHPStan no longer
+  asks for generic types on them; declare `@implements Query<ResultType>` to get the result type from
+  `QueryBusInterface::ask()`.
+
 ### Handlers are registered on the async buses
 
 Handlers without an explicit `bus` are registered on the sync bus of their type **and** on the async bus of

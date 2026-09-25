@@ -10,11 +10,11 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
 use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ChargePaymentCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
@@ -118,7 +118,7 @@ final class RateLimitStampDeciderTest extends TestCase
             $decider->decide($message, DispatchMode::SYNC, []);
             self::fail('Expected RateLimitExceededException');
         } catch (RateLimitExceededException $e) {
-            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $e->messageClass);
             /* @phpstan-ignore staticMethod.alreadyNarrowedType */
             self::assertInstanceOf(\DateTimeImmutable::class, $e->retryAfter);
             self::assertSame(0, $e->remainingTokens);

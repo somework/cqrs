@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\Support;
+namespace SomeWork\CqrsBundle\Tests\Policy;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\CoversClass;
@@ -13,7 +13,7 @@ use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryConfiguration;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
-use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
 
 #[CoversClass(ExponentialBackoffRetryPolicy::class)]
 final class ExponentialBackoffRetryPolicyTest extends TestCase

@@ -78,12 +78,9 @@ Events without handlers are not an error.
 Cannot determine the message handled by "App\Application\Command\CreateTaskHandler" (service "App\Application\Command\CreateTaskHandler"). Type-hint the first parameter of App\Application\Command\CreateTaskHandler::__invoke() with the message class or declare it explicitly, e.g. #[AsCommandHandler(command: YourMessage::class)].
 ```
 
-**Cause.** The handler is registered through a marker interface (or extends
-`AbstractCommandHandler`, `AbstractQueryHandler` or `AbstractEventHandler`), and
-the first parameter of `__invoke()` has no class type (it is untyped, `object`,
-a scalar type, or missing). The bundle infers the handled message from that
-type. The `Abstract*Handler` classes declare an untyped `__invoke()`, so they
-always need the attribute.
+**Cause.** The handler is registered through a marker interface, and the first
+parameter of `__invoke()` has no class type (it is untyped, `object`, a scalar
+type, or missing). The bundle infers the handled message from that type.
 
 **Fix.** Type-hint the message class (`public function __invoke(CreateTask $command): mixed`)
 or add the attribute: `#[AsCommandHandler(CreateTask::class)]`.

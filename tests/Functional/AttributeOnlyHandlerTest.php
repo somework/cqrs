@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Functional;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
@@ -132,12 +133,12 @@ final class AttributeOnlyHandlerTest extends KernelTestCase
         $metadata = [];
         foreach (['command', 'query', 'event'] as $type) {
             $metadata[$type] = array_map(static fn (HandlerDescriptor $descriptor): array => [
-                'type' => $descriptor->type,
+                'type' => $descriptor->type->value,
                 'message' => $descriptor->messageClass,
                 'handler_class' => $descriptor->handlerClass,
                 'service_id' => $descriptor->serviceId,
                 'bus' => $descriptor->bus,
-            ], $registry->byType($type));
+            ], $registry->byType(MessageType::from($type)));
         }
 
         return $metadata;

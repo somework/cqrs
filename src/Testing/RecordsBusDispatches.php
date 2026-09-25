@@ -12,7 +12,9 @@ namespace SomeWork\CqrsBundle\Testing;
 interface RecordsBusDispatches
 {
     /**
-     * @return list<array{message: object, ...}>
+     * The received messages, in the order they were dispatched.
+     *
+     * @return list<RecordedDispatch<object>>
      */
     public function getDispatched(): array;
 

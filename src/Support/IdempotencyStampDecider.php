@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 use Symfony\Component\Lock\Key;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;

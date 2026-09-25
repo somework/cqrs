@@ -19,10 +19,14 @@ final class AsEventHandler
      *
      * @param class-string          $event
      * @param non-empty-string|null $bus
+     * @param int                   $priority      Handlers of the same event with a higher priority run first
+     * @param non-empty-string|null $fromTransport Only run this handler for messages received from this transport
      */
     public function __construct(
         public readonly string $event,
         public readonly ?string $bus = null,
+        public readonly int $priority = 0,
+        public readonly ?string $fromTransport = null,
     ) {
     }
 }

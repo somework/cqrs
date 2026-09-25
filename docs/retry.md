@@ -55,8 +55,8 @@ the policy only configures transport retries.
 
 | Class | Stamps | `RetryConfiguration` | Notes |
 |-------|--------|----------------------|-------|
-| `SomeWork\CqrsBundle\Support\NullRetryPolicy` | none | no | The default policy of every message type. Transports keep their own Messenger retry strategy. |
-| `SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy` | none | yes | Constructor `(int $maxRetries = 3, int $initialDelay = 1000, float $multiplier = 2.0)`. Rejects `$maxRetries < 0`, `$initialDelay < 1` and `$multiplier <= 0`. |
+| `SomeWork\CqrsBundle\Policy\NullRetryPolicy` | none | no | The default policy of every message type. Transports keep their own Messenger retry strategy. |
+| `SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy` | none | yes | Constructor `(int $maxRetries = 3, int $initialDelay = 1000, float $multiplier = 2.0)`. Rejects `$maxRetries < 0`, `$initialDelay < 1` and `$multiplier <= 0`. |
 
 Both are registered as services under their class names. The `ExponentialBackoffRetryPolicy`
 service uses the constructor defaults, and `somework_cqrs.exponential_backoff_retry_policy`
@@ -66,7 +66,7 @@ is an alias of it. For other values, register your own service:
 # config/services.yaml
 services:
     app.retry.payment:
-        class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+        class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         arguments:
             $maxRetries: 5
             $initialDelay: 1000   # milliseconds
@@ -83,15 +83,15 @@ and a `map` from message class or interface names to service ids:
 somework_cqrs:
     retry_policies:
         command:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
             map:
                 App\Application\Command\ProcessPayment: app.retry.payment
-                App\Application\Command\TalksToPaymentGateway: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+                App\Application\Command\TalksToPaymentGateway: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         event:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
             map: {}
         query:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
             map: {}
 ```
 

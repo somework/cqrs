@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
@@ -38,9 +39,9 @@ final class FakeCommandBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame($command, $dispatched[0]['message']);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame($command, $dispatched[0]->message);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_uses_default_mode(): void
@@ -51,8 +52,8 @@ final class FakeCommandBusTest extends TestCase
         $bus->dispatch($command);
 
         $dispatched = $bus->getDispatched();
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
-        self::assertSame([], $dispatched[0]['stamps']);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
+        self::assertSame([], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_sync_records_with_sync_mode(): void
@@ -66,8 +67,8 @@ final class FakeCommandBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame($command, $dispatched[0]['message']);
-        self::assertSame(DispatchMode::SYNC, $dispatched[0]['mode']);
+        self::assertSame($command, $dispatched[0]->message);
+        self::assertSame(DispatchMode::SYNC, $dispatched[0]->mode);
     }
 
     public function test_dispatch_sync_returns_configured_result(): void
@@ -96,8 +97,8 @@ final class FakeCommandBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_get_dispatched_returns_empty_array_initially(): void
@@ -145,12 +146,12 @@ final class FakeCommandBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(3, $dispatched);
-        self::assertSame($command1, $dispatched[0]['message']);
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
-        self::assertSame($command2, $dispatched[1]['message']);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[1]['mode']);
-        self::assertSame($command3, $dispatched[2]['message']);
-        self::assertSame(DispatchMode::SYNC, $dispatched[2]['mode']);
+        self::assertSame($command1, $dispatched[0]->message);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
+        self::assertSame($command2, $dispatched[1]->message);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[1]->mode);
+        self::assertSame($command3, $dispatched[2]->message);
+        self::assertSame(DispatchMode::SYNC, $dispatched[2]->mode);
     }
 
     public function test_dispatch_with_multiple_stamps(): void
@@ -163,9 +164,9 @@ final class FakeCommandBusTest extends TestCase
         $bus->dispatch($command, DispatchMode::DEFAULT, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        self::assertCount(2, $dispatched[0]['stamps']);
-        self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
+        self::assertCount(2, $dispatched[0]->stamps);
+        self::assertSame($stamp1, $dispatched[0]->stamps[0]);
+        self::assertSame($stamp2, $dispatched[0]->stamps[1]);
     }
 
     public function test_dispatch_sync_with_stamps(): void
@@ -177,7 +178,7 @@ final class FakeCommandBusTest extends TestCase
         $bus->dispatchSync($command, $stamp);
 
         $dispatched = $bus->getDispatched();
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_async_returns_envelope_wrapping_command(): void
@@ -213,5 +214,46 @@ final class FakeCommandBusTest extends TestCase
         /* @phpstan-ignore staticMethod.alreadyNarrowedType */
         self::assertInstanceOf(Envelope::class, $envelope);
         self::assertSame($command, $envelope->getMessage());
+    }
+
+    public function test_will_return_for_answers_per_command_class(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->willReturn('default');
+        $bus->willReturnFor(CreateTaskCommand::class, 'task-1');
+
+        self::assertSame('task-1', $bus->dispatchSync(new CreateTaskCommand('1', 'a')));
+        self::assertSame('default', $bus->dispatchSync(new class implements Command {}));
+    }
+
+    public function test_will_throw_records_the_command_then_throws(): void
+    {
+        $bus = new FakeCommandBus();
+        $failure = new \DomainException('Out of stock');
+        $bus->willThrow($failure, CreateTaskCommand::class);
+
+        self::assertNull($bus->dispatchSync(new class implements Command {}), 'Other commands are not affected.');
+
+        try {
+            $bus->dispatchSync(new CreateTaskCommand('1', 'a'));
+            self::fail('The configured exception was not thrown.');
+        } catch (\DomainException $exception) {
+            self::assertSame($failure, $exception);
+        }
+        self::assertCount(2, $bus->getDispatched());
+        self::assertSame(DispatchMode::SYNC, $bus->getDispatched()[1]->mode);
+
+        $bus->reset();
+        self::assertNull($bus->dispatchSync(new CreateTaskCommand('1', 'a')), 'reset() forgets the configured exception.');
+    }
+
+    public function test_will_throw_without_a_class_applies_to_every_command(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->willThrow(new \RuntimeException('boom'));
+
+        $this->expectException(\RuntimeException::class);
+
+        $bus->dispatchSync(new class implements Command {});
     }
 }

@@ -6,7 +6,7 @@ namespace SomeWork\CqrsBundle\Outbox;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;

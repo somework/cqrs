@@ -6,10 +6,10 @@ namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Outbox\ReservedTableNames;
-use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
-use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
+use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
 use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;

@@ -12,11 +12,11 @@ use SomeWork\CqrsBundle\Command\ListHandlersCommand;
 use SomeWork\CqrsBundle\Health\HandlerResolvabilityChecker;
 use SomeWork\CqrsBundle\Health\TransportValidityChecker;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
-use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
-use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
-use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
+use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
 
 use function Symfony\Component\DependencyInjection\Loader\Configurator\abstract_arg;

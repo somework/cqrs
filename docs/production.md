@@ -120,7 +120,7 @@ drive those retries per message class, combine three settings:
 # config/services.yaml
 services:
     app.retry.payment:
-        class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+        class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         arguments:
             $maxRetries: 5
             $initialDelay: 1000      # milliseconds

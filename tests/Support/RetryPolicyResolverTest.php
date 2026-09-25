@@ -8,7 +8,7 @@ use LogicException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;

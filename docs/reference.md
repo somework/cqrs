@@ -21,25 +21,25 @@ somework_cqrs:
         event: null
         event_async: null
     naming:
-        default: SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy
+        default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
         command: null
         query: null
         event: null
     retry_policies:
-        command: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
-        query: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
-        event: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
+        command: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
+        query: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
+        event: { default: SomeWork\CqrsBundle\Policy\NullRetryPolicy, map: {} }
     retry_strategy:
         transports: {}
         jitter: 0.0
         max_delay: 0
     serialization:
-        default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        default: SomeWork\CqrsBundle\Policy\NullMessageSerializer
         command: { default: null, map: {} }
         query: { default: null, map: {} }
         event: { default: null, map: {} }
     metadata:
-        default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
+        default: SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider
         command: { default: null, map: {} }
         query: { default: null, map: {} }
         event: { default: null, map: {} }
@@ -231,7 +231,7 @@ somework_cqrs:
 
 | Key | Default |
 |-----|---------|
-| `default` | `SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy` |
+| `default` | `SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy` |
 | `command`, `query`, `event` | `null` (use `default`) |
 
 Services implementing `SomeWork\CqrsBundle\Contract\MessageNamingStrategy`
@@ -252,7 +252,7 @@ One section per message type (`command`, `query`, `event`), each with:
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\NullRetryPolicy` | service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\NullRetryPolicy` | service id or class name |
 | `map` | `{}` | message class or interface => service id or class name |
 
 Services implement `SomeWork\CqrsBundle\Contract\RetryPolicy`:
@@ -345,7 +345,7 @@ somework_cqrs:
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\NullMessageSerializer` | service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\NullMessageSerializer` | service id or class name |
 | `command.default`, `query.default`, `event.default` | `null` (use `serialization.default`) | service id, class name or `null` |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => service id or class name |
 
@@ -386,7 +386,7 @@ somework_cqrs:
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider` | service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider` | service id or class name |
 | `command.default`, `query.default`, `event.default` | `null` (use `metadata.default`) | service id, class name or `null` |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => service id or class name |
 
@@ -790,6 +790,8 @@ part of the public API (`@api`); get it from the container (autowire
 * `all()` returns every handler as a list of `HandlerDescriptor` objects
   (`type`, `messageClass`, `handlerClass`, `serviceId`, `bus`). A handler
   registered on a sync and an async bus appears once per bus.
-* `byType('command'|'query'|'event')` limits the list to one message type.
+* `byType(MessageType::Command)` (`SomeWork\CqrsBundle\Registry\MessageType`: `Command`,
+  `Query`, `Event`) limits the list to one message type; `HandlerDescriptor::$type` is a
+  `MessageType` too.
 * `getDisplayName(HandlerDescriptor $descriptor)` returns the name produced by
   the configured naming strategy.

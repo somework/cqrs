@@ -8,10 +8,10 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
-use SomeWork\CqrsBundle\Support\StampDecider;
 
 #[CoversClass(CausationIdStampDecider::class)]
 final class CausationIdStampDeciderTest extends TestCase
@@ -77,7 +77,7 @@ final class CausationIdStampDeciderTest extends TestCase
         $interfaces = $reflection->getInterfaceNames();
 
         self::assertNotContains(
-            'SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider',
+            'SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider',
             $interfaces,
         );
     }

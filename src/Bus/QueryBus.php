@@ -46,10 +46,16 @@ final class QueryBus implements QueryBusInterface
      * When the handler throws, its exception is rethrown as is (not wrapped in Messenger's
      * HandlerFailedException).
      *
+     * @template TResult
+     *
+     * @param Query<TResult> $query
+     *
      * @throws NoHandlerException              when no handler handled the query
      * @throws MultipleHandlersException       when more than one handler handled the query
      * @throws MessageSentToTransportException when the routing sent the query to a transport
      * @throws DuplicateMessageException       when deduplication dropped the query
+     *
+     * @return TResult
      */
     public function ask(Query $query, StampInterface ...$stamps): mixed
     {

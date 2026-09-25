@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\Support;
+namespace SomeWork\CqrsBundle\Tests\Policy;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
+use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
 
 use function sprintf;
 
