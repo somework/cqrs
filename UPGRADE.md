@@ -220,7 +220,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   the index, with `CREATE INDEX CONCURRENTLY` on PostgreSQL, then drops the old index; concurrent setups wait
   for each other, and changing the table waits at most 5 seconds for open transactions on it; run it over a direct
   connection, not through PgBouncer in transaction mode; `auto_setup: true` only adds the columns, on the first relay run (storing never changes the
-  table), so the relay works before the setup command runs, only slower, and warns until the index exists), generate a Doctrine migration (with doctrine/orm the
+  table; not while another transaction holds the table, on MySQL while any transaction of the server has been open for more
+  than a second), so the relay usually works before the setup command runs, only slower, and warns until the index exists), generate a Doctrine migration (with doctrine/orm the
   schema listener includes them; its plain `CREATE INDEX` blocks writes on PostgreSQL while it runs, so purge the
   published rows first on a large table), or change the table by hand, see
   [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they

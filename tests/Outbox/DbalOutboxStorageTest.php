@@ -9,6 +9,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DbalException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
@@ -35,7 +36,6 @@ use function str_contains;
 use function str_repeat;
 use function substr;
 use function time;
-use function usleep;
 
 use const DATE_ATOM;
 
@@ -287,6 +287,24 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertStringContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()));
     }
 
+    public function test_without_automatic_setup_a_missing_index_is_noticed_too(): void
+    {
+        TestDatabase::createTableOfVersion04($this->connection);
+        // The columns come from a migration, the index does not (yet).
+        (new DbalOutboxStorage($this->connection))->fetchUnpublished(1);
+        $queries = new QueryLog();
+        $connection = TestDatabase::connect($queries, keepTables: true);
+        if (TestDatabase::isSqlite($connection)) {
+            self::markTestSkipped('In-memory SQLite has one database per connection.');
+        }
+        $storage = new DbalOutboxStorage($connection, autoSetup: false);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'a'));
+
+        self::assertSame([self::ID_1], self::ids($storage->fetchUnpublished(10)));
+        self::assertStringNotContainsString('SELECT transport_name FROM', implode("\n", $queries->flush()));
+        $connection->close();
+    }
+
     public function test_the_relay_asks_for_the_pending_changes_without_looking_at_the_table_again(): void
     {
         $queries = new QueryLog();
@@ -328,6 +346,28 @@ final class DbalOutboxStorageTest extends TestCase
         }
     }
 
+    public function test_the_setup_command_notices_a_pooler_that_handed_its_lock_to_another_connection(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('The setup takes a session lock of PostgreSQL.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        // The statement that releases the lock ran on another server connection, which does not hold it.
+        $pooler = new BeforeQueryMiddleware('pg_advisory_unlock');
+        $pooler->replacement = 'SELECT false WHERE CAST(? AS text) IS NOT NULL OR true';
+        $connection = TestDatabase::connect(null, [$pooler], keepTables: true);
+
+        try {
+            (new DbalOutboxStorage($connection, autoSetup: false))->setup();
+            self::fail('The setup lock stays with another client.');
+        } catch (\RuntimeException $exception) {
+            self::assertStringContainsString('was set up, but through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection', $exception->getMessage());
+        } finally {
+            $connection->close();
+        }
+        self::assertSame([], (new DbalOutboxStorage($this->connection))->pendingChanges(), 'The setup itself was done.');
+    }
+
     public function test_a_mysql_table_of_a_database_is_used_on_a_connection_without_one(): void
     {
         if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
@@ -354,15 +394,14 @@ final class DbalOutboxStorageTest extends TestCase
         if (TestDatabase::isSqlite($this->connection)) {
             self::markTestSkipped('Needs a second connection to the same database.');
         }
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
         TestDatabase::createTableOfVersion04($this->connection);
         $other = TestDatabase::connect(keepTables: true);
-        // e.g. a report, or a connection left idle in a transaction.
+        // e.g. a report, a dump or a connection left idle in a transaction.
         $other->beginTransaction();
         $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox');
-        $postgres = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
-        if ($postgres) {
-            usleep(1_100_000);
-        }
+        $platform = $this->connection->getDatabasePlatform();
 
         try {
             $storage = new DbalOutboxStorage($this->connection);
@@ -375,8 +414,18 @@ final class DbalOutboxStorageTest extends TestCase
             } catch (\RuntimeException $exception) {
                 self::assertStringContainsString('could not be changed: a transaction kept it locked for more than 1 second(s)', $exception->getMessage());
             }
-            // PostgreSQL sees the transaction and does not queue the writes behind the change; MySQL waits for 1 second.
-            self::assertLessThan($postgres ? 0.5 : 2.5, microtime(true) - $started);
+            self::assertLessThan(2.5, microtime(true) - $started);
+            // The change never waits in the lock queue, where the writes would queue behind it
+            // (MySQL can only bound the wait).
+            $sql = implode("\n", $queries->flush());
+            if ($platform instanceof PostgreSQLPlatform) {
+                self::assertStringContainsString('LOCK TABLE somework_cqrs_outbox IN ACCESS EXCLUSIVE MODE NOWAIT', $sql);
+                self::assertStringNotContainsString('ALTER TABLE', $sql);
+            } elseif ($platform instanceof MariaDBPlatform) {
+                self::assertStringContainsString('ALTER TABLE somework_cqrs_outbox NOWAIT ADD attempts', $sql);
+            } else {
+                self::assertStringContainsString('SET SESSION lock_wait_timeout = 1', $sql);
+            }
 
             $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
         } finally {

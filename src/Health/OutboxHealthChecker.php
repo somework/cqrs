@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 
 use function implode;
+use function in_array;
 use function intdiv;
 use function sprintf;
 
@@ -38,23 +39,25 @@ final class OutboxHealthChecker implements HealthChecker
         }
 
         try {
-            $status = $this->outboxStorage->status();
-        } catch (\Throwable $exception) {
-            return [new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('The outbox storage cannot be read: %s', $exception->getMessage()))];
-        }
-
-        $results = [];
-
-        try {
             $changes = $this->outboxStorage->pendingChanges();
         } catch (\Throwable $exception) {
             $changes = [sprintf('its structure cannot be read (%s)', $exception->getMessage())];
         }
-
         // e.g. the index of this version, which the automatic setup leaves to the setup command.
-        if ([] !== $changes) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
+        $needsSetup = [] === $changes ? null : new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s', implode('; ', $changes)));
+
+        try {
+            $status = $this->outboxStorage->status();
+        } catch (\Throwable $exception) {
+            // A table of 0.4 (without the new columns) still takes messages: the upgrade is due, nothing is lost.
+            if (null !== $needsSetup && !in_array('the table does not exist', $changes, true)) {
+                return [$needsSetup];
+            }
+
+            return [new CheckResult(CheckSeverity::CRITICAL, 'outbox', sprintf('The outbox storage cannot be read: %s', $exception->getMessage()))];
         }
+
+        $results = null === $needsSetup ? [] : [$needsSetup];
 
         if ($status['failed'] > 0) {
             $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('The relay gave up on %d outbox message(s); see "somework:cqrs:outbox:failed"', $status['failed']));

@@ -191,19 +191,23 @@ whether the table exists and has the columns of this version (without locking an
 the table is missing, it creates it. Storing never changes an existing table (writes keep
 working on a table of 0.4); the relay and the `failed` command add the columns they need.
 Processes that start at the same time wait for each other (at most 30 seconds, less once
-another one has added the columns), and adding the columns waits at most 1 second for the
-transactions on the table. It does not even try while a transaction has held the table for
-longer (PostgreSQL), or while any transaction of the server has been open for longer (MySQL and
-MariaDB, which do not tell which tables a transaction holds; this needs the `PROCESS`
-privilege, without it each attempt holds up the writes to the table for up to 1 second), so
-writes do not queue behind the change. Until the columns exist,
-every relay run fails with `could not be changed: a transaction kept it locked`: run the
-setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
+another one has added the columns). Adding the columns never waits in the lock queue of the
+table, where the writes would queue behind it: PostgreSQL tries `LOCK TABLE … NOWAIT` and
+MariaDB `ALTER TABLE … NOWAIT` for up to 1 second (autovacuum gives way). MySQL cannot do
+that: it does not try while any transaction of the server has been open for more than a
+second (it does not tell which tables a transaction holds; this needs the `PROCESS`
+privilege, without it each attempt holds up the writes to the table for up to 1 second).
+Until the columns exist, every relay run fails with `could not be changed: a transaction kept
+it locked` (MySQL: `is not changed while a transaction of the database server has been
+open`): run the setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
 pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
 a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
-it. Until then the relay fetches with one query along the index of 0.4, in the order the rows
-were stored (the transports do not take turns), and the health check reads all pending rows,
-which takes seconds with a large backlog. It never creates the table inside an open
+it. Until then (the relay checks for the index once a minute, also with `auto_setup: false`)
+it fetches with one query along the index of 0.4, in the order the rows were stored: the
+transports do not take turns, and rows that are not due (retries, given-up rows, paused
+transports) are read past, which slows fetches when many of them are ahead. The health
+check reads all pending rows, which takes seconds with a large backlog, and warns (not
+critical) while the table lacks the columns. It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -243,7 +247,8 @@ and the new index to stay fast. Add them with one of:
 - `bin/console somework:cqrs:outbox:setup`, over a direct database connection (setups that
   start at the same time wait for each other with a database lock held by the session, which
   PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
-  notices it and refuses). A signal (e.g. a deploy job that is terminated) stops it with the
+  usually notices it and refuses, or fails afterwards saying that the lock stayed with
+  another server connection). A signal (e.g. a deploy job that is terminated) stops it with the
   exit code `128 + signal`, once the running statement returns; the next setup continues. On
   PostgreSQL it builds the index with `CREATE INDEX CONCURRENTLY` (without the role's
   `statement_timeout`), so writes go on while it runs; it waits for transactions that started

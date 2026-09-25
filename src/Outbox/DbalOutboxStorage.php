@@ -17,6 +17,7 @@ use Doctrine\DBAL\Exception\SyntaxErrorException;
 use Doctrine\DBAL\Exception\TableNotFoundException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Query\QueryBuilder;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
@@ -42,6 +43,7 @@ use function is_string;
 use function method_exists;
 use function microtime;
 use function min;
+use function preg_replace;
 use function random_int;
 use function sha1;
 use function sprintf;
@@ -96,6 +98,9 @@ final class DbalOutboxStorage implements OutboxStorage
     /** Seconds the setup command waits for another setup to finish. */
     private const SETUP_LOCK_TIMEOUT = 600;
 
+    /** Seconds after which a process looks at the table again (e.g. whether the setup command built the index meanwhile). */
+    private const RECHECK_SECONDS = 60;
+
     /** Seconds a process that finds the table unusable (e.g. the relay) waits for another setup to finish. */
     private const AUTO_SETUP_LOCK_TIMEOUT = 30;
 
@@ -115,8 +120,14 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private array|false|null $knownPlan = false;
 
-    /** Whether the first use found the index of this version missing (or unusable) */
-    private bool $withoutPendingIndex = false;
+    /** When $knownPlan was found (microtime). */
+    private float $knownPlanAt = 0.0;
+
+    /** Whether the relay's index exists and is usable, null until checked. */
+    private ?bool $pendingIndex = null;
+
+    /** When $pendingIndex was checked (microtime). */
+    private float $pendingIndexCheckedAt = 0.0;
 
     public function __construct(
         private readonly Connection $connection,
@@ -159,7 +170,7 @@ final class DbalOutboxStorage implements OutboxStorage
         // others; each is queried on its own part of the index, a paused one is not even read.
         // Without that index (until the setup command builds it), each of those queries would read
         // every pending row: one query along the index of 0.4 instead, in the order rows were stored.
-        $rows = $this->withoutPendingIndex
+        $rows = !$this->hasPendingIndex()
             ? $this->dueRowsInStoredOrder($limit, $excludedTransports)
             : $this->dueRows($limit, $this->transportsExcept($excludedTransports));
 
@@ -421,9 +432,13 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     public function pendingChanges(): array
     {
+        if ($this->cannotInspect()) {
+            return [];
+        }
+
         // The first use of this process just looked (e.g. the relay's): no need to look again.
         [$plan, $this->knownPlan] = [$this->knownPlan, false];
-        if (false === $plan) {
+        if (false === $plan || microtime(true) - $this->knownPlanAt > self::RECHECK_SECONDS) {
             $plan = $this->guard(fn (): ?array => $this->inDatabaseOfTable(fn (): ?array => $this->plan()));
         }
         if (null === $plan) {
@@ -464,8 +479,7 @@ final class DbalOutboxStorage implements OutboxStorage
     {
         $complete = $this->inDatabaseOfTable(function () use ($explicit, $columns): bool {
             $plan = $this->plan();
-            $this->knownPlan = $plan;
-            $this->withoutPendingIndex = null !== $plan && !$plan['create'] && isset($plan['indexes']['pending']);
+            [$this->knownPlan, $this->knownPlanAt] = [$plan, microtime(true)];
 
             if (null === $plan) {
                 return true;
@@ -475,7 +489,7 @@ final class DbalOutboxStorage implements OutboxStorage
                 // Say so right away, instead of waiting for the lock of a setup that was killed during the build.
                 $this->assertNotBuilding($plan);
                 $this->whileLocked(fn () => $this->upgrade(), self::SETUP_LOCK_TIMEOUT);
-                [$this->knownPlan, $this->withoutPendingIndex] = [false, false];
+                [$this->knownPlan, $this->pendingIndex] = [false, null];
             } elseif ($plan['create'] || ($columns && [] !== $plan['columns'])) {
                 $this->makeUsable($plan);
                 // The table and the columns exist now; the indexes are as they were.
@@ -539,7 +553,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
         if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
             if (!$plan['create'] && $this->oldTransactionOnMySql()) {
-                throw $this->tableLocked(self::AUTO_DDL_LOCK_TIMEOUT);
+                throw new \RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version and is not changed while a transaction of the database server has been open for more than %d second(s): MySQL does not tell which tables it holds, and the writes to the table would wait behind the change. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName, self::AUTO_DDL_LOCK_TIMEOUT));
             }
             $this->whileLocked(fn () => $this->withLockTimeout(fn () => $this->addMissingColumns(), self::AUTO_DDL_LOCK_TIMEOUT), self::AUTO_SETUP_LOCK_TIMEOUT, $stillNeeded);
 
@@ -548,17 +562,7 @@ final class DbalOutboxStorage implements OutboxStorage
 
         // One transaction for the lock, the lock timeout and the change: none of them outlives it,
         // also not behind a pooler in transaction mode (PgBouncer) that hands the connection on.
-        $this->withLockTimeout(function () use ($plan, $stillNeeded): void {
-            // Do not even queue behind a transaction that has held the table for a while: the
-            // writes behind the change would wait too (only visible with the privileges of pg_read_all_stats
-            // for the sessions of other users).
-            if (!$plan['create'] && false !== $this->connection->fetchOne(
-                'SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = to_regclass(?) AND l.pid <> pg_backend_pid() AND a.xact_start < now() - make_interval(secs => ?) LIMIT 1',
-                [$this->tableName, self::AUTO_DDL_LOCK_TIMEOUT],
-            )) {
-                throw $this->tableLocked(self::AUTO_DDL_LOCK_TIMEOUT);
-            }
-
+        $this->withLockTimeout(function () use ($stillNeeded): void {
             $locked = $this->pollLock('SELECT pg_try_advisory_xact_lock(hashtext(?))', self::AUTO_SETUP_LOCK_TIMEOUT, false, $stillNeeded);
             if (false === $locked) {
                 throw $this->setupRunsElsewhere(self::AUTO_SETUP_LOCK_TIMEOUT);
@@ -577,13 +581,16 @@ final class DbalOutboxStorage implements OutboxStorage
      */
     private function oldTransactionOnMySql(): bool
     {
-        if (!$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+        // MariaDB changes the table with NOWAIT instead (see addMissingColumns()).
+        $platform = $this->connection->getDatabasePlatform();
+        if (!$platform instanceof AbstractMySQLPlatform || $platform instanceof MariaDBPlatform) {
             return false;
         }
 
         try {
+            // trx_started is in the time zone of the server, NOW() in the one of the session.
             return false !== $this->connection->fetchOne(
-                'SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < NOW() - INTERVAL ? SECOND LIMIT 1',
+                "SELECT 1 FROM information_schema.innodb_trx WHERE trx_mysql_thread_id <> CONNECTION_ID() AND trx_started < CONVERT_TZ(NOW(), @@session.time_zone, 'SYSTEM') - INTERVAL ? SECOND LIMIT 1",
                 [self::AUTO_DDL_LOCK_TIMEOUT],
             );
         } catch (DbalException) {
@@ -615,7 +622,88 @@ final class DbalOutboxStorage implements OutboxStorage
         $current = $this->introspectTable($schemaManager);
         $upgraded = clone $current;
         self::addColumns($upgraded, $plan['columns']);
-        $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded));
+        $diff = $schemaManager->createComparator()->compareTables($current, $upgraded);
+        $platform = $this->connection->getDatabasePlatform();
+
+        // The change must not queue behind a transaction on the table: the writes would queue behind it.
+        if ($platform instanceof PostgreSQLPlatform) {
+            $this->lockWithoutQueueing(self::AUTO_DDL_LOCK_TIMEOUT);
+        } elseif ($platform instanceof MariaDBPlatform) {
+            $this->alterWithoutQueueing($platform->getAlterTableSQL($diff), self::AUTO_DDL_LOCK_TIMEOUT);
+
+            return;
+        }
+
+        $schemaManager->alterTable($diff);
+    }
+
+    /**
+     * Takes the lock of the table for the rest of the transaction (PostgreSQL) only while nobody
+     * holds it: a waiting lock request would hold up every later write of the table. Autovacuum
+     * gives way to a waiting request after deadlock_timeout, a client does not.
+     */
+    private function lockWithoutQueueing(int $seconds): void
+    {
+        $deadline = microtime(true) + $seconds;
+
+        while (true) {
+            $this->connection->createSavepoint('somework_cqrs_outbox_lock');
+            try {
+                $this->connection->executeStatement(sprintf('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE NOWAIT', $this->tableName));
+                $this->connection->releaseSavepoint('somework_cqrs_outbox_lock');
+
+                return;
+            } catch (DriverException $exception) {
+                if ('55P03' !== $exception->getSQLState()) {
+                    throw $exception;
+                }
+                $this->connection->rollbackSavepoint('somework_cqrs_outbox_lock');
+            }
+
+            if (microtime(true) >= $deadline) {
+                break;
+            }
+            usleep(50_000);
+        }
+
+        $clients = (int) $this->connection->fetchOne(
+            "SELECT COUNT(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = to_regclass(?) AND l.granted AND l.pid <> pg_backend_pid() AND a.backend_type IS DISTINCT FROM 'autovacuum worker'",
+            [$this->tableName],
+        );
+        if (0 !== $clients) {
+            throw $this->tableLocked($seconds);
+        }
+
+        // Only autovacuum, which is cancelled once the request has waited for deadlock_timeout (1 second by default).
+        $this->connection->executeStatement(sprintf("SET LOCAL lock_timeout = '%ds'", $seconds + 2));
+        $this->connection->executeStatement(sprintf('LOCK TABLE %s IN ACCESS EXCLUSIVE MODE', $this->tableName));
+    }
+
+    /**
+     * Runs the ALTER TABLE statements with NOWAIT (MariaDB) until they get the table, for at most
+     * $seconds: a waiting ALTER would hold up every later write of the table.
+     *
+     * @param list<string> $statements
+     */
+    private function alterWithoutQueueing(array $statements, int $seconds): void
+    {
+        foreach ($statements as $sql) {
+            $sql = (string) preg_replace('/^ALTER TABLE (\S+) /', 'ALTER TABLE $1 NOWAIT ', $sql);
+            $deadline = microtime(true) + $seconds;
+
+            while (true) {
+                try {
+                    $this->connection->executeStatement($sql);
+
+                    break;
+                } catch (LockWaitTimeoutException $exception) {
+                    if (microtime(true) >= $deadline) {
+                        throw $this->tableLocked($seconds, $exception);
+                    }
+                    usleep(50_000);
+                }
+            }
+        }
     }
 
     /**
@@ -799,14 +887,20 @@ final class DbalOutboxStorage implements OutboxStorage
         if (null === $locked) {
             return;
         }
-        if (null !== $backend) {
-            $this->assertDirectConnection($backend);
-        }
 
         try {
+            if (null !== $backend) {
+                $this->assertDirectConnection($backend);
+            }
             $setup();
         } finally {
-            $this->connection->executeQuery($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$this->setupLockName()])->free();
+            $released = $this->connection->fetchOne($platform instanceof PostgreSQLPlatform ? 'SELECT pg_advisory_unlock(hashtext(?))' : 'SELECT RELEASE_LOCK(?)', [$this->setupLockName()]);
+        }
+
+        // Another server connection took the lock: a pooler handed the statements around, and the
+        // lock now stays with it (until that connection closes).
+        if ($platform instanceof PostgreSQLPlatform && true !== $released) {
+            throw new \RuntimeException(sprintf('The outbox table "%s" was set up, but through a pooler in transaction mode (e.g. PgBouncer): the setup lock stays with another server connection until it closes, and blocks the next setup. Run "bin/console somework:cqrs:outbox:setup" over a direct database connection.', $this->tableName));
         }
     }
 
@@ -857,11 +951,20 @@ final class DbalOutboxStorage implements OutboxStorage
     private function setupLockName(): string
     {
         // PostgreSQL's advisory locks belong to the database, MySQL's named locks to the server.
+        $parts = $this->tableParts();
         $name = $this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform
-            ? $this->connection->getDatabase().'.'.($this->tableParts()[1] ?? $this->tableName)
+            ? (isset($parts[1]) ? $parts[0].'.'.$parts[1] : $this->connection->getDatabase().'.'.$parts[0])
             : $this->tableName;
 
         return 'somework_cqrs_outbox_setup_'.substr(sha1(strtolower($name)), 0, 16);
+    }
+
+    /**
+     * DBAL cannot look into a "database.table" of MySQL without a database selected.
+     */
+    private function cannotInspect(): bool
+    {
+        return isset($this->tableParts()[1]) && $this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform && null === $this->connection->getDatabase();
     }
 
     /**
@@ -939,6 +1042,38 @@ final class DbalOutboxStorage implements OutboxStorage
         self::configureTable($table, $tableName);
 
         return $table;
+    }
+
+    /**
+     * Whether the relay's index exists and is usable; checked again once a minute while it is not
+     * (the setup command may build it meanwhile). When the check fails, the index is assumed.
+     */
+    private function hasPendingIndex(): bool
+    {
+        if (true === $this->pendingIndex || (null !== $this->pendingIndex && microtime(true) - $this->pendingIndexCheckedAt < self::RECHECK_SECONDS)) {
+            return $this->pendingIndex;
+        }
+
+        $name = self::indexName($this->tableName, 'pending');
+        $parts = $this->tableParts();
+        $platform = $this->connection->getDatabasePlatform();
+
+        try {
+            $found = match (true) {
+                $platform instanceof PostgreSQLPlatform => $this->connection->fetchOne('SELECT i.indisvalid FROM pg_index i WHERE i.indexrelid = to_regclass(?) AND i.indrelid = to_regclass(?)', [$this->qualifiedIndexName($name), $this->tableName]),
+                $platform instanceof AbstractMySQLPlatform => $this->connection->fetchOne(
+                    'SELECT 1 FROM information_schema.statistics WHERE table_schema = COALESCE(?, DATABASE()) AND table_name = ? AND index_name = ? LIMIT 1',
+                    [isset($parts[1]) ? $parts[0] : null, $parts[1] ?? $parts[0], $name],
+                ),
+                default => $this->connection->fetchOne("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?", [$name]),
+            };
+            $this->pendingIndex = true === $found || 1 === (int) $found;
+        } catch (DbalException) {
+            $this->pendingIndex = true;
+        }
+        $this->pendingIndexCheckedAt = microtime(true);
+
+        return $this->pendingIndex;
     }
 
     /**
@@ -1150,9 +1285,8 @@ final class DbalOutboxStorage implements OutboxStorage
             return;
         }
 
-        // DBAL cannot look into a "database.table" of MySQL without a database selected: the queries
-        // themselves report a missing table or column.
-        if (null === $this->connection->getDatabase() && isset($this->tableParts()[1]) && $this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform) {
+        // The queries themselves report a missing table or column.
+        if ($this->cannotInspect()) {
             $this->setupDone = true;
 
             return;

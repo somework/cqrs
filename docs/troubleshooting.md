@@ -427,8 +427,11 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `The outbox table setup was stopped by signal <number>; run it again.` The
   setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
   it did so far stays.
-* `The outbox table "…" is set up through a pooler in transaction mode …` Run
-  the setup command over a direct database connection, not through PgBouncer.
+* `The outbox table "…" is set up through a pooler in transaction mode …` or
+  `… was set up, but through a pooler in transaction mode …` Run the setup
+  command over a direct database connection, not through PgBouncer. In the
+  second case the setup lock stays with a server connection of the pooler until
+  it closes (e.g. `RECONNECT` in PgBouncer's admin console).
 * `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
   `outbox.max_attempts` times (three times as many for transport failures). Fix
   the cause, then list and requeue it with `somework:cqrs:outbox:failed
@@ -450,13 +453,16 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
   table does not exist or lacks the columns of this version (run
   `somework:cqrs:outbox:setup`). With `could not be changed: a transaction kept it
   locked for more than 1 second(s)`, the relay tried to add the columns while a
-  transaction held the table; with `Another process has been setting up the outbox
+  transaction held the table; with `is not changed while a transaction of the
+  database server has been open for more than 1 second(s)` (MySQL), any long
+  transaction of the server, also of other databases, kept it from trying; with `Another process has been setting up the outbox
   table … for more than 30 seconds`, another process was upgrading it. Run
   `somework:cqrs:outbox:setup`, which waits longer.
 * `The outbox table needs "bin/console somework:cqrs:outbox:setup": …` The table
   lacks the index of this version, or has an invalid one (an interrupted build),
-  or still has the index of 0.4. The relay works, but reads every pending row on
-  each fetch. Run the setup command (over a direct database connection).
+  or still has the index of 0.4. The relay works, only slower: it fetches in the
+  order the rows were stored, without turns between transports. Run the setup
+  command (over a direct database connection).
 
 ## Health check failures
 

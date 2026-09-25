@@ -83,6 +83,19 @@ final class OutboxHealthCheckerTest extends TestCase
         ], self::summary((new OutboxHealthChecker($storage))->check()));
     }
 
+    public function test_a_table_of_version_04_is_a_warning(): void
+    {
+        // Messages are still stored (store() never changes the table); only the upgrade is due.
+        $connection = TestDatabase::connect();
+        TestDatabase::createTableOfVersion04($connection);
+        $storage = new DbalOutboxStorage($connection);
+        $storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-1 minute')));
+
+        self::assertSame([
+            [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the columns attempts, available_at, failed_at, last_error are missing; the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],
+        ], self::summary((new OutboxHealthChecker($storage))->check()));
+    }
+
     public function test_an_unreadable_storage_is_critical(): void
     {
         $storage = new DbalOutboxStorage(TestDatabase::connect(), autoSetup: false);
