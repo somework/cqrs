@@ -424,9 +424,10 @@ interface MessageMetadataProvider
 ```
 
 The default provider adds a `MessageMetadataStamp` with a random 32-character
-hexadecimal correlation id. A `MessageMetadataStamp` passed by the caller wins
-(use it to propagate a correlation id you received). When a message is
-dispatched from inside a handler, the causation id is filled in afterwards (see
+hexadecimal message id, which is also its correlation id. A
+`MessageMetadataStamp` passed by the caller wins (use it to propagate a
+correlation id you received). When a message is dispatched from inside a
+handler, it inherits the correlation id of the handled message (see
 [`causation_id`](#causation_id)).
 
 Resolution: exact class, parent classes, interfaces, type `default`, global
@@ -589,9 +590,11 @@ somework_cqrs:
 | `enabled` | `true` | boolean (no environment variables) |
 | `buses` | `[]` | list of Messenger bus service ids |
 
-While a handler runs, `CausationIdMiddleware` keeps the correlation id of the
-message being handled. Messages dispatched from that handler get it as the
-causation id of their `MessageMetadataStamp` (an explicit causation id is kept).
+While a handler runs, `CausationIdMiddleware` keeps the `MessageMetadataStamp`
+of the message being handled. Messages dispatched from that handler get its
+message id as their causation id (an explicit causation id is kept) and, unless
+the caller passed its own stamp, its correlation id. With `enabled: false`,
+every message starts its own flow.
 
 `buses` limits the middleware to the listed buses; the empty default means all
 buses used by the bundle (`default_bus` and every configured `buses.*`). Each

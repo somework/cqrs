@@ -45,7 +45,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_returns_stamps_unchanged_when_no_metadata_stamp_present(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
         $stamps = [];
 
@@ -56,7 +56,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_replaces_metadata_stamp_with_causation_id_from_context(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
         $metadataStamp = new MessageMetadataStamp('child-corr', ['key' => 'val']);
         $stamps = [$metadataStamp];
@@ -84,7 +84,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_preserves_other_stamps_when_replacing_metadata_stamp(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
         $otherStamp = new \Symfony\Component\Messenger\Stamp\DelayStamp(1000);
         $metadataStamp = new MessageMetadataStamp('child-corr');
@@ -100,7 +100,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_finds_metadata_stamp_in_middle_of_stamps_array(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
         $delay = new \Symfony\Component\Messenger\Stamp\DelayStamp(500);
         $metadata = new MessageMetadataStamp('child-corr', ['key' => 'val']);
@@ -123,7 +123,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_returns_empty_array_when_stamps_empty_and_context_has_value(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
 
         $result = $this->decider->decide($message, DispatchMode::DEFAULT, []);
@@ -133,7 +133,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_keeps_an_explicit_causation_id(): void
     {
-        $this->context->push('new-parent');
+        $this->context->push(self::parent('new-parent'));
         $message = new class implements Command {};
         $metadataStamp = new MessageMetadataStamp('child-corr', [], 'explicit-parent');
 
@@ -144,7 +144,7 @@ final class CausationIdStampDeciderTest extends TestCase
 
     public function test_enriches_the_last_metadata_stamp(): void
     {
-        $this->context->push('parent-corr');
+        $this->context->push(self::parent('parent-corr'));
         $message = new class implements Command {};
         $first = new MessageMetadataStamp('first');
         $last = new MessageMetadataStamp('last');
@@ -156,5 +156,10 @@ final class CausationIdStampDeciderTest extends TestCase
         self::assertInstanceOf(MessageMetadataStamp::class, $result[1]);
         self::assertSame('last', $result[1]->getCorrelationId());
         self::assertSame('parent-corr', $result[1]->getCausationId());
+    }
+
+    private static function parent(string $messageId): MessageMetadataStamp
+    {
+        return new MessageMetadataStamp('flow', [], null, $messageId);
     }
 }

@@ -10,7 +10,9 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncProjectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\GenerateReportHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ImportTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskImportedHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -79,6 +81,8 @@ final class TestKernel extends Kernel
         $services->set(FindTaskHandler::class);
         $services->set(TaskNotificationHandler::class);
         $services->set(AsyncProjectionHandler::class);
+        $services->set(ImportTasksHandler::class);
+        $services->set(TaskImportedHandler::class);
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void

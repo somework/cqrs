@@ -693,10 +693,11 @@ interface, a namespace wildcard (`App\Message\*`) or `*`.
 
 ## Metadata providers and correlation IDs
 
-Each dispatch can attach a `MessageMetadataStamp` carrying a correlation ID,
-an optional causation ID, and arbitrary key/value extras. The default
-`RandomCorrelationMetadataProvider` generates a random correlation ID, which you
-can read inside a handler:
+Each dispatch can attach a `MessageMetadataStamp` carrying a message ID, a
+correlation ID, an optional causation ID, and arbitrary key/value extras. The
+default `RandomCorrelationMetadataProvider` generates a random message ID, which
+is also the correlation ID of the first message of a flow. You can read them
+inside a handler:
 
 ```php
 <?php
@@ -719,7 +720,7 @@ final class ShipOrderHandler implements EnvelopeAware
 
         if ($metadataStamp instanceof MessageMetadataStamp) {
             $correlationId = $metadataStamp->getCorrelationId();
-            $causationId = $metadataStamp->getCausationId(); // correlation ID of the parent message, if any
+            $causationId = $metadataStamp->getCausationId(); // message ID of the parent message, if any
             // Pass the IDs to your logger or tracing system…
         }
 
@@ -728,9 +729,9 @@ final class ShipOrderHandler implements EnvelopeAware
 }
 ```
 
-When a message is dispatched while another one is being handled, the causation
-ID of the new message is set to the correlation ID of the message being handled
-(`causation_id` configuration).
+When a message is dispatched while another one is being handled, the new
+message inherits the correlation ID of the message being handled, and its
+causation ID is the message ID of that message (`causation_id` configuration).
 
 To change the metadata for a specific message, implement
 `MessageMetadataProvider` and register it in the configuration. The example

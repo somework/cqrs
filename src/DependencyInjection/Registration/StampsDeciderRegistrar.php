@@ -48,6 +48,9 @@ final class StampsDeciderRegistrar
      */
     public function register(ContainerBuilder $container, array $buses, array $idempotencyConfig = ['enabled' => false, 'ttl' => 300], array $causationIdConfig = ['enabled' => true], array $sequenceConfig = ['enabled' => true], array $rateLimitConfig = ['enabled' => false]): void
     {
+        // Child messages inherit the correlation id of the handled message.
+        $causationContext = true === $causationIdConfig['enabled'] ? new Reference('somework_cqrs.causation_id_context') : null;
+
         $deciderConfigurations = [
             [
                 'service_id_suffix' => 'command_retry',
@@ -91,6 +94,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'query'),
                     '$messageType' => Query::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],
@@ -100,6 +104,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'command'),
                     '$messageType' => Command::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],
@@ -127,6 +132,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'event'),
                     '$messageType' => Event::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],

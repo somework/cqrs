@@ -105,11 +105,11 @@ by commands and events still reports commands without a handler.
 
 ### CausationIdMiddleware
 
-While a message is handled, pushes the correlation id of its
-`MessageMetadataStamp` onto the `CausationIdContext` stack and pops it
-afterwards (also when the handler throws). `CausationIdStampDecider` reads this
-stack: a message dispatched from inside the handler gets the parent's
-correlation id as its causation id.
+While a message is handled, pushes its `MessageMetadataStamp` onto the
+`CausationIdContext` stack and pops it afterwards (also when the handler
+throws). The metadata deciders read this stack: a message dispatched from
+inside the handler inherits the parent's correlation id and gets the parent's
+message id as its causation id.
 
 Configure it under `somework_cqrs.causation_id`:
 
@@ -226,8 +226,11 @@ if any.
 ### MessageMetadataStampDecider (125)
 
 Adds the `MessageMetadataStamp` returned by the `MessageMetadataProvider`
-resolved for the message. The default provider generates a random correlation
-id.
+resolved for the message. The default provider generates a random message id,
+which is also the correlation id of the first message of a flow. While another
+message is handled, the provider's stamp takes the correlation id of that
+message and its message id as causation id (unless the provider set a
+causation id).
 
 ### SequenceStampDecider (110)
 
@@ -237,9 +240,10 @@ the aggregate id, the sequence number and the event class. See
 
 ### CausationIdStampDecider (100)
 
-When a message is dispatched while another one is being handled, sets the
-causation id of the last `MessageMetadataStamp` to the parent's correlation id.
-It runs after the metadata deciders, so the stamp already exists.
+When a message is dispatched while another one is being handled with a
+`MessageMetadataStamp` passed by the caller, sets its causation id to the
+parent's message id and keeps the caller's correlation id. It runs after the
+metadata deciders, so the stamp already exists.
 
 ### IdempotencyStampDecider (50)
 

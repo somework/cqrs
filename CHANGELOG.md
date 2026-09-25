@@ -18,6 +18,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - `@implements Query<ResultType>` types the result of `QueryBusInterface::ask()` for static analysis; the handler and query interfaces have template defaults.
 - `#[AsEventHandler(priority: …, fromTransport: …)]`; a `fromTransport` that names no Messenger transport fails the build.
 - `TraceContextStamp`: the W3C trace context travels from the dispatching process to the worker.
+- `MessageMetadataStamp::getMessageId()`: every message has its own id.
 - `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock.
 
 **Configuration**
@@ -64,6 +65,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - `StampDecider` and `MessageTypeAwareStampDecider` moved to `SomeWork\CqrsBundle\Contract`, and the default policies to `SomeWork\CqrsBundle\Policy`.
 - `HandlerRegistry::byType()` takes a `MessageType`, and `HandlerDescriptor::$type` is one. Exceptions expose `$messageClass`. The fake buses record `RecordedDispatch` objects.
 - One configuration shape for every per-message section. `async.dispatch_after_current_bus` moved to `dispatch_after_current_bus`, and `naming.<type>` to `naming.<type>.default`. `transports.*.stamp` is removed. Old options fail with a message naming the new place.
+- A message dispatched by a handler inherits the correlation id of the handled message, and its causation id is the message id of the handled message (it was its correlation id).
 - The container no longer autowires the internal services (`DispatchModeDecider`, `DispatchAfterCurrentBusDecider`, `TransportMappingProvider`, `CausationIdContext`) by class name.
 - `OutboxStorage` v2: `fetchUnpublished($limit, $excludedTransports)`, `claim()`, `release()`, `markPublished(array $ids)`, `recordFailure()` and `purgePublished()`. `OutboxMessage` gains `attempts`, `lastError`, `claimedAt`, `availableAt` and `signature`, and ids are lowercased.
 - The outbox table gains seven columns and two indexes; writes need the columns: run `somework:cqrs:outbox:setup` before deploying.

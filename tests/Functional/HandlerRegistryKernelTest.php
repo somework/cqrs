@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ImportTasksCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -58,6 +59,8 @@ final class HandlerRegistryKernelTest extends KernelTestCase
                 [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands'],
                 [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands_async'],
                 [GenerateReportCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\GenerateReportHandler', 'messenger.bus.commands_async'],
+                [ImportTasksCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\ImportTasksHandler', 'messenger.bus.commands'],
+                [ImportTasksCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\ImportTasksHandler', 'messenger.bus.commands_async'],
             ],
             $actual,
         );
@@ -95,7 +98,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $events = $registry->byType(MessageType::Event);
+        $events = array_filter($registry->byType(MessageType::Event), static fn (HandlerDescriptor $descriptor): bool => TaskCreatedEvent::class === $descriptor->messageClass);
 
         self::assertCount(2, $events);
 

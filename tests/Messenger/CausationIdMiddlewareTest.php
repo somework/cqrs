@@ -33,7 +33,7 @@ final class CausationIdMiddlewareTest extends TestCase
         self::assertInstanceOf(MiddlewareInterface::class, $this->middleware);
     }
 
-    public function test_pushes_correlation_id_before_handler_and_pops_after(): void
+    public function test_pushes_the_metadata_before_the_handler_and_pops_it_after(): void
     {
         $message = new class implements Command {};
         $metadataStamp = new MessageMetadataStamp('corr-123');
@@ -53,7 +53,7 @@ final class CausationIdMiddlewareTest extends TestCase
 
         $this->middleware->handle($envelope, $stack);
 
-        self::assertSame('corr-123', $capturedCurrent);
+        self::assertSame($metadataStamp, $capturedCurrent);
         self::assertNull($this->context->current());
     }
 
@@ -149,9 +149,9 @@ final class CausationIdMiddlewareTest extends TestCase
 
         $this->middleware->handle($outerEnvelope, $outerStack);
 
-        self::assertSame('outer-corr', $capturedOuterContext);
-        self::assertSame('inner-corr', $capturedInnerContext);
-        self::assertSame('outer-corr', $capturedAfterInnerPop);
+        self::assertSame($outerStamp, $capturedOuterContext);
+        self::assertSame($innerStamp, $capturedInnerContext);
+        self::assertSame($outerStamp, $capturedAfterInnerPop);
         self::assertNull($this->context->current());
     }
 

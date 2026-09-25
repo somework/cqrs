@@ -11,10 +11,13 @@ use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\GenerateReportHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ImportTasksHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskImportedHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ImportTasksCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\UnobservedEvent;
@@ -144,5 +147,28 @@ final class MessengerIntegrationTest extends KernelTestCase
         self::assertCount(1, $asyncMetadata);
         self::assertMatchesRegularExpression('/^[0-9a-f]{32}$/', $asyncMetadata[0]->getCorrelationId());
         self::assertNotSame($syncMetadata[0]->getCorrelationId(), $asyncMetadata[0]->getCorrelationId());
+    }
+
+    public function test_child_messages_share_the_correlation_id_and_name_their_parent(): void
+    {
+        $commandBus = static::getContainer()->get(CommandBus::class);
+        assert($commandBus instanceof CommandBus);
+        $recorder = static::getContainer()->get(TaskRecorder::class);
+        assert($recorder instanceof TaskRecorder);
+
+        $commandBus->dispatchSync(new ImportTasksCommand(['a', 'b']));
+        $commandBus->dispatchSync(new ImportTasksCommand(['c']));
+
+        [$first, $second] = $recorder->metadataStamps(ImportTasksHandler::class);
+        self::assertNotSame($first->getCorrelationId(), $second->getCorrelationId(), 'Each command starts a flow.');
+        self::assertSame($first->getMessageId(), $first->getCorrelationId());
+
+        $events = $recorder->metadataStamps(TaskImportedHandler::class);
+        self::assertCount(3, $events);
+        foreach ([[$events[0], $first], [$events[1], $first], [$events[2], $second]] as [$event, $command]) {
+            self::assertSame($command->getCorrelationId(), $event->getCorrelationId());
+            self::assertSame($command->getMessageId(), $event->getCausationId());
+        }
+        self::assertNotSame($events[0]->getMessageId(), $events[1]->getMessageId());
     }
 }

@@ -237,6 +237,20 @@ The stamp pipeline no longer replaces or duplicates stamps you pass to `dispatch
 `MessageMetadataStamp` and an explicit causation id is kept. `IdempotencyStamp` stays on the envelope next to
 the `DeduplicateStamp` it produces.
 
+### Correlation and causation ids
+
+`MessageMetadataStamp` gains a message id (`getMessageId()`, fourth constructor argument, generated when
+omitted), and the ids mean what their names say:
+
+- A message dispatched while another one is handled inherits the correlation id of the handled message. In
+  0.4 every message got a new random correlation id, which in practice identified the message.
+- Its causation id is the **message id** of the handled message (it was the handled message's correlation id).
+- `createWithRandomCorrelationId()` uses the same random id as message id and correlation id.
+
+If your logs or projections used the correlation id to identify a single message, use `getMessageId()`. Stamps
+serialized by 0.4 (messages in a queue or the outbox) are read with their correlation id as message id. Create
+one stamp per dispatch: a stamp passed to several dispatches gives them the same message id.
+
 ### `dispatchSync()` and `ask()` errors
 
 - When exactly one handler fails, its exception is rethrown as is instead of Messenger's

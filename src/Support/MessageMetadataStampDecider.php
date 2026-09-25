@@ -12,6 +12,10 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Adds metadata stamps for supported messages unless the caller already passed one.
  *
+ * While another message is handled (with "causation_id" enabled), the provider's stamp takes
+ * the correlation id of the handled message and its message id as causation id, unless the
+ * provider set a causation id itself.
+ *
  * @internal
  */
 final class MessageMetadataStampDecider implements MessageTypeAwareStampDecider
@@ -22,6 +26,7 @@ final class MessageMetadataStampDecider implements MessageTypeAwareStampDecider
     public function __construct(
         private readonly MessageMetadataProviderResolver $providers,
         private readonly string $messageType,
+        private readonly ?CausationIdContext $causation = null,
     ) {
     }
 
@@ -53,6 +58,13 @@ final class MessageMetadataStampDecider implements MessageTypeAwareStampDecider
 
         if (null === $metadataStamp) {
             return $stamps;
+        }
+
+        $parent = $this->causation?->current();
+        if (null !== $parent && null === $metadataStamp->getCausationId()) {
+            $metadataStamp = $metadataStamp
+                ->withCorrelationId($parent->getCorrelationId())
+                ->withCausationId($parent->getMessageId());
         }
 
         $stamps[] = $metadataStamp;

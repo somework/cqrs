@@ -436,11 +436,18 @@ messages. Every dispatch logs one debug line with the bus, the dispatch mode and
 
 ### Correlation and causation ids
 
-Every message dispatched through the facades gets a `MessageMetadataStamp` with a
-correlation id (by default a random one from `RandomCorrelationMetadataProvider`).
-When a handler dispatches further messages, `CausationIdMiddleware` and
-`CausationIdStampDecider` set their causation id to the parent's correlation id,
-so you can rebuild the chain of messages from your logs.
+Every message dispatched through the facades gets a `MessageMetadataStamp` with
+three ids:
+
+- the **message id**, unique per message (a retry keeps it);
+- the **correlation id** of the flow: the first message uses its own message id,
+  and every message a handler dispatches inherits the correlation id of the
+  message being handled, so one request shares one correlation id;
+- the **causation id**: the message id of the message whose handler dispatched
+  this one (null for the first message).
+
+Group your logs by correlation id to see a whole flow, and follow the causation
+ids to rebuild its tree of messages.
 
 Read the stamp in a handler through `EnvelopeAware`:
 
@@ -473,6 +480,7 @@ final class ProcessPaymentHandler implements EnvelopeAware
         $metadata = $this->getEnvelope()->last(MessageMetadataStamp::class);
 
         $this->logger->info('Processing payment', [
+            'message_id' => $metadata?->getMessageId(),
             'correlation_id' => $metadata?->getCorrelationId(),
             'causation_id' => $metadata?->getCausationId(),
             'payment_id' => $command->paymentId,
@@ -485,8 +493,10 @@ final class ProcessPaymentHandler implements EnvelopeAware
 }
 ```
 
-To continue a correlation id that came with a request, pass your own stamp; a
-`MessageMetadataStamp` from the caller is kept:
+To continue a correlation id that came with a request, pass your own stamp (one
+per dispatch: the stamp also carries the message id); a `MessageMetadataStamp`
+from the caller is kept, and the messages its handlers dispatch inherit its
+correlation id:
 
 ```php
 <?php
