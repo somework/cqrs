@@ -197,7 +197,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      * Options read only at runtime; every other option names services, buses, transports, dispatch
      * modes or message classes that must be known when the container is compiled.
      */
-    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'dispatch_after_current_bus'];
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'outbox.signing.secret', 'outbox.signing.previous_secrets', 'outbox.signing.accept_unsigned', 'dispatch_after_current_bus'];
 
     /**
      * Without this check an environment variable in such an option fails later with Symfony's
@@ -251,6 +251,11 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             if (!is_bool($value)) {
                 throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.', $section));
             }
+        }
+
+        $signing = $config['outbox']['signing'] ?? null;
+        if (is_array($signing) && !is_bool($signing['enabled'] ?? null)) {
+            throw new InvalidConfigurationException('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.');
         }
     }
 

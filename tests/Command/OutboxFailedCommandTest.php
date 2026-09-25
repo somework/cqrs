@@ -172,10 +172,10 @@ final class OutboxFailedCommandTest extends TestCase
 
         $tester = new CommandTester(new OutboxFailedCommand($storage));
         self::assertSame(Command::SUCCESS, $tester->execute([]));
-        self::assertStringContainsString('0199a000-0000-7000-8000-000000000001 (routing) 2026-01-01T10:00:00+00:00 2026-01-01T11:00:00+00:00 3 boom [31m', self::display($tester));
+        self::assertStringContainsString('0199a000-0000-7000-8000-000000000001 ? (routing) 2026-01-01T10:00:00+00:00 2026-01-01T11:00:00+00:00 3 boom [31m', self::display($tester));
 
         self::assertSame(Command::SUCCESS, (new CommandTester(new OutboxFailedCommand($storage)))->execute(['--requeue' => true, '--transport' => 'async']));
-        self::assertSame([[[], 'async']], $storage->requeued);
+        self::assertSame([[[], 'async', null]], $storage->requeued);
     }
 
     private static function display(CommandTester $tester): string

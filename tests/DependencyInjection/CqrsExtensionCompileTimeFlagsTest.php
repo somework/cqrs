@@ -96,11 +96,23 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         $container = $this->container([
             'retry_strategy' => ['jitter' => '%env(float:JITTER)%', 'max_delay' => '%env(int:MAX_DELAY)%'],
             'dispatch_after_current_bus' => ['command' => ['default' => '%env(bool:DEFER)%']],
+            'outbox' => ['enabled' => true, 'signing' => ['secret' => '%env(OUTBOX_SECRET)%', 'previous_secrets' => ['%env(OLD_OUTBOX_SECRET)%'], 'accept_unsigned' => '%env(bool:ACCEPT_UNSIGNED)%']],
         ]);
 
         (new MergeExtensionConfigurationPass())->process($container);
 
         self::assertIsString($container->getParameter('somework_cqrs.retry_strategy.jitter'));
+        self::assertSame('%env(OUTBOX_SECRET)%', $container->resolveEnvPlaceholders($container->getDefinition('somework_cqrs.outbox.signer')->getArgument('$secret'), '%%env(%s)%%'));
+    }
+
+    public function test_the_outbox_signing_switch_rejects_an_environment_variable(): void
+    {
+        $container = $this->container(['outbox' => ['enabled' => true, 'signing' => ['enabled' => '%env(bool:SIGN)%']]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled');
+
+        (new MergeExtensionConfigurationPass())->process($container);
     }
 
     /**

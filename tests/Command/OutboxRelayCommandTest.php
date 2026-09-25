@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
@@ -477,6 +478,59 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertStringContainsString('The transport "async_events" does not exist.', $this->storage->failures[$message->id]['error']);
         self::assertStringContainsString('--requeue --transport=<name> '.$message->id, self::display($tester));
         self::assertCount(1, $this->async->getSent(), 'The other messages are relayed.');
+    }
+
+    public function test_only_signed_messages_are_decoded(): void
+    {
+        $signer = new OutboxSigner('secret');
+        $signed = $this->outboxMessage('signed', new CreateTaskCommand('1', 'a'));
+        $this->storage->store(new OutboxMessage($signed->id, $signed->body, $signed->headers, $signed->createdAt, 'async', signature: $signer->sign($signed)));
+        // Written by someone with access to the table, e.g. through an SQL injection elsewhere.
+        $this->storage->store($this->outboxMessage('forged', new CreateTaskCommand('2', 'b')));
+        $tampered = $this->outboxMessage('tampered', new CreateTaskCommand('3', 'c'));
+        $this->storage->store(new OutboxMessage($tampered->id, $tampered->body, $tampered->headers, $tampered->createdAt, 'async', signature: $signer->sign($this->outboxMessage('tampered', new CreateTaskCommand('3', 'original')))));
+        $decoded = [];
+        $serializer = new class(new PhpSerializer(), $decoded) implements SerializerInterface {
+            /** @param list<string> $decoded */
+            public function __construct(private readonly PhpSerializer $inner, public array &$decoded)
+            {
+            }
+
+            public function decode(array $encodedEnvelope): Envelope
+            {
+                $envelope = $this->inner->decode($encodedEnvelope);
+                $message = $envelope->getMessage();
+                $this->decoded[] = $message instanceof CreateTaskCommand ? $message->id : $message::class;
+
+                return $envelope;
+            }
+
+            public function encode(Envelope $envelope): array
+            {
+                return $this->inner->encode($envelope);
+            }
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, $serializer, $this->bus(), $this->locks, signer: $signer));
+        $tester->execute([]);
+
+        self::assertSame(['1'], $decoded, 'Rows without a valid signature never reach the serializer.');
+        self::assertSame(['1'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
+        self::assertStringContainsString('Gave up on message "forged" after 1 attempt(s): The message is not signed, so it was not decoded', self::display($tester));
+        self::assertStringContainsString('Gave up on message "tampered" after 1 attempt(s): The signature of the message does not match, so it was not decoded', self::display($tester));
+        self::assertStringContainsString('somework:cqrs:outbox:failed --requeue --sign tampered', self::display($tester));
+    }
+
+    public function test_unsigned_messages_can_be_accepted_while_old_rows_drain(): void
+    {
+        $this->storage->store($this->outboxMessage('unsigned', new CreateTaskCommand('1', 'a')));
+        $this->storage->store(new OutboxMessage('tampered', 'body', '{}', new DateTimeImmutable(), 'async', signature: 'v1:wrong'));
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, signer: new OutboxSigner('secret'), acceptUnsigned: 'true'));
+        $tester->execute([]);
+
+        self::assertCount(1, $this->async->getSent());
+        self::assertStringContainsString('Gave up on message "tampered"', self::display($tester), 'A wrong signature is never accepted.');
     }
 
     public function test_rejects_less_than_one_attempt(): void

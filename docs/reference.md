@@ -680,6 +680,10 @@ somework_cqrs:
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
 | `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
+| `signing.enabled` | `true` | boolean (no environment variables): sign stored rows and verify them before the relay decodes them |
+| `signing.secret` | `null` | string; `null` uses `kernel.secret` (`framework.secret`) |
+| `signing.previous_secrets` | `[]` | list of strings: secrets whose signatures are still accepted |
+| `signing.accept_unsigned` | `false` | boolean: relay rows without a signature (e.g. of an earlier version) |
 
 Enabling the outbox registers the `SomeWork\CqrsBundle\Contract\OutboxStorage`
 service plus the `somework:cqrs:outbox:*` commands. With `storage: null` that is

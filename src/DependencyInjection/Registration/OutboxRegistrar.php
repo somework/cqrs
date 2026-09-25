@@ -9,11 +9,14 @@ use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
+use SomeWork\CqrsBundle\Outbox\Signing\SigningOutboxStorage;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -26,9 +29,9 @@ use function sprintf;
 final class OutboxRegistrar
 {
     /**
-     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, max_attempts?: int|string} $config
-     * @param bool                                                                                                                                                    $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
-     * @param array<string, string|null>                                                                                                                              $buses               The "somework_cqrs.buses" configuration
+     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
+     * @param bool                                                                                                                                                                                                                                                                       $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
+     * @param array<string, string|null>                                                                                                                                                                                                                                                 $buses               The "somework_cqrs.buses" configuration
      */
     public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus', ?ContainerHelper $helper = null): void
     {
@@ -57,6 +60,26 @@ final class OutboxRegistrar
         $container->setAlias(OutboxStoragePass::BASE_STORAGE_ID, $baseStorage)->setPublic(false);
         $container->setAlias(OutboxStoragePass::STORAGE_ID, $baseStorage)->setPublic(false);
         $container->setAlias(OutboxStorage::class, OutboxStoragePass::STORAGE_ID)->setPublic(false);
+
+        // Signing decorates the storage the application uses, so rows of any storage are signed; the
+        // highest priority makes it the innermost decorator, which stores what it signed.
+        $signing = $config['signing'] ?? ['enabled' => false, 'secret' => null, 'previous_secrets' => [], 'accept_unsigned' => false];
+        $signer = null;
+        if (true === $signing['enabled']) {
+            $signerDef = new Definition(OutboxSigner::class);
+            $signerDef->setArgument('$secret', $signing['secret']);
+            $signerDef->setArgument('$previousSecrets', $signing['previous_secrets']);
+            $signerDef->setPublic(false);
+            $container->setDefinition(OutboxSigningSecretPass::SIGNER_ID, $signerDef);
+            $signer = new Reference(OutboxSigningSecretPass::SIGNER_ID);
+
+            $signingDef = new Definition(SigningOutboxStorage::class);
+            $signingDef->setDecoratedService(OutboxStoragePass::STORAGE_ID, null, 1000);
+            $signingDef->setArgument('$inner', new Reference('somework_cqrs.outbox.signing_storage.inner'));
+            $signingDef->setArgument('$signer', $signer);
+            $signingDef->setPublic(false);
+            $container->setDefinition('somework_cqrs.outbox.signing_storage', $signingDef);
+        }
 
         $serializer = new Reference($config['serializer'] ?? 'messenger.default_serializer');
         $container->setAlias('somework_cqrs.outbox.serializer', (string) $serializer)->setPublic(false);
@@ -87,6 +110,8 @@ final class OutboxRegistrar
         $relayDef->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         // Messenger's transports by name: a row stored for a transport that does not exist is given up at once.
         $relayDef->setArgument('$transports', new Reference('messenger.receiver_locator', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        $relayDef->setArgument('$signer', $signer);
+        $relayDef->setArgument('$acceptUnsigned', $signing['accept_unsigned']);
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
@@ -99,6 +124,7 @@ final class OutboxRegistrar
 
         $failedDef = new Definition(OutboxFailedCommand::class);
         $failedDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
+        $failedDef->setArgument('$signer', $signer);
         $failedDef->addTag('console.command');
         $failedDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.failed_command', $failedDef);

@@ -714,11 +714,53 @@ autowires to), so the decorator does not have to implement the capabilities.
 
 ## Security
 
-The relay trusts the outbox table: it decodes every due row with the outbox serializer and
-dispatches the message it finds. Whoever can write rows (e.g. through an SQL injection in
-your application) can make the relay dispatch any message. With Messenger's default PHP
-serializer, decoding runs `unserialize()`, which can execute code through classes your
-application loads. This is the same trust model as Messenger's Doctrine transport.
+The relay decodes due rows with the outbox serializer and dispatches the message it finds.
+With Messenger's default PHP serializer, decoding runs `unserialize()`, which can execute code
+through classes your application loads. Whoever can write rows (e.g. through an SQL injection
+in your application) could therefore run code in the relay, so the rows are signed.
+
+### Signed rows
+
+With `outbox.signing.enabled` (the default), the storage signs every row it stores with
+HMAC-SHA256 (a key derived from `framework.secret`, or from `outbox.signing.secret`) over the
+id, the body and the headers, and the relay verifies the signature **before** it decodes the
+row. A row without a valid signature is given up at once, without being decoded:
+`The message is not signed, so it was not decoded …` or `The signature of the message does not
+match …`.
+
+What signing protects, and what it does not:
+
+- It keeps rows the application did not store from reaching `unserialize()` and the handlers:
+  an attacker who can write to the table but does not know the secret cannot forge a row.
+- It does not stop someone with write access from changing the state of rows: deleting them,
+  marking them published or given up, changing `transport_name` (not signed, so that
+  `outbox:failed --requeue --transport` works), or copying a signed row under the same id to
+  send a message again. Consumers must be idempotent anyway (see
+  [Delivery guarantees](#delivery-guarantees)).
+- It does not help when the secret leaks: rotate it.
+
+Operating it:
+
+- **Store through the `OutboxStorage` service or `OutboxWriter`.** The signature is added by
+  a decorator of `somework_cqrs.outbox.storage`; rows stored directly through
+  `DbalOutboxStorage` (autowired by that class) or by SQL are not signed.
+- **Rotate the secret** by moving the old one to `outbox.signing.previous_secrets` until the
+  rows signed with it are relayed. Rotating `framework.secret` (e.g. `APP_SECRET`) rotates the
+  outbox secret too, unless `outbox.signing.secret` is set.
+- **Rows of an earlier version** are not signed. Relay them before you upgrade, or set
+  `outbox.signing.accept_unsigned: true` until they are relayed (rows with a wrong signature
+  are still given up).
+- **A row you checked** (e.g. one stored while signing was disabled) is signed with the current
+  secret and handed back to the relay with
+  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first (with the
+  message class from the `type` header, when the serializer writes one) and, in an
+  interactive terminal, asks for confirmation. Only sign rows your application stored.
+- A storage of your own must return the id, body, headers and signature exactly as stored.
+
+`signing.enabled: false` restores the trust model of Messenger's Doctrine transport: the
+table is trusted.
+
+### Other measures
 
 - **Keep write access narrow.** Let the application connect with a role that can only read and
   write rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`); every command of the outbox works with

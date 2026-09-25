@@ -80,6 +80,7 @@ reports messages that were sent to a transport or deduplicated).
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
+- `OutboxSigningSecretPass` — signs outbox rows with `kernel.secret` unless `outbox.signing.secret` is set (fails clearly without a secret)
 - `OutboxStoragePass` — keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage`, and checks that a custom storage implements `OutboxStorage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
@@ -93,7 +94,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`.
 
-**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
+**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`; `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 

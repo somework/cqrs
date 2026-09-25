@@ -58,9 +58,13 @@ releases.
    `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`, per-message map keys of deleted classes,
    `%env()%` values in compile-time options, the moved configuration options (see
    [Configuration shape](#configuration-shape)) and the fake buses of your tests (see the sections below).
-2. With the outbox: let the 0.4 relay send what is due, then stop it. Check that every stored transport name
-   exists, because 0.4 ignored it and 0.5 sends to it
-   (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`).
+2. With the outbox: let the 0.4 relay send what is due, then stop it: 0.5 signs rows and only relays signed ones
+   (see [Signed rows](docs/outbox.md#signed-rows); to relay rows of 0.4 after the upgrade, set
+   `outbox.signing.accept_unsigned: true` until they are gone). Check that every stored transport name exists,
+   because 0.4 ignored it and 0.5 sends to it
+   (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`). Outbox signing
+   uses `framework.secret`: when you rotate it, keep the old value in `outbox.signing.previous_secrets` until
+   the rows signed with it are relayed.
 3. `composer update somework/cqrs-bundle`.
 4. Run `bin/console somework:cqrs:outbox:setup` or your Doctrine migration.
 5. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
@@ -267,8 +271,9 @@ Options the container compilation needs (dispatch modes, transport names, bus id
 `retry_strategy.transports`, and `outbox.table_name`, `outbox.connection` and `outbox.serializer`) reject
 `%env(...)%` with a clear message; before, they failed with
 "Incompatible use of dynamic environment variables" or an invalid enum value. Environment variables still work in
-`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup`, `outbox.max_attempts`
-and the `dispatch_after_current_bus` flags.
+`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup`, `outbox.max_attempts`,
+`outbox.signing.secret`, `outbox.signing.previous_secrets`, `outbox.signing.accept_unsigned` and the
+`dispatch_after_current_bus` flags.
 
 ### Handler attributes must match the handler method
 
@@ -394,6 +399,11 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - With very long table names the new index is named `idx_<hash>_pending`.
+- **Rows are signed** (`outbox.signing`, on by default, with `framework.secret`): the relay gives up rows
+  without a valid signature without decoding them. Store rows through the `OutboxStorage` service or
+  `OutboxWriter` (the signature is added by a decorator of `somework_cqrs.outbox.storage`), not through an
+  injected `DbalOutboxStorage` or SQL. Rows of 0.4 are unsigned: see step 2 of the checklist. Disable signing with
+  `outbox.signing.enabled: false` to keep trusting the table as before.
 - A storage of your own is configured with `outbox.storage: App\Outbox\MyStorage` instead of redefining the
   `somework_cqrs.outbox.storage` service (which still works), and no longer needs doctrine/dbal. The setup and
   failed commands and the health check use it when it implements `SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema`,

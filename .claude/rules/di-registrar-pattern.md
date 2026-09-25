@@ -35,6 +35,7 @@ Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the containe
 | `CqrsHandlerPass` | BEFORE_OPTIMIZATION, 1 | Normalises handler tags (message, buses) before Messenger's `MessengerPass` (priority 0) consumes them |
 | `CqrsRetryStrategyPass` | BEFORE_OPTIMIZATION, 0 | Validates `retry_strategy.transports` and wires `CqrsRetryStrategy` into `messenger.retry_strategy_locator` (wrapping the transport's own strategy as fallback) |
 | `OutboxRelayLockPass` | BEFORE_OPTIMIZATION, 0 | Prefixes the relay lock name with `%cache.prefix.seed%` (FrameworkBundle's parameter, unknown while the extension loads) |
+| `OutboxSigningSecretPass` | BEFORE_OPTIMIZATION, 0 | Binds `%kernel.secret%` (FrameworkBundle's parameter, unknown while the extension loads) to the outbox signer unless `outbox.signing.secret` is set; fails clearly without it |
 | `TransportRoutingPass` | BEFORE_OPTIMIZATION, 0 | Passes the message types routed by `framework.messenger.routing` (keys of `messenger.senders_locator`) to `MessageTransportStampDecider` |
 | `ValidateConfiguredServicesPass` | BEFORE_OPTIMIZATION, 10 | Reports a missing service or rate limiter with the config path that names it (recorded by `ContainerHelper::configuredService()`), before other passes fail on the dangling reference |
 | `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |

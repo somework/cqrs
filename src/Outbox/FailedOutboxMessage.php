@@ -20,6 +20,8 @@ final class FailedOutboxMessage
         public readonly DateTimeImmutable $failedAt,
         public readonly int $attempts,
         public readonly ?string $lastError,
+        /** The "type" header of the serializer (the message class), when the serializer writes one; the body is never decoded to find it. */
+        public readonly ?string $messageType = null,
     ) {
     }
 }

@@ -108,6 +108,27 @@ final class OutboxRelayKernelTest extends KernelTestCase
         self::assertCount(1, $this->storage()->fetchUnpublished(10));
     }
 
+    public function test_a_row_written_around_the_storage_is_not_decoded_until_an_operator_signs_it(): void
+    {
+        // What an attacker with write access to the table (e.g. an SQL injection) would insert:
+        // a serialized envelope, which the PHP serializer of the relay would unserialize.
+        $forged = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('forged', 'Injected')), $this->serializer(), 'async');
+        $this->connection()->insert('somework_cqrs_outbox', ['id' => $forged->id, 'body' => $forged->body, 'headers' => $forged->headers, 'transport_name' => 'async', 'created_at' => '2026-01-01 10:00:00']);
+
+        $relay = $this->console('somework:cqrs:outbox:relay');
+
+        self::assertSame(Command::FAILURE, $relay->getStatusCode());
+        self::assertStringContainsString('The message is not signed, so it was not decoded', self::display($relay));
+        self::assertSame([], $this->transport()->getSent());
+
+        self::assertSame(Command::INVALID, $this->console('somework:cqrs:outbox:failed', ['--requeue' => true, '--sign' => true])->getStatusCode(), 'Only rows named one by one are signed.');
+        $sign = $this->console('somework:cqrs:outbox:failed', ['--requeue' => true, '--sign' => true, 'ids' => [$forged->id]]);
+        self::assertStringContainsString('Requeued 1 message(s)', self::display($sign));
+
+        self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:relay')->getStatusCode());
+        self::assertCount(1, $this->transport()->getSent(), 'Signed by the operator, the row is relayed.');
+    }
+
     /**
      * @param array<string, mixed> $input
      */
@@ -117,7 +138,7 @@ final class OutboxRelayKernelTest extends KernelTestCase
         self::assertNotNull($kernel);
 
         $tester = new CommandTester((new Application($kernel))->find($command));
-        $tester->execute($input);
+        $tester->execute($input, ['interactive' => false]);
 
         return $tester;
     }

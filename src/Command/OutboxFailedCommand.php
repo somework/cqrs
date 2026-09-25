@@ -7,6 +7,8 @@ namespace SomeWork\CqrsBundle\Command;
 use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
+use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
@@ -17,6 +19,7 @@ use Symfony\Component\Console\Style\SymfonyStyle;
 
 use function array_map;
 use function array_values;
+use function assert;
 use function count;
 use function filter_var;
 use function is_array;
@@ -41,10 +44,13 @@ final class OutboxFailedCommand extends Command
     private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/Di';
 
     /**
-     * @param OutboxStorage $outboxStorage The storage behind any decorator (see OutboxStoragePass)
+     * @param OutboxStorage     $outboxStorage The storage behind any decorator (see OutboxStoragePass)
+     * @param OutboxSigner|null $signer        Signs requeued messages with --sign (outbox.signing)
      */
-    public function __construct(private readonly OutboxStorage $outboxStorage)
-    {
+    public function __construct(
+        private readonly OutboxStorage $outboxStorage,
+        private readonly ?OutboxSigner $signer = null,
+    ) {
         parent::__construct();
     }
 
@@ -54,6 +60,7 @@ final class OutboxFailedCommand extends Command
             ->addArgument('ids', InputArgument::IS_ARRAY, 'Ids of the messages to requeue (with --requeue); all given-up messages when omitted')
             ->addOption('requeue', null, InputOption::VALUE_NONE, 'Requeue the messages with a fresh attempt counter instead of listing them')
             ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue: send the messages to this transport instead of the stored one')
+            ->addOption('sign', null, InputOption::VALUE_NONE, 'With --requeue and message ids: sign the messages with the current secret (they were unsigned, or signed with another secret)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to list', '50');
     }
 
@@ -87,7 +94,23 @@ final class OutboxFailedCommand extends Command
             return self::INVALID;
         }
 
+        $sign = true === $input->getOption('sign');
+        if ($sign && (true !== $input->getOption('requeue') || [] === $ids)) {
+            $io->error('--sign needs --requeue and the ids of the messages: sign only rows you checked.');
+
+            return self::INVALID;
+        }
+        if ($sign && null === $this->signer) {
+            $io->error('Outbox signing is disabled ("somework_cqrs.outbox.signing.enabled"): there is nothing to sign with.');
+
+            return self::FAILURE;
+        }
+
         try {
+            if ($sign) {
+                return $this->signAndRequeue($io, $input, $storage, $ids, $transport);
+            }
+
             return true === $input->getOption('requeue') ? $this->requeue($io, $storage, $ids, $transport) : $this->list($io, $input, $storage, $ids);
         } catch (\Throwable $exception) {
             // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
@@ -100,9 +123,9 @@ final class OutboxFailedCommand extends Command
     /**
      * @param list<string> $ids
      */
-    private function requeue(SymfonyStyle $io, FailedOutboxMessages $storage, array $ids, ?string $transport): int
+    private function requeue(SymfonyStyle $io, FailedOutboxMessages $storage, array $ids, ?string $transport, ?\Closure $sign = null): int
     {
-        $requeued = $storage->requeueFailed($ids, $transport);
+        $requeued = $storage->requeueFailed($ids, $transport, $sign);
         $io->success(sprintf('Requeued %d message(s)%s; the next relay run sends them.', $requeued, null === $transport ? '' : sprintf(' to the transport "%s"', $transport)));
 
         if ([] !== $ids && $requeued < count($ids)) {
@@ -112,6 +135,35 @@ final class OutboxFailedCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * A signature makes the relay decode the row (unserialize() with PHP's serializer): the rows
+     * are shown first, and in an interactive terminal the operator confirms.
+     *
+     * @param list<string> $ids
+     */
+    private function signAndRequeue(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids, ?string $transport): int
+    {
+        assert(null !== $this->signer);
+        $signer = $this->signer;
+
+        $failed = $storage->fetchFailed(count($ids), $ids);
+        if ([] === $failed) {
+            $io->warning('None of the given messages has been given up: nothing was signed.');
+
+            return self::FAILURE;
+        }
+
+        $io->text('These rows will be signed with the current secret, so the relay decodes them. Only sign rows your application stored:');
+        $this->table($io, $failed);
+        if ($input->isInteractive() && !$io->confirm('Sign and requeue them?', false)) {
+            $io->note('Nothing was signed.');
+
+            return self::FAILURE;
+        }
+
+        return $this->requeue($io, $storage, $ids, $transport, static fn (OutboxMessage $message): string => $signer->sign($message));
     }
 
     /**
@@ -139,10 +191,22 @@ final class OutboxFailedCommand extends Command
             return self::SUCCESS;
         }
 
+        $this->table($io, $failed);
+        $io->note('Fix the cause, then run this command with --requeue (optionally followed by message ids).');
+
+        return self::SUCCESS;
+    }
+
+    /**
+     * @param list<FailedOutboxMessage> $failed
+     */
+    private function table(SymfonyStyle $io, array $failed): void
+    {
         $io->table(
-            ['Id', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
+            ['Id', 'Message', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
             array_map(static fn (FailedOutboxMessage $message): array => [
                 self::printable($message->id),
+                self::printable($message->messageType ?? '?'),
                 self::printable($message->transportName ?? '(routing)'),
                 $message->createdAt->format(DATE_ATOM),
                 $message->failedAt->format(DATE_ATOM),
@@ -150,9 +214,6 @@ final class OutboxFailedCommand extends Command
                 self::printable($message->lastError ?? ''),
             ], $failed),
         );
-        $io->note('Fix the cause, then run this command with --requeue (optionally followed by message ids).');
-
-        return self::SUCCESS;
     }
 
     /**

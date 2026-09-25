@@ -9,6 +9,7 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Command\LockableTrait;
@@ -32,6 +33,7 @@ use function microtime;
 use function register_shutdown_function;
 use function sprintf;
 
+use const FILTER_VALIDATE_BOOL;
 use const FILTER_VALIDATE_INT;
 use const SIGINT;
 use const SIGTERM;
@@ -64,11 +66,13 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     private readonly OutboxRelay $relay;
 
     /**
-     * @param ContainerInterface|null  $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
-     * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
-     * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
-     * @param OutboxSchema|null        $table       The storage behind a decorated $outboxStorage, for the report of pending schema changes
-     * @param ContainerInterface|null  $transports  Messenger's transports by name; a message stored for another transport is given up at once
+     * @param ContainerInterface|null  $buses          Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     * @param int                      $maxAttempts    Attempts after which a failing message is given up (three times as many when its transport fails)
+     * @param (\Closure(): float)|null $clock          Seconds since the epoch, microtime(true) by default (for tests)
+     * @param OutboxSchema|null        $table          The storage behind a decorated $outboxStorage, for the report of pending schema changes
+     * @param ContainerInterface|null  $transports     Messenger's transports by name; a message stored for another transport is given up at once
+     * @param OutboxSigner|null        $signer         Verifies every message before it is decoded (outbox.signing)
+     * @param bool|string              $acceptUnsigned Relay messages without a signature (outbox.signing.accept_unsigned, possibly from an environment variable)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -82,8 +86,10 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         private readonly ?\Closure $clock = null,
         private readonly ?OutboxSchema $table = null,
         ?ContainerInterface $transports = null,
+        ?OutboxSigner $signer = null,
+        bool|string $acceptUnsigned = false,
     ) {
-        $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports);
+        $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports, $signer, true === filter_var($acceptUnsigned, FILTER_VALIDATE_BOOL));
 
         parent::__construct();
 

@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
@@ -131,6 +132,7 @@ final class OutboxRelay
      * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
      * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
      * @param ContainerInterface|null  $transports  Messenger's transports by name; a message stored for another transport is given up at once
+     * @param OutboxSigner|null        $signer      Verifies the signature of every message before it is decoded (outbox.signing)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -141,6 +143,8 @@ final class OutboxRelay
         private readonly ?LoggerInterface $logger = null,
         private readonly ?\Closure $clock = null,
         private readonly ?ContainerInterface $transports = null,
+        private readonly ?OutboxSigner $signer = null,
+        private readonly bool $acceptUnsigned = false,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -359,6 +363,12 @@ final class OutboxRelay
             return $this->giveUp($message, $attempt, sprintf('The transport "%s" does not exist. Fix the code that stores it, then run "somework:cqrs:outbox:failed --requeue --transport=<name> %s".', $message->transportName, $message->id), $reporter);
         }
 
+        // Only rows this application signed reach the serializer (PHP's unserialize() by default).
+        $unverified = $this->unverified($message);
+        if (null !== $unverified) {
+            return $this->giveUp($message, $attempt, $unverified, $reporter);
+        }
+
         try {
             $this->send($message, $this->decode($message), $reporter);
         } catch (\Throwable $exception) {
@@ -371,6 +381,26 @@ final class OutboxRelay
         }
 
         return self::RELAYED;
+    }
+
+    /**
+     * Why the message must not be decoded, or null when its signature is valid (or not checked).
+     */
+    private function unverified(OutboxMessage $message): ?string
+    {
+        if (null === $this->signer || $this->signer->verify($message)) {
+            return null;
+        }
+
+        if (null === $message->signature) {
+            if ($this->acceptUnsigned) {
+                return null;
+            }
+
+            return sprintf('The message is not signed, so it was not decoded: it was stored before outbox signing was enabled, by code that bypasses the OutboxStorage service, or by someone else. Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s" (or set "somework_cqrs.outbox.signing.accept_unsigned" while rows of an earlier version drain).', $message->id);
+        }
+
+        return sprintf('The signature of the message does not match, so it was not decoded: the row was changed or written by someone else, or signed with a secret that is no longer configured (add it to "somework_cqrs.outbox.signing.previous_secrets"). Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s".', $message->id);
     }
 
     /**

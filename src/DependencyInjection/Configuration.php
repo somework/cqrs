@@ -328,6 +328,22 @@ final class Configuration implements ConfigurationInterface
         // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
         $outboxChildren->integerNode('max_attempts')->defaultValue(10)
             ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
+        $signing = $outboxChildren->arrayNode('signing');
+        $signing->addDefaultsIfNotSet()
+            ->info('HMAC-SHA256 signatures of stored rows: the relay only decodes (unserializes) rows this application signed.');
+        $signingChildren = $signing->children();
+        $signingChildren->booleanNode('enabled')->defaultTrue()
+            ->info('Sign every stored row and verify it before relaying it (no environment variables).');
+        self::requireName($signingChildren->scalarNode('secret')->defaultNull()
+            ->info('Secret of the signatures; null uses kernel.secret ("framework.secret"). Environment variables are allowed.'), true);
+        $signingChildren->arrayNode('previous_secrets')
+            ->info('Secrets whose signatures are still accepted, e.g. the old secret after a rotation, until the rows signed with it are relayed.')
+            ->scalarPrototype()->end()
+            ->defaultValue([]);
+        $signingChildren->booleanNode('accept_unsigned')->defaultFalse()
+            ->info('Relay rows without a signature (stored before signing was enabled) while they drain. Rows with a wrong signature are always given up.');
+        $signingChildren->end();
+        $signing->end();
         $outboxChildren->end();
         $outbox->end();
 

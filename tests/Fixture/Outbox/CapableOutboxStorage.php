@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 
 use function array_slice;
 use function count;
+use function in_array;
 
 /**
  * A storage of an application (not the DBAL one) that implements every capability.
@@ -29,7 +30,7 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     /** @var list<FailedOutboxMessage> */
     public array $failed = [];
 
-    /** @var list<array{list<string>, string|null}> */
+    /** @var list<array{list<string>, string|null, (\Closure(OutboxMessage): string)|null}> */
     public array $requeued = [];
 
     public OutboxStatus $status;
@@ -84,14 +85,14 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
         return $this->pendingChanges;
     }
 
-    public function fetchFailed(int $limit): array
+    public function fetchFailed(int $limit, array $ids = []): array
     {
-        return array_slice($this->failed, 0, $limit);
+        return array_slice(array_values(array_filter($this->failed, static fn (FailedOutboxMessage $message): bool => [] === $ids || in_array($message->id, $ids, true))), 0, $limit);
     }
 
-    public function requeueFailed(array $ids = [], ?string $transportName = null): int
+    public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
     {
-        $this->requeued[] = [$ids, $transportName];
+        $this->requeued[] = [$ids, $transportName, $sign];
 
         return [] === $ids ? count($this->failed) : count($ids);
     }

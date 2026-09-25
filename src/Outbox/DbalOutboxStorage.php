@@ -30,7 +30,9 @@ use function array_values;
 use function count;
 use function get_debug_type;
 use function in_array;
+use function is_array;
 use function is_string;
+use function json_decode;
 use function min;
 use function preg_replace;
 use function random_int;
@@ -39,6 +41,8 @@ use function str_contains;
 use function str_starts_with;
 use function strtolower;
 use function usleep;
+
+use const JSON_THROW_ON_ERROR;
 
 /**
  * DBAL-backed implementation of the transactional outbox storage.
@@ -438,20 +442,22 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         return [] === $since ? null : min($since);
     }
 
-    public function fetchFailed(int $limit): array
+    public function fetchFailed(int $limit, array $ids = []): array
     {
         $this->ensureTableExists();
 
-        $rows = $this->guard(fn (): array => $this->connection->createQueryBuilder()
-            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error')
+        $query = $this->connection->createQueryBuilder()
+            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error', 'headers')
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL')
             ->orderBy('failed_at', 'ASC')
             ->addOrderBy('id', 'ASC')
-            ->setMaxResults($limit)
-            ->executeQuery()
-            ->fetchAllAssociative());
+            ->setMaxResults($limit);
+        if ([] !== $ids) {
+            $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
+        }
+        $rows = $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative());
 
         $platform = $this->connection->getDatabasePlatform();
 
@@ -462,47 +468,76 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             failedAt: self::readUtc($row['failed_at'], $platform),
             attempts: (int) $row['attempts'],
             lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
+            messageType: self::messageType((string) $row['headers']),
         ), $rows);
     }
 
-    public function requeueFailed(array $ids = [], ?string $transportName = null): int
+    public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
     {
         $this->ensureTableExists();
 
+        $requeue = function (?string $id = null, ?string $signature = null) use ($ids, $transportName): int {
+            $query = $this->connection->createQueryBuilder()
+                ->update($this->tableName)
+                ->set('failed_at', 'NULL')
+                ->set('available_at', 'NULL')
+                ->set('attempts', '0')
+                ->set('last_error', 'NULL')
+                ->set('claim_token', 'NULL')
+                ->set('claimed_at', 'NULL')
+                ->where('published_at IS NULL')
+                ->andWhere('failed_at IS NOT NULL');
+
+            if (null !== $transportName) {
+                $query->set('transport_name', ':transport_name')->setParameter('transport_name', $transportName);
+            }
+            if (null !== $id) {
+                $query->set('signature', ':signature')->setParameter('signature', $signature)
+                    ->andWhere('id = :id')->setParameter('id', $id);
+            } elseif ([] !== $ids) {
+                $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
+            }
+
+            return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        };
+
+        if (null === $sign) {
+            return $requeue();
+        }
+
+        // Each row is signed as stored, and requeued in the same statement.
         $query = $this->connection->createQueryBuilder()
-            ->update($this->tableName)
-            ->set('failed_at', 'NULL')
-            ->set('available_at', 'NULL')
-            ->set('attempts', '0')
-            ->set('last_error', 'NULL')
-            ->set('claim_token', 'NULL')
-            ->set('claimed_at', 'NULL')
+            ->select('id', 'body', 'headers', 'transport_name', 'created_at')
+            ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL');
-
-        if (null !== $transportName) {
-            $query->set('transport_name', ':transport_name')->setParameter('transport_name', $transportName);
-        }
-
         if ([] !== $ids) {
-            $query->andWhere('id IN (:ids)')->setParameter('ids', $ids, ArrayParameterType::STRING);
+            $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
+        }
+        $platform = $this->connection->getDatabasePlatform();
+        $requeued = 0;
+        foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
+            $message = new OutboxMessage((string) $row['id'], (string) $row['body'], (string) $row['headers'], self::readUtc($row['created_at'], $platform), null === $row['transport_name'] ? null : (string) $row['transport_name']);
+            $requeued += $requeue($message->id, $sign($message));
         }
 
-        return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        return $requeued;
     }
 
     /**
-     * Creates the outbox table, or brings an existing one up to date: adds the columns and the
-     * index it lacks, rebuilds an index an interrupted build left invalid, and drops the index of
-     * 0.4. It waits up to 10 minutes for another setup to finish.
-     *
-     * @param (\Closure(): void)|null $onWait Called once when another process is setting up the table,
-     *                                        before waiting for it (e.g. to say so)
-     *
-     * @throws \LogicException   when the table must be changed inside an open transaction, or when
-     *                           the database rejects the table name
-     * @throws \RuntimeException when another process keeps the table locked, or builds its index
+     * The "type" header of Messenger's serializers, read as JSON; the body is never decoded.
      */
+    private static function messageType(string $headers): ?string
+    {
+        try {
+            $decoded = json_decode($headers, true, 8, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            return null;
+        }
+
+        return is_array($decoded) && is_string($decoded['type'] ?? null) ? $decoded['type'] : null;
+    }
+
     public function setup(?\Closure $onWait = null): void
     {
         $this->schema->setup($onWait);

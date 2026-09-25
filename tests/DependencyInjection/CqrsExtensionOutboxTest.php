@@ -8,17 +8,20 @@ use Doctrine\DBAL\Connection;
 use Doctrine\ORM\Tools\ToolEvents;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 #[CoversClass(CqrsExtension::class)]
 #[CoversClass(Configuration::class)]
 #[CoversClass(OutboxRegistrar::class)]
+#[CoversClass(OutboxSigningSecretPass::class)]
 final class CqrsExtensionOutboxTest extends TestCase
 {
     public function test_outbox_disabled_by_default(): void
@@ -92,6 +95,48 @@ final class CqrsExtensionOutboxTest extends TestCase
 
         self::assertSame(InMemoryOutboxStorage::class, (string) $container->getAlias('somework_cqrs.outbox.storage'));
         self::assertTrue($container->hasDefinition(InMemoryOutboxStorage::class), 'A class name is registered as a service.');
+    }
+
+    public function test_signing_is_enabled_by_default_with_the_kernel_secret(): void
+    {
+        $container = $this->compiledOutboxContainer(['secret' => 'kernel-secret']);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.signing_storage'));
+        self::assertSame('%kernel.secret%', $container->getDefinition('somework_cqrs.outbox.signer')->getArgument('$secret'));
+        self::assertInstanceOf(Reference::class, $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$signer'));
+    }
+
+    public function test_signing_needs_a_secret(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Outbox signing ("somework_cqrs.outbox.signing.enabled") needs a secret: set "framework.secret" or "somework_cqrs.outbox.signing.secret", or disable signing.');
+
+        $this->compiledOutboxContainer([]);
+    }
+
+    public function test_signing_can_be_disabled(): void
+    {
+        $container = $this->compiledOutboxContainer([], ['enabled' => false]);
+
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.signer'));
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.signing_storage'));
+        self::assertNull($container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$signer'));
+    }
+
+    /**
+     * @param array<string, mixed> $parameters
+     * @param array<string, mixed> $signing
+     */
+    private function compiledOutboxContainer(array $parameters, array $signing = []): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+        if (isset($parameters['secret'])) {
+            $container->setParameter('kernel.secret', $parameters['secret']);
+        }
+        (new CqrsExtension())->load([['outbox' => ['enabled' => true, 'signing' => $signing]]], $container);
+        (new OutboxSigningSecretPass())->process($container);
+
+        return $container;
     }
 
     public function test_schema_subscriber_is_skipped_without_doctrine_orm(): void
