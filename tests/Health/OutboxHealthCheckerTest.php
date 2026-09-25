@@ -73,9 +73,10 @@ final class OutboxHealthCheckerTest extends TestCase
     {
         $connection = TestDatabase::connect();
         TestDatabase::createTableOfVersion04($connection);
-        // The automatic setup adds the columns, not the index.
         $storage = new DbalOutboxStorage($connection);
         $storage->store(self::message('00000000-0000-7000-8000-000000000001', new DateTimeImmutable('-1 minute')));
+        // The relay's automatic setup adds the columns, not the index.
+        $storage->fetchUnpublished(1);
 
         self::assertSame([
             [CheckSeverity::WARNING, 'The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there'],

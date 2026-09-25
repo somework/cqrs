@@ -104,6 +104,9 @@ final class DbalOutboxStorage implements OutboxStorage
     /** Process-local cache of the "table is up to date" check. */
     private bool $setupDone = false;
 
+    /** Process-local cache of the "table exists" check (it may still lack the columns of this version). */
+    private bool $tableExists = false;
+
     public function __construct(
         private readonly Connection $connection,
         private readonly string $tableName = 'somework_cqrs_outbox',
@@ -114,7 +117,8 @@ final class DbalOutboxStorage implements OutboxStorage
 
     public function store(OutboxMessage $message): void
     {
-        $this->ensureTableExists();
+        // Only the table: an upgrade could wait for the transactions on it, writes must not.
+        $this->ensureTableExists(false);
 
         // The failure columns keep their defaults, so storing also works while an existing table
         // still waits for its upgrade.
@@ -236,7 +240,8 @@ final class DbalOutboxStorage implements OutboxStorage
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
     {
-        $this->ensureTableExists();
+        // Purging does not need the columns of this version (e.g. before the upgrade of a big 0.4 table).
+        $this->ensureTableExists(false);
 
         $deleted = 0;
 
@@ -432,25 +437,34 @@ final class DbalOutboxStorage implements OutboxStorage
      *                       setup only makes the table usable: it creates it, or adds the columns it
      *                       lacks within a second; it never builds or drops an index, which takes
      *                       long on a big table (the health check reports a missing one)
+     * @param bool $columns  Whether the caller needs the columns of this version (storing does not)
+     *
+     * @return bool Whether the table has the columns of this version
      */
-    private function prepareTable(bool $explicit): void
+    private function prepareTable(bool $explicit, bool $columns = true): bool
     {
-        $this->inDatabaseOfTable(function () use ($explicit): void {
+        $complete = $this->inDatabaseOfTable(function () use ($explicit, $columns): bool {
             $plan = $this->plan();
 
             if (null === $plan) {
-                return;
+                return true;
             }
 
             if ($explicit) {
                 $this->whileLocked(fn () => $this->upgrade(), self::SETUP_LOCK_TIMEOUT);
-            } elseif ($plan['create'] || [] !== $plan['columns']) {
+            } elseif ($plan['create'] || ($columns && [] !== $plan['columns'])) {
                 $this->makeUsable($plan);
+            } elseif ([] !== $plan['columns']) {
+                return false;
             }
+
+            return true;
         });
 
         // Schema tools quote reserved words, plain queries do not: fail here, not on the first message.
         $this->connection->createQueryBuilder()->select('id')->from($this->tableName)->where('1 = 0')->executeQuery()->free();
+
+        return $complete;
     }
 
     /**
@@ -489,20 +503,39 @@ final class DbalOutboxStorage implements OutboxStorage
     private function makeUsable(array $plan): void
     {
         $this->assertNoTransaction($plan['create'] ? 'does not exist' : sprintf('lacks the columns %s', implode(', ', $plan['columns'])));
+        // Another process (e.g. the setup command) may do it while this one waits for the lock.
+        $stillNeeded = function (): bool {
+            $plan = $this->plan();
+
+            return null !== $plan && ($plan['create'] || [] !== $plan['columns']);
+        };
 
         if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
-            $this->whileLocked(fn () => $this->withLockTimeout(fn () => $this->addMissingColumns(), self::AUTO_DDL_LOCK_TIMEOUT), self::AUTO_SETUP_LOCK_TIMEOUT);
+            $this->whileLocked(fn () => $this->withLockTimeout(fn () => $this->addMissingColumns(), self::AUTO_DDL_LOCK_TIMEOUT), self::AUTO_SETUP_LOCK_TIMEOUT, $stillNeeded);
 
             return;
         }
 
         // One transaction for the lock, the lock timeout and the change: none of them outlives it,
         // also not behind a pooler in transaction mode (PgBouncer) that hands the connection on.
-        $this->withLockTimeout(function (): void {
-            if (!$this->pollLock('SELECT pg_try_advisory_xact_lock(hashtext(?))', self::AUTO_SETUP_LOCK_TIMEOUT, false)) {
+        $this->withLockTimeout(function () use ($plan, $stillNeeded): void {
+            // Do not even queue behind a transaction that has held the table for a while: the
+            // writes behind the change would wait too (only visible with the privileges of pg_read_all_stats
+            // for the sessions of other users).
+            if (!$plan['create'] && false !== $this->connection->fetchOne(
+                'SELECT 1 FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid WHERE l.relation = to_regclass(?) AND l.pid <> pg_backend_pid() AND a.xact_start < now() - make_interval(secs => ?) LIMIT 1',
+                [$this->tableName, self::AUTO_DDL_LOCK_TIMEOUT],
+            )) {
+                throw $this->tableLocked(self::AUTO_DDL_LOCK_TIMEOUT);
+            }
+
+            $locked = $this->pollLock('SELECT pg_try_advisory_xact_lock(hashtext(?))', self::AUTO_SETUP_LOCK_TIMEOUT, false, $stillNeeded);
+            if (false === $locked) {
                 throw $this->setupRunsElsewhere(self::AUTO_SETUP_LOCK_TIMEOUT);
             }
-            $this->addMissingColumns();
+            if (true === $locked) {
+                $this->addMissingColumns();
+            }
         }, self::AUTO_DDL_LOCK_TIMEOUT);
     }
 
@@ -663,8 +696,13 @@ final class DbalOutboxStorage implements OutboxStorage
                 throw $exception;
             }
 
-            throw new \RuntimeException(sprintf('The outbox table "%s" could not be changed: a transaction kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $seconds), 0, $exception);
+            throw $this->tableLocked($seconds, $exception);
         }
+    }
+
+    private function tableLocked(int $seconds, ?\Throwable $previous = null): \RuntimeException
+    {
+        return new \RuntimeException(sprintf('The outbox table "%s" could not be changed: a transaction kept it locked for more than %d second(s). Run "bin/console somework:cqrs:outbox:setup" when the table is less busy.', $this->tableName, $seconds), 0, $previous);
     }
 
     /**
@@ -673,10 +711,11 @@ final class DbalOutboxStorage implements OutboxStorage
      * connection, not through a pooler in transaction mode (PgBouncer). Inside a transaction, where
      * the table cannot be changed anyway, and on SQLite no lock is taken.
      *
-     * @param \Closure(): void $setup
-     * @param int              $timeout Seconds to wait for another setup to finish
+     * @param \Closure(): void        $setup
+     * @param int                     $timeout     Seconds to wait for another setup to finish
+     * @param (\Closure(): bool)|null $stillNeeded Whether $setup still has to run, checked while waiting
      */
-    private function whileLocked(\Closure $setup, int $timeout): void
+    private function whileLocked(\Closure $setup, int $timeout, ?\Closure $stillNeeded = null): void
     {
         $platform = $this->connection->getDatabasePlatform();
 
@@ -690,10 +729,13 @@ final class DbalOutboxStorage implements OutboxStorage
         // statement, so a process blocked in pg_advisory_lock() would deadlock with the one holding
         // the lock. On MySQL, in short waits, so that a second signal stops the process.
         $locked = $platform instanceof PostgreSQLPlatform
-            ? $this->pollLock('SELECT pg_try_advisory_lock(hashtext(?))', $timeout, false)
-            : $this->pollLock('SELECT GET_LOCK(?, 1)', $timeout, true);
-        if (!$locked) {
+            ? $this->pollLock('SELECT pg_try_advisory_lock(hashtext(?))', $timeout, false, $stillNeeded)
+            : $this->pollLock('SELECT GET_LOCK(?, 1)', $timeout, true, $stillNeeded);
+        if (false === $locked) {
             throw $this->setupRunsElsewhere($timeout);
+        }
+        if (null === $locked) {
+            return;
         }
 
         try {
@@ -706,15 +748,21 @@ final class DbalOutboxStorage implements OutboxStorage
     /**
      * Runs $sql, which returns true or 1 once it got the setup lock, until $timeout seconds passed.
      *
-     * @param bool $waits Whether $sql waits for the lock itself
+     * @param bool                    $waits       Whether $sql waits for the lock itself
+     * @param (\Closure(): bool)|null $stillNeeded Checked after every try: false ends the wait
+     *
+     * @return bool|null True when locked, false after the timeout, null when no longer needed
      */
-    private function pollLock(string $sql, int $timeout, bool $waits): bool
+    private function pollLock(string $sql, int $timeout, bool $waits, ?\Closure $stillNeeded = null): ?bool
     {
         $deadline = microtime(true) + $timeout;
 
         while (true) {
             if (1 === (int) $this->connection->fetchOne($sql, [$this->setupLockName()])) {
                 return true;
+            }
+            if (null !== $stillNeeded && !$stillNeeded()) {
+                return null;
             }
             if (microtime(true) >= $deadline) {
                 return false;
@@ -727,7 +775,20 @@ final class DbalOutboxStorage implements OutboxStorage
 
     private function setupLockName(): string
     {
-        return 'somework_cqrs_outbox_setup_'.substr(sha1($this->tableName), 0, 16);
+        // PostgreSQL's advisory locks belong to the database, MySQL's named locks to the server.
+        $name = $this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform
+            ? $this->connection->getDatabase().'.'.($this->tableParts()[1] ?? $this->tableName)
+            : $this->tableName;
+
+        return 'somework_cqrs_outbox_setup_'.substr(sha1(strtolower($name)), 0, 16);
+    }
+
+    /**
+     * @return array{0: string, 1?: string} "schema.table" split, or the unqualified name
+     */
+    private function tableParts(): array
+    {
+        return explode('.', $this->tableName, 2);
     }
 
     private function setupRunsElsewhere(int $timeout): \RuntimeException
@@ -778,6 +839,21 @@ final class DbalOutboxStorage implements OutboxStorage
     public static function addTableToSchema(Schema $schema, string $tableName = 'somework_cqrs_outbox'): Table
     {
         $table = $schema->createTable($tableName);
+
+        self::configureTable($table, $tableName);
+
+        return $table;
+    }
+
+    /**
+     * Adds the table as $name, with the columns and indexes of the configured $tableName: MySQL lists
+     * a "database.table" of the connection's own database as "table".
+     *
+     * @internal
+     */
+    public static function addTableToSchemaAs(Schema $schema, string $name, string $tableName): Table
+    {
+        $table = $schema->createTable($name);
 
         self::configureTable($table, $tableName);
 
@@ -956,16 +1032,19 @@ final class DbalOutboxStorage implements OutboxStorage
         return $query;
     }
 
-    private function ensureTableExists(): void
+    /**
+     * @param bool $columns Whether the caller needs the columns of this version, or only the table
+     */
+    private function ensureTableExists(bool $columns = true): void
     {
         // Inside a transaction the table cannot be changed; a missing table or column then fails the query itself.
         // (The existence check is also unreliable there: schema filters and qualified names hide tables.)
-        if ($this->setupDone || !$this->autoSetup || $this->connection->isTransactionActive()) {
+        if ($this->setupDone || ($this->tableExists && !$columns) || !$this->autoSetup || $this->connection->isTransactionActive()) {
             return;
         }
 
-        $this->guard(fn () => $this->prepareTable(false));
-        $this->setupDone = true;
+        $this->setupDone = $this->guard(fn (): bool => $this->prepareTable(false, $columns));
+        $this->tableExists = true;
     }
 
     /**

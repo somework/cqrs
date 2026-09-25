@@ -16,12 +16,15 @@ use function str_contains;
 
 /**
  * Runs a callback once, right before the first statement whose SQL contains $needle, e.g. to let
- * another process change a row between two queries.
+ * another process change a row between two queries. With a $replacement, every such statement is
+ * replaced by it (e.g. to fake what the database reports).
  */
 final class BeforeQueryMiddleware implements Middleware
 {
     /** @var (\Closure(): void)|null */
     public ?\Closure $callback = null;
+
+    public ?string $replacement = null;
 
     public function __construct(private readonly string $needle)
     {
@@ -45,28 +48,30 @@ final class BeforeQueryMiddleware implements Middleware
 
                     public function prepare(string $sql): Statement
                     {
-                        $this->middleware->before($sql);
-
-                        return parent::prepare($sql);
+                        return parent::prepare($this->middleware->before($sql));
                     }
 
                     public function query(string $sql): Result
                     {
-                        $this->middleware->before($sql);
-
-                        return parent::query($sql);
+                        return parent::query($this->middleware->before($sql));
                     }
                 };
             }
         };
     }
 
-    public function before(string $sql): void
+    public function before(string $sql): string
     {
-        if (null !== $this->callback && str_contains($sql, $this->needle)) {
+        if (!str_contains($sql, $this->needle)) {
+            return $sql;
+        }
+
+        if (null !== $this->callback) {
             $callback = $this->callback;
             $this->callback = null;
             $callback();
         }
+
+        return $this->replacement ?? $sql;
     }
 }

@@ -57,7 +57,7 @@ somework_cqrs:
 | Option | Default | Description |
 |--------|---------|-------------|
 | `enabled` | `false` | Registers the outbox storage and the four console commands. It decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
-| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`; setting it up needs a connection that selects a database). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
+| `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`: with `auto_setup` the connection must select a database, its `dbname`, and the Doctrine schema listener only adds a table of that database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
 | `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
@@ -188,9 +188,14 @@ final class Version20260101000000 extends AbstractMigration
 
 **`auto_setup: true` (default).** The first time a process uses the storage, it checks
 whether the table exists and has the columns of this version (without locking anything). If
-not, it creates the table, or adds the columns: processes that start at the same time wait for
-each other (at most 30 seconds), and adding the columns waits at most 1 second for the
-transactions on the table. On PostgreSQL this runs in one transaction, so it is safe behind a
+the table is missing, it creates it. Storing never changes an existing table (writes keep
+working on a table of 0.4); the relay and the `failed` command add the columns they need.
+Processes that start at the same time wait for each other (at most 30 seconds, less once
+another one has added the columns), and adding the columns waits at most 1 second for the
+transactions on the table; on PostgreSQL it does not even try while a transaction has held
+the table for longer, so writes do not queue behind the change. Until the columns exist,
+every relay run fails with `could not be changed: a transaction kept it locked`: run the
+setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
 pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
 a big table: the relay and the health check warn until `somework:cqrs:outbox:setup` has done
 it (without the index every fetch reads all pending rows). It never creates the table inside an open
@@ -242,7 +247,7 @@ and the new index to stay fast. Add them with one of:
   the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
   fails with `could not be changed: a transaction kept it locked` instead of blocking every
   write behind it; run the setup again when the table is less busy. With `auto_setup: true`,
-  the first process adds the columns (waiting at most 1 second), so the relay works before
+  the first relay run adds the columns (waiting at most 1 second), so the relay works before
   the setup command has run, only slower;
 - `doctrine:migrations:diff` when `doctrine/orm` is installed (the schema listener includes
   the new columns and index);
@@ -270,7 +275,7 @@ every message ever relayed. Building the indexes then takes a while, and a migra
 by `doctrine:migrations:diff` uses a plain `CREATE INDEX`, which blocks writes on PostgreSQL
 until it is done. It also drops the old index before it creates the new one, so the relay has
 no index while the migration runs; put the `DROP INDEX` last. Purge the published rows first
-(with `auto_setup: false`, `somework:cqrs:outbox:purge` works on the 0.4 table), or use the
+(`somework:cqrs:outbox:purge` works on the 0.4 table and does not change it), or use the
 statements above.
 
 ## Relaying
@@ -299,7 +304,9 @@ For each due row the relay:
 
 The transports take turns, the one whose next row has waited longest first (rows stored
 without a transport name count as one transport), so the backlog of one transport, for example
-after an outage, does not hold up the others. Within
+after an outage, does not hold up the others: the oldest due rows go first, whatever their
+transport. (When more transports have a backlog than a run relays rows, a transport whose rows
+are newer waits until the older rows are relayed.) Within
 a transport the relay takes the new rows first (never attempted, or requeued), in the order
 they were stored, then the rows that failed before and whose retry time has passed, in the order
 of their retry time. Rows that keep failing therefore do not hold up new rows. A relay that
@@ -354,6 +361,8 @@ What happens in special cases:
   and exits with `1`. A second signal stops it at once. PHP handles signals between
   operations: a send blocked on the network is only interrupted by the transport's own
   timeout, so configure timeouts on your transports (and a grace period longer than them).
+  While the relay waits for another process to add the columns to the table (at most 30
+  seconds, on upgrade day), the first signal takes effect after that wait.
 - **Only one relay runs at a time.** When `symfony/lock` is installed, the command takes a
   lock named after the application, the connection and the table, and extends it after
   every row; if the lock is lost, the run stops with exit code `1`. The application part is

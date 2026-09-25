@@ -237,9 +237,10 @@ database transaction and a relay sends them to Messenger afterwards. See
 
 The table is created on first use (`auto_setup: true`), but never inside an open
 transaction: storing the first message inside a transaction throws a
-`LogicException` if the table does not exist yet. The automatic setup adds the
-columns a table of an earlier version lacks, but leaves its indexes to the setup
-command (the relay and the health check warn until it has run). Create the table,
+`LogicException` if the table does not exist yet. Storing never changes an
+existing table; the relay adds the columns a table of an earlier version lacks,
+but leaves its indexes to the setup command (the relay and the health check warn
+until it has run). Create the table,
 or upgrade one of an earlier version, during deployment:
 
 ```bash
@@ -274,7 +275,8 @@ time) and marks each one published after dispatching it.
   makes the command exit with `1`; the rows behind it are not blocked. After
   `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
 * The transports take turns, the one whose next row has waited longest first,
-  so one transport's backlog does not hold up the others.
+  so one transport's backlog does not hold up the others (the oldest due rows go
+  first, whatever their transport).
 * A transport that fails 3 times in a row with a `TransportException` (broker
   down, or rejecting messages) is paused until the next run, while the rows of
   the other transports are relayed (10 times, or 3 times taking more than 10
@@ -286,7 +288,9 @@ time) and marks each one published after dispatching it.
   marking it published, the row is sent again. Make handlers idempotent.
 * SIGTERM and SIGINT (with the `pcntl` extension) let the relay finish the
   current row, then it exits with `1`. A deploy or a container stop therefore
-  does not leave a row half done.
+  does not leave a row half done. A send blocked on the network ends only with the
+  transport's timeout, and a wait for another process upgrading the table (at
+  most 30 seconds) ends first; a second signal stops the relay at once.
 * When symfony/lock is installed, only one relay runs at a time; a second one
   prints "Another outbox relay is already running." and exits with `0`. The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local

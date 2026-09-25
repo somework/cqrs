@@ -27,11 +27,14 @@ use function array_values;
 use function date_default_timezone_get;
 use function date_default_timezone_set;
 use function implode;
+use function microtime;
 use function preg_replace;
+use function sha1;
 use function str_contains;
 use function str_repeat;
 use function substr;
 use function time;
+use function usleep;
 
 use const DATE_ATOM;
 
@@ -231,6 +234,120 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertStringContainsString('INSERT INTO somework_cqrs_outbox', $sql);
     }
 
+    public function test_storing_and_purging_never_change_a_table_of_an_earlier_version(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $queries->flush();
+
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
+        $storage->purgePublished(new DateTimeImmutable());
+
+        self::assertDoesNotMatchRegularExpression('/ALTER TABLE|CREATE TABLE/', implode("\n", $queries->flush()), 'Writes (and purges) do not wait for an upgrade.');
+        self::assertSame('the columns attempts, available_at, failed_at, last_error are missing', $storage->pendingChanges()[0]);
+
+        // The relay needs the columns: the same process adds them when it fetches.
+        self::assertSame([self::ID_1, self::ID_2], self::ids($storage->fetchUnpublished(10)));
+        self::assertStringContainsString('ALTER TABLE', implode("\n", $queries->flush()));
+    }
+
+    public function test_the_automatic_upgrade_gives_up_at_once_behind_a_long_transaction_and_writes_go_on(): void
+    {
+        if (TestDatabase::isSqlite($this->connection)) {
+            self::markTestSkipped('Needs a second connection to the same database.');
+        }
+        TestDatabase::createTableOfVersion04($this->connection);
+        $other = TestDatabase::connect(keepTables: true);
+        // e.g. a report, or a connection left idle in a transaction.
+        $other->beginTransaction();
+        $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox');
+        $postgres = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
+        if ($postgres) {
+            usleep(1_100_000);
+        }
+
+        try {
+            $storage = new DbalOutboxStorage($this->connection);
+            $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+            $started = microtime(true);
+            try {
+                $storage->fetchUnpublished(10);
+                self::fail('The columns cannot be added while the transaction holds the table.');
+            } catch (\RuntimeException $exception) {
+                self::assertStringContainsString('could not be changed: a transaction kept it locked for more than 1 second(s)', $exception->getMessage());
+            }
+            // PostgreSQL sees the transaction and does not queue the writes behind the change; MySQL waits for 1 second.
+            self::assertLessThan($postgres ? 0.5 : 2.5, microtime(true) - $started);
+
+            $storage->store(self::message(self::ID_2, '2026-01-01 10:00:01'));
+        } finally {
+            $other->rollBack();
+            $other->close();
+        }
+
+        self::assertSame([self::ID_1, self::ID_2], self::ids((new DbalOutboxStorage($this->connection))->fetchUnpublished(10)));
+    }
+
+    public function test_a_process_waiting_for_another_setup_goes_on_once_the_columns_exist(): void
+    {
+        $platform = $this->connection->getDatabasePlatform();
+        if (TestDatabase::isSqlite($this->connection)) {
+            self::markTestSkipped('SQLite takes no setup lock.');
+        }
+        $postgres = $platform instanceof PostgreSQLPlatform;
+        $middleware = new BeforeQueryMiddleware($postgres ? 'pg_try_advisory_xact_lock' : 'GET_LOCK');
+        $this->connection = TestDatabase::connect(null, [$middleware]);
+        TestDatabase::createTableOfVersion04($this->connection);
+        $other = TestDatabase::connect(keepTables: true);
+        // Right before this process tries the lock, another one takes it (and keeps it, e.g. to build
+        // the index next) and adds the columns.
+        $middleware->callback = static function () use ($other, $postgres): void {
+            $name = 'somework_cqrs_outbox_setup_'.substr(sha1($postgres ? 'somework_cqrs_outbox' : $other->getDatabase().'.somework_cqrs_outbox'), 0, 16);
+            $other->fetchOne($postgres ? 'SELECT pg_advisory_lock(hashtext(?))' : 'SELECT GET_LOCK(?, 0)', [$name]);
+            (new DbalOutboxStorage($other))->fetchUnpublished(1);
+        };
+
+        try {
+            $started = microtime(true);
+            $storage = new DbalOutboxStorage($this->connection);
+
+            self::assertSame([], $storage->fetchUnpublished(10));
+            self::assertNull($middleware->callback, 'The other process held the lock.');
+            self::assertLessThan(5, microtime(true) - $started, 'It did not wait for the lock that it no longer needs.');
+        } finally {
+            $other->close();
+        }
+    }
+
+    public function test_setup_leaves_an_index_that_another_process_builds_alone(): void
+    {
+        if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
+            self::markTestSkipped('Only PostgreSQL builds indexes concurrently.');
+        }
+        (new DbalOutboxStorage($this->connection))->setup();
+        // A build in progress is not valid yet; pg_stat_progress_create_index reports it.
+        $this->connection->executeStatement("UPDATE pg_index SET indisvalid = false WHERE indexrelid = 'idx_somework_cqrs_outbox_pending'::regclass");
+        $progress = new BeforeQueryMiddleware('pg_stat_progress_create_index');
+        $progress->replacement = "SELECT 'idx_somework_cqrs_outbox_pending' AS relname WHERE CAST(? AS text) IS NOT NULL";
+        $connection = TestDatabase::connect(null, [$progress], keepTables: true);
+        $storage = new DbalOutboxStorage($connection);
+
+        self::assertSame(['the index "idx_somework_cqrs_outbox_pending" is being built'], $storage->pendingChanges());
+        try {
+            $storage->setup();
+            self::fail('The build of the other process is not dropped.');
+        } catch (\RuntimeException $exception) {
+            self::assertSame('Another process is building the index "idx_somework_cqrs_outbox_pending" of the outbox table "somework_cqrs_outbox". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', $exception->getMessage());
+        } finally {
+            $connection->close();
+        }
+        self::assertTrue(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_pending'));
+    }
+
     public function test_setup_rebuilds_an_index_that_a_killed_build_left_invalid(): void
     {
         if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
@@ -296,10 +413,17 @@ final class DbalOutboxStorageTest extends TestCase
             'the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there',
         ], $storage->pendingChanges());
 
+        $queries->flush();
         $storage->setup();
 
         self::assertSame([], $storage->pendingChanges());
         self::assertTrue(TestDatabase::hasIndex($this->connection, 'somework_cqrs_outbox', 'idx_somework_cqrs_outbox_pending'));
+        // The relay is never left without an index: the old one goes once the new one exists (SQLite
+        // rebuilds the table instead).
+        $sql = implode("\n", $queries->flush());
+        if (!TestDatabase::isSqlite($this->connection)) {
+            self::assertMatchesRegularExpression('/CREATE INDEX (CONCURRENTLY (IF NOT EXISTS )?)?idx_somework_cqrs_outbox_pending.*DROP INDEX (CONCURRENTLY (IF EXISTS )?)?`?idx_somework_cqrs_outbox_published_created/s', $sql);
+        }
     }
 
     public function test_setting_up_the_table_leaves_the_session_settings_of_the_connection_as_they_were(): void
@@ -322,8 +446,8 @@ final class DbalOutboxStorageTest extends TestCase
         $before = array_map(fn (string $sql): mixed => $this->connection->fetchOne($sql), $settings);
         $queries->flush();
 
-        // The automatic setup adds the columns, the setup command builds the index.
-        (new DbalOutboxStorage($this->connection))->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        // The automatic setup adds the columns (for the relay), the setup command builds the index.
+        (new DbalOutboxStorage($this->connection))->fetchUnpublished(1);
         $automatic = implode("\n", $queries->flush());
         (new DbalOutboxStorage($this->connection))->setup();
         $explicit = implode("\n", $queries->flush());
@@ -340,6 +464,8 @@ final class DbalOutboxStorageTest extends TestCase
         } else {
             self::assertStringContainsString('SET SESSION lock_wait_timeout = 1', $automatic);
             self::assertStringContainsString('SET SESSION lock_wait_timeout = 5', $explicit);
+            // In short waits, so that a second signal stops the process.
+            self::assertStringContainsString('GET_LOCK(?, 1)', $explicit);
         }
     }
 

@@ -8,6 +8,8 @@ use Doctrine\DBAL\Connection;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\AbstractLogger;
+use Psr\Log\LogLevel;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
@@ -33,6 +35,7 @@ use function array_map;
 use function array_values;
 use function ksort;
 use function preg_replace;
+use function strtr;
 
 /**
  * Runs the relay against the DBAL storage on a real database: in-memory SQLite, or the one named
@@ -128,11 +131,25 @@ final class OutboxRelayDbalTest extends TestCase
         $this->storage = new DbalOutboxStorage($this->connection);
         $this->store('task-1', 'async');
 
-        $tester = $this->relay($this->bus());
+        $logger = new class extends AbstractLogger {
+            /** @var list<string> */
+            public array $warnings = [];
+
+            public function log($level, string|\Stringable $message, array $context = []): void
+            {
+                if (LogLevel::WARNING === $level) {
+                    $this->warnings[] = strtr((string) $message, ['{changes}' => (string) ($context['changes'] ?? '')]);
+                }
+            }
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory(new InMemoryStore()), logger: $logger));
+        $tester->execute([]);
 
         self::assertSame(Command::SUCCESS, $tester->getStatusCode(), 'The table works without the index, only slower.');
         self::assertSame(['task-1'], $this->sentTaskIds());
         self::assertStringContainsString('The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing;', self::display($tester));
+        self::assertSame(['The outbox table needs "bin/console somework:cqrs:outbox:setup": the index "idx_somework_cqrs_outbox_pending" is missing; the index "idx_somework_cqrs_outbox_published_created" of version 0.4 is still there.'], $logger->warnings);
     }
 
     private function store(string $taskId, string $transportName): void

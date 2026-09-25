@@ -40,8 +40,9 @@ final class TestDatabase
     /**
      * @param LoggerInterface|null $queryLogger Receives every executed SQL statement
      * @param list<Middleware>     $middlewares
+     * @param bool                 $keepTables  Whether to keep the tables of a real database (a second connection to it)
      */
-    public static function connect(?LoggerInterface $queryLogger = null, array $middlewares = []): Connection
+    public static function connect(?LoggerInterface $queryLogger = null, array $middlewares = [], bool $keepTables = false): Connection
     {
         $url = getenv(self::URL_VARIABLE);
         $configuration = new Configuration();
@@ -57,7 +58,7 @@ final class TestDatabase
         $connection = DriverManager::getConnection((new DsnParser())->parse($url), $configuration);
         $platform = $connection->getDatabasePlatform();
 
-        foreach (self::TABLES as $table) {
+        foreach ($keepTables ? [] : self::TABLES as $table) {
             $connection->executeStatement('DROP TABLE IF EXISTS '.$platform->quoteSingleIdentifier($table));
         }
 

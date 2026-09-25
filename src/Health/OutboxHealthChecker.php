@@ -47,8 +47,8 @@ final class OutboxHealthChecker implements HealthChecker
 
         try {
             $changes = $this->outboxStorage->pendingChanges();
-        } catch (\Throwable) {
-            $changes = [];
+        } catch (\Throwable $exception) {
+            $changes = [sprintf('its structure cannot be read (%s)', $exception->getMessage())];
         }
 
         // e.g. the index of this version, which the automatic setup leaves to the setup command.
