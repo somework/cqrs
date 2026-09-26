@@ -1041,8 +1041,9 @@ final class DbalOutboxStorageTest extends TestCase
         OutboxRows::fail($storage, self::ID_1, 3, 'not signed', null);
         OutboxRows::fail($storage, self::ID_2, 3, 'not signed', null);
         $signer = new OutboxSigner('secret');
-        $signed = [];
-        $sign = static function (OutboxMessage $message) use ($signer, &$signed): string {
+        /** @var \ArrayObject<int, string> $signed */
+        $signed = new \ArrayObject();
+        $sign = static function (OutboxMessage $message) use ($signer, $signed): string {
             $signed[] = $message->id;
 
             return $signer->sign($message);
@@ -1050,11 +1051,11 @@ final class DbalOutboxStorageTest extends TestCase
 
         // A row that is still due and an unknown id are neither signed nor counted.
         self::assertSame(1, $storage->requeueFailed([strtoupper(self::ID_2), $due, self::UNKNOWN_ID], 'other', $sign));
-        self::assertSame([self::ID_2], $signed);
+        self::assertSame([self::ID_2], $signed->getArrayCopy());
         self::assertSame(1, $storage->requeueFailed([], null, $sign), 'Without ids, every row that is still given up.');
-        self::assertSame([self::ID_2, self::ID_1], $signed);
+        self::assertSame([self::ID_2, self::ID_1], $signed->getArrayCopy());
         self::assertSame(0, $storage->requeueFailed([], null, $sign));
-        self::assertSame([self::ID_2, self::ID_1], $signed);
+        self::assertSame([self::ID_2, self::ID_1], $signed->getArrayCopy());
         self::assertSame([], $storage->fetchFailed(10));
 
         $messages = [];
