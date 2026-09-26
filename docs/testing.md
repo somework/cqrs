@@ -504,7 +504,8 @@ profiler integration: with the profiler enabled in the `test` environment
 
 To handle what was sent to an in-memory transport, run a worker in the test, for example
 the `messenger:consume async --limit=1 --time-limit=5` command through `CommandTester`
-(the time limit makes an empty transport fail the test instead of hanging it).
+(the time limit keeps an empty transport from hanging the test; it does not fail it, so
+assert on what the handler did).
 
 `dispatchAsync()` requires an async bus (`somework_cqrs.buses.event_async` for events,
 `command_async` for commands). Without one, the bus throws
