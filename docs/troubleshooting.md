@@ -606,7 +606,8 @@ commit a lost message.
   could not add them (see `Stopping: the outbox storage failed` above): run the
   setup command.
 * `Transport "..." cannot be created: ...` The transport DSN or options are
-  invalid.
+  invalid, or, for a Redis transport without `lazy: true`, the Redis server
+  cannot be reached.
 * `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.
 
 It exits with `1` for warnings, for example
