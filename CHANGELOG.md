@@ -43,6 +43,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - The automatic setup creates the table or adds the columns without waiting in the table's lock queue. It never builds indexes, and never runs inside a transaction.
 - `DbalOutboxStorage::pendingChanges()` lists what `setup` still has to do.
 - `database.table` names work on MySQL and MariaDB. An unqualified name is found along the PostgreSQL search path.
+- The outbox builds and changes its table with the schema editors of DBAL 4.5 (and the older API before it), so the setup triggers no DBAL deprecations; `addTableToSchema()` still uses `Schema::createTable()`, which DBAL 4.5 deprecates without an in-place replacement.
 
 **Diagnostics and tooling**
 - The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps.

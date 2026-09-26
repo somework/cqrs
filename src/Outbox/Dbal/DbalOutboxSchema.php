@@ -17,18 +17,20 @@ use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Schema\AbstractSchemaManager;
+use Doctrine\DBAL\Schema\ComparatorConfig;
 use Doctrine\DBAL\Schema\Exception\TableDoesNotExist;
-use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
+use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Types\Types;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 
 use function array_filter;
+use function array_flip;
+use function array_intersect_key;
 use function array_keys;
 use function array_map;
 use function array_values;
-use function class_exists;
 use function explode;
 use function implode;
 use function in_array;
@@ -76,6 +78,28 @@ final class DbalOutboxSchema
      *
      * @var array<string, non-empty-list<string>>
      */
+    /** The columns of the table, in the order they are created. */
+    private const COLUMNS = [
+        'id' => ['type' => Types::GUID, 'notnull' => true],
+        'body' => ['type' => Types::TEXT, 'notnull' => true],
+        'headers' => ['type' => Types::TEXT, 'notnull' => true],
+        'transport_name' => ['type' => Types::STRING, 'notnull' => false, 'length' => 190],
+        'created_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => true],
+        'published_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => false],
+        // Attempts so far, counted when an attempt starts; the relay gives up after "somework_cqrs.outbox.max_attempts".
+        'attempts' => ['type' => Types::INTEGER, 'notnull' => true, 'default' => 0],
+        // Earliest time of the next attempt (NULL: never attempted, or requeued).
+        'available_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => false],
+        // When the relay gave up on the message.
+        'failed_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => false],
+        'last_error' => ['type' => Types::TEXT, 'notnull' => false],
+        // The relay run that claimed the message for an attempt it has not finished, and when.
+        'claim_token' => ['type' => Types::STRING, 'notnull' => false, 'length' => 32],
+        'claimed_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => false],
+        // "v1:" and the base64url HMAC-SHA256 of the id, body and headers (outbox.signing).
+        'signature' => ['type' => Types::STRING, 'notnull' => false, 'length' => 64],
+    ];
+
     private const INDEXES = [
         'pending' => ['published_at', 'failed_at', 'transport_name', 'available_at', 'created_at', 'id'],
         // Monitoring finds unfinished claims without reading the pending rows.
@@ -97,7 +121,7 @@ final class DbalOutboxSchema
     /**
      * What the first use found left for the setup command, for pendingChanges(); false when unknown.
      *
-     * @var array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<string>>, invalid: list<string>, building: list<string>, legacy: string|null}|false|null
+     * @var array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<non-empty-string>>, invalid: list<string>, building: list<string>, legacy: string|null}|false|null
      */
     private array|false|null $knownPlan = false;
 
@@ -232,7 +256,7 @@ final class DbalOutboxSchema
     /**
      * What the table lacks, or null when it is up to date.
      *
-     * @return array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<string>>, invalid: list<string>, building: list<string>, legacy: string|null}|null
+     * @return array{create: bool, columns: list<string>, indexes: array<string, non-empty-list<non-empty-string>>, invalid: list<string>, building: list<string>, legacy: string|null}|null
      */
     private function plan(): ?array
     {
@@ -347,9 +371,8 @@ final class DbalOutboxSchema
         }
 
         $current = $this->introspectTable($schemaManager);
-        $upgraded = clone $current;
-        self::addColumns($upgraded, $plan['columns']);
-        $diff = $schemaManager->createComparator()->compareTables($current, $upgraded);
+        $upgraded = OutboxTable::withColumns($current, self::columnDefinitions($plan['columns']));
+        $diff = self::compareTables($schemaManager, $current, $upgraded);
         $platform = $this->connection->getDatabasePlatform();
 
         // The change must not queue behind a transaction on the table: the writes would queue behind it.
@@ -479,14 +502,11 @@ final class DbalOutboxSchema
         $current = $this->introspectTable($schemaManager);
         $concurrently = $this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform;
 
-        $upgraded = clone $current;
-        self::addColumns($upgraded, $plan['columns']);
+        $upgraded = OutboxTable::withColumns($current, self::columnDefinitions($plan['columns']));
         if (!$concurrently) {
-            foreach ($plan['indexes'] as $suffix => $columns) {
-                $upgraded->addIndex($columns, self::indexName($this->tableName, $suffix));
-            }
+            $upgraded = OutboxTable::withIndexes($upgraded, self::indexDefinitions($this->tableName, $plan['indexes']));
         }
-        $this->withLockTimeout(static fn () => $schemaManager->alterTable($schemaManager->createComparator()->compareTables($current, $upgraded)), self::DDL_LOCK_TIMEOUT);
+        $this->withLockTimeout(static fn () => $schemaManager->alterTable(self::compareTables($schemaManager, $current, $upgraded)), self::DDL_LOCK_TIMEOUT);
 
         if ($concurrently) {
             foreach ($plan['indexes'] as $suffix => $columns) {
@@ -504,15 +524,14 @@ final class DbalOutboxSchema
             if ($concurrently) {
                 $this->connection->executeStatement(sprintf('DROP INDEX CONCURRENTLY IF EXISTS %s', $this->qualifiedIndexName($plan['legacy'])));
             } else {
-                $withoutLegacyIndex = clone $upgraded;
-                $withoutLegacyIndex->dropIndex($plan['legacy']);
-                $this->withLockTimeout(static fn () => $schemaManager->alterTable($schemaManager->createComparator()->compareTables($upgraded, $withoutLegacyIndex)), self::DDL_LOCK_TIMEOUT);
+                $withoutLegacyIndex = OutboxTable::withoutIndex($upgraded, $plan['legacy']);
+                $this->withLockTimeout(static fn () => $schemaManager->alterTable(self::compareTables($schemaManager, $upgraded, $withoutLegacyIndex)), self::DDL_LOCK_TIMEOUT);
             }
         }
     }
 
     /**
-     * @param array{indexes: array<string, non-empty-list<string>>, building: list<string>} $plan
+     * @param array{indexes: array<string, non-empty-list<non-empty-string>>, building: list<string>} $plan
      */
     private function assertNotBuilding(array $plan): void
     {
@@ -996,75 +1015,67 @@ final class DbalOutboxSchema
     }
 
     /**
-     * Built in a schema of the connection's schema config, so the table gets the default table
-     * options of the connection (charset and collation on MySQL/MariaDB), as in a migration.
+     * @param AbstractSchemaManager<AbstractPlatform> $schemaManager
+     */
+    private static function compareTables(AbstractSchemaManager $schemaManager, Table $from, Table $to): TableDiff
+    {
+        // The changes only add or drop indexes; DBAL 4.3+ deprecates reporting modified ones.
+        if (method_exists(ComparatorConfig::class, 'withReportModifiedIndexes')) { // @phpstan-ignore function.alreadyNarrowedType (DBAL < 4.3)
+            return $schemaManager->createComparator((new ComparatorConfig())->withReportModifiedIndexes(false))->compareTables($from, $to);
+        }
+
+        return $schemaManager->createComparator()->compareTables($from, $to);
+    }
+
+    /**
+     * Built with the connection's schema config, so the table gets the default table options
+     * of the connection (charset and collation on MySQL/MariaDB), as in a migration.
      *
      * @param AbstractSchemaManager<AbstractPlatform> $schemaManager
      */
     private static function buildTableDefinition(AbstractSchemaManager $schemaManager, string $tableName): Table
     {
-        $table = (new Schema([], [], $schemaManager->createSchemaConfig()))->createTable($tableName);
-
-        self::configureTable($table, $tableName);
-
-        return $table;
+        return OutboxTable::create($tableName, self::COLUMNS, 'id', self::indexDefinitions($tableName, self::INDEXES), $schemaManager->createSchemaConfig());
     }
 
-    public static function configureTable(Table $table, string $tableName): void
+    /**
+     * Adds the table as $name to a schema that is changed in place, with the indexes of $tableName.
+     */
+    public static function addToSchema(Schema $schema, string $name, string $tableName): Table
     {
-        self::addColumns($table, ['id', 'body', 'headers', 'transport_name', 'created_at', 'published_at', ...self::COLUMNS_SINCE_0_4]);
-
-        // PrimaryKeyConstraint and Table::addPrimaryKeyConstraint() exist since DBAL 4.3;
-        // Table::setPrimaryKey() is the only option on 4.0-4.2 (deprecated from 4.3).
-        if (class_exists(PrimaryKeyConstraint::class)) {
-            $table->addPrimaryKeyConstraint(
-                PrimaryKeyConstraint::editor()
-                    ->setUnquotedColumnNames('id')
-                    ->create(),
-            );
-        } else {
-            // Only reached on DBAL < 4.3, where setPrimaryKey() is not deprecated.
-            $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
-        }
-
-        foreach (self::INDEXES as $suffix => $columns) {
-            $table->addIndex($columns, self::indexName($tableName, $suffix));
-        }
+        return OutboxTable::addToSchema($schema, $name, self::COLUMNS, 'id', self::indexDefinitions($tableName, self::INDEXES));
     }
 
     /**
      * @param list<string> $columns
+     *
+     * @return array<non-empty-string, array{type: string, notnull: bool, length?: int, default?: int}>
      */
-    private static function addColumns(Table $table, array $columns): void
+    private static function columnDefinitions(array $columns): array
     {
-        foreach ($columns as $column) {
-            match ($column) {
-                'id' => $table->addColumn('id', Types::GUID)->setNotnull(true),
-                'body' => $table->addColumn('body', Types::TEXT)->setNotnull(true),
-                'headers' => $table->addColumn('headers', Types::TEXT)->setNotnull(true),
-                'transport_name' => $table->addColumn('transport_name', Types::STRING)->setLength(190)->setNotnull(false),
-                'created_at' => $table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true),
-                'published_at' => $table->addColumn('published_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
-                // Attempts so far, counted when an attempt starts; the relay gives up after "somework_cqrs.outbox.max_attempts".
-                'attempts' => $table->addColumn('attempts', Types::INTEGER)->setNotnull(true)->setDefault(0),
-                // Earliest time of the next attempt (NULL: never attempted, or requeued).
-                'available_at' => $table->addColumn('available_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
-                // When the relay gave up on the message.
-                'failed_at' => $table->addColumn('failed_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
-                'last_error' => $table->addColumn('last_error', Types::TEXT)->setNotnull(false),
-                // The relay run that claimed the message for an attempt it has not finished, and when.
-                'claim_token' => $table->addColumn('claim_token', Types::STRING)->setLength(32)->setNotnull(false),
-                'claimed_at' => $table->addColumn('claimed_at', Types::DATETIME_IMMUTABLE)->setNotnull(false),
-                // "v1:" and the base64url HMAC-SHA256 of the id, body and headers (outbox.signing).
-                'signature' => $table->addColumn('signature', Types::STRING)->setLength(64)->setNotnull(false),
-                default => throw new \LogicException(sprintf('Unknown outbox column "%s".', $column)),
-            };
+        return array_intersect_key(self::COLUMNS, array_flip($columns));
+    }
+
+    /**
+     * @param array<string, non-empty-list<non-empty-string>> $indexes Suffix => columns
+     *
+     * @return array<non-empty-string, non-empty-list<non-empty-string>> Index name => columns
+     */
+    private static function indexDefinitions(string $tableName, array $indexes): array
+    {
+        $definitions = [];
+        foreach ($indexes as $suffix => $columns) {
+            $definitions[self::indexName($tableName, $suffix)] = $columns;
         }
+
+        return $definitions;
     }
 
     /**
      * "idx_<table>_<suffix>", falling back to a hashed name when it would exceed the 63-character
      * identifier limit of PostgreSQL/MySQL.
+     *
+     * @return non-empty-string
      */
     private static function indexName(string $tableName, string $suffix): string
     {

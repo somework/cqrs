@@ -10,13 +10,13 @@ use Doctrine\DBAL\Driver\Middleware;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Logging\Middleware as LoggingMiddleware;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
-use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
+use Doctrine\DBAL\Schema\SchemaConfig;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Tools\DsnParser;
 use Doctrine\DBAL\Types\Types;
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Outbox\Dbal\OutboxTable;
 
-use function class_exists;
 use function getenv;
 use function is_string;
 use function method_exists;
@@ -90,22 +90,21 @@ final class TestDatabase
      */
     public static function createTableOfVersion04(Connection $connection, string $tableName = 'somework_cqrs_outbox'): void
     {
-        $table = new Table($tableName);
-        $table->addColumn('id', Types::GUID)->setNotnull(true);
-        $table->addColumn('body', Types::TEXT)->setNotnull(true);
-        $table->addColumn('headers', Types::TEXT)->setNotnull(true);
-        $table->addColumn('transport_name', Types::STRING)->setLength(190)->setNotnull(false);
-        $table->addColumn('created_at', Types::DATETIME_IMMUTABLE)->setNotnull(true);
-        $table->addColumn('published_at', Types::DATETIME_IMMUTABLE)->setNotnull(false);
-
-        if (class_exists(PrimaryKeyConstraint::class)) {
-            $table->addPrimaryKeyConstraint(PrimaryKeyConstraint::editor()->setUnquotedColumnNames('id')->create());
-        } else {
-            $table->setPrimaryKey(['id']); // @phpstan-ignore method.deprecated
-        }
-
-        // PostgreSQL cuts longer names to 63 characters (MySQL rejects them).
-        $table->addIndex(['published_at', 'created_at'], substr('idx_'.$tableName.'_published_created', 0, 63));
+        $table = OutboxTable::create(
+            $tableName,
+            [
+                'id' => ['type' => Types::GUID, 'notnull' => true],
+                'body' => ['type' => Types::TEXT, 'notnull' => true],
+                'headers' => ['type' => Types::TEXT, 'notnull' => true],
+                'transport_name' => ['type' => Types::STRING, 'notnull' => false, 'length' => 190],
+                'created_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => true],
+                'published_at' => ['type' => Types::DATETIME_IMMUTABLE, 'notnull' => false],
+            ],
+            'id',
+            // PostgreSQL cuts longer names to 63 characters (MySQL rejects them).
+            [substr('idx_'.$tableName.'_published_created', 0, 63) => ['published_at', 'created_at']],
+            new SchemaConfig(), // 0.4 created its table without the default table options
+        );
 
         $connection->createSchemaManager()->createTable($table);
     }

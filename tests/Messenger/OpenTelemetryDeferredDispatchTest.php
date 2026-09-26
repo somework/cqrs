@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Messenger;
 
+use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
+use OpenTelemetry\API\Trace\TraceFlags;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -25,6 +28,7 @@ use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\DispatchAfterCurrentBusMiddleware;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 use Symfony\Component\Messenger\Middleware\SendMessageMiddleware;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
@@ -116,5 +120,27 @@ final class OpenTelemetryDeferredDispatchTest extends TestCase
 
         self::assertSame([$stamp], $result->all(TraceContextStamp::class));
         self::assertSame([], $bus->dispatch(new CreateTaskCommand('t-2', 'x'))->all(TraceContextStamp::class), 'Without an active span there is nothing to capture.');
+    }
+
+    public function test_a_received_envelope_does_not_capture_the_trace_context_of_the_worker(): void
+    {
+        // A worker handles a received message inside its own span: capturing it would replace the
+        // propagated context of the producer.
+        $bus = new MessageBus([new TraceContextCaptureMiddleware()]);
+        $scope = Span::wrap(SpanContext::create('4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7', TraceFlags::SAMPLED))->activate();
+
+        try {
+            $dispatched = $bus->dispatch(new CreateTaskCommand('t-1', 'x'));
+            $received = $bus->dispatch(new CreateTaskCommand('t-2', 'x'), [new ReceivedStamp('async')]);
+        } finally {
+            $scope->detach();
+        }
+
+        self::assertSame(
+            '00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01',
+            $dispatched->last(TraceContextStamp::class)?->headers['traceparent'] ?? null,
+            'A dispatch records the active trace context.',
+        );
+        self::assertSame([], $received->all(TraceContextStamp::class));
     }
 }

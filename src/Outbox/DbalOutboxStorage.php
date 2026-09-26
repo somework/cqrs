@@ -707,11 +707,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public static function addTableToSchema(Schema $schema, string $tableName = 'somework_cqrs_outbox'): Table
     {
-        $table = $schema->createTable($tableName);
-
-        DbalOutboxSchema::configureTable($table, $tableName);
-
-        return $table;
+        return DbalOutboxSchema::addToSchema($schema, $tableName, $tableName);
     }
 
     /**
@@ -722,11 +718,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public static function addTableToSchemaAs(Schema $schema, string $name, string $tableName): Table
     {
-        $table = $schema->createTable($name);
-
-        DbalOutboxSchema::configureTable($table, $tableName);
-
-        return $table;
+        return DbalOutboxSchema::addToSchema($schema, $name, $tableName);
     }
 
     /**
