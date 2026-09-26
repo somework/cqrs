@@ -303,8 +303,11 @@ Unpublished rows are never deleted.
   be built (missing environment variable, failing constructor) is `CRITICAL`; no
   handlers at all is a `WARNING`.
 * **transport**: every Messenger transport is instantiated, which validates its
-  DSN and options. For the built-in transports this does not connect to the
-  broker.
+  DSN and options. Most built-in transports connect on first use, so this does
+  not need the broker. The Redis transport connects when it is created unless
+  its `lazy` option is `true`: an unreachable Redis server is then `CRITICAL`,
+  after the transport's `timeout`, which is unlimited by default (set it, e.g.
+  `?timeout=2`, or `lazy=true`, when a probe runs the check).
 
 The command prints a table of results and exits with the highest severity:
 `0` OK, `1` warnings, `2` critical. A checker that throws is reported as
