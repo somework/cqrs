@@ -8,6 +8,7 @@ use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Outbox\Relay\LimitedRelayRun;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
@@ -54,7 +55,7 @@ use const SIGTERM;
     name: 'somework:cqrs:outbox:relay',
     description: 'Relay unpublished outbox messages to their transports.',
 )]
-final class OutboxRelayCommand extends Command implements SignalableCommandInterface
+final class OutboxRelayCommand extends Command implements SignalableCommandInterface, LimitedRelayRun
 {
     use LockableTrait;
 
@@ -79,6 +80,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
     private bool $releasesLockOnShutdown = false;
 
     private bool $resetServices = true;
+
+    /** Whether the last run (without --watch) processed --limit messages. */
+    private bool $limitReached = false;
 
     private readonly OutboxRelay $relay;
 
@@ -149,8 +153,14 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         $this->addOption('no-reset', null, InputOption::VALUE_NONE, 'Do not reset the application\'s services after the messages the relay handles itself (no transport, sync://)');
     }
 
+    public function limitReached(): bool
+    {
+        return $this->limitReached;
+    }
+
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $this->limitReached = false;
         $io = new SymfonyStyle($input, $output);
         $limit = filter_var($input->getOption('limit'), FILTER_VALIDATE_INT);
 
@@ -204,6 +214,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             } catch (LockReleasingException $exception) {
                 // The lock expires on its own; the outcome of the run matters more.
                 $io->warning(sprintf('Could not release the relay lock: %s', $exception->getMessage()));
+                $this->lock = null;
             }
         }
     }
@@ -218,6 +229,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         if ($result->aborted) {
             return self::FAILURE;
         }
+        $this->limitReached = $result->processed >= $limit;
 
         // The storage behind a decorated one still tells what its schema needs.
         $table = $this->table ?? ($this->outboxStorage instanceof OutboxSchema ? $this->outboxStorage : null);
@@ -438,7 +450,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             return $this->lock($this->lockName);
         }
 
-        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS);
+        // Released by execute() and at shutdown: a lock that releases itself when it is destroyed would
+        // try again after its store failed (e.g. Redis went away), and fail with an uncaught exception.
+        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS, false);
         if (!$lock->acquire()) {
             return false;
         }

@@ -322,9 +322,9 @@ or keep it running with `--watch` when a minute of latency is too much:
 command=php /var/www/app/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autostart=true
 autorestart=true
-; exit code 1 (database or lock store down): restart with a growing delay
+; exits with 1 when the database or the lock store fails: restarted at once, about every
+; second while it is down (startsecs=0: never FATAL, the relay resumes when it is back)
 startsecs=0
-startretries=10
 stopsignal=TERM
 stopwaitsecs=30
 user=www-data
@@ -341,12 +341,14 @@ What the watching relay does:
   when the first one stops. Only the relay that holds the lock works, so more
   watchers add failover, not throughput.
 * After each row that its own process handled (no transport, `sync://`), it
-  resets the services, as a worker does between messages (`--no-reset` turns
-  that off).
+  resets the services, as a worker does between messages: Doctrine's entity
+  managers are cleared, and a closed one is reset (`--no-reset` turns that
+  off).
 * A transport that keeps failing is left alone for 30 seconds, doubling up to
   5 minutes, instead of being tried again every second.
 * When the database or the lock store fails, it exits with `1`: the process
-  manager restarts it, and the rows wait in the table meanwhile.
+  manager restarts it (with the settings above, about every second until the
+  database is back), and the rows wait in the table meanwhile.
 * With Doctrine's `auto_commit: false`, the relay commits after each fetch, so an
   idle watcher holds no snapshot and no locks. DBAL starts the next transaction
   right after each commit, though: PostgreSQL shows the connection as `idle in

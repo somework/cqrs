@@ -14,9 +14,11 @@ use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayServicesResetter;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -218,6 +220,16 @@ final class CqrsExtensionOutboxTest extends TestCase
         self::assertTrue($subscriber->hasTag('kernel.event_subscriber'));
         self::assertSame('somework_cqrs.outbox.relay_on_terminate', (string) $on->getDefinition('somework_cqrs.outbox.writer')->getArgument('$afterStore'));
         self::assertSame('somework_cqrs.outbox.writer', (string) $on->getAlias(OutboxWriterInterface::class));
+    }
+
+    public function test_the_relay_resets_doctrine_and_the_other_services(): void
+    {
+        $resetter = $this->createContainer(['outbox' => ['enabled' => true]])->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$resetter');
+
+        self::assertInstanceOf(Definition::class, $resetter);
+        self::assertSame(RelayServicesResetter::class, $resetter->getClass());
+        self::assertSame('services_resetter', (string) $resetter->getArgument('$services'));
+        self::assertSame('doctrine', (string) $resetter->getArgument('$doctrine'));
     }
 
     public function test_max_attempts_below_one_is_rejected(): void

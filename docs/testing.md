@@ -593,6 +593,10 @@ final class PlaceOrderOutboxTest extends KernelTestCase
 }
 ```
 
+The relay resets the services after each row it handles in the test's process (no transport,
+`sync://`), which also empties the in-memory transports: pass `'--no-reset' => true` when the
+test relays such rows and then asserts on `getSent()`.
+
 To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
 `new Envelope($message, [new RelayedFromOutboxStamp()])`.
 

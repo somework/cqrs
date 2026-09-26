@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayServicesResetter;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Outbox\Signing\SigningOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
@@ -134,7 +135,9 @@ final class OutboxRegistrar
         $relayDef->setArgument('$signer', $signer);
         $relayDef->setArgument('$acceptUnsigned', $signing['accept_unsigned']);
         // --watch resets the services between runs, as Messenger's workers do between messages.
-        $relayDef->setArgument('$resetter', new Reference('services_resetter', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        $relayDef->setArgument('$resetter', (new Definition(RelayServicesResetter::class))
+            ->setArgument('$services', new Reference('services_resetter', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+            ->setArgument('$doctrine', new Reference('doctrine', ContainerInterface::NULL_ON_INVALID_REFERENCE)));
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);

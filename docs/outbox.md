@@ -511,7 +511,7 @@ bin/console somework:cqrs:outbox:relay --watch    # keeps relaying until stopped
 | `--sleep` | `1` | Seconds to wait before looking again when no row was due, or for the lock (with `--watch`). |
 | `--time-limit` | none | Stops watching after this many seconds (with `--watch`), e.g. to let a process manager restart it. |
 | `--wait-for-lock` | `0` | Without `--watch`: seconds to wait for another relay to release the lock; if it keeps it, exits with `3`. With `0`, a run that finds the lock taken exits at once with `0`. |
-| `--no-reset` | off | Does not reset the application's services after the rows the relay handles itself. By default, after each row handled in the relay's process (a row without a transport, or a `sync://` transport) or failing in a handler there, the relay resets the services (`services_resetter`: e.g. the entity manager, closed by a failed flush), as Messenger's workers do between messages. |
+| `--no-reset` | off | Does not reset the application's services after the rows the relay handles itself. By default, after each row handled in the relay's process (a row without a transport, or a `sync://` transport) or failing in a handler there, the relay resets the services (`services_resetter`, and Doctrine's entity managers: cleared, or reset when a failed flush closed one), as Messenger's workers do between messages. |
 
 The relay fetches up to 50 due rows at a time and:
 
@@ -678,9 +678,9 @@ outbox within `--sleep` seconds instead of up to a minute:
 [program:outbox-relay]
 command=php /path/to/project/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autorestart=true
-; exits with 1 when the database or the lock store fails: restart it, with a delay that grows
+; exits with 1 when the database or the lock store fails: restarted at once, about every
+; second while it is down (startsecs=0: never FATAL, the relay resumes when it is back)
 startsecs=0
-startretries=10
 stopsignal=TERM
 stopwaitsecs=30
 ```
@@ -717,8 +717,11 @@ Two ways to see the messages handled while developing:
 
   What to expect:
 
-  - **Where the handlers run.** After the response, in the same PHP process: before the
+  - **Where the handlers run.** In the same PHP process, after the response: before the
     profiler stores the profile of the request, so their log lines show in its *Logs* panel.
+    The client gets the response first only where Symfony can finish it early (PHP-FPM,
+    FrankenPHP); with `php -S`, `symfony serve` without PHP-FPM or mod_php, the request takes
+    as long as the relayed handlers.
     Exceptions of the relayed handlers do not reach the error page: the relay records the
     failure on the row and logs it (`cqrs` channel), like a worker would.
   - **Failed rows.** A row whose handler failed is retried after the backoff (1 minute, then 2,
@@ -732,11 +735,16 @@ Two ways to see the messages handled while developing:
     so use `--watch` there. After a command that a signal interrupted, and after the relay
     command itself (its handlers' messages wait for its next run). A notice in the log tells
     when the relay was skipped for an open transaction.
+  - **How many.** Up to 10 runs of 100 messages after each request, command or worker
+    message: the relay goes on while a run stops at its limit, or while the relayed handlers
+    store more. A bulk load (fixtures, an import) of more than 1 000 messages leaves the rest
+    in the table, with a notice in the log: run `bin/console somework:cqrs:outbox:relay`, or
+    keep `--watch` running while you load.
   - **Several requests at once.** Only one relay runs at a time: the next one waits up to
-    2 seconds for the lock, then leaves its messages to the next request (or to the relay
-    holding the lock, which may have taken them already). Use either `relay_on_terminate` or a
-    relay with `--watch`, not both: the watcher keeps the lock, so each request that stores
-    messages would wait those 2 seconds before leaving them to it.
+    2 seconds for the lock, then leaves its messages to the relay holding it, which fetches
+    until no message is due. Use either `relay_on_terminate` or a relay with `--watch`, not
+    both: the watcher keeps the lock, so each request that stores messages would wait those
+    2 seconds before leaving them to it.
   - **Services** are not reset between the rows it handles, as with `sync://` in a request.
 - **A watching relay.** Keep `bin/console somework:cqrs:outbox:relay --watch` running in a
   terminal (or in `docker compose`, next to `messenger:consume`).

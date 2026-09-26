@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Outbox;
 
+use SomeWork\CqrsBundle\Outbox\Relay\LimitedRelayRun;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -14,9 +15,10 @@ use function sprintf;
 
 /**
  * Stands in for somework:cqrs:outbox:relay: records the options of each run, can store messages in
- * turn (a handler the relay ran stored one), and exits with $exitCode.
+ * turn (a handler the relay ran stored one), stops at its limit $fullRuns times, and exits with
+ * $exitCode.
  */
-final class RecordingRelayCommand extends Command
+final class RecordingRelayCommand extends Command implements LimitedRelayRun
 {
     /** @var list<string> */
     public array $runs = [];
@@ -26,6 +28,11 @@ final class RecordingRelayCommand extends Command
     public int $storesDuringRun = 0;
 
     public int $exitCode = self::SUCCESS;
+
+    /** Runs that stop at their limit, leaving messages due. */
+    public int $fullRuns = 0;
+
+    private bool $limitReached = false;
 
     public function __construct()
     {
@@ -42,10 +49,16 @@ final class RecordingRelayCommand extends Command
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $this->runs[] = sprintf('--limit=%s --wait-for-lock=%s%s', $input->getOption('limit'), $input->getOption('wait-for-lock'), true === $input->getOption('no-reset') ? ' --no-reset' : '');
+        $this->limitReached = $this->fullRuns-- > 0;
         if ($this->storesDuringRun-- > 0) {
             $this->subscriber?->stored();
         }
 
         return $this->exitCode;
+    }
+
+    public function limitReached(): bool
+    {
+        return $this->limitReached;
     }
 }

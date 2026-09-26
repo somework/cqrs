@@ -23,12 +23,13 @@ use Symfony\Component\Messenger\Event\WorkerRunningEvent;
  * outbox table, without a relay running on a schedule; with a sync:// transport they are handled
  * right away.
  *
- * Messages the relayed handlers store are relayed in the next pass, up to MAX_PASSES. It does not
+ * Messages the relayed handlers store, and the messages a run left because it reached its limit,
+ * are relayed in the next pass, up to MAX_PASSES (then a notice is logged). It does not
  * relay while a transaction is still open on the outbox connection (its rows are not committed
  * yet, and the relay would write inside it), after a command a signal interrupted, or after the
  * relay command itself; the messages then wait for the next request, command or relay. When
  * another relay holds the lock, it waits for it up to LOCK_WAIT_SECONDS, then leaves the messages
- * to that relay.
+ * to that relay: it fetches until no message is due.
  *
  * @internal
  */
@@ -99,16 +100,24 @@ final class RelayOnTerminateSubscriber implements EventSubscriberInterface
                 return;
             }
 
-            for ($pass = 0; $this->stored && $pass < self::MAX_PASSES; ++$pass) {
+            $more = false;
+            for ($pass = 0; ($this->stored || $more) && $pass < self::MAX_PASSES; ++$pass) {
                 $this->stored = false;
                 $input = new ArrayInput(['--limit' => (string) $this->limit, '--wait-for-lock' => (string) self::LOCK_WAIT_SECONDS, '--no-reset' => true]);
                 $input->setInteractive(false);
-                if (OutboxRelayCommand::LOCK_TAKEN === ($this->relayCommand)()->run($input, new NullOutput())) {
-                    // Another relay is busy: it, or the next request, relays the messages.
-                    $this->stored = true;
+                $command = ($this->relayCommand)();
+                if (OutboxRelayCommand::LOCK_TAKEN === $command->run($input, new NullOutput())) {
+                    // Another relay is busy; it fetches until no message is due, the stored ones included.
+                    $this->logger?->info('The outbox is relayed by another relay, which holds the relay lock.');
 
                     return;
                 }
+                // A run stopped at its limit: more messages may be due.
+                $more = $command instanceof LimitedRelayRun && $command->limitReached();
+            }
+
+            if ($this->stored || $more) {
+                $this->logger?->notice('The outbox still has messages to relay after {count} runs of up to {limit} messages: run "bin/console somework:cqrs:outbox:relay" (or keep "--watch" running) for bulk loads.', ['count' => self::MAX_PASSES, 'limit' => $this->limit]);
             }
         } catch (\Throwable $exception) {
             // The rows stay in the outbox for the next run; the request or command already finished.

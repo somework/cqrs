@@ -24,6 +24,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\LosingLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingLockStore;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnavailableLockStore;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnavailableTransport;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -1100,6 +1101,35 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
         self::assertStringContainsString('the relay lock was lost', self::display($tester));
         self::assertCount(1, $this->async->getSent(), 'The run stops right after the lock could not be extended.');
+    }
+
+    public function test_a_lock_store_that_goes_away_does_not_crash_the_relay_when_it_exits(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), new LockFactory(new UnavailableLockStore()));
+
+        $tester = new CommandTester($command);
+        $tester->execute([]);
+        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Could not release the relay lock', self::display($tester));
+
+        // The lock does not try to release itself again when it is destroyed (at the latest when PHP shuts down).
+        self::assertNull((new \ReflectionProperty($command, 'lock'))->getValue($command));
+    }
+
+    public function test_tells_whether_the_last_run_stopped_at_its_limit(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $this->store(new CreateTaskCommand('2', 'b'), 'async');
+        $this->store(new CreateTaskCommand('3', 'c'), 'async');
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks);
+
+        (new CommandTester($command))->execute(['--limit' => '2']);
+        self::assertTrue($command->limitReached());
+
+        (new CommandTester($command))->execute(['--limit' => '2']);
+        self::assertFalse($command->limitReached());
     }
 
     public function test_the_lock_is_extended_every_ten_seconds(): void

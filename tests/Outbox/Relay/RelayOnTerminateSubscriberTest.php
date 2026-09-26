@@ -95,24 +95,48 @@ final class RelayOnTerminateSubscriberTest extends TestCase
         self::assertCount(1, $relay->runs);
     }
 
-    public function test_leaves_the_messages_due_when_another_relay_keeps_the_lock(): void
+    public function test_leaves_the_messages_to_the_relay_that_keeps_the_lock(): void
     {
-        $busy = new RecordingRelayCommand();
-        $busy->exitCode = OutboxRelayCommand::LOCK_TAKEN;
-        $relay = $busy;
-        $subscriber = new RelayOnTerminateSubscriber(static function () use (&$relay): Command {
-            return $relay;
-        });
+        // A --watch relay, or the relay of another request, which fetches until no message is due.
+        $relay = new RecordingRelayCommand();
+        $relay->exitCode = OutboxRelayCommand::LOCK_TAKEN;
+        $logger = new RecordingLogger();
+        $subscriber = new RelayOnTerminateSubscriber(static fn (): Command => $relay, logger: $logger);
 
         $subscriber->stored();
         $subscriber->relay();
-        self::assertCount(1, $busy->runs, 'No further pass while the lock is taken.');
+        self::assertTrue($logger->hasRecordContaining('info', 'relayed by another relay'));
 
-        // The next request relays them.
-        $relay = $free = new RecordingRelayCommand();
+        // A worker does not wait for the lock again after every later message.
         $subscriber->relay();
+        self::assertCount(1, $relay->runs);
+    }
+
+    public function test_relays_again_while_the_runs_stop_at_their_limit(): void
+    {
+        // A command stored 250 messages: runs of 100 until one is not full.
+        $relay = new RecordingRelayCommand();
+        $relay->fullRuns = 2;
+        $subscriber = new RelayOnTerminateSubscriber(static fn (): Command => $relay, 100);
+
+        $subscriber->stored();
         $subscriber->relay();
-        self::assertCount(1, $free->runs);
+
+        self::assertCount(3, $relay->runs);
+    }
+
+    public function test_tells_when_messages_are_left_after_the_last_pass(): void
+    {
+        $relay = new RecordingRelayCommand();
+        $relay->fullRuns = 50;
+        $logger = new RecordingLogger();
+        $subscriber = new RelayOnTerminateSubscriber(static fn (): Command => $relay, 100, $logger);
+
+        $subscriber->stored();
+        $subscriber->relay();
+
+        self::assertCount(10, $relay->runs);
+        self::assertTrue($logger->hasRecordContaining('notice', 'The outbox still has messages to relay after {count} runs'));
     }
 
     public function test_a_failing_relay_is_logged_without_breaking_the_request(): void
