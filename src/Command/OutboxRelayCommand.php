@@ -175,7 +175,8 @@ final class OutboxRelayCommand extends Command
             'headers' => json_decode($message->headers, true, 512, JSON_THROW_ON_ERROR),
         ]);
 
-        // Since Symfony 8, serializers report decoding failures inside the envelope instead of throwing.
+        // A serializer may report a failure without throwing: the PHP serializer stamps a message whose
+        // class cannot be loaded (MessageDecodingFailedStamp), and a serializer may return the error as the message.
         $decoded = $envelope->getMessage();
         if ($decoded instanceof MessageDecodingFailedException) {
             throw $decoded;
