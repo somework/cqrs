@@ -494,10 +494,12 @@ profiler integration: with the profiler enabled in the `test` environment
 (`framework.profiler.enabled: true`) each Messenger bus is decorated by a
 `TraceableMessageBus`. While collecting (`framework.profiler.collect: true`, or
 `$client->enableProfiler()` before a request), `getDispatchedMessages()` on the bus service
-(for example `messenger.bus.default`) lists each dispatched message with its stamps.
+(`messenger.default_bus`, or an id you configured under `somework_cqrs.buses`, such as
+`event.bus`) lists each dispatched message with its stamps.
 
 To handle what was sent to an in-memory transport, run a worker in the test, for example
-the `messenger:consume async --limit=1` command through `CommandTester`.
+the `messenger:consume async --limit=1 --time-limit=5` command through `CommandTester`
+(the time limit makes an empty transport fail the test instead of hanging it).
 
 `dispatchAsync()` requires an async bus (`somework_cqrs.buses.event_async` for events,
 `command_async` for commands). Without one, the bus throws

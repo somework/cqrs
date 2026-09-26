@@ -9,13 +9,16 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\QueryBus;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Exception\DeferredDispatchFailedException;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
@@ -146,6 +149,37 @@ final class SynchronousDispatchTest extends TestCase
         } catch (MultipleHandlersException $exception) {
             self::assertSame(CreateTaskCommand::class, $exception->messageClass);
             self::assertSame(2, $exception->handlerCount);
+        }
+    }
+
+    public function test_a_deferred_message_that_fails_after_the_handler_succeeded_is_reported_as_such(): void
+    {
+        // The handler commits its work, then an event it deferred cannot be sent (the broker is down).
+        $messengerBus = null;
+        $committed = false;
+        $messengerBus = new MessageBus([
+            new DispatchAfterCurrentBusMiddleware(),
+            new HandleMessageMiddleware(new HandlersLocator([
+                CreateTaskCommand::class => [static function (CreateTaskCommand $command) use (&$messengerBus, &$committed): string {
+                    $committed = true;
+                    $messengerBus?->dispatch(new TaskCreatedEvent('1'), [new DispatchAfterCurrentBusStamp()]);
+
+                    return 'task-1';
+                }],
+                TaskCreatedEvent::class => [static fn (): never => throw new \RuntimeException('Connection refused')],
+            ])),
+        ]);
+
+        try {
+            (new CommandBus($messengerBus))->dispatchSync(new CreateTaskCommand('1', 'x'));
+            self::fail('Expected the deferred failure to be reported.');
+        } catch (DeferredDispatchFailedException $exception) {
+            self::assertTrue($committed);
+            self::assertSame('task-1', $exception->result, 'The result of the handler, which succeeded.');
+            self::assertSame(CreateTaskCommand::class, $exception->messageClass);
+            self::assertStringContainsString('succeeded, but a message it dispatched with DispatchAfterCurrentBusStamp failed afterwards', $exception->getMessage());
+            self::assertStringContainsString('Connection refused', $exception->getMessage());
+            self::assertInstanceOf(DelayedMessageHandlingException::class, $exception->getPrevious());
         }
     }
 

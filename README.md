@@ -46,7 +46,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 | **Stamps** | Added by the caller | Composable `StampDecider` pipeline with priority ordering |
 | **Testing** | `InMemoryTransport` or mocks | Fake buses plus `assertDispatched()` / `assertNotDispatched()` |
 | **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` |
-| **Transactional outbox** | Not built-in | `OutboxStorage` interface + DBAL implementation and relay command |
+| **Transactional outbox** | Only with a Doctrine transport on the business connection | `OutboxWriter` + DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
 | **OpenTelemetry** | Not built-in | Middleware producing dispatch and consume spans |
 
 > **Choose plain Messenger** when your app has simple dispatch needs and you want no additional dependency.
@@ -188,6 +188,11 @@ final class CreateTaskHandler
     }
 }
 ```
+
+An asynchronous event dispatched from a handler is sent once the handler has returned, after its
+transaction committed; if the broker is down then, the event is lost and `dispatchSync()` throws
+`DeferredDispatchFailedException`. Store events that must not be lost with the
+[transactional outbox](docs/outbox.md) instead.
 
 ### Step 3 -- Define a query and its handler
 

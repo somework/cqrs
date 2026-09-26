@@ -9,8 +9,10 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
+use SomeWork\CqrsBundle\Outbox\Signing\SignableBody;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -24,8 +26,10 @@ use function assert;
 use function count;
 use function filter_var;
 use function hash_equals;
+use function implode;
 use function is_array;
 use function is_string;
+use function ltrim;
 use function preg_match;
 use function sprintf;
 use function strtolower;
@@ -64,6 +68,8 @@ final class OutboxFailedCommand extends Command
             ->addOption('requeue', null, InputOption::VALUE_NONE, 'Requeue the messages with a fresh attempt counter instead of listing them')
             ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue and message ids: send the messages to this transport instead of the stored one')
             ->addOption('sign', null, InputOption::VALUE_NONE, 'With --requeue and message ids: sign the messages with the current secret (they were unsigned, or signed with another secret)')
+            ->addOption('allow-class', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'With --sign: a class or interface the bodies may instantiate besides the envelope, stamps, the message and the types of their properties')
+            ->addOption('delete', null, InputOption::VALUE_NONE, 'Delete the given messages instead of listing them (rows that must not be sent, or personal data to erase)')
             ->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to list', '50');
     }
 
@@ -90,6 +96,27 @@ final class OutboxFailedCommand extends Command
             }
         }
 
+        if (true === $input->getOption('delete')) {
+            if (true === $input->getOption('requeue') || true === $input->getOption('sign') || null !== $input->getOption('transport')) {
+                $io->error('--delete cannot be combined with --requeue, --sign or --transport.');
+
+                return self::INVALID;
+            }
+            if ([] === $ids) {
+                $io->error('--delete needs the ids of the messages: it cannot be undone.');
+
+                return self::INVALID;
+            }
+
+            try {
+                return $this->delete($io, $input, $storage, $ids);
+            } catch (\Throwable $exception) {
+                $io->error(sprintf('The outbox storage failed: %s', $exception->getMessage()));
+
+                return self::FAILURE;
+            }
+        }
+
         $transport = $input->getOption('transport');
         if (null !== $transport && (!is_string($transport) || '' === trim($transport) || true !== $input->getOption('requeue'))) {
             $io->error('--transport needs a transport name and --requeue.');
@@ -104,6 +131,13 @@ final class OutboxFailedCommand extends Command
         }
 
         $sign = true === $input->getOption('sign');
+        $allowedClasses = $input->getOption('allow-class');
+        $allowedClasses = is_array($allowedClasses) ? array_values(array_map(static fn (mixed $class): string => ltrim((string) $class, '\\'), $allowedClasses)) : [];
+        if ([] !== $allowedClasses && !$sign) {
+            $io->error('--allow-class is only used with --sign.');
+
+            return self::INVALID;
+        }
         if ($sign && (true !== $input->getOption('requeue') || [] === $ids)) {
             $io->error('--sign needs --requeue and the ids of the messages: sign only rows you checked.');
 
@@ -117,7 +151,7 @@ final class OutboxFailedCommand extends Command
 
         try {
             if ($sign) {
-                return $this->signAndRequeue($io, $input, $storage, $ids, $transport);
+                return $this->signAndRequeue($io, $input, $storage, $ids, $transport, $allowedClasses);
             }
 
             return true === $input->getOption('requeue') ? $this->requeue($io, $storage, $ids, $transport) : $this->list($io, $input, $storage, $ids);
@@ -151,8 +185,9 @@ final class OutboxFailedCommand extends Command
      * are shown first, and in an interactive terminal the operator confirms.
      *
      * @param list<string> $ids
+     * @param list<string> $allowedClasses
      */
-    private function signAndRequeue(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids, ?string $transport): int
+    private function signAndRequeue(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids, ?string $transport, array $allowedClasses): int
     {
         assert(null !== $this->signer);
         $signer = $this->signer;
@@ -166,21 +201,34 @@ final class OutboxFailedCommand extends Command
 
         $io->text('These rows will be signed with the current secret, so the relay decodes them (with the PHP serializer: unserializes them). Only sign rows your application stored:');
         $io->table(
-            ['Id', 'Type header', 'Class in the body', 'Body', 'Transport', 'Last error'],
+            ['Id', 'Type header', 'Class in the body', 'Classes the body instantiates', 'Body', 'Transport', 'Last error'],
             array_map(static fn (FailedOutboxMessage $message): array => [
                 self::printable($message->id),
                 self::printable($message->messageType ?? '-'),
                 self::printable($message->bodyClass ?? '-'),
+                null === $message->bodyClasses ? '?' : self::printable(implode(', ', $message->bodyClasses)),
                 null === $message->digest ? '?' : 'sha256 '.substr($message->digest, 0, 16),
                 self::printable($message->transportName ?? '(routing)'),
                 self::printable($message->lastError ?? ''),
             ], $failed),
         );
 
-        // A forged row may carry a plausible header: it must agree with the body.
+        // A row forged by someone without the secret may name a plausible class: the header must agree
+        // with the body, and the body may only instantiate the kind of objects the application stores.
         foreach ($failed as $message) {
             if (null !== $message->messageType && null !== $message->bodyClass && $message->messageType !== $message->bodyClass) {
                 $io->error(sprintf('The type header of message "%s" (%s) does not match the class in its body (%s): the row was not stored by this application. Nothing was signed.', self::printable($message->id), self::printable($message->messageType), self::printable($message->bodyClass)));
+
+                return self::FAILURE;
+            }
+
+            if (null === $message->bodyClasses) {
+                continue;
+            }
+            $messageClass = $message->bodyClass ?? $message->messageType;
+            $untrusted = null === $messageClass ? $message->bodyClasses : SignableBody::untrustedClasses($messageClass, $message->bodyClasses, $allowedClasses);
+            if ([] !== $untrusted) {
+                $io->error(sprintf('The body of message "%s" instantiates %s, which %s neither the envelope, a stamp, the message class%s nor a type declared by their properties: the row may have been forged to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it; if it did (e.g. an object in an untyped property), allow the class with --allow-class.', self::printable($message->id), self::printable(implode(', ', $untrusted)), 1 === count($untrusted) ? 'is' : 'are', null === $messageClass ? '' : sprintf(' (%s)', self::printable($messageClass))));
 
                 return self::FAILURE;
             }
@@ -221,6 +269,37 @@ final class OutboxFailedCommand extends Command
 
             return self::FAILURE;
         }
+    }
+
+    /**
+     * @param non-empty-list<string> $ids
+     */
+    private function delete(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids): int
+    {
+        $failed = $storage->fetchFailed(count($ids), $ids);
+        if ([] === $failed) {
+            $io->warning('None of the given messages has been given up: nothing was deleted.');
+
+            return self::FAILURE;
+        }
+
+        $this->table($io, $failed);
+        if ($input->isInteractive() && !$io->confirm(sprintf('Delete these %d message(s)? This cannot be undone.', count($failed)), false)) {
+            $io->note('Nothing was deleted.');
+
+            return self::FAILURE;
+        }
+
+        $deleted = $storage->deleteFailed($ids);
+        $io->success(sprintf('Deleted %d message(s).', $deleted));
+
+        if ($deleted < count($ids)) {
+            $io->warning(sprintf('%d of the %d given message(s) were not deleted: they do not exist, were published, or have not been given up.', count($ids) - $deleted, count($ids)));
+
+            return self::FAILURE;
+        }
+
+        return self::SUCCESS;
     }
 
     /**
@@ -274,11 +353,12 @@ final class OutboxFailedCommand extends Command
     }
 
     /**
-     * Text read from the table, without control characters: escape sequences stored in a row
-     * would reach the terminal of the operator.
+     * Text read from the table, without control characters and with console formatter tags
+     * escaped: escape sequences or tags such as <href=…> stored in a row would reach the terminal
+     * of the operator.
      */
     private static function printable(string $text): string
     {
-        return (string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8'));
+        return OutputFormatter::escape((string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8')));
     }
 }

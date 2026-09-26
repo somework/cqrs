@@ -44,7 +44,7 @@
         "symfony/rate-limiter": "^7.2 || ^8.0"
     },
     "conflict": {
-        "doctrine/dbal": "<4.0",
+        "doctrine/dbal": "<4.0 || >=5.0",
         "open-telemetry/api": "<1.8",
         "symfony/lock": "<7.2",
         "symfony/rate-limiter": "<7.2"

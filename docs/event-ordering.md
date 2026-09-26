@@ -9,8 +9,9 @@ consumers to detect gaps, enforce ordering, or build projections from the envelo
 
 `SequenceStampDecider` runs in the stamp pipeline (priority 110) for Event-type
 messages. When an event implements `SequenceAware`, the decider reads
-`getAggregateId()` and `getSequenceNumber()` and attaches an
-`AggregateSequenceStamp`. The stamp's `aggregateType` is set to the event's FQCN.
+`getAggregateType()`, `getAggregateId()` and `getSequenceNumber()` and attaches an
+`AggregateSequenceStamp`. Every event of an aggregate returns the same aggregate type
+(not its own class), so consumers keep one sequence per aggregate.
 
 The stamp is added for every dispatch through `EventBus` (synchronous or
 asynchronous) and travels with the envelope, so workers consuming the event from
@@ -40,6 +41,11 @@ final class OrderShipped implements Event, SequenceAware
         public readonly string $orderId,
         public readonly int $sequenceNumber,
     ) {
+    }
+
+    public function getAggregateType(): string
+    {
+        return 'order'; // The same for OrderPlaced, OrderShipped, OrderCancelled…
     }
 
     public function getAggregateId(): string
@@ -82,7 +88,7 @@ final class OrderTimelineProjector implements EnvelopeAware
             $aggregateId = $stamp->aggregateId;
             $sequenceNumber = $stamp->sequenceNumber;
 
-            // Compare $sequenceNumber with the last one stored for this aggregate
+            // Compare $sequenceNumber with the last one stored for ($aggregateType, $aggregateId)
             // to skip duplicates or detect gaps.
         }
     }
@@ -113,13 +119,16 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
 |----------|------|-------------|
 | `aggregateId` | `string` | The aggregate identifier returned by `SequenceAware::getAggregateId()`. Must be non-empty; an empty string throws `InvalidArgumentException` at construction time. |
 | `sequenceNumber` | `int` | The sequence number returned by `SequenceAware::getSequenceNumber()`. Must be non-negative; a negative value throws `InvalidArgumentException` at construction time. |
-| `aggregateType` | `string` | The FQCN of the dispatched event class (`$message::class`). Allows consumers to scope ordering per aggregate type. |
+| `aggregateType` | `string` | The aggregate type returned by `SequenceAware::getAggregateType()`, the same for every event of an aggregate. Aggregate ids are unique per type, so consumers keep one sequence per type and id. |
 
 ## Limitations
 
 - **Ordering is vocabulary only.** The stamp carries ordering metadata but does not
   enforce processing order. Consumers are responsible for detecting gaps or
   reordering.
+
+- **Not through the outbox.** A message stored with `OutboxWriter` does not run the stamp
+  pipeline: pass an `AggregateSequenceStamp` to `store()` yourself.
 
 - **Events only.** SequenceStampDecider only processes Event-type messages. Commands
   and queries are not affected.

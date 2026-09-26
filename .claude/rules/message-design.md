@@ -8,12 +8,13 @@ Messages (commands, queries, events) are immutable DTOs — data carriers with n
 - All properties `public readonly` (primitives: string, int, float, bool, array)
 - No methods beyond the constructor
 - Implements the appropriate marker interface (`Command`, `Query`, or `Event`)
+- Carries `/** @psalm-immutable */`, and queries `@implements Query<ResultType>` (`Query<mixed>` when untyped), as `somework:cqrs:generate` writes
 
 Keep message classes minimal (typically 4-20 lines). The class name IS the documentation — it describes the intent (command/query) or the fact (event).
 
 ## Immutability Contract
 
-The marker interfaces carry `@psalm-immutable`, which propagates to all implementing classes. This means:
+The marker interfaces carry `@psalm-immutable`. Psalm does not propagate it: it requires `@psalm-immutable` on every message class (and does not support template defaults, so declare the generics). This means:
 - Properties cannot be modified after construction (enforced by both `readonly` and Psalm)
 - No methods that modify state are allowed
 - Any "with" methods (used only in stamps, not messages) must return new instances

@@ -36,6 +36,8 @@ use function bin2hex;
 use function count;
 use function implode;
 use function in_array;
+use function is_array;
+use function is_string;
 use function json_decode;
 use function max;
 use function mb_scrub;
@@ -388,7 +390,7 @@ final class OutboxRelay
         if (null !== $message->claimedAt && $message->attempts >= self::TRANSPORT_ATTEMPTS_FACTOR * $this->maxAttempts) {
             $error = null === $message->lastError || '' === $message->lastError ? self::INTERRUPTED : self::INTERRUPTED.' Previous error: '.$message->lastError;
 
-            return $this->giveUp($message, $message->attempts, mb_substr($error, 0, self::MAX_ERROR_LENGTH, 'UTF-8'), $reporter);
+            return $this->giveUp($message, $message->attempts, $error, $reporter);
         }
 
         // A stored transport that does not exist (a typo, a renamed transport) fails every attempt:
@@ -428,10 +430,10 @@ final class OutboxRelay
                 return null;
             }
 
-            return sprintf('The message is not signed, so it was not decoded: it was stored before outbox signing was enabled, by code that bypasses the OutboxStorage service, or by someone else. Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s" (or set "somework_cqrs.outbox.signing.accept_unsigned" while rows of an earlier version drain).', $message->id);
+            return sprintf('The message is not signed, so it was not decoded: it was stored before outbox signing was enabled, by code that bypasses the OutboxStorage service, or by someone else. Delete the row unless your application stored it; if it did, run "somework:cqrs:outbox:failed --requeue --sign %s", which checks the classes in the body before signing (or set "somework_cqrs.outbox.signing.accept_unsigned" while rows of an earlier version drain).', $message->id);
         }
 
-        return sprintf('The signature of the message does not match, so it was not decoded: the row was changed or written by someone else (another application sharing this table?), or signed with a secret that is no longer configured (add it to "somework_cqrs.outbox.signing.previous_secrets"). Check the row, then run "somework:cqrs:outbox:failed --requeue --sign %s".', $message->id);
+        return sprintf('The signature of the message does not match, so it was not decoded: the row was changed or written by someone else (another application sharing this table?), or signed with a secret that is no longer configured (add it to "somework_cqrs.outbox.signing.previous_secrets"). Delete the row unless your application stored it; if it did, run "somework:cqrs:outbox:failed --requeue --sign %s", which checks the classes in the body before signing.', $message->id);
     }
 
     /**
@@ -439,6 +441,8 @@ final class OutboxRelay
      */
     private function giveUp(OutboxMessage $message, int $attempts, string $error, RelayReporter $reporter): string
     {
+        // May contain text read from the row (its transport name, the previous error).
+        $error = self::clean($error);
         if (!$this->recordFailure($message, $attempts, $error, null)) {
             return self::CLAIMED_ELSEWHERE;
         }
@@ -464,7 +468,7 @@ final class OutboxRelay
         if (!$this->recordFailure($message, $attempt, $error, $retryAt)) {
             // Published or claimed by an overlapping relay in the meantime: its outcome counts.
             $reporter->claimedElsewhereAfterFailure($message, $error);
-            $this->logger?->warning('Could not relay outbox message {id}, which another relay claimed in the meantime: {error}', ['id' => $message->id, 'error' => $error, 'exception' => $exception]);
+            $this->logger?->warning('Could not relay outbox message {id}, which another relay claimed in the meantime: {error}', ['id' => $message->id, 'error' => $error, 'exception' => $exception] + self::logContext($message));
 
             return $outcome;
         }
@@ -473,7 +477,7 @@ final class OutboxRelay
             $this->reportGivenUp($message, $attempt, $error, $reporter, $exception);
         } else {
             $reporter->attemptFailed($message, $attempt, $maxAttempts, $retryAt, $error);
-            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $maxAttempts, 'error' => $error, 'exception' => $exception]);
+            $this->logger?->warning('Could not relay outbox message {id} (attempt {attempt} of {max_attempts}): {error}', ['id' => $message->id, 'attempt' => $attempt, 'max_attempts' => $maxAttempts, 'error' => $error, 'exception' => $exception] + self::logContext($message));
         }
 
         return $outcome;
@@ -623,18 +627,40 @@ final class OutboxRelay
     private function reportGivenUp(OutboxMessage $message, int $attempts, string $error, RelayReporter $reporter, ?\Throwable $exception = null): void
     {
         $reporter->gaveUp($message, $attempts, $error);
-        $this->logger?->error('Gave up on outbox message {id} after {attempts} attempt(s): {error}', ['id' => $message->id, 'attempts' => $attempts, 'error' => $error] + (null === $exception ? [] : ['exception' => $exception]));
+        $this->logger?->error('Gave up on outbox message {id} after {attempts} attempt(s): {error}', ['id' => $message->id, 'attempts' => $attempts, 'error' => $error] + self::logContext($message) + (null === $exception ? [] : ['exception' => $exception]));
     }
 
     public static function describe(\Throwable $exception): string
     {
-        $description = '' === $exception->getMessage() ? $exception::class : sprintf('%s: %s', $exception::class, $exception->getMessage());
+        return self::clean('' === $exception->getMessage() ? $exception::class : sprintf('%s: %s', $exception::class, $exception->getMessage()));
+    }
 
-        // Stored in a text column and shown in terminals: valid UTF-8, bounded, and without control
-        // characters (escape sequences in a message would reach the terminal of the operator).
-        $description = (string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($description, 'UTF-8'));
+    /**
+     * The transport and the "type" header of a row (read as JSON, not decoded), to group failures by.
+     *
+     * @return array{transport: string, type: string}
+     */
+    private static function logContext(OutboxMessage $message): array
+    {
+        try {
+            $headers = json_decode($message->headers, true, 8, JSON_THROW_ON_ERROR);
+        } catch (\JsonException) {
+            $headers = null;
+        }
 
-        return mb_substr($description, 0, self::MAX_ERROR_LENGTH, 'UTF-8');
+        return [
+            'transport' => self::clean($message->transportName ?? '(routing)'),
+            'type' => self::clean(is_array($headers) && is_string($headers['type'] ?? null) ? $headers['type'] : '?'),
+        ];
+    }
+
+    /**
+     * Stored in a text column and shown in terminals: valid UTF-8, bounded, and without control
+     * characters (escape sequences in a message would reach the terminal of the operator).
+     */
+    private static function clean(string $text): string
+    {
+        return mb_substr((string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8')), 0, self::MAX_ERROR_LENGTH, 'UTF-8');
     }
 
     private function decode(OutboxMessage $message): Envelope

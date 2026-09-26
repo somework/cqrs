@@ -52,7 +52,7 @@ Create private factory methods with nullable parameters and `??=` defaults to re
 ## Attributes
 
 Use PHPUnit attributes, not annotations:
-- Every test class declares its coverage target: `#[CoversClass(ClassName::class)]` for classes, `#[CoversTrait]` for traits, `#[CoversNothing]` for kernel tests and interface contracts (`CoversClass` on an interface is a PHPUnit warning; the suite fails on warnings, notices and deprecations)
+- Every test class declares its coverage target: `#[CoversClass(ClassName::class)]` for classes, `#[CoversTrait]` for traits, `#[CoversNothing]` for kernel tests and interface contracts (`CoversClass` on an interface is a PHPUnit warning; the suite fails on warnings, notices and deprecations that `src/` triggers directly, including silenced ones such as Symfony's `trigger_deprecation()`; deprecations raised by vendor code on its own, and Doctrine's (off unless `DOCTRINE_DEPRECATIONS=trigger`), are not reported, so DBAL deprecations are caught by PHPStan and `OutboxTableTest`)
 - `#[DataProvider('providerMethodName')]` on test methods — provider methods must be `public static`
 - Name test methods `test_snake_case_description`; do not use `#[Test]`
 - Tests that depend on optional features of newer dependencies (e.g. `DeduplicateStamp` from Messenger 7.3) are guarded with `#[RequiresMethod]`, because CI also runs with the lowest supported versions (Symfony 7.2, DBAL 4.0)

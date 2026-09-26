@@ -46,7 +46,7 @@ final class SequenceStampDecider implements MessageTypeAwareStampDecider
         return [...$stamps, new AggregateSequenceStamp(
             $message->getAggregateId(),
             $message->getSequenceNumber(),
-            $message::class,
+            $message->getAggregateType(),
         )];
     }
 }

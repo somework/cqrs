@@ -19,6 +19,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - `#[AsEventHandler(priority: …, fromTransport: …)]`; a `fromTransport` that names no Messenger transport fails the build.
 - `TraceContextStamp`: the W3C trace context travels from the dispatching process to the worker.
 - `MessageMetadataStamp::getMessageId()`: every message has its own id.
+- `DeferredDispatchFailedException`: `dispatchSync()` and `ask()` report a message deferred by the handler (`DispatchAfterCurrentBusStamp`, e.g. an asynchronous event) that failed after the handler succeeded, with the handler's result, instead of Messenger's `DelayedMessageHandlingException`.
 - `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock, also after a PHP fatal error (in a shutdown function).
 
 **Configuration**
@@ -27,7 +28,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A service id or rate limiter that does not exist, or a service that does not implement the interface its option needs, fails the build with the configuration path that names it.
 
 **Transactional outbox**
-- `OutboxWriter` (`@api`) stores a message in one call, once per transport an asynchronous dispatch would use (the key of a `DeduplicateStamp` is scoped to the row's transport, and a message stored while a handler runs continues the flow of the handled message: same correlation id, the handled message as cause); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
+- `OutboxWriter` (`@api`) stores a message in one call (with OpenTelemetry enabled, with the current trace context, so the relayed message continues the trace), once per transport an asynchronous dispatch would use (the key of a `DeduplicateStamp` is scoped to the row's transport, and a message stored while a handler runs continues the flow of the handled message: same correlation id, the handled message as cause); `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids.
 - The commands `somework:cqrs:outbox:setup`, `…:failed` (list, `--requeue`, `--transport`, `--sign`) and `…:purge`; the options `outbox.storage`, `connection`, `serializer`, `auto_setup`, `max_attempts` and `signing`.
 - Retries with an exponential backoff (1 minute up to 1 hour); a row is given up after `outbox.max_attempts` attempts, or three times as many when its transport fails.
 - The relay claims each fetched batch with a token of its run before sending, and renews the claims of its batch every 20 seconds, so a slow send does not let another relay take them over. A row whose attempt was interrupted (the process died) is retried on its own, keeps the error of the attempt before, and is given up after three times `max_attempts`. Unattempted claims are released, also when a send throws, and sent rows are marked as published at most 2 seconds later, also while a slow send is running.
@@ -35,7 +36,8 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A row stored for a transport that does not exist is given up at once, with an error that says how to fix it.
 - Signed rows (HMAC-SHA256, `outbox.signing`, on by default with `framework.secret`): the relay only decodes rows with a valid signature. `previous_secrets` supports a rotation, and `accept_unsigned` lets rows of 0.4 drain. The secrets accept `%env()%` values.
 - Capability interfaces `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` and `OutboxMonitoring`, with the `FailedOutboxMessage` and `OutboxStatus` DTOs. With them, setup, failed and health work with any storage, also behind a decorator. The interfaces are autowired to the configured storage when it implements them; without `OutboxSchema`, the relay skips its schema report.
-- `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header and a digest of the body, refuses to sign a row whose type header names another class, and signs only the bodies it showed. `--transport` needs the ids of the messages.
+- `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header, every class the body would instantiate and a digest of the body; it refuses to sign a row whose type header names another class, or whose body instantiates a class the message and its stamps do not declare (`--allow-class` adds one), and signs only the bodies it showed. The body is read by a parser of PHP's serialize() format, never unserialized. `--transport` needs the ids of the messages.
+- `outbox:failed --delete <ids>` (and `FailedOutboxMessages::deleteFailed()`) deletes given-up rows, e.g. to erase personal data.
 - A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds; it expires after 60 seconds, so a killed relay blocks the next runs for at most a minute. Marking rows as published is retried up to 5 times after a deadlock or serialization failure; rows that still fail are marked at the next flush, and only a failure at the end of the run stops it.
 - SIGTERM and SIGINT stop the relay after the current row with exit code 1; after a PHP fatal error it still releases its lock.
 - An outbox check in `somework:cqrs:health`: given-up rows, failing rows, due rows waiting more than 10 minutes, claims that ran out more than 10 minutes ago without a relay taking them over, and a table that needs the setup command. Counts stop at 10 000 rows.
@@ -43,10 +45,10 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - The automatic setup creates the table or adds the columns without waiting in the table's lock queue. It never builds indexes, and never runs inside a transaction.
 - `DbalOutboxStorage::pendingChanges()` lists what `setup` still has to do.
 - `database.table` names work on MySQL and MariaDB. An unqualified name is found along the PostgreSQL search path.
-- The outbox builds and changes its table with the schema editors of DBAL 4.5 (and the older API before it), so the setup triggers no DBAL deprecations; `addTableToSchema()` still uses `Schema::createTable()`, which DBAL 4.5 deprecates without an in-place replacement.
+- The outbox builds and changes its table with the schema editors of DBAL 4.5 (and the older API before it), so the setup triggers no DBAL deprecations; `addTableToSchema()` still uses `Schema::createTable()` and the `Table` mutators, which DBAL 4.5 deprecates without an in-place replacement. DBAL 5 is declared as a conflict until it is supported.
 
 **Diagnostics and tooling**
-- The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps.
+- The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps. The relay's failure logs carry the row's transport and message type.
 - A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event that has handlers, but none on its bus.
 - The compilation log explains why idempotency cannot deduplicate, and the first `IdempotencyStamp` of a process logs it as a warning.
 - `somework:cqrs:list` prints a compact table per message type, filters with `--message`, and marks retry policies that no transport uses.
@@ -71,6 +73,8 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - `OutboxStorage` v2: `fetchUnpublished($limit, $excludedTransports)`, `claim()`, `release()`, `markPublished(array $ids)`, `recordFailure()` and `purgePublished()`. `OutboxMessage` gains `attempts`, `lastError`, `claimedAt`, `availableAt` and `signature`, and ids are lowercased.
 - The outbox table gains seven columns and two indexes; writes need the columns: run `somework:cqrs:outbox:setup` before deploying.
 - `OutboxStorage` moved to `SomeWork\CqrsBundle\Contract\Outbox`, and gained `renew()`.
+- `SequenceAware` has `getAggregateType()`, which `AggregateSequenceStamp::$aggregateType` holds (it held the class of each event, so one aggregate's events formed one sequence per event class).
+- `dispatchSync()` and `ask()` throw `DeferredDispatchFailedException` instead of Messenger's `DelayedMessageHandlingException`.
 - `DbalOutboxStorage` is no longer autowired by its class name: type-hint the capability interfaces, or `somework_cqrs.outbox.base_storage`.
 - The relay gives up unsigned rows unless `outbox.signing.accept_unsigned` is set.
 - `DbalOutboxStorage::status()` returns an `OutboxStatus`, and `fetchFailed()` returns `FailedOutboxMessage` objects.
@@ -159,6 +163,10 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - Errors that the relay stores and prints, and the output of `outbox:failed`, contain no control characters.
 - Table names and generated class names with a trailing newline are rejected.
 - Documented: least-privilege roles for the outbox, JSON serialization, personal data in stored errors, and scoping idempotency keys.
+- The `--sign` review of `outbox:failed` could be fooled by a forged row (a class name written inside a stamp's string, or an object nested in a stamp), and the relay's error for unsigned rows recommended signing them; the review now reads every class of the body and refuses unexpected ones, and the error says to delete rows the application did not store.
+- Console formatter tags stored in a row (e.g. `<href=…>` in `last_error`) are escaped in the output of `outbox:failed`, and text read from a row (its transport name, a previous error) is stored and printed without control characters.
+- `outbox:failed` no longer reads every body to list the given-up rows (large rows exhausted the memory of the command).
+
 
 ## [0.4.0] - 2026-03-23
 

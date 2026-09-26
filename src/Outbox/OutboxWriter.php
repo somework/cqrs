@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Outbox;
 
+use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Messenger\Envelope;
@@ -33,8 +35,9 @@ final class OutboxWriter
      * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
      * OutboxWriter): the constructor takes internal services and may change in any release.
      *
-     * @param StampDecider|null       $transports The bundle's transport stamp decider; without it, messages follow the Messenger routing
-     * @param CausationIdContext|null $causation  The message being handled, whose flow a stored message continues
+     * @param StampDecider|null       $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param CausationIdContext|null $causation           The message being handled, whose flow a stored message continues
+     * @param bool                    $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
      *
      * @internal
      */
@@ -43,6 +46,7 @@ final class OutboxWriter
         private readonly SerializerInterface $serializer,
         private readonly ?StampDecider $transports = null,
         private readonly ?CausationIdContext $causation = null,
+        private readonly bool $captureTraceContext = false,
     ) {
     }
 
@@ -53,7 +57,8 @@ final class OutboxWriter
      * Messenger routing when it is relayed.
      *
      * Stored while a handler runs and without a MessageMetadataStamp, the message continues the
-     * flow of the handled message: same correlation id, the handled message as cause.
+     * flow of the handled message: same correlation id, the handled message as cause. With
+     * OpenTelemetry, it also continues the current trace when it is relayed.
      *
      * @return list<OutboxMessage> The stored rows
      */
@@ -63,6 +68,13 @@ final class OutboxWriter
         $parent = $this->causation?->current();
         if (null !== $parent && null === $envelope->last(MessageMetadataStamp::class)) {
             $envelope = $envelope->with(new MessageMetadataStamp($parent->getCorrelationId(), [], $parent->getMessageId()));
+        }
+        if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {
+            $headers = [];
+            TraceContextPropagator::getInstance()->inject($headers);
+            if ([] !== $headers) {
+                $envelope = $envelope->with(new TraceContextStamp($headers));
+            }
         }
         $stored = [];
         $transports = null !== $transportName ? [$transportName] : $this->transportsFor($message);

@@ -20,6 +20,8 @@ use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
+use function sprintf;
+
 #[CoversClass(OutboxRelay::class)]
 #[CoversClass(RelayResult::class)]
 final class OutboxRelayTest extends TestCase
@@ -41,6 +43,9 @@ final class OutboxRelayTest extends TestCase
 
         self::assertSame([2, 2, 0, 0, false], [$result->processed, $result->relayed, $result->failed, $result->claimedElsewhere, $result->aborted]);
         self::assertSame(['m3'], array_map(static fn (OutboxMessage $message): string => $message->id, $this->storage->fetchUnpublished(10)));
+        self::assertTrue($this->storage->isPublished('m1'));
+        self::assertTrue($this->storage->isPublished('m2'));
+        self::assertFalse($this->storage->isPublished('m3'));
     }
 
     public function test_the_reporter_aborts_the_run_after_a_message(): void
@@ -76,7 +81,11 @@ final class OutboxRelayTest extends TestCase
         $result = $relay->run(10, $this->reporter());
 
         self::assertSame(3, $result->relayed);
-        self::assertSame([], $this->storage->fetchUnpublished(10), 'The ids of the failed flush were marked by a later one.');
+        // fetchUnpublished() also hides rows that are claimed but not marked, so check the marks.
+        foreach (['m1', 'm2', 'm3'] as $id) {
+            self::assertTrue($this->storage->isPublished($id), sprintf('"%s" was marked by a later flush.', $id));
+        }
+        self::assertSame([], $this->storage->unpublishedIds());
     }
 
     public function test_the_last_flush_of_a_run_does_not_hide_a_failure(): void

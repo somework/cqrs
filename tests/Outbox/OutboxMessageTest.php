@@ -13,8 +13,13 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
+use function hexdec;
 use function json_decode;
+use function microtime;
 use function sort;
+use function str_replace;
+use function substr;
+use function usleep;
 
 #[CoversClass(OutboxMessage::class)]
 final class OutboxMessageTest extends TestCase
@@ -74,5 +79,43 @@ final class OutboxMessageTest extends TestCase
         foreach ($ids as $id) {
             self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $id);
         }
+    }
+
+    public function test_a_generated_id_is_a_uuid_v7_carrying_the_millisecond_of_its_creation(): void
+    {
+        $before = (int) (microtime(true) * 1000);
+        $id = self::generateId();
+        $after = (int) (microtime(true) * 1000);
+
+        $hex = str_replace('-', '', $id);
+        self::assertSame('7', $hex[12], 'Version 7.');
+        self::assertSame(0x8, hexdec($hex[16]) & 0xC, 'RFC 9562 variant (bits 10).');
+        // unix_ts_ms: the first 48 bits. Ids of other processes are ordered by it, so it must be
+        // the current time (the per-process counter may move it at most a millisecond ahead).
+        $milliseconds = hexdec(substr($hex, 0, 12));
+        self::assertGreaterThanOrEqual($before, $milliseconds);
+        self::assertLessThanOrEqual($after + 1, $milliseconds);
+    }
+
+    public function test_ids_generated_in_later_milliseconds_sort_after_earlier_ones(): void
+    {
+        $ids = [];
+        $milliseconds = [];
+        for ($i = 0; $i < 3; ++$i) {
+            $ids[] = $id = self::generateId();
+            $milliseconds[] = hexdec(substr(str_replace('-', '', $id), 0, 12));
+            usleep(2000);
+        }
+
+        self::assertGreaterThan($milliseconds[0], $milliseconds[1]);
+        self::assertGreaterThan($milliseconds[1], $milliseconds[2]);
+        $sorted = $ids;
+        sort($sorted);
+        self::assertSame($ids, $sorted);
+    }
+
+    private static function generateId(): string
+    {
+        return OutboxMessage::fromEnvelope(new Envelope(new \stdClass()), new PhpSerializer())->id;
     }
 }

@@ -33,6 +33,9 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     /** @var list<array{list<string>, string|null, (\Closure(OutboxMessage): string)|null}> */
     public array $requeued = [];
 
+    /** @var list<list<string>> */
+    public array $deleted = [];
+
     /** @var list<OutboxMessage> Rows as stored, which requeueFailed() signs with */
     public array $rows = [];
 
@@ -99,6 +102,13 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     public function fetchFailed(int $limit, array $ids = []): array
     {
         return array_slice(array_values(array_filter($this->failed, static fn (FailedOutboxMessage $message): bool => [] === $ids || in_array($message->id, $ids, true))), 0, $limit);
+    }
+
+    public function deleteFailed(array $ids): int
+    {
+        $this->deleted[] = $ids;
+
+        return count($ids);
     }
 
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int

@@ -25,10 +25,18 @@ final class FailedOutboxMessage
         public readonly ?string $lastError,
         /** The "type" header of the serializer (the message class), when the serializer writes one; the body is never decoded to find it. */
         public readonly ?string $messageType = null,
-        /** The message class named in a body of Messenger's PHP serializer, read as text without unserializing it. */
+        /** The message class in a body of Messenger's PHP serializer, read as text without unserializing it. */
         public readonly ?string $bodyClass = null,
         /** {@see self::digest()} of the row, to recognise it before signing it. */
         public readonly ?string $digest = null,
+        /**
+         * Every class a body of Messenger's PHP serializer instantiates (the envelope, stamps, the message and
+         * objects in their properties), read as text; for other bodies, every class token of serialize()'s
+         * format in the text. Null when the body was not read.
+         *
+         * @var list<string>|null
+         */
+        public readonly ?array $bodyClasses = null,
     ) {
     }
 

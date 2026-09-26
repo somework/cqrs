@@ -239,7 +239,7 @@ causation id).
 ### SequenceStampDecider (110)
 
 For events implementing `SequenceAware`, adds an `AggregateSequenceStamp` with
-the aggregate id, the sequence number and the event class. See
+the aggregate type, the aggregate id and the sequence number. See
 [Event ordering](event-ordering.md).
 
 ### CausationIdStampDecider (100)

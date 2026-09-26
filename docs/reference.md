@@ -631,8 +631,8 @@ somework_cqrs:
 | `enabled` | `true` | boolean (no environment variables) |
 
 Events implementing `SomeWork\CqrsBundle\Contract\SequenceAware`
-(`getAggregateId()`, `getSequenceNumber()`) receive an `AggregateSequenceStamp`
-(aggregate id, sequence number and the event class as aggregate type). A stamp
+(`getAggregateType()`, `getAggregateId()`, `getSequenceNumber()`) receive an
+`AggregateSequenceStamp` with these three values. A stamp
 passed by the caller is kept. See [Event ordering](event-ordering.md).
 
 ```yaml

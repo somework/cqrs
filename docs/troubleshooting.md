@@ -252,6 +252,28 @@ seconds ago, or an asynchronous one has not been handled by a worker yet.
 (catch the exception), use a key that identifies one logical operation, or lower
 `idempotency.ttl`. See [Idempotency](idempotency.md).
 
+An **asynchronous** dispatch (`dispatch()`, `dispatchAsync()`) dropped as a duplicate throws
+nothing and the bundle logs nothing about it: the only trace is the Lock component's
+`Failed to acquire the "…" lock` at info level on the `lock` log channel. When a message with an
+`IdempotencyStamp` never reaches its worker, check that channel and the lock store: the key
+stays locked until a worker handled the earlier message, or until the TTL expires when that
+message went to the failure transport.
+
+### `DeferredDispatchFailedException`
+
+**Symptom.** `dispatchSync()` or `ask()` throws `DeferredDispatchFailedException`: "The handler
+of message … succeeded, but a message it dispatched with DispatchAfterCurrentBusStamp failed
+afterwards".
+
+**Cause.** The handler returned (and committed its transaction), then a message it dispatched
+(by default an asynchronous event, which is held back until the handler returned) could not be
+sent, or one of its synchronous handlers threw.
+
+**Fix.** Do not retry the whole command: its work is done, and `$exception->result` holds its
+result. Dispatch the lost message again once the transport is back, and store messages that must
+not be lost with the [transactional outbox](outbox.md) (see
+[When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
+
 ### `RateLimitExceededException`
 
 **Symptom.**

@@ -43,14 +43,12 @@ use function json_decode;
 use function max;
 use function microtime;
 use function min;
-use function preg_match;
 use function preg_replace;
 use function random_int;
 use function sprintf;
 use function str_contains;
 use function str_replace;
 use function str_starts_with;
-use function stripslashes;
 use function strtolower;
 use function usleep;
 use function usort;
@@ -566,8 +564,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         $this->readFromPrimary();
         $this->ensureTableExists();
 
+        // The bodies (up to the size a broker rejects) only for the messages about to be signed.
         $query = $this->connection->createQueryBuilder()
-            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error', 'headers', 'body')
+            ->select('id', 'transport_name', 'created_at', 'failed_at', 'attempts', 'last_error', 'headers', ...([] === $ids ? [] : ['body']))
             ->from($this->tableName)
             ->where('published_at IS NULL')
             ->andWhere('failed_at IS NOT NULL')
@@ -581,17 +580,37 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
         $platform = $this->connection->getDatabasePlatform();
 
-        return array_map(static fn (array $row): FailedOutboxMessage => new FailedOutboxMessage(
-            id: (string) $row['id'],
-            transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
-            createdAt: self::readUtc($row['created_at'], $platform),
-            failedAt: self::readUtc($row['failed_at'], $platform),
-            attempts: (int) $row['attempts'],
-            lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
-            messageType: self::messageType((string) $row['headers']),
-            bodyClass: self::serializedMessageClass((string) $row['body']),
-            digest: FailedOutboxMessage::digest((string) $row['body'], (string) $row['headers']),
-        ), $rows);
+        return array_map(static function (array $row) use ($platform): FailedOutboxMessage {
+            $body = isset($row['body']) ? (string) $row['body'] : null;
+            $contents = null === $body ? null : SerializedBody::inspect($body);
+
+            return new FailedOutboxMessage(
+                id: (string) $row['id'],
+                transportName: null === $row['transport_name'] ? null : (string) $row['transport_name'],
+                createdAt: self::readUtc($row['created_at'], $platform),
+                failedAt: self::readUtc($row['failed_at'], $platform),
+                attempts: (int) $row['attempts'],
+                lastError: null === $row['last_error'] ? null : (string) $row['last_error'],
+                messageType: self::messageType((string) $row['headers']),
+                bodyClass: $contents['messageClass'] ?? null,
+                digest: null === $body ? null : FailedOutboxMessage::digest($body, (string) $row['headers']),
+                bodyClasses: $contents['classes'] ?? null,
+            );
+        }, $rows);
+    }
+
+    public function deleteFailed(array $ids): int
+    {
+        $this->ensureTableExists();
+
+        $query = $this->connection->createQueryBuilder()
+            ->delete($this->tableName)
+            ->where('published_at IS NULL')
+            ->andWhere('failed_at IS NOT NULL')
+            ->andWhere('id IN (:ids)')
+            ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
+
+        return (int) $this->guard(static fn (): int|string => $query->executeStatement());
     }
 
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
@@ -644,15 +663,6 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         }
 
         return $requeued;
-    }
-
-    /**
-     * The class of the message in a body of Messenger's PHP serializer (an escaped serialize() of
-     * the envelope), found in the text: the body is never unserialized.
-     */
-    private static function serializedMessageClass(string $body): ?string
-    {
-        return 1 === preg_match('/\x00message";O:\d+:"([^"]+)"/', stripslashes($body), $match) ? $match[1] : null;
     }
 
     /**

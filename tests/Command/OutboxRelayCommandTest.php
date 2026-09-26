@@ -108,6 +108,7 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertStringContainsString('Relayed 2 message(s).', self::display($tester));
         self::assertSame(['1', '2'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
         self::assertSame([], $this->storage->fetchUnpublished(10));
+        self::assertSame([], $this->storage->unpublishedIds(), 'Both are marked as published, not only claimed.');
     }
 
     public function test_messages_without_transport_name_follow_the_routing(): void
@@ -481,6 +482,19 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertStringContainsString('The transport "async_events" does not exist (is the row from another application sharing this table?)', $this->storage->failures[$message->id]['error']);
         self::assertStringContainsString('--requeue --transport=<name> '.$message->id, self::display($tester));
         self::assertCount(1, $this->async->getSent(), 'The other messages are relayed.');
+    }
+
+    public function test_text_read_from_the_row_is_stored_and_printed_without_control_characters(): void
+    {
+        // transport_name is not signed: escape sequences in it must not reach the operator's terminal.
+        $message = $this->store(new CreateTaskCommand('1', 'a'), "as\e]8;;https://evil.example\e\\ync");
+        $transports = new ServiceLocator(['async' => fn (): SenderInterface => $this->async]);
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, transports: $transports));
+        $tester->execute([]);
+
+        self::assertStringNotContainsString("\e", $this->storage->failures[$message->id]['error']);
+        self::assertStringNotContainsString("\e", $tester->getDisplay());
     }
 
     public function test_only_signed_messages_are_decoded(): void

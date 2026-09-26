@@ -67,6 +67,15 @@ final class OutboxRelayKernelTest extends KernelTestCase
         self::assertSame('Write docs', $this->recorder()->task('task-1'));
         self::assertSame([CreateTaskCommand::class], $this->recorder()->handledMessages(CreateTaskHandler::class));
         self::assertSame([], $this->storage()->fetchUnpublished(10));
+        // fetchUnpublished() also hides a row that is still claimed, so check the mark itself.
+        self::assertNotNull($this->connection()->fetchOne('SELECT published_at FROM somework_cqrs_outbox'), 'The relayed row is marked as published.');
+
+        // Once its claim would have expired, a published row is not sent again (the worker has
+        // reset the in-memory transport).
+        self::assertSame([], $this->transport()->getSent());
+        $this->connection()->executeStatement('UPDATE somework_cqrs_outbox SET available_at = NULL, claimed_at = NULL');
+        self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:relay')->getStatusCode());
+        self::assertSame([], $this->transport()->getSent(), 'The published row is not relayed again.');
     }
 
     public function test_the_writer_sends_messages_where_an_async_dispatch_would(): void
@@ -127,6 +136,7 @@ final class OutboxRelayKernelTest extends KernelTestCase
 
         self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:relay')->getStatusCode());
         self::assertCount(1, $this->transport()->getSent(), 'Signed by the operator, the row is relayed.');
+        self::assertNotNull($this->connection()->fetchOne('SELECT published_at FROM somework_cqrs_outbox WHERE id = ?', [$forged->id]), 'The relayed row is marked as published.');
     }
 
     /**

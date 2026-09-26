@@ -121,6 +121,7 @@ final class OutboxRelayDbalTest extends TestCase
         ksort($sent);
         self::assertSame(['task-1' => 1, 'task-2' => 1, 'task-3' => 1], $sent, 'Each message is sent once.');
         self::assertSame([], $this->storage->fetchUnpublished(10));
+        self::assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox WHERE published_at IS NULL'), 'Every row is marked as published.');
     }
 
     public function test_a_relay_that_died_during_a_batch_retries_each_interrupted_message_alone(): void
@@ -142,6 +143,7 @@ final class OutboxRelayDbalTest extends TestCase
         self::assertCount(3, array_filter($queries->flush(), static fn (string $sql): bool => str_contains($sql, 'SET claim_token')), 'One claim per interrupted message: if one kills the process again, only it is blamed.');
         self::assertSame(['task-1', 'task-2', 'task-3'], $this->sentTaskIds());
         self::assertSame([], $this->storage->fetchUnpublished(10));
+        self::assertSame(0, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox WHERE published_at IS NULL'), 'Every row is marked as published.');
         self::assertSame(2, (int) $this->connection->fetchOne('SELECT MAX(attempts) FROM somework_cqrs_outbox'), 'The interrupted attempt counts.');
     }
 

@@ -330,12 +330,17 @@ Unpublished rows are never deleted.
 
 ### Given-up rows
 
-Monitor the relay's exit code and the given-up rows:
+Monitor the health check and the given-up rows:
 
 ```bash
-bin/console somework:cqrs:outbox:failed              # what the relay gave up on, and why
-bin/console somework:cqrs:outbox:failed --requeue    # after fixing the cause
+bin/console somework:cqrs:outbox:failed                 # what the relay gave up on, and why
+bin/console somework:cqrs:outbox:failed --requeue       # after fixing the cause
+bin/console somework:cqrs:outbox:failed --delete <id>   # a row that must not be sent
 ```
+
+Rows that failed and wait for another attempt are not listed: the relay logs each failed
+attempt with the row's transport and message type (`transport`, `type`), and the health check
+warns while such rows keep failing.
 
 A broker outage uses up attempts slowly: rows whose transport fails get three
 times `max_attempts` (30 attempts by default, about a day of retries), and each
@@ -544,6 +549,27 @@ What you get:
 
 See [Middleware: OpenTelemetryMiddleware](middleware.md#opentelemetrymiddleware)
 for the details.
+
+## Personal data
+
+Messages often carry personal data, and the bundle keeps or passes on parts of them:
+
+- **Outbox rows.** The body (the whole serialized message) and `last_error` stay in the table
+  until the row is purged. Published rows are only deleted by
+  `somework:cqrs:outbox:purge`: schedule it with an `--older-than` that fits your retention
+  policy. Rows the relay gave up on are never purged; delete them with
+  `somework:cqrs:outbox:failed --delete <id>…` once handled (for example to answer an erasure
+  request), after finding them by id or with SQL.
+- **Error texts.** Exception messages can contain personal data. They end up in `last_error`,
+  in the relay's output and logs, in the output of `outbox:failed`, and, with OpenTelemetry, in
+  the span status and exception events sent to your tracing backend.
+- **Idempotency keys.** An `IdempotencyStamp` key is stored in the lock store (e.g. Redis) for
+  its TTL, written to the debug log of the bundle, included in the message of
+  `DuplicateMessageException` (and so in error trackers) and serialized with the message. Do
+  not put personal data such as e-mail addresses in keys; hash client-supplied values
+  (`hash('sha256', $tenantId.':'.$requestId)`).
+- **Metadata.** Values returned by your `MessageMetadataProvider` travel with every message
+  and appear in logs and spans; keep them to ids.
 
 ## Message versioning
 

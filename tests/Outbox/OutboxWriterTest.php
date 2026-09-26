@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
+use OpenTelemetry\API\Trace\Span;
+use OpenTelemetry\API\Trace\SpanContext;
+use OpenTelemetry\API\Trace\TraceFlags;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
@@ -11,6 +14,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
@@ -45,6 +49,22 @@ final class OutboxWriterTest extends TestCase
         self::assertInstanceOf(CreateTaskCommand::class, $decoded);
         self::assertSame('1', $decoded->id);
         self::assertSame(5000, $envelope->last(DelayStamp::class)?->getDelay());
+    }
+
+    public function test_a_stored_message_continues_the_current_trace_when_opentelemetry_is_enabled(): void
+    {
+        $scope = Span::wrap(SpanContext::create('4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7', TraceFlags::SAMPLED))->activate();
+        try {
+            $traced = (new OutboxWriter($this->storage, new PhpSerializer(), $this->transports(['async']), captureTraceContext: true))->store(new CreateTaskCommand('1', 'a'));
+            $untraced = (new OutboxWriter($this->storage, new PhpSerializer(), $this->transports(['async'])))->store(new CreateTaskCommand('2', 'a'));
+        } finally {
+            $scope->detach();
+        }
+
+        $stamp = (new PhpSerializer())->decode(['body' => $traced[0]->body])->last(TraceContextStamp::class);
+        self::assertInstanceOf(TraceContextStamp::class, $stamp);
+        self::assertStringContainsString('4bf92f3577b34da6a3ce929d0e0e4736', $stamp->headers['traceparent'] ?? '');
+        self::assertNull((new PhpSerializer())->decode(['body' => $untraced[0]->body])->last(TraceContextStamp::class));
     }
 
     public function test_stores_one_row_per_configured_transport(): void

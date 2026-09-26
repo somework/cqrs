@@ -7,11 +7,13 @@ namespace SomeWork\CqrsBundle\Bus;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
+use SomeWork\CqrsBundle\Exception\DeferredDispatchFailedException;
 use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\MessageBusInterface;
@@ -53,6 +55,7 @@ final class QueryBus implements QueryBusInterface
      * @throws NoHandlerException              when no handler handled the query
      * @throws MultipleHandlersException       when more than one handler handled the query
      * @throws MessageSentToTransportException when the routing sent the query to a transport
+     * @throws DeferredDispatchFailedException when the handler succeeded but a message it deferred (DispatchAfterCurrentBusStamp) failed afterwards
      * @throws DuplicateMessageException       when deduplication dropped the query
      *
      * @return TResult
@@ -71,6 +74,8 @@ final class QueryBus implements QueryBusInterface
             $envelope = $this->bus->dispatch($query, $stamps);
         } catch (HandlerFailedException $exception) {
             throw SynchronousResult::unwrap($exception);
+        } catch (DelayedMessageHandlingException $exception) {
+            throw DeferredDispatchFailedException::fromDelayedHandling($query::class, self::BUS_NAME, $exception);
         } catch (NoHandlerForMessageException $exception) {
             throw new NoHandlerException($query::class, self::BUS_NAME, $exception);
         }

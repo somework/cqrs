@@ -15,7 +15,7 @@
             <directory>tests</directory>
         </testsuite>
     </testsuites>
-    <source ignoreIndirectDeprecations="true">
+    <source ignoreIndirectDeprecations="true" ignoreSuppressionOfDeprecations="true">
         <include>
             <directory>src</directory>
         </include>

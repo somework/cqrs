@@ -98,7 +98,9 @@ final class PaymentService
 The key should identify the operation, for example an order id or a client-supplied request
 id. Keys are global per message class: two users or tenants that send the same key for the same
 message class collide, and the second message is dropped as a duplicate. Scope keys that come
-from clients, e.g. `new IdempotencyStamp($tenantId.':'.$userId.':'.$requestId)`.
+from clients, e.g. `new IdempotencyStamp($tenantId.':'.$userId.':'.$requestId)`. Keys are
+stored in the lock store, logged and shown in `DuplicateMessageException`: use ids, never
+personal data such as e-mail addresses (see [Personal data](production.md#personal-data)).
 `new IdempotencyStamp('')` throws an `InvalidArgumentException`. Stamps are variadic
 arguments of every dispatch method: `dispatch($message, DispatchMode::DEFAULT, ...$stamps)`,
 `dispatchSync($message, ...$stamps)`, `dispatchAsync($message, ...$stamps)` and

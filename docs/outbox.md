@@ -27,6 +27,21 @@ database table **in the same transaction** as the business change. The
 Writing to the outbox is always explicit. The CQRS buses (`EventBus::dispatch()` and so on)
 never write to the outbox.
 
+## When do I need the outbox?
+
+- **Your transport is not your database** (AMQP, Redis, SQS, Kafka…): a message sent from a
+  handler is either sent before the commit (and goes out for a change that may still roll back)
+  or after it (and is lost when the send fails). The bundle's buses send asynchronous commands
+  and events after the handler returned (`dispatch_after_current_bus`, on by default), so a
+  failed send leaves the change committed and throws `DeferredDispatchFailedException` from
+  `dispatchSync()`. Store such messages with `OutboxWriter` instead.
+- **Your transport is a Doctrine transport on the same connection** as your business data:
+  Messenger inserts the message in the current transaction, so it is already atomic, but only
+  when it is sent inside the transaction. Disable `dispatch_after_current_bus` for those
+  messages (`somework_cqrs.dispatch_after_current_bus.event.map`), or use the outbox anyway.
+- **A message goes to several transports**, some of which may fail: the outbox stores one row per
+  transport and retries each on its own.
+
 ## Requirements
 
 - `doctrine/dbal` 4. Enabling the outbox without it fails container compilation with an
@@ -561,7 +576,10 @@ to relay them.
   table that needs the setup command, and
   runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the
   application's `logger` service, besides printing them.
-- Alert on the relay's exit code `1`.
+- Alert on `somework:cqrs:health` (exit code `1` for a warning, `2` for critical) and on
+  given-up rows, not on every exit code `1` of the relay: the relay also exits with `1` when a
+  single row failed and will be retried, and when a signal stopped it (a deployment). Runs
+  that keep exiting with `1`, or errors in its log, need a look.
 
 ## Purging published rows
 
@@ -766,9 +784,11 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 `$sign`, it calls `$sign($message)` with each requeued row as stored (id, body, headers) and
 stores the returned string as the row's signature; that is how `--requeue --sign` works.
 `FailedOutboxMessage` may carry `messageType` (the serializer's `type` header), `bodyClass` (the
-class named in a PHP-serialized body, read without unserializing it) and `digest`
+message class of a PHP-serialized body), `bodyClasses` (every class the body instantiates; both
+read without unserializing it, with `SerializedBody::inspect()`) and `digest`
 (`FailedOutboxMessage::digest($body, $headers)`), which `--sign` shows to the operator and
-checks again before it signs a row.
+checks before it signs a row. Fill them only for messages asked for by id: a listing of all
+given-up messages should not read every body.
 
 Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
 health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.
@@ -817,7 +837,10 @@ Operating it:
   `DbalOutboxStorage` you create yourself, are not signed. (The bundle offers no autowiring
   alias of `DbalOutboxStorage` for that reason.)
 - **Rotate the secret** by moving the old one to `outbox.signing.previous_secrets` until the
-  rows signed with it are relayed. Rotating `framework.secret` (e.g. `APP_SECRET`) rotates the
+  rows signed with it are relayed. Each entry may be an environment variable
+  (`previous_secrets: ['%env(OUTBOX_PREVIOUS_SECRET)%']`, with an empty default for the
+  variable when there is none: empty entries are ignored); the whole list cannot come from a
+  single variable. Rotating `framework.secret` (e.g. `APP_SECRET`) rotates the
   outbox secret too, unless `outbox.signing.secret` is set.
 - **Rows of an earlier version** are not signed. During a rolling deployment, instances of 0.4
   keep storing unsigned rows until the last one is replaced, so set
@@ -830,11 +853,18 @@ Operating it:
 - **A row you checked** (e.g. one stored while signing was disabled) is signed with the current
   secret and handed back to the relay with
   `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
-  header, the class named in a PHP-serialized body (read as text, never unserialized) and a
-  SHA-256 prefix of the body. It refuses a row whose `type` header does not match the class in
-  its body, and in an interactive terminal it asks for confirmation. It signs the bodies it
-  showed: a row whose body changed in the meantime stops the command. Only sign rows your
-  application stored.
+  header, the message class of a PHP-serialized body, every class the body would instantiate
+  (read as text, never unserialized) and a SHA-256 prefix of the body. It refuses a row whose
+  `type` header does not match the class in its body, and a body that instantiates a class that
+  is neither the envelope, a stamp, the message class nor a type declared by the properties of
+  those (recursively): a forged row cannot smuggle an object of any other class (an
+  `unserialize()` gadget) past the review. An object your application stores in an untyped
+  property (`mixed`, `object`, arrays) is refused too; allow its class or interface with
+  `--allow-class=App\Money`. In an interactive terminal it asks for confirmation. It signs the
+  bodies it showed: a row whose body changed in the meantime stops the command. The review
+  cannot tell a forged row from a genuine one when it only carries the application's own
+  classes (with data chosen by whoever wrote it): only sign rows your application stored, and
+  delete the others.
 - A storage of your own must return the id, body, headers and signature exactly as stored.
 
 `signing.enabled: false` restores the trust model of Messenger's Doctrine transport: the
@@ -861,8 +891,8 @@ table is trusted.
 **Error texts.** The relay stores the message of the exception of a failed attempt in
 `last_error`, prints it and logs it, and the OpenTelemetry middleware records exceptions on
 spans. Exception messages can contain personal data. Rows the relay gave up on keep their
-error until you requeue them or delete them (e.g. with SQL, by `failed_at`), so include them in
-your retention policy. Control characters are replaced by spaces in stored errors and in the
+error until you requeue them or delete them (`somework:cqrs:outbox:failed --delete <id>…`), so
+include them in your retention policy (see [Personal data](production.md#personal-data)). Control characters are replaced by spaces in stored errors and in the
 output of `somework:cqrs:outbox:failed`.
 
 **Message size.** A fetch reads the bodies of at most 8 MiB of messages (a larger message is

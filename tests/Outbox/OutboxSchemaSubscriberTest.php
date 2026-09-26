@@ -151,7 +151,7 @@ final class OutboxSchemaSubscriberTest extends TestCase
         (new OutboxSchemaSubscriber('app.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app', new PostgreSQLPlatform()));
 
         self::assertTrue($schema->hasTable('app.outbox'));
-        self::assertFalse($schema->hasTable('outbox'));
+        self::assertCount(1, $schema->getTables(), 'Only the qualified table.');
     }
 
     private function createEventArgs(Schema $schema, ?string $database = null, ?AbstractPlatform $platform = null): GenerateSchemaEventArgs

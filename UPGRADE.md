@@ -294,6 +294,16 @@ correlation id and names the handled message as its cause.
   `catch (NoHandlerForMessageException $e)` blocks around these two methods.
 - The async bus is checked before the stamp pipeline runs, so a dispatch failing with
   `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
+- `DeferredDispatchFailedException` (new, `@api`) replaces Messenger's `DelayedMessageHandlingException` when the
+  handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous events)
+  failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
+  Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
+
+### Event ordering
+
+- **Breaking:** `SequenceAware` has a new method, `getAggregateType(): string`. Return the same value for every event
+  of an aggregate (e.g. `'order'`). `AggregateSequenceStamp::$aggregateType` now holds it; before, it held the class
+  of each event, so consumers keeping one sequence per `aggregateType` and id saw one sequence per event class.
 
 ### Stamp decider priorities and resolution
 
@@ -492,7 +502,11 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   failed commands and the health check use it when it implements `SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema`,
   `FailedOutboxMessages` or `OutboxMonitoring` (see [Custom storage](docs/outbox.md#custom-storage)).
 - Code that calls `DbalOutboxStorage::status()` or `fetchFailed()` gets an `OutboxStatus` and `FailedOutboxMessage`
-  objects instead of arrays (`$status->oldestDue` instead of `$status['oldest_due']`).
+  objects instead of arrays (`$status->oldestDue` instead of `$status['oldest_due']`). `fetchFailed()` reads the
+  bodies (`bodyClass`, `bodyClasses`, `digest`) only for the messages asked for by id.
+- `outbox:failed --requeue --sign` refuses a row whose body instantiates a class that is neither the envelope, a stamp,
+  the message class nor a type declared by their properties. A message of yours with an object in an untyped
+  property (`mixed`, `object`, arrays) needs `--allow-class=<class or interface>` to be signed.
 
 ### Console commands
 

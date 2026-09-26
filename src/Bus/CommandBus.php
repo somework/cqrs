@@ -7,12 +7,14 @@ namespace SomeWork\CqrsBundle\Bus;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Exception\DeferredDispatchFailedException;
 use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\MessageBusInterface;
@@ -57,6 +59,7 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
      *
      * @throws NoHandlerException              when no handler handled the command
      * @throws MessageSentToTransportException when the routing sent the command to a transport
+     * @throws DeferredDispatchFailedException when the handler succeeded but a message it deferred (DispatchAfterCurrentBusStamp) failed afterwards
      * @throws DuplicateMessageException       when deduplication dropped the command
      * @throws MultipleHandlersException       when more than one handler handled the command (the result would be ambiguous)
      */
@@ -66,6 +69,8 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
             $envelope = $this->dispatchMessageSync($command, ...SynchronousResult::withoutDeferral($stamps));
         } catch (HandlerFailedException $exception) {
             throw SynchronousResult::unwrap($exception);
+        } catch (DelayedMessageHandlingException $exception) {
+            throw DeferredDispatchFailedException::fromDelayedHandling($command::class, self::BUS_NAME, $exception);
         } catch (NoHandlerForMessageException $exception) {
             throw new NoHandlerException($command::class, self::BUS_NAME, $exception);
         }

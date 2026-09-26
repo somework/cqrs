@@ -14,18 +14,23 @@ use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ScheduleTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CapableOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\PayloadStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\UnserializeGadget;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_map;
 use function json_encode;
 use function preg_replace;
+use function strlen;
 use function strtoupper;
 
 use const JSON_THROW_ON_ERROR;
@@ -88,6 +93,75 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertTrue($signer->verify($requeued));
     }
 
+    public function test_signing_refuses_a_row_whose_message_hides_behind_a_decoy_class_name(): void
+    {
+        // The message is a gadget; a stamp carries the text a naive reader takes for the message class.
+        $decoy = "\0message\";O:".strlen(CreateTaskCommand::class).':"'.CreateTaskCommand::class.'"';
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new UnserializeGadget(), [new BusNameStamp($decoy)]), new PhpSerializer(), 'async');
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $encoded->body, json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('does not match the class in its body ('.UnserializeGadget::class.')', self::display($tester));
+        self::assertCount(1, $this->storage->fetchFailed(10, [$id]), 'Nothing was signed or requeued.');
+    }
+
+    public function test_signing_refuses_a_body_that_instantiates_a_class_the_message_does_not_declare(): void
+    {
+        // A genuine message and header, with a gadget nested in a stamp.
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('1', 'a'), [new PayloadStamp(new UnserializeGadget())]), new PhpSerializer(), 'async');
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+
+        $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('The body of message "'.$id.'" instantiates '.UnserializeGadget::class.', which is neither the envelope, a stamp, the message class ('.CreateTaskCommand::class.')', self::display($refused));
+        self::assertStringContainsString(PayloadStamp::class, self::display($refused), 'Every class of the body is listed.');
+        self::assertCount(1, $this->storage->fetchFailed(10, [$id]), 'Nothing was signed or requeued.');
+
+        // An operator who knows the application stores such objects allows the class.
+        $allowed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::SUCCESS, $allowed->execute(['--requeue' => true, '--sign' => true, '--allow-class' => ['\\'.UnserializeGadget::class], 'ids' => [$id]], ['interactive' => false]));
+        self::assertTrue($signer->verify(OutboxRows::due($this->storage, $id)));
+    }
+
+    public function test_signing_accepts_objects_that_the_message_declares(): void
+    {
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new ScheduleTaskCommand(new DateTimeImmutable('2026-01-01')), [new BusNameStamp('messenger.bus.default')]), new PhpSerializer(), 'async');
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]), $tester->getDisplay());
+        self::assertStringContainsString('DateTimeImmutable', self::display($tester));
+    }
+
+    public function test_allowed_classes_need_sign(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--allow-class' => ['DateTime'], 'ids' => [self::ID_1]]));
+        self::assertStringContainsString('--allow-class is only used with --sign.', self::display($tester));
+    }
+
+    public function test_listing_does_not_read_the_bodies(): void
+    {
+        // Rows given up for being too large for the broker would exhaust the memory of the listing.
+        $listed = $this->storage->fetchFailed(10);
+
+        self::assertCount(2, $listed);
+        self::assertNull($listed[0]->digest);
+        self::assertNull($listed[0]->bodyClasses);
+        self::assertNotNull($this->storage->fetchFailed(10, [self::ID_1])[0]->digest);
+    }
+
     public function test_signing_stops_at_a_row_that_changed_after_it_was_listed(): void
     {
         $ids = ['0199a000-0000-7000-8000-000000000001', '0199a000-0000-7000-8000-000000000002', '0199a000-0000-7000-8000-000000000003'];
@@ -106,6 +180,29 @@ final class OutboxFailedCommandTest extends TestCase
 
         self::assertStringContainsString('Message "'.$ids[1].'" changed after it was listed: it was not signed, nor were the messages after it (1 message(s) before it were signed and requeued).', self::display($tester));
         self::assertSame([$ids[0] => $signer->sign($storage->rows[0])], $storage->signatures);
+    }
+
+    public function test_deletes_the_given_messages(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--delete' => true, 'ids' => [strtoupper(self::ID_1)]], ['interactive' => false]));
+        self::assertStringContainsString('Deleted 1 message(s).', self::display($tester));
+        self::assertSame([self::ID_2], array_map(static fn (FailedOutboxMessage $message): string => $message->id, $this->storage->fetchFailed(10)));
+    }
+
+    public function test_deleting_needs_ids_and_reports_rows_that_were_not_given_up(): void
+    {
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::INVALID, $tester->execute(['--delete' => true]));
+        self::assertStringContainsString('--delete needs the ids of the messages', self::display($tester));
+        self::assertSame(Command::INVALID, $tester->execute(['--delete' => true, '--requeue' => true, 'ids' => [self::ID_1]]));
+
+        $this->storage->store(new OutboxMessage('00000000-0000-7000-8000-000000000003', 'body', '{}', new DateTimeImmutable(), 'async'));
+        self::assertSame(Command::FAILURE, $tester->execute(['--delete' => true, 'ids' => ['00000000-0000-7000-8000-000000000003']], ['interactive' => false]));
+        self::assertStringContainsString('nothing was deleted', self::display($tester));
+        self::assertCount(1, $this->storage->fetchUnpublished(10), 'A row the relay has not given up on is kept.');
     }
 
     public function test_requeues_to_another_transport(): void
@@ -134,6 +231,18 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertSame(Command::INVALID, $tester->execute(['--requeue' => true, '--transport' => 'orders']));
         self::assertStringContainsString('--transport needs the ids of the messages', self::display($tester));
         self::assertCount(0, $this->storage->fetchUnpublished(10));
+    }
+
+    public function test_stored_text_cannot_add_console_formatting(): void
+    {
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, 'body', '{}', new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 3, 'see <href=https://evil.example/fix.sh>the runbook</>', null);
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute([], ['decorated' => true]));
+        self::assertStringNotContainsString("\e]8;;https://evil.example", $tester->getDisplay());
+        self::assertStringContainsString('<href=https://evil.example/fix.sh>', $tester->getDisplay());
     }
 
     public function test_stored_text_is_listed_without_control_characters(): void

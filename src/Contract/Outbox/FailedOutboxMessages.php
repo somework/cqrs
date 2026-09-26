@@ -16,7 +16,9 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 interface FailedOutboxMessages
 {
     /**
-     * The messages the relay gave up on, oldest failure first.
+     * The messages the relay gave up on, oldest failure first. What the body contains ($bodyClass,
+     * $bodyClasses, $digest) is only needed, and may only be read, for messages asked for by id:
+     * a listing of all of them should not load every body.
      *
      * @param list<string> $ids Only these messages; all when empty
      *
@@ -34,4 +36,13 @@ interface FailedOutboxMessages
      * @return int The number of requeued messages
      */
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int;
+
+    /**
+     * Deletes messages the relay gave up on (e.g. rows that must not be sent, or personal data to erase).
+     *
+     * @param non-empty-list<string> $ids
+     *
+     * @return int The number of deleted messages
+     */
+    public function deleteFailed(array $ids): int;
 }

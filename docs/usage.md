@@ -401,7 +401,11 @@ Asynchronous commands and events automatically receive Messenger's
 `DispatchAfterCurrentBusStamp`. When such a message is dispatched while another
 message is being handled (for example from inside a command handler), Messenger
 holds it back until the outer handler has finished successfully and drops it if
-the handler fails. You can turn this off globally or per message:
+the handler fails. The message is then sent after the handler's database
+transaction committed: when that send fails, the change stays and the message is
+lost (`dispatchSync()` reports it with `DeferredDispatchFailedException`). Use the
+[transactional outbox](outbox.md) for messages that must not be lost. You can turn
+the stamp off globally or per message:
 
 ```yaml
 somework_cqrs:
@@ -492,6 +496,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 | `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry. |
 | `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. It is queued and a worker will handle it: do not dispatch it again. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
+| `DeferredDispatchFailedException` | The handler succeeded (`$result` holds its result), but a message it dispatched with `DispatchAfterCurrentBusStamp` (by default: an asynchronous event) failed once the handler had returned: sending it failed, or a synchronous handler of it threw. What the handler did stays done, so do not retry the whole command; the failed message is lost unless dispatched again (Messenger's `DelayedMessageHandlingException` is the previous exception). |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |
 
 `AsyncBusNotConfiguredException` is thrown by asynchronous dispatches
@@ -623,6 +628,20 @@ final class ApproveInvoiceHandler
 
 Events dispatched without any registered handler do not throw an exception
 (see [Fire-and-forget events](#fire-and-forget-events)).
+
+!!! warning "An event dispatched this way can be lost"
+    An asynchronous event dispatched inside a handler is held back until the handler has
+    returned ([`DispatchAfterCurrentBusStamp`](#toggling-dispatchaftercurrentbusstamp)), so
+    it is only sent after the handler's transaction committed. When sending it fails then (the
+    broker is down), the change stays committed and the event is lost:
+    `dispatchSync()` throws `DeferredDispatchFailedException`, whose `$result` is the result
+    of the handler, which succeeded. Do not retry the whole command then.
+
+    For events that must not be lost, store them with the
+    [transactional outbox](outbox.md) (`OutboxWriter`) in the same transaction instead. With a
+    Doctrine transport on the connection of your business data, disabling
+    `dispatch_after_current_bus` for those events also makes the send part of the transaction
+    (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
 Multiple handlers can subscribe to the same event; each is a class of its own:
 

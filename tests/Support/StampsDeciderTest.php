@@ -18,23 +18,39 @@ use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Support\CausationIdContext;
+use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
+use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use SomeWork\CqrsBundle\Support\RateLimitResolver;
+use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
+use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
+use SomeWork\CqrsBundle\Support\SequenceStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
+use Symfony\Component\RateLimiter\RateLimiterFactory;
+use Symfony\Component\RateLimiter\Storage\InMemoryStorage;
 
 use function array_map;
+use function array_slice;
 use function assert;
 use function is_string;
 
@@ -356,6 +372,69 @@ final class StampsDeciderTest extends TestCase
             DispatchAfterCurrentBusStamp::class,
         ], array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps));
         self::assertSame($callerTransports, $stamps[0]);
+    }
+
+    /**
+     * @return iterable<string, array{object, bool}>
+     */
+    public static function unconfiguredMessages(): iterable
+    {
+        foreach (['command' => new CreateTaskCommand('1', 'Test'), 'event' => new TaskCreatedEvent('1')] as $type => $message) {
+            yield $type.', a limiter accepts, a parent is handled' => [$message, true];
+            yield $type.', no limiter, no parent' => [$message, false];
+        }
+    }
+
+    /**
+     * Every decider of the pipeline with nothing configured for the message: the stamps of the
+     * caller pass through unchanged and in order; only the deferral of an asynchronous dispatch
+     * (on by default) is added.
+     */
+    #[DataProvider('unconfiguredMessages')]
+    public function test_caller_stamps_pass_unchanged_through_deciders_with_nothing_configured(object $message, bool $limiterAndParent): void
+    {
+        $callerStamps = [
+            new DelayStamp(500),
+            new DummyStamp('caller'),
+            new BusNameStamp('messenger.bus.caller'),
+            new DummyStamp('last'),
+        ];
+        $causation = new CausationIdContext();
+        if ($limiterAndParent) {
+            $causation->push(new MessageMetadataStamp('parent-correlation-id'));
+        }
+        $limiters = $limiterAndParent
+            ? [RateLimitResolver::DEFAULT_KEY => static fn (): RateLimiterFactory => new RateLimiterFactory(['id' => 'accepting', 'policy' => 'no_limit'], new InMemoryStorage())]
+            : [];
+        $messageType = $message instanceof Event ? Event::class : Command::class;
+        $noMetadata = new class implements MessageMetadataProvider {
+            public function getStamp(object $message, DispatchMode $mode): ?MessageMetadataStamp
+            {
+                return null;
+            }
+        };
+        $noTransports = new MessageTransportResolver(new ServiceLocator([]));
+        $transportMap = new TransportResolverMap(sync: $noTransports, async: $noTransports);
+
+        // In the order of the priorities the bundle registers them with.
+        $pipeline = new StampsDecider([
+            new RateLimitStampDecider(new RateLimitResolver(new ServiceLocator($limiters)), $messageType),
+            new RetryPolicyStampDecider(RetryPolicyResolver::withoutOverrides(), $messageType),
+            new MessageTransportStampDecider($transportMap, new TransportResolverMap(sync: $noTransports), $transportMap),
+            new MessageSerializerStampDecider(MessageSerializerResolver::withoutOverrides(), $messageType),
+            new MessageMetadataStampDecider(MessageMetadataProviderResolver::withoutOverrides($noMetadata), $messageType, $causation),
+            new SequenceStampDecider(),
+            new CausationIdStampDecider($causation),
+            new IdempotencyStampDecider(),
+            new DispatchAfterCurrentBusStampDecider(DispatchAfterCurrentBusDecider::defaults()),
+        ]);
+
+        self::assertSame($callerStamps, $pipeline->decide($message, DispatchMode::SYNC, $callerStamps));
+
+        $async = $pipeline->decide($message, DispatchMode::ASYNC, $callerStamps);
+        self::assertCount(5, $async);
+        self::assertSame($callerStamps, array_slice($async, 0, 4));
+        self::assertInstanceOf(DispatchAfterCurrentBusStamp::class, $async[4]);
     }
 
     private function configuredPipelineFor(object $message): StampsDecider

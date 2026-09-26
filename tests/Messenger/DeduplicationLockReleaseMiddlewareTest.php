@@ -45,7 +45,10 @@ use function tempnam;
 use function unlink;
 use function var_export;
 
+use const E_DEPRECATED;
 use const E_ERROR;
+use const E_NOTICE;
+use const E_USER_WARNING;
 use const E_WARNING;
 use const PHP_BINARY;
 
@@ -251,6 +254,32 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
         $release->releaseInFlightAfterFatalError(['type' => E_WARNING, 'message' => 'warning', 'file' => __FILE__, 'line' => __LINE__]);
 
         self::assertFalse($locks->createLock('task-done')->acquire(), 'The lock is still held.');
+    }
+
+    public function test_a_non_fatal_last_error_at_shutdown_keeps_the_key_of_a_dispatch_in_progress(): void
+    {
+        // e.g. exit() in a handler after a warning: the process ends normally, error_get_last()
+        // returns the warning, and the dispatch in progress keeps deduplicating.
+        $locks = new LockFactory(new InMemoryStore());
+        $release = new DeduplicationLockReleaseMiddleware($locks);
+        $heldAfterShutdownFunction = null;
+        $bus = new MessageBus([
+            new DeduplicateMiddleware($locks),
+            $release,
+            new HandleMessageMiddleware(new HandlersLocator([CreateTaskCommand::class => [static function () use ($release, $locks, &$heldAfterShutdownFunction): string {
+                foreach ([E_WARNING, E_USER_WARNING, E_NOTICE, E_DEPRECATED] as $type) {
+                    $release->releaseInFlightAfterFatalError(['type' => $type, 'message' => 'not fatal', 'file' => __FILE__, 'line' => __LINE__]);
+                }
+                $heldAfterShutdownFunction = !$locks->createLock('task-in-flight')->acquire();
+
+                return 'done';
+            }]])),
+        ]);
+
+        $bus->dispatch(new CreateTaskCommand('1', 'x'), [new DeduplicateStamp('task-in-flight')]);
+
+        self::assertTrue($heldAfterShutdownFunction, 'The key of the dispatch in progress is not released.');
+        self::assertFalse($locks->createLock('task-in-flight')->acquire(), 'The lock is still held.');
     }
 
     private function bus(\Closure $handler, ?LockFactory $locks = null, ?RecordingLogger $logger = null): MessageBus
