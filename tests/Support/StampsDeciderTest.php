@@ -12,14 +12,29 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
+use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
+use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
+use SomeWork\CqrsBundle\Support\MessageTransportResolver;
+use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\DelayStamp;
+use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
+use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
+use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+use function array_map;
 use function assert;
 use function is_string;
 
@@ -270,6 +285,112 @@ final class StampsDeciderTest extends TestCase
         self::assertSame(CreateTaskCommand::class, $logContexts[0]['message']);
         self::assertSame(0, $logContexts[0]['stamps_before']);
         self::assertSame(1, $logContexts[0]['stamps_after']);
+    }
+
+    /**
+     * @return iterable<string, array{object}>
+     */
+    public static function configuredMessages(): iterable
+    {
+        yield 'command' => [new CreateTaskCommand('1', 'Test')];
+        yield 'event' => [new TaskCreatedEvent('1')];
+    }
+
+    #[DataProvider('configuredMessages')]
+    public function test_the_default_pipeline_adds_the_configured_stamps(object $message): void
+    {
+        $stamps = $this->configuredPipelineFor($message)->decide($message, DispatchMode::ASYNC, []);
+
+        self::assertSame([
+            DelayStamp::class,
+            TransportNamesStamp::class,
+            SerializerStamp::class,
+            MessageMetadataStamp::class,
+            DispatchAfterCurrentBusStamp::class,
+        ], array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps));
+
+        $delay = $stamps[0];
+        self::assertInstanceOf(DelayStamp::class, $delay);
+        self::assertSame(1000, $delay->getDelay());
+        $transports = $stamps[1];
+        self::assertInstanceOf(TransportNamesStamp::class, $transports);
+        self::assertSame(['configured'], $transports->getTransportNames());
+        $serializer = $stamps[2];
+        self::assertInstanceOf(SerializerStamp::class, $serializer);
+        self::assertSame(['groups' => ['configured']], $serializer->getContext());
+        $metadata = $stamps[3];
+        self::assertInstanceOf(MessageMetadataStamp::class, $metadata);
+        self::assertSame('configured-correlation-id', $metadata->getCorrelationId());
+    }
+
+    #[DataProvider('configuredMessages')]
+    public function test_stamps_passed_by_the_caller_win_over_every_configured_stamp(object $message): void
+    {
+        $callerStamps = [
+            new DelayStamp(60000),
+            new TransportNamesStamp(['caller']),
+            new SerializerStamp(['groups' => ['caller']]),
+            new MessageMetadataStamp('caller-correlation-id'),
+            new DispatchAfterCurrentBusStamp(),
+            new DummyStamp('unrelated'),
+        ];
+
+        $stamps = $this->configuredPipelineFor($message)->decide($message, DispatchMode::ASYNC, $callerStamps);
+
+        // Messenger reads the last stamp of a class: no configured stamp may follow the caller's.
+        self::assertSame($callerStamps, $stamps);
+    }
+
+    #[DataProvider('configuredMessages')]
+    public function test_a_single_caller_stamp_only_replaces_its_own_kind(object $message): void
+    {
+        $callerTransports = new TransportNamesStamp(['caller']);
+
+        $stamps = $this->configuredPipelineFor($message)->decide($message, DispatchMode::ASYNC, [$callerTransports]);
+
+        self::assertSame([
+            TransportNamesStamp::class,
+            DelayStamp::class,
+            SerializerStamp::class,
+            MessageMetadataStamp::class,
+            DispatchAfterCurrentBusStamp::class,
+        ], array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps));
+        self::assertSame($callerTransports, $stamps[0]);
+    }
+
+    private function configuredPipelineFor(object $message): StampsDecider
+    {
+        $retryPolicy = new class implements RetryPolicy {
+            public function getStamps(object $message, DispatchMode $mode): array
+            {
+                return [new DelayStamp(1000)];
+            }
+        };
+        $serializer = new class implements MessageSerializer {
+            public function getStamp(object $message, DispatchMode $mode): SerializerStamp
+            {
+                return new SerializerStamp(['groups' => ['configured']]);
+            }
+        };
+        $metadata = new class implements MessageMetadataProvider {
+            public function getStamp(object $message, DispatchMode $mode): MessageMetadataStamp
+            {
+                return new MessageMetadataStamp('configured-correlation-id');
+            }
+        };
+        $transports = new MessageTransportResolver(new ServiceLocator([
+            $message::class => static fn (): array => ['configured'],
+        ]));
+        $factory = $message instanceof Event ? StampsDecider::withDefaultEventDecorators(...) : StampsDecider::withDefaultCommandDecorators(...);
+
+        return $factory(
+            RetryPolicyResolver::withoutOverrides($retryPolicy),
+            MessageSerializerResolver::withoutOverrides($serializer),
+            MessageMetadataProviderResolver::withoutOverrides($metadata),
+            DispatchAfterCurrentBusDecider::defaults(),
+            $transports,
+            $transports,
+        );
     }
 
     /**

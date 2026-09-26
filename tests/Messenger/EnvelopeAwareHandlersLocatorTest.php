@@ -94,6 +94,34 @@ final class EnvelopeAwareHandlersLocatorTest extends TestCase
         );
     }
 
+    public function test_a_plain_handler_followed_by_an_envelope_aware_handler_both_run(): void
+    {
+        $plain = new PlainSpyHandler();
+        $aware = new SpyEnvelopeAwareHandler();
+        $plainDescriptor = new HandlerDescriptor($plain);
+        $awareDescriptor = new HandlerDescriptor($aware);
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$plainDescriptor, $awareDescriptor]]));
+        $bus = new MessageBus([new HandleMessageMiddleware($locator)]);
+        $message = new \stdClass();
+
+        $envelope = $bus->dispatch($message, [new MessageMetadataStamp('correlation')]);
+
+        self::assertSame([$message], $plain->handledMessages);
+        self::assertSame([], $plain->envelopes, 'A handler that is not EnvelopeAware must not receive the envelope.');
+        self::assertSame([$message], $aware->handledMessages);
+        self::assertCount(1, $aware->envelopes);
+        self::assertSame($message, $aware->envelopes[0]->getMessage());
+        self::assertSame('correlation', $aware->envelopes[0]->last(MessageMetadataStamp::class)?->getCorrelationId());
+        self::assertSame(
+            [PlainSpyHandler::class.'::__invoke', SpyEnvelopeAwareHandler::class.'::__invoke'],
+            array_map(static fn (HandledStamp $stamp): string => $stamp->getHandlerName(), $envelope->all(HandledStamp::class)),
+        );
+        self::assertSame(
+            [$plainDescriptor, $awareDescriptor],
+            iterator_to_array($locator->getHandlers(new Envelope($message)), false),
+        );
+    }
+
     public function test_a_nested_dispatch_to_the_same_handler_restores_the_outer_envelope(): void
     {
         $handler = new class implements EnvelopeAware {
@@ -157,4 +185,26 @@ class SpyEnvelopeAwareHandler implements EnvelopeAware
 
 final class OtherSpyEnvelopeAwareHandler extends SpyEnvelopeAwareHandler
 {
+}
+
+/**
+ * Has a setEnvelope() method but does not implement EnvelopeAware.
+ */
+final class PlainSpyHandler
+{
+    /** @var list<Envelope> */
+    public array $envelopes = [];
+
+    /** @var list<object> */
+    public array $handledMessages = [];
+
+    public function setEnvelope(Envelope $envelope): void
+    {
+        $this->envelopes[] = $envelope;
+    }
+
+    public function __invoke(object $message): void
+    {
+        $this->handledMessages[] = $message;
+    }
 }

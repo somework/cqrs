@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Connections\PrimaryReadReplicaConnection;
 use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\DBAL\Exception as DbalException;
@@ -24,12 +25,14 @@ use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxStatus;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\BeforeQueryMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\OutboxRows;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\QueryLog;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 
 use function array_filter;
+use function array_keys;
 use function array_map;
 use function array_slice;
 use function array_unique;
@@ -45,8 +48,13 @@ use function sha1;
 use function sprintf;
 use function str_contains;
 use function str_repeat;
+use function str_starts_with;
+use function strtoupper;
 use function substr;
+use function sys_get_temp_dir;
+use function tempnam;
 use function time;
+use function unlink;
 use function usleep;
 
 use const DATE_ATOM;
@@ -1023,6 +1031,45 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([], $storage->fetchFailed(10));
     }
 
+    public function test_requeueing_with_signatures_signs_and_counts_only_the_given_up_rows(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $due = '00000000-0000-7000-8000-000000000003';
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00', 'async'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00', 'async'));
+        $storage->store(self::message($due, '2026-01-01 10:02:00', 'async'));
+        OutboxRows::fail($storage, self::ID_1, 3, 'not signed', null);
+        OutboxRows::fail($storage, self::ID_2, 3, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+        $signed = [];
+        $sign = static function (OutboxMessage $message) use ($signer, &$signed): string {
+            $signed[] = $message->id;
+
+            return $signer->sign($message);
+        };
+
+        // A row that is still due and an unknown id are neither signed nor counted.
+        self::assertSame(1, $storage->requeueFailed([strtoupper(self::ID_2), $due, self::UNKNOWN_ID], 'other', $sign));
+        self::assertSame([self::ID_2], $signed);
+        self::assertSame(1, $storage->requeueFailed([], null, $sign), 'Without ids, every row that is still given up.');
+        self::assertSame([self::ID_2, self::ID_1], $signed);
+        self::assertSame(0, $storage->requeueFailed([], null, $sign));
+        self::assertSame([self::ID_2, self::ID_1], $signed);
+        self::assertSame([], $storage->fetchFailed(10));
+
+        $messages = [];
+        foreach ($storage->fetchUnpublished(10) as $message) {
+            $messages[$message->id] = $message;
+        }
+        self::assertSame([self::ID_1, self::ID_2, $due], array_keys($messages));
+        self::assertTrue($signer->verify($messages[self::ID_1]));
+        self::assertTrue($signer->verify($messages[self::ID_2]));
+        self::assertNull($messages[$due]->signature, 'A row that was not requeued keeps its signature.');
+        self::assertSame(['async', 'other', 'async'], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, array_values($messages)));
+        self::assertSame([0, 0, 0], array_map(static fn (OutboxMessage $message): int => $message->attempts, array_values($messages)));
+        self::assertSame([null, null, null], array_map(static fn (OutboxMessage $message): ?string => $message->lastError, array_values($messages)));
+    }
+
     public function test_a_claim_counts_the_attempt_and_postpones_the_message(): void
     {
         $storage = new DbalOutboxStorage($this->connection);
@@ -1062,6 +1109,27 @@ final class DbalOutboxStorageTest extends TestCase
         // e.g. "outbox:failed --requeue --transport" moved the messages since they were fetched.
         self::assertSame([], $storage->claim([self::message(self::ID_1, '2026-01-01 10:00:00', 'other'), self::message(self::ID_2, '2026-01-01 10:01:00', 'async')], [0 => new DateTimeImmutable()], 'relay-a'));
         self::assertSame([self::ID_2, self::ID_1], $storage->claim([self::message(self::ID_2, '2026-01-01 10:01:00'), self::message(self::ID_1, '2026-01-01 10:00:00', 'async')], [0 => new DateTimeImmutable()], 'relay-a'));
+    }
+
+    public function test_rows_without_a_transport_name_are_claimed_only_while_they_still_have_none(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        $storage->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+        $fetched = $storage->fetchUnpublished(10);
+        self::assertSame([null, null], array_map(static fn (OutboxMessage $message): ?string => $message->transportName, $fetched));
+        // Meanwhile the second message was given up and requeued to a transport, with its attempts reset.
+        OutboxRows::fail($storage, self::ID_2, 1, 'boom', null);
+        self::assertSame(1, $storage->requeueFailed([self::ID_2], 'async'));
+
+        self::assertSame([self::ID_1], $storage->claim($fetched, [0 => new DateTimeImmutable('+1 minute')], 'relay-a'));
+
+        $row = $this->connection->fetchAssociative('SELECT attempts, claim_token, transport_name FROM somework_cqrs_outbox WHERE id = ?', [self::ID_1]);
+        self::assertIsArray($row);
+        self::assertSame([1, 'relay-a', null], [(int) $row['attempts'], $row['claim_token'], $row['transport_name']]);
+        $due = $storage->fetchUnpublished(10);
+        self::assertSame([self::ID_2], self::ids($due), 'The requeued message is due on its new transport, unclaimed.');
+        self::assertSame(['async', 0, null], [$due[0]->transportName, $due[0]->attempts, $due[0]->claimedAt]);
     }
 
     public function test_messages_with_different_attempts_are_claimed_with_their_own_retry_time(): void
@@ -1320,6 +1388,26 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $status->failed);
     }
 
+    public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void
+    {
+        // A lagging replica would show the relay rows already published, or none that are due.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'wrapperClass' => PrimaryReadReplicaConnection::class, 'primary' => $params, 'replica' => [$params]]);
+
+        try {
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+            (new DbalOutboxStorage(DriverManager::getConnection($params)))->setup();
+
+            $storage->fetchUnpublished(10);
+
+            self::assertTrue($connection->isConnectedToPrimary());
+        } finally {
+            $connection->close();
+            unlink($file);
+        }
+    }
+
     public function test_the_table_gets_the_default_table_options_of_the_connection(): void
     {
         // e.g. a database whose default charset is latin1, used through a utf8mb4 connection.
@@ -1408,6 +1496,33 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(0, $storage->purgePublished(new DateTimeImmutable('-1 hour')));
         self::assertSame(1, $storage->purgePublished(new DateTimeImmutable('+1 hour')));
         self::assertCount(1, $storage->fetchUnpublished(10));
+    }
+
+    public function test_purge_deletes_more_published_messages_than_fit_in_one_batch(): void
+    {
+        $queries = new QueryLog();
+        $this->connection = TestDatabase::connect($queries);
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->setup();
+        // One more than the rows a purge deletes per statement.
+        $published = array_map(static fn (int $i): string => sprintf('00000000-0000-7000-8000-%012d', $i), range(1, 1001));
+        $this->connection->transactional(static function () use ($storage, $published): void {
+            foreach ($published as $id) {
+                $storage->store(self::message($id, '2026-01-01 10:00:00'));
+            }
+        });
+        $unpublished = '00000000-0000-7000-8000-100000000000';
+        $storage->store(self::message($unpublished, '2026-01-01 10:00:00'));
+        $storage->markPublished($published);
+        $queries->flush();
+
+        self::assertSame(1001, $storage->purgePublished(new DateTimeImmutable('+1 hour')));
+
+        $deletes = array_values(array_filter($queries->flush(), static fn (string $sql): bool => str_starts_with($sql, 'DELETE')));
+        self::assertCount(2, $deletes, 'The rows are deleted in batches.');
+        self::assertSame(1, (int) $this->connection->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox'));
+        self::assertSame([$unpublished], self::ids($storage->fetchUnpublished(10)));
+        self::assertSame(0, $storage->purgePublished(new DateTimeImmutable('+1 hour')));
     }
 
     public function test_auto_setup_creates_the_table_outside_of_a_transaction(): void
