@@ -138,7 +138,6 @@ final class DispatchModeDeciderTest extends TestCase
         self::assertSame(DispatchMode::ASYNC, $firstResult);
 
         $commandCache = new ReflectionProperty($decider, 'commandModeCache');
-        $commandCache->setAccessible(true);
         $cachedModes = $commandCache->getValue($decider);
 
         self::assertIsArray($cachedModes);

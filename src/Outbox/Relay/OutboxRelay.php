@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Outbox\Relay;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Exception\RetryableException;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
@@ -171,11 +172,11 @@ final class OutboxRelay
 
         try {
             $aborted = $this->relay($limit, $reporter);
-            $this->flush();
+            $this->flush(true);
         } catch (\Throwable $exception) {
             // Keep what was sent before the failure from being sent again, if the storage still works.
             try {
-                $this->flush();
+                $this->flush(true);
             } catch (\Throwable) {
                 // The first failure matters; the messages are sent again (at least once).
             }
@@ -557,9 +558,12 @@ final class OutboxRelay
     /**
      * Marks the messages sent since the last call as published.
      *
+     * @param bool $final Whether the run ends: a deadlock or serialization failure is only retried
+     *                    at the next flush during the run (the relay still holds the claims)
+     *
      * @throws \RuntimeException when the storage fails, which stops the run
      */
-    private function flush(): void
+    private function flush(bool $final = false): void
     {
         $this->flushedAt = $this->now();
         if ([] === $this->sent) {
@@ -569,6 +573,14 @@ final class OutboxRelay
         [$ids, $this->sent] = [$this->sent, []];
         try {
             $this->outboxStorage->markPublished($ids);
+        } catch (RetryableException $exception) {
+            if ($final) {
+                throw new \RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);
+            }
+
+            // Marking is idempotent: try again at the next flush.
+            $this->sent = [...$ids, ...$this->sent];
+            $this->logger?->warning('Could not mark {count} sent outbox message(s) as published yet, retrying at the next flush: {error}', ['count' => count($ids), 'error' => self::describe($exception)]);
         } catch (\Throwable $exception) {
             // The claims stay, so the messages are sent again later (at least once).
             throw new \RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);

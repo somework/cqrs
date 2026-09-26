@@ -137,9 +137,12 @@ returns the stored rows. The main points:
   is retried alone. When none is configured, the row follows `framework.messenger.routing`
   when it is relayed. A transport name you pass wins. The relay sends the message there with
   Messenger's `TransportNamesStamp`.
-- **Only your stamps.** The rest of the stamp pipeline does not run: the bundle adds no
-  metadata, retry or serializer stamps. Pass the stamps you need; they are serialized with
-  the message.
+- **Only your stamps, plus the causation.** The stamp pipeline does not run: the bundle adds
+  no retry, serializer or rate-limit stamps. Pass the stamps you need; they are serialized
+  with the message. The one exception is metadata: stored while a handler runs and without a
+  `MessageMetadataStamp` of its own, the message gets one that keeps the correlation id of
+  the handled message and names its message id as the cause. Outside a handler no metadata
+  is added.
 - **The bus is chosen for you.** The relay dispatches commands on `buses.command_async`
   (or `buses.command`), events on `buses.event_async` (or `buses.event`), queries on
   `buses.query`, and anything else on the default bus. That bus adds its `BusNameStamp`, so
@@ -876,12 +879,19 @@ times the size of the largest message in memory: decoding and sending copy it.
   a second application (or kernel) sharing the table would have its rows given up as
   unsigned or badly signed (another secret) or for an unknown transport, or sent by the wrong
   relay. Give each application its own `table_name`, schema or database.
-- **Long transactions slow the relay on PostgreSQL.** While any transaction holds an old
+- **Long transactions slow the relay.** On PostgreSQL, while any transaction holds an old
   snapshot (a long report, `pg_dump` on the primary, an idle-in-transaction session), the
   rows relayed since stay in the index as dead entries, and every fetch walks them: relaying
   gets slower the longer the snapshot is held, until it ends (then autovacuum cleans up).
-  Keep long transactions off the primary (run `pg_dump` against a replica), and watch
-  `pg_stat_activity` for `idle in transaction` sessions. Larger `--limit` runs suffer less.
+  InnoDB (MySQL, MariaDB) behaves the same way while an old read view is open (a
+  `mysqldump --single-transaction`, a long `REPEATABLE READ` transaction): purge cannot remove
+  the marked rows' old versions, and the history list length grows. Keep long transactions
+  off the primary (take dumps from a replica), and watch `pg_stat_activity` for
+  `idle in transaction` sessions, or `information_schema.innodb_trx` on MySQL and MariaDB.
+  Larger `--limit` runs suffer less.
+- **Reads go to the primary.** With a `PrimaryReadReplicaConnection`, the storage switches to
+  the primary before the relay, the health check and the outbox commands read, so they never
+  see a lagging replica (a row already published would be sent again).
 - **Given-up rows wait for you.** Rows the relay gave up on stay in the table until you
   requeue or delete them. Once a row is relayed, Messenger's retry and failure transports
   take over.

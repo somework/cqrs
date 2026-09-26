@@ -80,16 +80,21 @@ rejects the new options.
      the 0.4 relay before the 0.5 relay starts;
    - check that every stored transport name exists, because 0.4 ignored it and 0.5 sends to it
      (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
-   - with OpenTelemetry enabled, messages dispatched by 0.5 carry a `TraceContextStamp`, a class 0.4 does not
-     have: a 0.4 worker fails to decode them. Stop the 0.4 workers (or drain their queues) before 0.5 code
-     dispatches, and roll back only once no message sent by 0.5 is queued. Messages sent by 0.4 are read by
-     0.5;
    - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
-     value in `outbox.signing.previous_secrets` until the rows signed with it are relayed.
+     value in `outbox.signing.previous_secrets` until the rows signed with it are relayed;
+   - on MySQL and MariaDB, a table that 0.4 created in a `latin1` database is still `latin1` (0.5 creates new
+     tables with the connection's defaults, but does not convert existing ones), and fails to store messages
+     with 4-byte characters such as emoji. Check with `SHOW CREATE TABLE somework_cqrs_outbox` and convert it
+     while the relay is stopped: `ALTER TABLE somework_cqrs_outbox CONVERT TO CHARACTER SET utf8mb4 COLLATE
+     utf8mb4_unicode_ci` (it copies the table and blocks writes meanwhile).
 4. `composer update somework/cqrs-bundle`, committed together with steps 1 to 3.
-5. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
+5. **Workers, before the deployment**, with OpenTelemetry enabled: messages dispatched by 0.5 carry a
+   `TraceContextStamp`, a class 0.4 does not have, so a 0.4 worker fails to decode them. Stop the 0.4 workers
+   (or drain their queues) before 0.5 code dispatches, and roll back only once no message sent by 0.5 is
+   queued. Messages sent by 0.4 are read by 0.5.
+6. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
    migration): writes need the new columns.
-6. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+7. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
 
 **Rolling back to 0.4** after the setup has run: stop the 0.5 relays first. 0.4 ignores the new columns, so it
 relays the rows 0.5 gave up on (including rows refused for a missing or invalid signature, which then reach
@@ -184,7 +189,9 @@ typed first parameter and no attribute now fails at compile time with
   `->stamps`) instead of arrays.
 - `Query`, `QueryHandler`, `CommandHandler` and `EventHandler` have template defaults, so PHPStan no longer
   asks for generic types on them; declare `@implements Query<ResultType>` to get the result type from
-  `QueryBusInterface::ask()`.
+  `QueryBusInterface::ask()`. Psalm does not support template defaults: with Psalm, declare the generics
+  everywhere (`@implements Query<mixed>` for an untyped result). The marker interfaces are `@psalm-immutable`,
+  so Psalm also asks for `@psalm-immutable` on message classes; `somework:cqrs:generate` adds both.
 
 ### Configuration shape
 
@@ -397,7 +404,7 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `claimed_at`, `signature`) **and two indexes** (`idx_<table>_pending`, which replaces
   `idx_<table>_published_created`, and `idx_<table>_claimed`). **Writes need the columns**: run
   `bin/console somework:cqrs:outbox:setup` (or your migration) before the new version takes traffic (checklist
-  step 5), over a direct connection, not through PgBouncer in transaction mode. Without it, a write inside a
+  step 6), over a direct connection, not through PgBouncer in transaction mode. Without it, a write inside a
   transaction fails with `The outbox table "…" lacks columns this version of the bundle needs (…)`; outside one,
   `auto_setup` adds the columns first, but never the indexes. On a large table, purge the published rows first.
   The details (locks, timeouts, `CREATE INDEX CONCURRENTLY`, the SQL for a migration of your own) are in
@@ -469,6 +476,10 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
 - With very long table names the new index is named `idx_<hash>_pending`.
+- **Reads go to the primary.** With a `PrimaryReadReplicaConnection`, the relay, the health check and the
+  outbox commands switch the connection to the primary before reading (0.4 read from a replica, where rows
+  already published could look pending). Later reads of the application through that connection go to the
+  primary too, as after any write.
 - **Rows are signed** (`outbox.signing`, on by default, with `framework.secret`): the relay gives up rows
   without a valid signature without decoding them. Store rows through the `OutboxStorage` service or
   `OutboxWriter` (the signature is added by a decorator of `somework_cqrs.outbox.storage`), not through SQL; the

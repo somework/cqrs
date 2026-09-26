@@ -9,4 +9,7 @@ require dirname(__DIR__).'/vendor/autoload.php';
 // Symfony's kernel boot registers exception/error handlers that persist after shutdown.
 if (class_exists(Symfony\Component\ErrorHandler\ErrorHandler::class)) {
     Symfony\Component\ErrorHandler\ErrorHandler::register();
+    // Keep Symfony's exception handler, but give the error handler back to PHPUnit: otherwise
+    // PHPUnit never installs its own, and failOnDeprecation/failOnNotice have no effect.
+    restore_error_handler();
 }

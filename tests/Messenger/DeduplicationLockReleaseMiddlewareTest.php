@@ -17,6 +17,7 @@ use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Lock\PersistingStoreInterface;
 use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
+use Symfony\Component\Lock\Store\PdoStore;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
@@ -32,11 +33,21 @@ use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function bin2hex;
+use function dirname;
+use function escapeshellarg;
+use function exec;
+use function file_put_contents;
+use function implode;
 use function random_bytes;
 use function sprintf;
+use function sys_get_temp_dir;
+use function tempnam;
+use function unlink;
+use function var_export;
 
 use const E_ERROR;
 use const E_WARNING;
+use const PHP_BINARY;
 
 #[CoversClass(DeduplicationLockReleaseMiddleware::class)]
 #[RequiresMethod(DeduplicateStamp::class, '__construct')]
@@ -185,6 +196,42 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
         $bus->dispatch(new CreateTaskCommand('1', 'x'), [$stamp]);
 
         self::assertTrue($locks->createLock('task-fatal')->acquire(), 'The lock was released.');
+    }
+
+    public function test_a_real_fatal_error_releases_the_key_in_the_dying_process(): void
+    {
+        // The lock lives in a database file, so it outlives the process like a Redis or PDO lock.
+        $database = tempnam(sys_get_temp_dir(), 'cqrs-lock');
+        $script = tempnam(sys_get_temp_dir(), 'cqrs-fatal');
+        file_put_contents($script, sprintf(<<<'PHP'
+            <?php
+            require %s;
+            $locks = new Symfony\Component\Lock\LockFactory(new Symfony\Component\Lock\Store\PdoStore('sqlite:'.%s));
+            $bus = new Symfony\Component\Messenger\MessageBus([
+                new Symfony\Component\Messenger\Middleware\DeduplicateMiddleware($locks),
+                new SomeWork\CqrsBundle\Messenger\DeduplicationLockReleaseMiddleware($locks),
+                new Symfony\Component\Messenger\Middleware\HandleMessageMiddleware(new Symfony\Component\Messenger\Handler\HandlersLocator([
+                    SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand::class => [static function (): string {
+                        ini_set('memory_limit', '64M');
+
+                        return str_repeat('x', 128 * 1024 * 1024);
+                    }],
+                ])),
+            ]);
+            $bus->dispatch(new SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand('1', 'x'), [new Symfony\Component\Messenger\Stamp\DeduplicateStamp('task-fatal', 300)]);
+            PHP, var_export(dirname(__DIR__, 2).'/vendor/autoload.php', true), var_export($database, true)));
+
+        try {
+            exec(sprintf('%s %s 2>&1', escapeshellarg(PHP_BINARY), escapeshellarg($script)), $output, $exitCode);
+
+            self::assertSame(255, $exitCode, implode("\n", $output));
+            self::assertStringContainsString('Allowed memory size', implode("\n", $output));
+            $locks = new LockFactory(new PdoStore('sqlite:'.$database));
+            self::assertTrue($locks->createLock('task-fatal')->acquire(), 'The dying process released the lock.');
+        } finally {
+            unlink($script);
+            unlink($database);
+        }
     }
 
     public function test_only_dispatches_in_progress_are_released_after_a_fatal_error(): void

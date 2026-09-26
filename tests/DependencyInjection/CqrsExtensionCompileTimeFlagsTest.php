@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\MergeExtensionConfigurationPass;
+use Symfony\Component\DependencyInjection\Compiler\ValidateEnvPlaceholdersPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 use function sprintf;
@@ -61,6 +62,21 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         $ttl = $container->getParameter('somework_cqrs.idempotency.ttl');
         self::assertIsString($ttl);
         self::assertSame('%env(int:CQRS_IDEMPOTENCY_TTL)%', $container->resolveEnvPlaceholders($ttl, '%%env(%s)%%'));
+    }
+
+    public function test_the_signing_secrets_accept_environment_variables(): void
+    {
+        $container = $this->container(['outbox' => ['enabled' => true, 'signing' => [
+            'secret' => '%env(CQRS_OUTBOX_SECRET)%',
+            'previous_secrets' => ['%env(CQRS_OUTBOX_OLD_SECRET)%'],
+        ]]]);
+
+        (new MergeExtensionConfigurationPass())->process($container);
+        // Symfony re-processes the configuration with dummy values ('' for a string) in every kernel.
+        (new ValidateEnvPlaceholdersPass())->process($container);
+
+        $signer = $container->getDefinition('somework_cqrs.outbox.signer');
+        self::assertSame('%env(CQRS_OUTBOX_SECRET)%', $container->resolveEnvPlaceholders($signer->getArgument('$secret'), '%%env(%s)%%'));
     }
 
     /**

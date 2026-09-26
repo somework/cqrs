@@ -290,6 +290,15 @@ final class GenerateMessageCommand extends SymfonyCommand
         $interfaceAlias = 0 === strcasecmp($messageShortName, self::shortName($interface)) ? self::shortName($interface).'Contract' : self::shortName($interface);
         $interfaceImport = $interfaceAlias === self::shortName($interface) ? $interface : sprintf('%s as %s', $interface, $interfaceAlias);
 
+        // The marker interfaces are @psalm-immutable, which Psalm requires on implementing classes too.
+        $docblock = ['/**', ' * @psalm-immutable'];
+        if ('query' === $type) {
+            $docblock[] = ' * TODO: Replace mixed with the result type of the handler.';
+            $docblock[] = ' *';
+            $docblock[] = sprintf(' * @implements %s<mixed>', $interfaceAlias);
+        }
+        $docblock[] = ' */';
+
         return implode("\n", [
             '<?php',
             '',
@@ -299,6 +308,7 @@ final class GenerateMessageCommand extends SymfonyCommand
             '',
             sprintf('use %s;', $interfaceImport),
             '',
+            ...$docblock,
             sprintf('final class %s implements %s', $messageShortName, $interfaceAlias),
             '{',
             '    public function __construct(',

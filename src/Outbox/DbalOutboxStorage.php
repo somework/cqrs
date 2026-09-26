@@ -8,6 +8,7 @@ use DateTimeImmutable;
 use DateTimeZone;
 use Doctrine\DBAL\ArrayParameterType;
 use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Connections\PrimaryReadReplicaConnection;
 use Doctrine\DBAL\Exception\RetryableException;
 use Doctrine\DBAL\Platforms\AbstractMySQLPlatform;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
@@ -138,6 +139,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public function fetchUnpublished(int $limit, array $excludedTransports = []): array
     {
+        $this->readFromPrimary();
         $this->ensureTableExists();
 
         // Transports take turns, so the backlog of one (e.g. after an outage) does not hold up the
@@ -428,6 +430,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public function unpublishedBacklog(): array
     {
+        $this->readFromPrimary();
         $row = $this->guard(fn (): array|false => $this->connection->createQueryBuilder()
             ->select('COUNT(*) AS unpublished', 'MIN(created_at) AS since')
             ->from($this->tableName)
@@ -443,6 +446,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function status(): OutboxStatus
     {
+        $this->readFromPrimary();
         // Monitoring only reads: it never changes the table (an upgrade may be running elsewhere).
         // Counts stop at OutboxStatus::COUNT_CAP, and every query reads along an index: the
         // pending rows are restricted to the listed transports, so the conditions on available_at
@@ -559,6 +563,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function fetchFailed(int $limit, array $ids = []): array
     {
+        $this->readFromPrimary();
         $this->ensureTableExists();
 
         $query = $this->connection->createQueryBuilder()
@@ -679,7 +684,20 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public function pendingChanges(): array
     {
+        $this->readFromPrimary();
+
         return $this->schema->pendingChanges();
+    }
+
+    /**
+     * A primary/read-replica connection reads from a replica until it writes: the relay would act
+     * on stale rows (and the commands would report them), so the outbox always reads the primary.
+     */
+    private function readFromPrimary(): void
+    {
+        if ($this->connection instanceof PrimaryReadReplicaConnection) {
+            $this->connection->ensureConnectedToPrimary();
+        }
     }
 
     /**

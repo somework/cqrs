@@ -74,6 +74,19 @@ final class OutboxStoragePassTest extends TestCase
         self::assertFalse($container->has('somework_cqrs.outbox.dbal_storage'));
     }
 
+    public function test_a_custom_storage_without_a_schema_does_not_break_the_relay(): void
+    {
+        // The relay's schema report needs OutboxSchema; a storage without it is not passed (was a TypeError).
+        $container = $this->container(['storage' => 'app.outbox']);
+        $container->register('app.outbox', InMemoryOutboxStorage::class);
+        $container->compile();
+
+        $relay = $container->get('somework_cqrs.outbox.relay_command');
+        self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($relay, 'outboxStorage'));
+        self::assertNull(self::argument($relay, 'table'));
+        self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($container->get('somework_cqrs.outbox.setup_command'), 'outboxStorage'));
+    }
+
     public function test_capabilities_autowire_to_the_storage_that_implements_them(): void
     {
         $container = $this->container(['storage' => 'app.outbox']);

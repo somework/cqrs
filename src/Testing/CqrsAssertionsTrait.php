@@ -19,6 +19,9 @@ use SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage;
  */
 trait CqrsAssertionsTrait
 {
+    /**
+     * @psalm-suppress InternalClass, InternalMethod
+     */
     #[Before]
     protected function resetCqrsState(): void
     {

@@ -398,7 +398,9 @@ final class TaskControllerTest extends WebTestCase
 ```
 
 The fakes are ordinary shared services, so each freshly booted kernel gets new, empty
-instances. Only the interface aliases change. The concrete `SomeWork\CqrsBundle\Bus\CommandBus`,
+instances. The test client reboots the kernel before each request after the first one, so
+a fake configured before the second request would be lost: call `$client->disableReboot()`
+when a test sends several requests, and configure the fakes after `createClient()`. Only the interface aliases change. The concrete `SomeWork\CqrsBundle\Bus\CommandBus`,
 `QueryBus` and `EventBus` services stay registered and public, and services that type-hint
 those classes still get the real buses.
 
@@ -454,7 +456,9 @@ when@test:
     framework:
         messenger:
             transports:
-                async: 'in-memory://'
+                # serialize=true encodes and decodes each message, as a real transport does,
+                # so a message that cannot be serialized fails the test instead of production.
+                async: 'in-memory://?serialize=true'
 ```
 
 ```php
@@ -484,6 +488,16 @@ final class AsyncEventTest extends KernelTestCase
     }
 }
 ```
+
+To assert on what went through the real buses without a transport, use Messenger's
+profiler integration: with the profiler enabled in the `test` environment
+(`framework.profiler.enabled: true`) each Messenger bus is decorated by a
+`TraceableMessageBus`. While collecting (`framework.profiler.collect: true`, or
+`$client->enableProfiler()` before a request), `getDispatchedMessages()` on the bus service
+(for example `messenger.bus.default`) lists each dispatched message with its stamps.
+
+To handle what was sent to an in-memory transport, run a worker in the test, for example
+the `messenger:consume async --limit=1` command through `CommandTester`.
 
 `dispatchAsync()` requires an async bus (`somework_cqrs.buses.event_async` for events,
 `command_async` for commands). Without one, the bus throws

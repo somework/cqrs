@@ -275,7 +275,9 @@ time) and marks each one published after dispatching it.
   not sent to any transport is handled synchronously, and the command prints and
   logs a warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
-  (for example a `MessageMetadataStamp`) to the envelope you store.
+  to the envelope you store. Only a message stored while a handler runs gets a
+  `MessageMetadataStamp` without one being passed (it continues the handled
+  message's correlation); outside a handler, pass one yourself if you need it.
 * A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
   makes the command exit with `1`; the rows behind it are not blocked. After
   `outbox.max_attempts` attempts (default 10) the relay gives up on the row.

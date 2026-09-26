@@ -33,10 +33,10 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - The relay claims each fetched batch with a token of its run before sending, and renews the claims of its batch every 20 seconds, so a slow send does not let another relay take them over. A row whose attempt was interrupted (the process died) is retried on its own, keeps the error of the attempt before, and is given up after three times `max_attempts`. Unattempted claims are released, also when a send throws, and sent rows are marked as published at most 2 seconds later, also while a slow send is running.
 - A transport that fails 3 times in a row (10 times, or 3 over 10 seconds, once it accepted a message in the run) is paused until the next run; the others go on. The transports take turns, and new rows go before retries.
 - A row stored for a transport that does not exist is given up at once, with an error that says how to fix it.
-- Signed rows (HMAC-SHA256, `outbox.signing`, on by default with `framework.secret`): the relay only decodes rows with a valid signature. `previous_secrets` supports a rotation, and `accept_unsigned` lets rows of 0.4 drain.
-- Capability interfaces `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` and `OutboxMonitoring`, with the `FailedOutboxMessage` and `OutboxStatus` DTOs. With them, setup, failed and health work with any storage, also behind a decorator. The interfaces are autowired to the configured storage when it implements them.
+- Signed rows (HMAC-SHA256, `outbox.signing`, on by default with `framework.secret`): the relay only decodes rows with a valid signature. `previous_secrets` supports a rotation, and `accept_unsigned` lets rows of 0.4 drain. The secrets accept `%env()%` values.
+- Capability interfaces `Contract\Outbox\OutboxSchema`, `FailedOutboxMessages` and `OutboxMonitoring`, with the `FailedOutboxMessage` and `OutboxStatus` DTOs. With them, setup, failed and health work with any storage, also behind a decorator. The interfaces are autowired to the configured storage when it implements them; without `OutboxSchema`, the relay skips its schema report.
 - `outbox:failed --requeue --sign <ids>` shows the class in each body next to its type header and a digest of the body, refuses to sign a row whose type header names another class, and signs only the bodies it showed. `--transport` needs the ids of the messages.
-- A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds; it expires after 60 seconds, so a killed relay blocks the next runs for at most a minute. Marking rows as published is retried up to 5 times after a deadlock or serialization failure.
+- A single relay at a time when symfony/lock is installed. The lock is scoped to `framework.cache.prefix_seed` (or the project directory), the connection and the table, and extended every 10 seconds; it expires after 60 seconds, so a killed relay blocks the next runs for at most a minute. Marking rows as published is retried up to 5 times after a deadlock or serialization failure; rows that still fail are marked at the next flush, and only a failure at the end of the run stops it.
 - SIGTERM and SIGINT stop the relay after the current row with exit code 1; after a PHP fatal error it still releases its lock.
 - An outbox check in `somework:cqrs:health`: given-up rows, failing rows, due rows waiting more than 10 minutes, claims that ran out more than 10 minutes ago without a relay taking them over, and a table that needs the setup command. Counts stop at 10 000 rows.
 - The indexes `idx_<table>_pending` for the relay and `idx_<table>_claimed` for the health check. `setup` builds it with `CREATE INDEX CONCURRENTLY` on PostgreSQL, and serialises concurrent setups with a database lock. It gives up after 5 seconds instead of blocking writes, notices a transaction pooler, and exits with `128 + signal`.
@@ -49,7 +49,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event that has handlers, but none on its bus.
 - The compilation log explains why idempotency cannot deduplicate, and the first `IdempotencyStamp` of a process logs it as a warning.
 - `somework:cqrs:list` prints a compact table per message type, filters with `--message`, and marks retry policies that no transport uses.
-- `somework:cqrs:generate` writes the imports of a handler in alphabetical order.
+- `somework:cqrs:generate` writes the imports of a handler in alphabetical order, and marks messages `@psalm-immutable` (queries also get `@implements Query<mixed>`).
 
 **Testing and API**
 - `Testing\RecordedDispatch`, `FakeCommandBus::willReturnFor()`, and `willThrow()` on the command and query fakes. A failed `assertDispatched()` names the fake bus.
@@ -142,8 +142,9 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
   - marked rows as published when their message class could not be loaded (symfony/messenger 7.4+);
   - marked a retry as published when Messenger's deduplication dropped it because an earlier attempt of the same row still held the lock;
   - dispatched relayed messages on the default bus;
+  - read from the replica of a `PrimaryReadReplicaConnection`, where rows already published could look pending;
   - added its table to the schema of every connection;
-  - created its table without the default table options of the connection (e.g. a latin1 table in a latin1 database used through a utf8mb4 connection, which then failed on 4-byte characters).
+  - created its table without the default table options of the connection (e.g. a latin1 table in a latin1 database used through a utf8mb4 connection, which then failed on 4-byte characters). Tables created by 0.4 are not converted; UPGRADE.md shows how.
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.
 - `somework:cqrs:generate` could write outside the PSR-4 layout and the project directory, generated code that did not compile, and left half a skeleton behind on failure.
 - `FakeQueryBus` ignored a configured `null` result, and the fake buses returned envelopes without the dispatched stamps.

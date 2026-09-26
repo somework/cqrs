@@ -17,13 +17,16 @@ use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Outbox\Signing\SigningOutboxStorage;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function is_string;
 use function sprintf;
+use function trim;
 
 /** @internal */
 final class OutboxRegistrar
@@ -71,6 +74,11 @@ final class OutboxRegistrar
         $signing = $config['signing'] ?? ['enabled' => false, 'secret' => null, 'previous_secrets' => [], 'accept_unsigned' => false];
         $signer = null;
         if (true === $signing['enabled']) {
+            // An environment variable reaches this point as a non-empty placeholder.
+            if (is_string($signing['secret']) && '' === trim($signing['secret'])) {
+                throw new InvalidConfigurationException('Invalid configuration for path "somework_cqrs.outbox.signing.secret": Expected a non-empty string or null, got "".');
+            }
+
             $signerDef = new Definition(OutboxSigner::class);
             $signerDef->setArgument('$secret', $signing['secret']);
             $signerDef->setArgument('$previousSecrets', $signing['previous_secrets']);

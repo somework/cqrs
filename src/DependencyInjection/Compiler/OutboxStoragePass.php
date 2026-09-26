@@ -44,11 +44,12 @@ final class OutboxStoragePass implements CompilerPassInterface
     /** Interfaces autowired to the configured storage when it implements them. */
     public const CAPABILITIES = [OutboxSchema::class, FailedOutboxMessages::class, OutboxMonitoring::class];
 
+    /** Service => [argument, interface the argument requires (null: any OutboxStorage, checked at runtime)] */
     private const CAPABILITY_CONSUMERS = [
-        'somework_cqrs.outbox.setup_command' => '$outboxStorage',
-        'somework_cqrs.outbox.failed_command' => '$outboxStorage',
-        'somework_cqrs.outbox.health_checker' => '$outboxStorage',
-        'somework_cqrs.outbox.relay_command' => '$table',
+        'somework_cqrs.outbox.setup_command' => ['$outboxStorage', null],
+        'somework_cqrs.outbox.failed_command' => ['$outboxStorage', null],
+        'somework_cqrs.outbox.health_checker' => ['$outboxStorage', null],
+        'somework_cqrs.outbox.relay_command' => ['$table', OutboxSchema::class],
     ];
 
     public function process(ContainerBuilder $container): void
@@ -69,10 +70,14 @@ final class OutboxStoragePass implements CompilerPassInterface
             return;
         }
 
-        foreach (self::CAPABILITY_CONSUMERS as $id => $argument) {
-            if ($container->hasDefinition($id)) {
-                $container->getDefinition($id)->setArgument($argument, new Reference($base));
+        foreach (self::CAPABILITY_CONSUMERS as $id => [$argument, $required]) {
+            if (!$container->hasDefinition($id)) {
+                continue;
             }
+
+            // A storage without the capability (e.g. a custom storage that has no schema) is not passed:
+            // the consumer then does without it.
+            $container->getDefinition($id)->setArgument($argument, null === $required || (null !== $class && is_a($class, $required, true)) ? new Reference($base) : null);
         }
     }
 

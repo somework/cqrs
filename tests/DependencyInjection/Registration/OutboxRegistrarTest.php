@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Reference;
@@ -41,6 +42,15 @@ final class OutboxRegistrarTest extends TestCase
             'somework_cqrs.outbox.storage',
             (string) $container->getAlias(OutboxStorage::class),
         );
+    }
+
+    public function test_rejects_an_empty_signing_secret(): void
+    {
+        // An environment variable arrives as a non-empty placeholder; only a literal '' is an error.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Invalid configuration for path "somework_cqrs.outbox.signing.secret": Expected a non-empty string or null, got "".');
+
+        (new OutboxRegistrar())->register(new ContainerBuilder(), ['enabled' => true, 'table_name' => 'outbox', 'signing' => ['enabled' => true, 'secret' => ' ', 'previous_secrets' => [], 'accept_unsigned' => false]]);
     }
 
     public function test_registers_relay_command(): void

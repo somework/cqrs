@@ -47,6 +47,9 @@ final class InMemoryOutboxStorage implements OutboxStorage
     /** @var (\Closure(list<OutboxMessage>): void)|null Called with every fetched batch, e.g. to let another relay claim a message */
     public ?\Closure $afterFetch = null;
 
+    /** @var (\Closure(list<string>): void)|null Runs before markPublished(), e.g. to throw */
+    public ?\Closure $beforeMarkingPublished = null;
+
     /** @var list<list<string>> Every markPublished() call */
     public array $publishCalls = [];
 
@@ -169,6 +172,10 @@ final class InMemoryOutboxStorage implements OutboxStorage
 
     public function markPublished(array $ids): void
     {
+        if (null !== $this->beforeMarkingPublished) {
+            ($this->beforeMarkingPublished)($ids);
+        }
+
         foreach ($ids as $id) {
             if (in_array($id, $this->failMarkingPublished, true)) {
                 throw new \RuntimeException(sprintf('Cannot mark "%s" as published.', $id));

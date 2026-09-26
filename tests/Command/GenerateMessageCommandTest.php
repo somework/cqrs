@@ -56,7 +56,7 @@ final class GenerateMessageCommandTest extends TestCase
 
         $message = $this->read('src/Application/Command/ShipOrder.php');
         self::assertStringContainsString('namespace App\\Application\\Command;', $message);
-        self::assertStringContainsString('final class ShipOrder implements Command', $message);
+        self::assertStringContainsString("/**\n * @psalm-immutable\n */\nfinal class ShipOrder implements Command", $message);
         self::assertStringContainsString('public readonly string $id,', $message);
 
         $handler = $this->read('src/Application/Command/ShipOrderHandler.php');
@@ -223,7 +223,7 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertStringContainsString("use App\\Query\\FindSomething;\nuse SomeWork\\CqrsBundle\\Attribute\\AsQueryHandler;", $queryHandler);
         self::assertStringContainsString('#[AsQueryHandler(FindSomething::class)]', $queryHandler);
         self::assertStringContainsString('public function __invoke(FindSomething $query): mixed', $queryHandler);
-        self::assertStringContainsString('final class FindSomething implements Query', $this->read('src/Query/FindSomething.php'));
+        self::assertStringContainsString(" * @psalm-immutable\n * TODO: Replace mixed with the result type of the handler.\n *\n * @implements Query<mixed>\n */\nfinal class FindSomething implements Query", $this->read('src/Query/FindSomething.php'));
 
         $eventHandler = $this->read('src/Event/SomethingHappenedHandler.php');
         self::assertStringContainsString('#[AsEventHandler(SomethingHappened::class)]', $eventHandler);

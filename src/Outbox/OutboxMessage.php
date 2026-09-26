@@ -114,7 +114,8 @@ final class OutboxMessage
         }
 
         $bytes .= chr(0x70 | (self::$sequence >> 8)).chr(self::$sequence & 0xFF); // version 7 + rand_a
-        $bytes .= chr((ord($tail = random_bytes(8)) & 0x3F) | 0x80).substr($tail, 1); // RFC 4122 variant + rand_b
+        $tail = random_bytes(8);
+        $bytes .= chr((ord($tail[0]) & 0x3F) | 0x80).substr($tail, 1); // RFC 4122 variant + rand_b
 
         $hex = bin2hex($bytes);
 

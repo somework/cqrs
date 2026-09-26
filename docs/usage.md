@@ -570,9 +570,17 @@ final class FindInvoice implements Query
 }
 ```
 
-`$this->queryBus->ask(new FindInvoice($id))` is then `InvoiceView|null`, and
-`FakeQueryBus::willReturnFor(FindInvoice::class, $result)` checks the type of
-`$result` the same way.
+`$this->queryBus->ask(new FindInvoice($id))` is then `InvoiceView|null`.
+`FakeQueryBus::willReturnFor(FindInvoice::class, $result)` does not check the type
+of `$result`.
+
+PHPStan uses the defaults of the templates (`Query<mixed>`, `CommandHandler<Command>`,
+…) when a class declares none. Psalm does not support template defaults: it reports
+`MissingTemplateParam` for a query or handler without them, so with Psalm declare them
+everywhere (`@implements Query<mixed>` when the result is untyped, and
+`@implements CommandHandler<CreateTask>` on handlers). The message interfaces are also
+`@psalm-immutable`, so Psalm asks for that annotation on every message class
+(`somework:cqrs:generate` adds it).
 
 The query bus enforces exactly one handler per query: a second handler on the
 same bus is rejected at compile time, and `ask()` throws the exceptions listed

@@ -347,8 +347,10 @@ final class Configuration implements ConfigurationInterface
         $signingChildren = $signing->children();
         $signingChildren->booleanNode('enabled')->defaultTrue()
             ->info('Sign every stored row and verify it before relaying it (no environment variables).');
-        self::requireName($signingChildren->scalarNode('secret')->defaultNull()
-            ->info('Secret of the signatures; null uses kernel.secret ("framework.secret"). Environment variables are allowed.'), true);
+        // Not validated here: Symfony checks string environment variables with an empty dummy value.
+        // OutboxRegistrar rejects a literal empty secret, OutboxSigner an empty one at runtime.
+        $signingChildren->scalarNode('secret')->defaultNull()
+            ->info('Secret of the signatures; null uses kernel.secret ("framework.secret"). Environment variables are allowed.');
         $signingChildren->arrayNode('previous_secrets')
             ->info('Secrets whose signatures are still accepted, e.g. the old secret after a rotation, until the rows signed with it are relayed.')
             ->scalarPrototype()->end()

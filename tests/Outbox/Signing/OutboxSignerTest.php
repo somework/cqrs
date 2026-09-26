@@ -60,6 +60,21 @@ final class OutboxSignerTest extends TestCase
         self::assertNotSame($signature, (new OutboxSigner('new', ['old']))->sign(self::message()), 'New rows are signed with the current secret.');
     }
 
+    public function test_the_signature_matches_a_known_answer(): void
+    {
+        // Computed independently (HMAC-SHA256 over length-prefixed fields, key derived from the
+        // secret): rows signed by this version must stay valid after a refactoring of the signer.
+        self::assertSame('v1:rPZojb7Bur6bUYqZQo_VS3Np1VzXei7I4Inzv57BWOI', (new OutboxSigner('secret'))->sign(self::message()));
+    }
+
+    public function test_an_empty_previous_secret_accepts_nothing(): void
+    {
+        // The signature an empty secret would produce, computed independently.
+        $signedWithEmptySecret = self::message(signature: 'v1:PAxujlidoQcn9waCSN4jYupL_lNXuQO29yLzdu0xtC8');
+
+        self::assertFalse((new OutboxSigner('secret', ['']))->verify($signedWithEmptySecret));
+    }
+
     public function test_an_empty_secret_is_rejected(): void
     {
         $this->expectExceptionMessage('Outbox signing needs a secret');
