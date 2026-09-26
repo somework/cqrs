@@ -447,7 +447,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -480,7 +480,7 @@ final class DelayAsyncMessagesStampDecider implements StampDecider
 }
 ```
 
-With autoconfiguration the class is added to the pipeline automatically, with priority 0. To choose where it runs (higher priorities run first; the built-in deciders use 0 to 225), tag it explicitly:
+With autoconfiguration the class is added to the pipeline automatically, with priority 0, after the built-in deciders (225 to 50) and before `DispatchAfterCurrentBusStampDecider` (-10). To choose where it runs (higher priorities run first), tag it explicitly:
 
 ```yaml
 services:

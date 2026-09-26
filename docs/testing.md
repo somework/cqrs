@@ -29,8 +29,8 @@ test suite runs on PHPUnit 11.5. The fake buses have no PHPUnit dependency.
 
 | Class | Methods it records | Configuring results | Other methods |
 |-------|--------------------|---------------------|---------------|
-| `FakeCommandBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | `willReturn(mixed $result)`: the value `dispatchSync()` returns (default `null`) | `getDispatched()`, `reset()` |
-| `FakeQueryBus` | `ask()` | `willReturn(mixed $result)`: the default result; `willReturnFor(string $queryClass, mixed $result)`: the result for one query class | `getDispatched()`, `reset()` |
+| `FakeCommandBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | `willReturn(mixed $result)`: the value `dispatchSync()` returns (default `null`); `willReturnFor(string $commandClass, mixed $result)`: the result for one command class; `willThrow(Throwable $exception, ?string $commandClass = null)`: `dispatchSync()` throws it | `getDispatched()`, `reset()` |
+| `FakeQueryBus` | `ask()` | `willReturn(mixed $result)`: the default result; `willReturnFor(string $queryClass, mixed $result)`: the result for one query class; `willThrow(Throwable $exception, ?string $queryClass = null)`: `ask()` throws it | `getDispatched()`, `reset()` |
 | `FakeEventBus` | `dispatch()`, `dispatchSync()`, `dispatchAsync()` | none | `getDispatched()`, `reset()` |
 
 A fake handles nothing. It does not run the stamp pipeline or resolve dispatch modes, and it
@@ -39,15 +39,12 @@ built from the stamps you passed.
 
 ### What `getDispatched()` returns
 
-`getDispatched()` returns one **array per call**, in call order. The entries are neither
-envelopes nor bare messages:
+`getDispatched()` returns one `SomeWork\CqrsBundle\Testing\RecordedDispatch` per call, in
+call order, with the read-only properties `message`, `mode` (a `DispatchMode`, `null` for
+queries, which are always synchronous) and `stamps` (the stamps you passed). A message is
+recorded before a configured exception is thrown.
 
-| Fake | Shape of each record |
-|------|----------------------|
-| `FakeCommandBus`, `FakeEventBus` | `['message' => object, 'mode' => DispatchMode, 'stamps' => list<StampInterface>]` |
-| `FakeQueryBus` | `['message' => object, 'stamps' => list<StampInterface>]` (no `mode`: queries are always synchronous) |
-
-The `mode` entry records the method that was called:
+The `mode` records the method that was called:
 
 - `dispatchSync()` records `DispatchMode::SYNC`.
 - `dispatchAsync()` records `DispatchMode::ASYNC`.
@@ -56,7 +53,7 @@ The `mode` entry records the method that was called:
   `#[Asynchronous]`.
 
 `reset()` clears the records. On `FakeCommandBus` and `FakeQueryBus` it also clears any
-results set with `willReturn()` or `willReturnFor()`.
+results and exceptions set with `willReturn()`, `willReturnFor()` or `willThrow()`.
 
 ### FakeCommandBus
 
@@ -88,7 +85,9 @@ final class TaskServiceTest extends TestCase
 
         $records = $commandBus->getDispatched();
         self::assertCount(1, $records);
-        self::assertSame('task-1', $records[0]['message']->id);
+        $message = $records[0]->message;
+        self::assertInstanceOf(CreateTask::class, $message);
+        self::assertSame('task-1', $message->id);
     }
 
     public function test_dispatch_sync_returns_the_configured_result(): void
@@ -180,18 +179,21 @@ final class TaskCreatedEventTest extends TestCase
         );
 
         $record = $eventBus->getDispatched()[0];
-        self::assertSame(DispatchMode::ASYNC, $record['mode']);
-        self::assertInstanceOf(IdempotencyStamp::class, $record['stamps'][0]);
+        self::assertSame(DispatchMode::ASYNC, $record->mode);
+        self::assertInstanceOf(IdempotencyStamp::class, $record->stamps[0]);
     }
 }
 ```
 
 ## Assertions
 
-`CqrsAssertionsTrait` provides two `protected static` assertions:
+`CqrsAssertionsTrait` provides these `protected static` assertions:
 
 - `assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 - `assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
+- `assertStoredInOutbox()` and `assertNotStoredInOutbox()`, with the same parameters: they only
+  match dispatches with `DispatchMode::OUTBOX`, or with the default mode of a class carrying
+  `#[Outbox]` (see [Code that stores messages in the outbox](#code-that-stores-messages-in-the-outbox)).
 
 Their parameters work as follows:
 
@@ -233,8 +235,9 @@ final class AssertionExamplesTest extends CqrsTestCase
 }
 ```
 
-On failure, the message names the classes that were actually dispatched
-(`Actually dispatched: App\Application\Command\CreateTask`), or says
+On failure, the message names the classes that were actually dispatched, with
+the mode each dispatch was recorded with
+(`Actually dispatched: App\Application\Command\CreateTask (DispatchMode::DEFAULT)`), or says
 `No messages were dispatched.`
 
 ### CqrsTestCase or CqrsAssertionsTrait
@@ -250,8 +253,9 @@ you never need to call it yourself.
 
 ### Using the constraint directly
 
-`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null)`.
-You can combine it with PHPUnit's logical constraints:
+`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null, ?DispatchMode $mode = null)`;
+with a mode, it only matches dispatches with that mode (`new DispatchedMessage(OrderPlaced::class, null, DispatchMode::OUTBOX)`
+is what `assertStoredInOutbox()` uses). You can combine it with PHPUnit's logical constraints:
 
 ```php
 <?php
@@ -318,10 +322,8 @@ final class TaskHandlersTest extends TestCase
 }
 ```
 
-Handlers that extend `AbstractCommandHandler`, `AbstractQueryHandler` or
-`AbstractEventHandler` are `EnvelopeAware`. When you call them directly, first pass an
-envelope with `$handler->setEnvelope(new Envelope($message))` if `handle()`, `fetch()` or
-`on()` reads `$this->getEnvelope()`.
+When you call an `EnvelopeAware` handler directly and it reads `$this->getEnvelope()`,
+first pass an envelope with `$handler->setEnvelope(new Envelope($message))`.
 
 ## Swapping the buses for fakes in the test container
 
@@ -401,7 +403,9 @@ final class TaskControllerTest extends WebTestCase
 ```
 
 The fakes are ordinary shared services, so each freshly booted kernel gets new, empty
-instances. Only the interface aliases change. The concrete `SomeWork\CqrsBundle\Bus\CommandBus`,
+instances. The test client reboots the kernel before each request after the first one, so
+a fake configured before the second request would be lost: call `$client->disableReboot()`
+when a test sends several requests, and configure the fakes after `createClient()`. Only the interface aliases change. The concrete `SomeWork\CqrsBundle\Bus\CommandBus`,
 `QueryBus` and `EventBus` services stay registered and public, and services that type-hint
 those classes still get the real buses.
 
@@ -457,7 +461,9 @@ when@test:
     framework:
         messenger:
             transports:
-                async: 'in-memory://'
+                # serialize=true encodes and decodes each message, as a real transport does,
+                # so a message that cannot be serialized fails the test instead of production.
+                async: 'in-memory://?serialize=true'
 ```
 
 ```php
@@ -479,7 +485,7 @@ final class AsyncEventTest extends KernelTestCase
         $container = static::getContainer();
 
         // TaskCreated is routed to the "async" transport (Messenger routing or somework_cqrs.transports).
-        $container->get(EventBus::class)->dispatchAsync(new TaskCreated('task-1'));
+        $container->get(EventBus::class)->dispatchAsync(new TaskCreated('task-1', 'Write docs'));
 
         $sent = $container->get('messenger.transport.async')->getSent();
         self::assertCount(1, $sent);
@@ -488,9 +494,113 @@ final class AsyncEventTest extends KernelTestCase
 }
 ```
 
+To assert on what went through the real buses without a transport, use Messenger's
+profiler integration: with the profiler enabled in the `test` environment
+(`framework.profiler.enabled: true`) each Messenger bus is decorated by a
+`TraceableMessageBus`. While collecting (`framework.profiler.collect: true`, or
+`$client->enableProfiler()` before a request), `getDispatchedMessages()` on the bus service
+(`messenger.default_bus`, or an id you configured under `somework_cqrs.buses`, such as
+`event.bus`) lists each dispatched message with its stamps.
+
+To handle what was sent to an in-memory transport, run a worker in the test, for example
+the `messenger:consume async --limit=1 --time-limit=5` command through `CommandTester`
+(the time limit makes an empty transport fail the test instead of hanging it).
+
 `dispatchAsync()` requires an async bus (`somework_cqrs.buses.event_async` for events,
 `command_async` for commands). Without one, the bus throws
 `AsyncBusNotConfiguredException`.
+
+## Code that stores messages in the outbox
+
+Code that stores messages through the buses is tested with the fake buses. For the
+`PlaceOrderHandler` of [Through the buses](outbox.md#through-the-buses), which dispatches the
+`#[Outbox]` event `OrderPlaced` with the default mode:
+
+```php
+$connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+$connection->executeStatement('CREATE TABLE orders (id VARCHAR(36) NOT NULL)');
+$eventBus = new FakeEventBus();
+
+(new PlaceOrderHandler($connection, $eventBus))(new PlaceOrder('order-1'));
+
+self::assertStoredInOutbox($eventBus, OrderPlaced::class, static fn (OrderPlaced $event): bool => 'order-1' === $event->orderId);
+```
+
+The assertion matches a dispatch with `DispatchMode::OUTBOX`, or with the default mode of a
+class carrying `#[Outbox]`, and the fakes return an envelope with an `OutboxStoredStamp` (with a
+generated id) for it. A fake bus does not know the configuration: a `dispatch()` with the default
+mode that `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEFAULT`, so check it
+with `assertDispatched()`, or test the resolution in a kernel test as below. The failure message
+lists each recorded dispatch with its mode.
+
+Code that calls `OutboxWriter::store()` itself type-hints `Contract\Outbox\OutboxWriterInterface`
+(the container autowires it to the writer), and unit tests pass a `Testing\FakeOutboxWriter`.
+It records each stored message with `DispatchMode::OUTBOX` (and the transport given to `store()`
+as a `TransportNamesStamp`), so the outbox assertions work on it too:
+
+```php
+$writer = new FakeOutboxWriter();
+(new ExportOrderHandler($writer))(new ExportOrder('order-1'));
+
+self::assertStoredInOutbox($writer, OrderExported::class, static fn (OrderExported $event): bool => 'order-1' === $event->orderId);
+```
+
+`getStoredRows()` returns the rows `store()` returned (encoded with PHP's serializer), and
+`willThrow()` makes `store()` fail, e.g. with `OutboxRequiresTransactionException`. The fake does
+not resolve the configured transports and checks no transaction.
+
+To test the outbox itself, run the code against a real outbox table. The outbox stores its rows
+in the transaction of the code under test, so it uses the same connection: in the `test`
+environment, point that connection at a test database (an SQLite file or in-memory database is
+enough), and create the table before the code under test opens its transaction (the automatic
+setup never runs inside one). An outbox on a connection of its own only works when the code
+under test opens its transaction on that connection. Then read the stored rows through the `OutboxStorage`
+service, or relay them to an in-memory transport:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Integration;
+
+use App\Application\Command\PlaceOrder;
+use App\Domain\Event\OrderPlaced;
+use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Console\Tester\CommandTester;
+
+final class PlaceOrderOutboxTest extends KernelTestCase
+{
+    public function test_the_order_placed_event_is_stored_then_relayed(): void
+    {
+        self::bootKernel();
+        $container = static::getContainer();
+        $container->get(OutboxSchema::class)->setup();
+
+        $container->get(CommandBus::class)->dispatchSync(new PlaceOrder('order-1'));
+
+        // Each row records the message class in its "type" header.
+        $rows = $container->get(OutboxStorage::class)->fetchUnpublished(10);
+        self::assertCount(1, $rows);
+        self::assertSame(OrderPlaced::class, json_decode($rows[0]->headers, true)['type']);
+
+        $relay = new CommandTester((new Application(self::$kernel))->find('somework:cqrs:outbox:relay'));
+        self::assertSame(0, $relay->execute([]));
+        self::assertCount(1, $container->get('messenger.transport.async')->getSent());
+    }
+}
+```
+
+The relay resets the services after each row it handles in the test's process (no transport,
+`sync://`), which also empties the in-memory transports: pass `'--no-reset' => true` when the
+test relays such rows and then asserts on `getSent()`.
+
+To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
+`new Envelope($message, [new RelayedFromOutboxStamp()])`.
 
 ## Tips
 
@@ -500,6 +610,6 @@ final class AsyncEventTest extends KernelTestCase
 - **Unit-test handlers without buses.** Call `__invoke()` directly. Use the fakes to test the
   code that dispatches.
 - **Check message properties** with the `assertDispatched()` callback, or read
-  `getDispatched()[n]['message']`.
+  `getDispatched()[n]->message`.
 - **Check the dispatch mode** through the `mode` entry of a record, not by relying on
   `dispatch_modes` configuration: the fakes record the mode the caller passed.
