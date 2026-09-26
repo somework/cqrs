@@ -881,9 +881,12 @@ table is trusted.
   write rows (`SELECT`, `INSERT`, `UPDATE`, `DELETE`); every command of the outbox works with
   it once the table is set up. Run `somework:cqrs:outbox:setup` or your migrations with a role
   that may change the schema, and set `auto_setup: false`.
-- **Prefer a serializer that does not create arbitrary PHP objects**, e.g.
-  `serializer: messenger.transport.symfony_serializer` (JSON). Messages made of primitives, as
-  the bundle recommends, encode without extra normalizers. Rows written with another serializer
+- **Prefer a serializer that does not unserialize PHP objects**, e.g.
+  `serializer: messenger.transport.symfony_serializer` (JSON). It still instantiates the class
+  its `type` header names (with the body as constructor arguments), so signing matters as much;
+  `--sign` checks that header, but cannot list other classes in a body that is not
+  PHP-serialized. Messages made of primitives, as the bundle recommends, encode without extra
+  normalizers. Rows written with another serializer
   cannot be decoded after the switch: relay them first.
 - **Symfony 7.4 or later** refuses unsigned `RunProcessMessage` and `RunCommandMessage`; on
   7.2 and 7.3 a forged row can start a process or a console command through Messenger's own

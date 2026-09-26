@@ -25,6 +25,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
+use Symfony\Component\Messenger\Stamp\NoAutoAckStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function addslashes;
@@ -149,6 +150,55 @@ final class OutboxFailedCommandTest extends TestCase
         // A message class of the application that is not a command, query or event is allowed explicitly.
         $allowed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
         self::assertSame(Command::SUCCESS, $allowed->execute(['--requeue' => true, '--sign' => true, '--allow-class' => [UnserializeGadget::class], 'ids' => [$id]], ['interactive' => false]));
+    }
+
+    public function test_signing_checks_the_type_header_of_a_body_of_another_serializer(): void
+    {
+        // The Symfony serializer instantiates the class its type header names, with the body as arguments.
+        $forged = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($forged, '{"filename":"/tmp/victim","mode":"w"}', json_encode(['type' => \SplFileObject::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $forged, 1, 'not signed', null);
+        $genuine = '00000000-0000-7000-8000-000000000004';
+        $this->storage->store(new OutboxMessage($genuine, '{"id":"1","name":"a"}', json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $genuine, 1, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+
+        $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$forged]], ['interactive' => false]));
+        self::assertStringContainsString('instantiates SplFileObject, which is neither', self::display($refused));
+
+        $signed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::SUCCESS, $signed->execute(['--requeue' => true, '--sign' => true, 'ids' => [$genuine]], ['interactive' => false]));
+        self::assertStringContainsString('not a PHP-serialized body: the type header names the class', self::display($signed));
+    }
+
+    public function test_signing_finds_the_message_under_any_form_of_its_property_name(): void
+    {
+        // PHP also accepts the unmangled property name: the message must not hide from the header check.
+        $body = addslashes(str_replace("s:46:\"\0Symfony\\Component\\Messenger\\Envelope\0message\"", 's:7:"message"', serialize(new Envelope(new UnserializeGadget()))));
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $body, json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('does not match the class in its body ('.UnserializeGadget::class.')', self::display($tester));
+    }
+
+    public function test_signing_refuses_stamps_that_are_never_stored(): void
+    {
+        // NoAutoAckStamp is never serialized: a body that carries one was not written by the serializer.
+        $stamp = 'O:'.strlen(NoAutoAckStamp::class).':"'.NoAutoAckStamp::class.'":0:{}';
+        $body = str_replace('a:0:{}', 'a:1:{s:'.strlen(NoAutoAckStamp::class).':"'.NoAutoAckStamp::class.'";a:1:{i:0;'.$stamp.'}}', serialize(new Envelope(new CreateTaskCommand('1', 'a'))));
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, addslashes($body), json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('instantiates '.NoAutoAckStamp::class, self::display($tester));
     }
 
     public function test_signing_refuses_a_body_with_custom_serialization(): void

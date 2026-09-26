@@ -163,7 +163,8 @@ final class SerializedBody
                 for ($i = 0; $i < $count; ++$i) {
                     $property = $this->key();
                     $value = $this->value($depth + 1);
-                    if (Envelope::class === $class && "\0".Envelope::class."\0message" === $property) {
+                    // Private, protected or public: PHP accepts every form of the property name.
+                    if (Envelope::class === $class && null !== $property && ('message' === $property || str_ends_with($property, "\0message"))) {
                         $message = $value['class'];
                     }
                 }

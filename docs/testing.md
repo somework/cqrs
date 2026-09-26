@@ -509,8 +509,9 @@ the `messenger:consume async --limit=1 --time-limit=5` command through `CommandT
 
 `OutboxWriter` has no fake: test the code that uses it against a real outbox table. In the
 `test` environment, point the outbox at a connection of its own (an SQLite file or in-memory
-database is enough, with `auto_setup` creating the table), then read the stored rows through the
-`OutboxStorage` service, or relay them to an in-memory transport:
+database is enough) and create the table before the code under test opens its transaction (the
+automatic setup never runs inside one). Then read the stored rows through the `OutboxStorage`
+service, or relay them to an in-memory transport:
 
 ```php
 <?php
@@ -522,6 +523,7 @@ namespace App\Tests\Integration;
 use App\Application\Command\PlaceOrder;
 use App\Domain\Event\OrderPlaced;
 use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -533,6 +535,7 @@ final class PlaceOrderOutboxTest extends KernelTestCase
     {
         self::bootKernel();
         $container = static::getContainer();
+        $container->get(OutboxSchema::class)->setup();
 
         $container->get(CommandBus::class)->dispatchSync(new PlaceOrder('order-1'));
 

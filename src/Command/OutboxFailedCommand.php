@@ -18,15 +18,18 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\Messenger\Envelope;
 
 use function array_key_exists;
 use function array_map;
+use function array_unique;
 use function array_values;
 use function assert;
 use function count;
 use function filter_var;
 use function hash_equals;
 use function implode;
+use function in_array;
 use function is_array;
 use function is_string;
 use function ltrim;
@@ -206,7 +209,11 @@ final class OutboxFailedCommand extends Command
                 self::printable($message->id),
                 self::printable($message->messageType ?? '-'),
                 self::printable($message->bodyClass ?? '-'),
-                null === $message->bodyClasses ? '?' : self::printable(implode(', ', $message->bodyClasses)),
+                match (true) {
+                    null === $message->bodyClasses => '?',
+                    null === $message->bodyClass && [] === $message->bodyClasses => 'not a PHP-serialized body: the type header names the class',
+                    default => self::printable(implode(', ', $message->bodyClasses)),
+                },
                 null === $message->digest ? '?' : 'sha256 '.substr($message->digest, 0, 16),
                 self::printable($message->transportName ?? '(routing)'),
                 self::printable($message->lastError ?? ''),
@@ -230,8 +237,16 @@ final class OutboxFailedCommand extends Command
 
                 return self::FAILURE;
             }
+            // An envelope whose message cannot be found was not written by the serializer.
+            if (null === $message->bodyClass && in_array(Envelope::class, $message->bodyClasses, true)) {
+                $io->error(sprintf('The message of the envelope in the body of message "%s" cannot be found: the row was not stored by this application. Nothing was signed.', self::printable($message->id)));
+
+                return self::FAILURE;
+            }
             $messageClass = $message->bodyClass ?? $message->messageType;
-            $untrusted = null === $messageClass ? $message->bodyClasses : SignableBody::untrustedClasses($messageClass, $message->bodyClasses, $allowedClasses);
+            // The serializers that read the type header (the Symfony serializer) instantiate the class it names.
+            $classes = array_values(array_unique([...(null === $message->messageType ? [] : [$message->messageType]), ...$message->bodyClasses]));
+            $untrusted = null === $messageClass ? $classes : SignableBody::untrustedClasses($messageClass, $classes, $allowedClasses);
             if ([] !== $untrusted) {
                 $io->error(sprintf('The body of message "%s" instantiates %s, which %s neither the envelope, a stamp, a command, query or event%s nor a type declared by their properties: the row may have been forged to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it; if it did (e.g. an object in an untyped property), allow the class with --allow-class.', self::printable($message->id), self::printable(implode(', ', $untrusted)), 1 === count($untrusted) ? 'is' : 'are', null === $messageClass ? '' : sprintf(' (%s)', self::printable($messageClass))));
 

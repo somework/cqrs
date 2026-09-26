@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_filter;
@@ -80,7 +81,8 @@ final class SignableBody
      */
     private static function isAllowed(string $class, array $types): bool
     {
-        if (!class_exists($class) && !enum_exists($class)) {
+        // Never stored by a serializer (NoAutoAckStamp, AckStamp, …): a body that carries one was not written by it.
+        if ((!class_exists($class) && !enum_exists($class)) || is_a($class, NonSendableStampInterface::class, true)) {
             return false;
         }
 
