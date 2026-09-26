@@ -264,6 +264,13 @@ final class OutboxRelay
             return null;
         }
 
+        // A message whose last attempt was interrupted may kill the process again: the messages sent
+        // before it are marked as published first, so that only it is blamed (and sent again).
+        $interrupted = 1 === count($messages) && null !== $messages[0]->claimedAt;
+        if ($interrupted && [] !== $this->sent) {
+            $this->flush();
+        }
+
         $claimed = array_flip($this->claim($messages));
         $claimedAt = $this->now();
         $pending = array_values(array_filter($messages, static fn (OutboxMessage $message): bool => isset($claimed[$message->id])));
@@ -296,6 +303,9 @@ final class OutboxRelay
 
                 $started = $this->now();
                 $outcome = $this->process($message, $reporter);
+                if ($interrupted && [] !== $this->sent) {
+                    $this->flush();
+                }
                 $this->count($message, $outcome, $started, $reporter);
 
                 if (!$reporter->continueAfterMessage()) {

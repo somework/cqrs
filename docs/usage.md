@@ -635,7 +635,9 @@ Events dispatched without any registered handler do not throw an exception
     it is only sent after the handler's transaction committed. When sending it fails then (the
     broker is down), the change stays committed and the event is lost:
     `dispatchSync()` throws `DeferredDispatchFailedException`, whose `$result` is the result
-    of the handler, which succeeded. Do not retry the whole command then.
+    of the handler, which succeeded. Do not retry the whole command then. In a worker, Messenger
+    retries the command, skips the handler because it already ran, and acknowledges it: the
+    event is lost with only a warning in the Messenger log.
 
     For events that must not be lost, store them with the
     [transactional outbox](outbox.md) (`OutboxWriter`) in the same transaction instead. With a

@@ -37,6 +37,13 @@ final class FailedOutboxMessage
          * @var list<string>|null
          */
         public readonly ?array $bodyClasses = null,
+        /**
+         * The classes of $bodyClasses with custom serialization (Serializable): the objects in their data
+         * are not listed, as those classes read it themselves.
+         *
+         * @var list<string>
+         */
+        public readonly array $customSerializedClasses = [],
     ) {
     }
 

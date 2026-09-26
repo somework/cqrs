@@ -739,7 +739,7 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
 | `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage that does not implement `OutboxSchema`, or when the database fails; `128 + signal` when stopped by a signal |
 | `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed, the storage failed, a signal stopped the run, or the lock could not be acquired or was lost; `2` for an invalid limit |
-| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME] [--sign]] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage that does not implement `FailedOutboxMessages`, when the database fails, when a given id was not requeued, or when `--sign` refused or was not confirmed; `2` for ids without `--requeue`, `--transport` or `--sign` without ids, or an invalid limit |
+| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME] [--sign [--allow-class=CLASS ...]]] [--delete] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage that does not implement `FailedOutboxMessages`, when the database fails, when a given id was not requeued or deleted, or when `--sign` refused or the operator did not confirm; `2` for ids without `--requeue` or `--delete`, `--transport`, `--sign` or `--delete` without ids, `--delete` with `--requeue`, `--sign` or `--transport`, `--allow-class` without `--sign`, or an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list

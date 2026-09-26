@@ -505,6 +505,49 @@ the `messenger:consume async --limit=1 --time-limit=5` command through `CommandT
 `command_async` for commands). Without one, the bus throws
 `AsyncBusNotConfiguredException`.
 
+## Code that stores messages in the outbox
+
+`OutboxWriter` has no fake: test the code that uses it against a real outbox table. In the
+`test` environment, point the outbox at a connection of its own (an SQLite file or in-memory
+database is enough, with `auto_setup` creating the table), then read the stored rows through the
+`OutboxStorage` service, or relay them to an in-memory transport:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Integration;
+
+use App\Application\Command\PlaceOrder;
+use App\Domain\Event\OrderPlaced;
+use SomeWork\CqrsBundle\Bus\CommandBus;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use Symfony\Bundle\FrameworkBundle\Console\Application;
+use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
+use Symfony\Component\Console\Tester\CommandTester;
+
+final class PlaceOrderOutboxTest extends KernelTestCase
+{
+    public function test_the_order_placed_event_is_stored_then_relayed(): void
+    {
+        self::bootKernel();
+        $container = static::getContainer();
+
+        $container->get(CommandBus::class)->dispatchSync(new PlaceOrder('order-1'));
+
+        // Each row records the message class in its "type" header.
+        $rows = $container->get(OutboxStorage::class)->fetchUnpublished(10);
+        self::assertCount(1, $rows);
+        self::assertSame(OrderPlaced::class, json_decode($rows[0]->headers, true)['type']);
+
+        $relay = new CommandTester((new Application(self::$kernel))->find('somework:cqrs:outbox:relay'));
+        self::assertSame(0, $relay->execute([]));
+        self::assertCount(1, $container->get('messenger.transport.async')->getSent());
+    }
+}
+```
+
 ## Tips
 
 - **Type-hint the interfaces** (`CommandBusInterface`, `QueryBusInterface`,

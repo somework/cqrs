@@ -477,8 +477,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             + $count($pending()->andWhere('available_at <= :now')->setParameter('now', $now, Types::DATETIME_IMMUTABLE));
         $capped = $capped || $due > OutboxStatus::COUNT_CAP;
 
-        // Rows whose last attempt failed: postponed, and not claimed right now.
-        $failing = $pending()->andWhere('available_at IS NOT NULL')->andWhere('claim_token IS NULL');
+        // Rows whose last attempt failed: postponed, and not claimed right now; or claimed again after
+        // an attempt that was interrupted (a relay that keeps dying on them).
+        $failing = $pending()->andWhere('available_at IS NOT NULL')->andWhere('claim_token IS NULL OR attempts > 1');
         $retrying = $count(clone $failing);
         $oldestRetrying = $this->capped($failing, 'MIN(created_at)');
 
@@ -595,6 +596,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 bodyClass: $contents['messageClass'] ?? null,
                 digest: null === $body ? null : FailedOutboxMessage::digest($body, (string) $row['headers']),
                 bodyClasses: $contents['classes'] ?? null,
+                customSerializedClasses: $contents['custom'] ?? [],
             );
         }, $rows);
     }

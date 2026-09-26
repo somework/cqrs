@@ -65,7 +65,12 @@ rejects the new options.
    - handlers extending the removed abstract handlers ([Abstract handlers removed](#abstract-handlers-removed-classes-moved));
    - imports of moved classes (`Support\StampDecider`, `Support\NullRetryPolicy`, …) and class names in the
      configuration;
-   - `catch (HandlerFailedException)` around `dispatchSync()`/`ask()`;
+   - `catch (HandlerFailedException)`, `catch (NoHandlerForMessageException)` and
+     `catch (DelayedMessageHandlingException)` around `dispatchSync()`/`ask()`
+     ([`dispatchSync()` and `ask()` errors](#dispatchsync-and-ask-errors));
+   - `$exception->messageFqcn` (now `$messageClass`) and `HandlerRegistry::byType('command')` (now a
+     `MessageType`);
+   - events implementing `SequenceAware`, which need `getAggregateType()` ([Event ordering](#event-ordering));
    - custom `OutboxStorage` implementations and decorators, and imports of `Contract\OutboxStorage` (now
      `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
    - tests that read `getDispatched()` of the fake buses as arrays.
@@ -304,6 +309,11 @@ correlation id and names the handled message as its cause.
 - **Breaking:** `SequenceAware` has a new method, `getAggregateType(): string`. Return the same value for every event
   of an aggregate (e.g. `'order'`). `AggregateSequenceStamp::$aggregateType` now holds it; before, it held the class
   of each event, so consumers keeping one sequence per `aggregateType` and id saw one sequence per event class.
+  An empty aggregate type is rejected.
+- Messages queued (or stored in the outbox) by 0.4 still carry the event class as `aggregateType`. A consumer
+  that keeps the last sequence number per aggregate type and id sees a new stream after the deployment: drain
+  the queues and the outbox before it, or map the old event classes to the new aggregate type in the consumer,
+  and re-key the sequence numbers it stored.
 
 ### Stamp decider priorities and resolution
 
@@ -504,9 +514,11 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 - Code that calls `DbalOutboxStorage::status()` or `fetchFailed()` gets an `OutboxStatus` and `FailedOutboxMessage`
   objects instead of arrays (`$status->oldestDue` instead of `$status['oldest_due']`). `fetchFailed()` reads the
   bodies (`bodyClass`, `bodyClasses`, `digest`) only for the messages asked for by id.
-- `outbox:failed --requeue --sign` refuses a row whose body instantiates a class that is neither the envelope, a stamp,
-  the message class nor a type declared by their properties. A message of yours with an object in an untyped
-  property (`mixed`, `object`, arrays) needs `--allow-class=<class or interface>` to be signed.
+- `outbox:failed --requeue --sign` refuses a row whose message is not a command, query or event, whose body
+  instantiates a class that is neither the envelope, a stamp, the message class nor a type declared by their
+  properties, or that uses custom serialization (`Serializable`). A message of yours that is not a command, query or
+  event, or has an object in an untyped property (`mixed`, `object`, arrays), needs `--allow-class=<class or
+  interface>` to be signed.
 
 ### Console commands
 

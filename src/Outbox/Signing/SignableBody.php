@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Outbox\Signing;
 
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -17,10 +20,11 @@ use function is_a;
 
 /**
  * Decides which classes a body signed by "outbox:failed --requeue --sign" may instantiate: the
- * envelope, stamps, the message class, and the classes the declared property types of those
- * (and of their typed properties, recursively) allow. A row forged by someone without the
- * secret can then only carry the kind of objects the application stores, never an arbitrary
- * class (an unserialize() gadget).
+ * envelope, stamps, the message class when it is a command, query or event, and the classes the
+ * declared property types of those (and of their typed properties, recursively) allow. A row
+ * forged by someone without the secret can then only carry the kind of objects the application
+ * stores, never an arbitrary class (an unserialize() gadget). Classes the operator allows are
+ * trusted too, including as the message.
  *
  * @internal
  */
@@ -41,7 +45,11 @@ final class SignableBody
         }
 
         /** @var array<string, true> $types Classes and interfaces whose instances are allowed */
-        $types = [Envelope::class => true, StampInterface::class => true, $messageClass => true];
+        $types = [Envelope::class => true, StampInterface::class => true];
+        // The body names its message class itself: only a class the bundle dispatches is trusted.
+        if (is_a($messageClass, Command::class, true) || is_a($messageClass, Query::class, true) || is_a($messageClass, Event::class, true)) {
+            $types[$messageClass] = true;
+        }
         foreach ($allowedTypes as $type) {
             $types[$type] = true;
         }

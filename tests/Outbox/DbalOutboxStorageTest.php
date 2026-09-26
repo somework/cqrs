@@ -1470,6 +1470,21 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertFalse($status->capped);
     }
 
+    public function test_status_counts_messages_whose_attempts_keep_being_interrupted(): void
+    {
+        // A relay that dies on every run (a message that exhausts its memory) leaves the rows claimed.
+        $storage = new DbalOutboxStorage($this->connection);
+        $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+        OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('-1 minute'));
+        self::assertSame(0, $storage->status()->retrying, 'Interrupted once: maybe a deployment.');
+
+        OutboxRows::claim($storage, self::ID_1, new DateTimeImmutable('+1 minute'));
+        $status = $storage->status();
+
+        self::assertSame(1, $status->retrying, 'Interrupted again while the next relay tried it.');
+        self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
+    }
+
     public function test_status_counts_stop_at_the_cap(): void
     {
         $storage = new DbalOutboxStorage($this->connection, autoSetup: false);

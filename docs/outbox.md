@@ -34,7 +34,9 @@ never write to the outbox.
   or after it (and is lost when the send fails). The bundle's buses send asynchronous commands
   and events after the handler returned (`dispatch_after_current_bus`, on by default), so a
   failed send leaves the change committed and throws `DeferredDispatchFailedException` from
-  `dispatchSync()`. Store such messages with `OutboxWriter` instead.
+  `dispatchSync()`; in a worker, the retried command skips the handler that already ran and
+  the event is lost with a warning in the Messenger log. Store such messages with `OutboxWriter`
+  instead.
 - **Your transport is a Doctrine transport on the same connection** as your business data:
   Messenger inserts the message in the current transaction, so it is already atomic, but only
   when it is sent inside the transaction. Disable `dispatch_after_current_bus` for those
@@ -554,14 +556,14 @@ consumer before you requeue it. When you lower `max_attempts`, a row
 that already had more failed attempts gets one more attempt and, if it fails, is given up with
 its real error.
 
-Publishing a row clears its `failed_at`, `last_error` and claim. `purge` never deletes given-up rows; delete them
-with SQL (`DELETE FROM somework_cqrs_outbox WHERE failed_at IS NOT NULL`) if you do not want
-to relay them.
+Publishing a row clears its `failed_at`, `last_error` and claim. `purge` never deletes given-up rows; delete those you do not want to relay with
+`somework:cqrs:outbox:failed --delete <id>…`.
 
 ## Monitoring
 
 - `somework:cqrs:health` includes an outbox check. It warns when the relay gave up on rows;
-  when rows failed and wait for another attempt while the oldest of them was stored more than
+  when rows failed (or their attempt was interrupted more than once: a relay that keeps dying on
+  them) and wait for another attempt while the oldest of them was stored more than
   10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
   row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
   their failing transport); when a claim ran out (at the retry time of its attempt) more than
@@ -777,7 +779,7 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 | Interface | Methods | Used by |
 |---|---|---|
 | `OutboxSchema` | `setup(?\Closure $onWait = null): void`, `pendingChanges(): list<string>` | `somework:cqrs:outbox:setup`; the relay and the health check report what `pendingChanges()` returns |
-| `FailedOutboxMessages` | `fetchFailed(int $limit, array $ids = []): list<FailedOutboxMessage>`, `requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int` | `somework:cqrs:outbox:failed` |
+| `FailedOutboxMessages` | `fetchFailed(int $limit, array $ids = []): list<FailedOutboxMessage>`, `requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int`, `deleteFailed(array $ids): int` | `somework:cqrs:outbox:failed` |
 | `OutboxMonitoring` | `status(): OutboxStatus` | the outbox check of `somework:cqrs:health` |
 
 `fetchFailed()` returns only the given ids when there are any. When `requeueFailed()` gets
@@ -855,12 +857,15 @@ Operating it:
   `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
   header, the message class of a PHP-serialized body, every class the body would instantiate
   (read as text, never unserialized) and a SHA-256 prefix of the body. It refuses a row whose
-  `type` header does not match the class in its body, and a body that instantiates a class that
-  is neither the envelope, a stamp, the message class nor a type declared by the properties of
-  those (recursively): a forged row cannot smuggle an object of any other class (an
-  `unserialize()` gadget) past the review. An object your application stores in an untyped
-  property (`mixed`, `object`, arrays) is refused too; allow its class or interface with
-  `--allow-class=App\Money`. In an interactive terminal it asks for confirmation. It signs the
+  `type` header does not match the class in its body; a body that instantiates a class that is
+  neither the envelope, a stamp, a command, query or event (as the message) nor a type declared by
+  the properties of those (recursively); and a body with custom serialization (a class
+  implementing only `Serializable`, whose data the review cannot read). A forged row therefore
+  cannot smuggle an object of any other class (an `unserialize()` gadget) past the review. A
+  message that is not a command, query or event, or an object your application stores in an
+  untyped property (`mixed`, `object`, arrays), is refused too; allow its class or interface with
+  `--allow-class=App\Money` (the classes you allow, and the types their properties declare, are
+  trusted). In an interactive terminal it asks for confirmation. It signs the
   bodies it showed: a row whose body changed in the meantime stops the command. The review
   cannot tell a forged row from a genuine one when it only carries the application's own
   classes (with data chosen by whoever wrote it): only sign rows your application stored, and

@@ -64,7 +64,7 @@ final class OutboxFailedCommand extends Command
     protected function configure(): void
     {
         $this
-            ->addArgument('ids', InputArgument::IS_ARRAY, 'Ids of the messages to requeue (with --requeue); all given-up messages when omitted')
+            ->addArgument('ids', InputArgument::IS_ARRAY, 'Ids of the messages to requeue (with --requeue; all given-up messages when omitted) or to delete (with --delete)')
             ->addOption('requeue', null, InputOption::VALUE_NONE, 'Requeue the messages with a fresh attempt counter instead of listing them')
             ->addOption('transport', null, InputOption::VALUE_REQUIRED, 'With --requeue and message ids: send the messages to this transport instead of the stored one')
             ->addOption('sign', null, InputOption::VALUE_NONE, 'With --requeue and message ids: sign the messages with the current secret (they were unsigned, or signed with another secret)')
@@ -225,10 +225,15 @@ final class OutboxFailedCommand extends Command
             if (null === $message->bodyClasses) {
                 continue;
             }
+            if ([] !== $message->customSerializedClasses) {
+                $io->error(sprintf('The body of message "%s" contains %s, serialized with custom serialization (Serializable): the objects in its data cannot be checked, and a forged row may hide one there to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it.', self::printable($message->id), self::printable(implode(', ', $message->customSerializedClasses))));
+
+                return self::FAILURE;
+            }
             $messageClass = $message->bodyClass ?? $message->messageType;
             $untrusted = null === $messageClass ? $message->bodyClasses : SignableBody::untrustedClasses($messageClass, $message->bodyClasses, $allowedClasses);
             if ([] !== $untrusted) {
-                $io->error(sprintf('The body of message "%s" instantiates %s, which %s neither the envelope, a stamp, the message class%s nor a type declared by their properties: the row may have been forged to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it; if it did (e.g. an object in an untyped property), allow the class with --allow-class.', self::printable($message->id), self::printable(implode(', ', $untrusted)), 1 === count($untrusted) ? 'is' : 'are', null === $messageClass ? '' : sprintf(' (%s)', self::printable($messageClass))));
+                $io->error(sprintf('The body of message "%s" instantiates %s, which %s neither the envelope, a stamp, a command, query or event%s nor a type declared by their properties: the row may have been forged to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it; if it did (e.g. an object in an untyped property), allow the class with --allow-class.', self::printable($message->id), self::printable(implode(', ', $untrusted)), 1 === count($untrusted) ? 'is' : 'are', null === $messageClass ? '' : sprintf(' (%s)', self::printable($messageClass))));
 
                 return self::FAILURE;
             }
@@ -308,7 +313,7 @@ final class OutboxFailedCommand extends Command
     private function list(SymfonyStyle $io, InputInterface $input, FailedOutboxMessages $storage, array $ids): int
     {
         if ([] !== $ids) {
-            $io->error('Message ids are only accepted together with --requeue.');
+            $io->error('Message ids are only accepted together with --requeue or --delete.');
 
             return self::INVALID;
         }

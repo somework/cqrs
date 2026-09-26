@@ -31,6 +31,7 @@ final class SerializedBodyTest extends TestCase
         self::assertSame([
             'messageClass' => CreateTaskCommand::class,
             'classes' => [Envelope::class, BusNameStamp::class, PayloadStamp::class, UnserializeGadget::class, CreateTaskCommand::class],
+            'custom' => [],
         ], SerializedBody::inspect($body));
     }
 
@@ -39,7 +40,7 @@ final class SerializedBodyTest extends TestCase
         $decoy = "\0message\";O:".strlen(CreateTaskCommand::class).':"'.CreateTaskCommand::class.'"';
         $body = (new PhpSerializer())->encode(new Envelope(new UnserializeGadget(), [new BusNameStamp($decoy)]))['body'];
 
-        self::assertSame(['messageClass' => UnserializeGadget::class, 'classes' => [Envelope::class, BusNameStamp::class, UnserializeGadget::class]], SerializedBody::inspect($body));
+        self::assertSame(['messageClass' => UnserializeGadget::class, 'classes' => [Envelope::class, BusNameStamp::class, UnserializeGadget::class], 'custom' => []], SerializedBody::inspect($body));
     }
 
     public function test_reads_a_base64_body(): void
@@ -50,12 +51,13 @@ final class SerializedBodyTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{string, list<string>}>
+     * @return iterable<string, array{string, list<string>, 2?: list<string>}>
      */
     public static function values(): iterable
     {
         yield 'signed object length' => [str_replace('O:8:"stdClass"', 'O:+8:"stdClass"', serialize(new \stdClass())), ['stdClass']];
-        yield 'custom serialization' => [serialize(new \ArrayObject([new \stdClass()])), ['ArrayObject', 'stdClass']];
+        yield 'custom serialization' => ['C:11:"ArrayObject":21:{x:i:0;a:0:{};m:a:0:{}}', ['ArrayObject'], ['ArrayObject']];
+        yield 'serialized with __serialize()' => [serialize(new \ArrayObject([new \stdClass()])), ['ArrayObject', 'stdClass']];
         yield 'enum' => [serialize([\SomeWork\CqrsBundle\Registry\MessageType::Command]), [\SomeWork\CqrsBundle\Registry\MessageType::class]];
         yield 'scalars and references' => [serialize([1, -2, 1.5, true, null, 'x', [3]]), []];
         yield 'escaped string' => ['a:1:{i:0;S:2:"\\41b";}', []];
@@ -63,17 +65,18 @@ final class SerializedBodyTest extends TestCase
 
     /**
      * @param list<string> $classes
+     * @param list<string> $custom
      */
     #[DataProvider('values')]
-    public function test_reads_every_kind_of_value(string $serialized, array $classes): void
+    public function test_reads_every_kind_of_value(string $serialized, array $classes, array $custom = []): void
     {
-        self::assertSame(['messageClass' => null, 'classes' => $classes], SerializedBody::inspect(addslashes($serialized)));
+        self::assertSame(['messageClass' => null, 'classes' => $classes, 'custom' => $custom], SerializedBody::inspect(addslashes($serialized)));
     }
 
     public function test_an_unreadable_body_lists_every_class_token(): void
     {
         // Another serializer's body names no classes; a malformed payload names them all, conservatively.
-        self::assertSame(['messageClass' => null, 'classes' => []], SerializedBody::inspect('{"id":"1","name":"x"}'));
-        self::assertSame(['messageClass' => null, 'classes' => ['App\Gadget', 'App\Other']], SerializedBody::inspect(addslashes('O:10:"App\Gadget":1:{s:1:"a";C:9:"App\Other":broken}')));
+        self::assertSame(['messageClass' => null, 'classes' => [], 'custom' => []], SerializedBody::inspect('{"id":"1","name":"x"}'));
+        self::assertSame(['messageClass' => null, 'classes' => ['App\Gadget', 'App\Other'], 'custom' => ['App\Other']], SerializedBody::inspect(addslashes('O:10:"App\Gadget":1:{s:1:"a";C:9:"App\Other":broken}')));
     }
 }

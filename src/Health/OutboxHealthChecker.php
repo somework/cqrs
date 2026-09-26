@@ -92,7 +92,7 @@ final class OutboxHealthChecker implements HealthChecker
 
         // Postponed after failed attempts, so not due: an outage of their transport, or messages that cannot be sent.
         if ($failingFor > self::MAX_WAIT_SECONDS) {
-            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%s outbox message(s) failed and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', self::count($status->retrying, $status), intdiv($failingFor, 60)));
+            $results[] = new CheckResult(CheckSeverity::WARNING, 'outbox', sprintf('%s outbox message(s) failed, or their attempt was interrupted (the relay died), and wait for another attempt, the oldest was stored %d minute(s) ago; see the relay output or the "last_error" column', self::count($status->retrying, $status), intdiv($failingFor, 60)));
         }
 
         $oldestDue = $status->oldestDue;

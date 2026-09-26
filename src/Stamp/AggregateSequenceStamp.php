@@ -25,6 +25,10 @@ final class AggregateSequenceStamp implements StampInterface
             throw new \InvalidArgumentException('Aggregate ID cannot be empty.');
         }
 
+        if ('' === $this->aggregateType) {
+            throw new \InvalidArgumentException('Aggregate type cannot be empty: events of different aggregates with the same id would share one sequence.');
+        }
+
         if ($this->sequenceNumber < 0) {
             throw new \InvalidArgumentException('Sequence number must be non-negative.');
         }

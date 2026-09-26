@@ -270,8 +270,9 @@ afterwards".
 sent, or one of its synchronous handlers threw.
 
 **Fix.** Do not retry the whole command: its work is done, and `$exception->result` holds its
-result. Dispatch the lost message again once the transport is back, and store messages that must
-not be lost with the [transactional outbox](outbox.md) (see
+result. The exception does not carry the lost message; Messenger's log names it ("Sending message
+… with … sender"), and its handler's effects are missing. Store messages that must not be lost
+with the [transactional outbox](outbox.md) instead (see
 [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
 ### `RateLimitExceededException`

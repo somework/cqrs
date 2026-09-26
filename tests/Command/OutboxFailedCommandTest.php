@@ -27,9 +27,12 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
+use function addslashes;
 use function array_map;
 use function json_encode;
 use function preg_replace;
+use function serialize;
+use function str_replace;
 use function strlen;
 use function strtoupper;
 
@@ -120,7 +123,7 @@ final class OutboxFailedCommandTest extends TestCase
 
         $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
         self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
-        self::assertStringContainsString('The body of message "'.$id.'" instantiates '.UnserializeGadget::class.', which is neither the envelope, a stamp, the message class ('.CreateTaskCommand::class.')', self::display($refused));
+        self::assertStringContainsString('The body of message "'.$id.'" instantiates '.UnserializeGadget::class.', which is neither the envelope, a stamp, a command, query or event ('.CreateTaskCommand::class.')', self::display($refused));
         self::assertStringContainsString(PayloadStamp::class, self::display($refused), 'Every class of the body is listed.');
         self::assertCount(1, $this->storage->fetchFailed(10, [$id]), 'Nothing was signed or requeued.');
 
@@ -128,6 +131,43 @@ final class OutboxFailedCommandTest extends TestCase
         $allowed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
         self::assertSame(Command::SUCCESS, $allowed->execute(['--requeue' => true, '--sign' => true, '--allow-class' => ['\\'.UnserializeGadget::class], 'ids' => [$id]], ['interactive' => false]));
         self::assertTrue($signer->verify(OutboxRows::due($this->storage, $id)));
+    }
+
+    public function test_signing_refuses_a_message_class_the_bundle_does_not_dispatch(): void
+    {
+        // The body names its message class itself: a forged row may name any loadable class there.
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new UnserializeGadget()), new PhpSerializer(), 'async');
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+
+        $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('instantiates '.UnserializeGadget::class.', which is neither the envelope, a stamp, a command, query or event', self::display($refused));
+
+        // A message class of the application that is not a command, query or event is allowed explicitly.
+        $allowed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::SUCCESS, $allowed->execute(['--requeue' => true, '--sign' => true, '--allow-class' => [UnserializeGadget::class], 'ids' => [$id]], ['interactive' => false]));
+    }
+
+    public function test_signing_refuses_a_body_with_custom_serialization(): void
+    {
+        // A Serializable class reads its data itself: objects hidden there cannot be listed.
+        $body = addslashes(str_replace(
+            's:11:"PLACEHOLDER";',
+            'C:11:"ArrayObject":21:{x:i:0;a:0:{};m:a:0:{}}',
+            serialize(new Envelope(new CreateTaskCommand('1', 'a'), [new PayloadStamp('PLACEHOLDER')])),
+        ));
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $body, json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, '--allow-class' => [\ArrayObject::class], 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('contains ArrayObject, serialized with custom serialization (Serializable)', self::display($tester));
+        self::assertStringContainsString('ArrayObject', self::display($tester));
     }
 
     public function test_signing_accepts_objects_that_the_message_declares(): void

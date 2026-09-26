@@ -35,6 +35,9 @@ final class SerializedBody
     /** @var array<string, true> */
     private array $classes = [];
 
+    /** @var array<string, true> Classes serialized with Serializable ("C:"), which read their data themselves */
+    private array $customClasses = [];
+
     private function __construct(private readonly string $data, private int $position = 0)
     {
     }
@@ -44,7 +47,10 @@ final class SerializedBody
      * body instantiates. For a body that cannot be read as a serialized value (another serializer,
      * or a malformed payload), every object, custom object or enum token found in its text.
      *
-     * @return array{messageClass: string|null, classes: list<string>}
+     * The objects nested in the data of a class with custom serialization (Serializable, "C:") are
+     * not listed: that class unserializes its data itself. They are reported in "custom".
+     *
+     * @return array{messageClass: string|null, classes: list<string>, custom: list<string>}
      */
     public static function inspect(string $body): array
     {
@@ -61,7 +67,9 @@ final class SerializedBody
         } catch (\UnexpectedValueException) {
             preg_match_all('/[OCE]:\+?\d+:"([^"]*)"/', $data, $matches);
 
-            return ['messageClass' => null, 'classes' => array_values(array_unique($matches[1]))];
+            preg_match_all('/C:\+?\d+:"([^"]*)"/', $data, $custom);
+
+            return ['messageClass' => null, 'classes' => array_values(array_unique($matches[1])), 'custom' => array_values(array_unique($custom[1]))];
         }
 
         $messageClass = null;
@@ -69,7 +77,7 @@ final class SerializedBody
             $messageClass = $value['message'];
         }
 
-        return ['messageClass' => $messageClass, 'classes' => array_keys($reader->classes)];
+        return ['messageClass' => $messageClass, 'classes' => array_keys($reader->classes), 'custom' => array_keys($reader->customClasses)];
     }
 
     /**
@@ -145,6 +153,7 @@ final class SerializedBody
                 $this->expect(':{');
                 if ('C' === $type) {
                     // Custom serialization: the class reads these bytes itself.
+                    $this->customClasses[$class] = true;
                     $this->bytes($count);
                     $this->expect('}');
 

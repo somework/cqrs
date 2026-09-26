@@ -63,6 +63,8 @@ final class OutboxMessageTest extends TestCase
         self::assertSame('corr-1', $decoded->last(MessageMetadataStamp::class)?->getCorrelationId());
         self::assertSame('async', $message->transportName);
         self::assertSame('2026-01-01 00:00:00', $message->createdAt->format('Y-m-d H:i:s'));
+        // PhpSerializer writes no headers: the class is recorded for the listing and the logs.
+        self::assertSame(['type' => CreateTaskCommand::class], json_decode($message->headers, true));
     }
 
     public function test_generated_ids_are_time_ordered_uuid_v7(): void

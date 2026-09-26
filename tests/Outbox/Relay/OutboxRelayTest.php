@@ -139,6 +139,26 @@ final class OutboxRelayTest extends TestCase
         new OutboxRelay($this->storage, new PhpSerializer(), new RecordingBus(), maxAttempts: 0);
     }
 
+    public function test_messages_retried_after_an_interrupted_attempt_are_marked_published_one_by_one(): void
+    {
+        // The process died during their last attempt, maybe because of one of them: each is marked as
+        // published before the next one is sent, so a message that kills the process again is the only
+        // one blamed and sent again (not every message sent before it in the run).
+        foreach (['m1', 'm2', 'm3'] as $id) {
+            $this->storage->interrupt($id, 1);
+        }
+        $publishedWhenSending = [];
+        $bus = new CallbackBus(function () use (&$publishedWhenSending): void {
+            $publishedWhenSending[] = [$this->storage->isPublished('m1'), $this->storage->isPublished('m2')];
+        });
+
+        $result = (new OutboxRelay($this->storage, new PhpSerializer(), $bus))->run(10, $this->reporter());
+
+        self::assertSame(3, $result->relayed);
+        self::assertSame([[false, false], [true, false], [true, true]], $publishedWhenSending);
+        self::assertTrue($this->storage->isPublished('m3'));
+    }
+
     private function relay(): OutboxRelay
     {
         return new OutboxRelay($this->storage, new PhpSerializer(), new RecordingBus());

@@ -78,11 +78,15 @@ final class OutboxMessage
     public static function fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null): self
     {
         $encoded = $serializer->encode($envelope);
+        // The message class, for the listing of given-up rows and the relay's logs: Messenger's PHP
+        // serializer writes no headers (and ignores them when decoding).
+        $headers = $encoded['headers'] ?? [];
+        $headers['type'] ??= $envelope->getMessage()::class;
 
         return new self(
             id: self::generateUuidV7(),
             body: $encoded['body'],
-            headers: json_encode($encoded['headers'] ?? [], JSON_THROW_ON_ERROR),
+            headers: json_encode($headers, JSON_THROW_ON_ERROR),
             createdAt: $createdAt ?? new DateTimeImmutable(),
             transportName: $transportName,
         );

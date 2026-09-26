@@ -74,7 +74,7 @@ final class OutboxHealthCheckerTest extends TestCase
         OutboxRows::fail($this->storage, '00000000-0000-7000-8000-000000000002', 1, 'TransportException: Connection refused', new DateTimeImmutable('+1 minute'));
 
         self::assertSame([
-            [CheckSeverity::WARNING, '2 outbox message(s) failed and wait for another attempt, the oldest was stored 2880 minute(s) ago; see the relay output or the "last_error" column'],
+            [CheckSeverity::WARNING, '2 outbox message(s) failed, or their attempt was interrupted (the relay died), and wait for another attempt, the oldest was stored 2880 minute(s) ago; see the relay output or the "last_error" column'],
         ], self::summary((new OutboxHealthChecker($this->storage))->check()));
     }
 
