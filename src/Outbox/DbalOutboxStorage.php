@@ -21,7 +21,9 @@ use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 
 use function array_chunk;
 use function array_column;
@@ -69,7 +71,7 @@ use const JSON_THROW_ON_ERROR;
  *
  * @api
  */
-final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring
+final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox, RelayUnitOfWork
 {
     private const PURGE_BATCH_SIZE = 1000;
 
@@ -229,6 +231,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             $claimed = (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
             $complete = $complete && $claimed === count($group);
         }
+        $this->commitImplicitTransaction();
 
         $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
         if ($complete) {
@@ -289,6 +292,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->setParameter('token', $token);
             $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
         }
+        $this->commitImplicitTransaction();
 
         // MySQL counts changed rows only (a renewal within the same second changes nothing): read back.
         $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
@@ -333,6 +337,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->setParameter('token', $token)
                 ->executeStatement()));
         }
+        $this->commitImplicitTransaction();
     }
 
     public function markPublished(array $ids): void
@@ -357,6 +362,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->setParameter('published_at', self::now(), Types::DATETIME_IMMUTABLE)
             ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING)
             ->executeStatement()));
+        $this->commitImplicitTransaction();
     }
 
     public function recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool
@@ -382,7 +388,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->setParameter('token', $token);
 
         // Clearing the claim token always changes the row, so the count is exact on MySQL too.
-        return 0 !== (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+        $recorded = 0 !== (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+        $this->commitImplicitTransaction();
+
+        return $recorded;
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -413,6 +422,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->where('id IN (:ids)')
                 ->setParameter('ids', $ids, ArrayParameterType::STRING)
                 ->executeStatement());
+            $this->commitImplicitTransaction();
         } while (self::PURGE_BATCH_SIZE === count($ids));
 
         return $deleted;
@@ -560,6 +570,12 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         return [] === $since ? null : min($since);
     }
 
+    public function isInTransaction(): bool
+    {
+        // With auto-commit off, DBAL opens a transaction when it connects: every statement is in one.
+        return !$this->connection->isAutoCommit() || $this->connection->isTransactionActive();
+    }
+
     public function fetchFailed(int $limit, array $ids = []): array
     {
         $this->readFromPrimary();
@@ -612,7 +628,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->andWhere('id IN (:ids)')
             ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
 
-        return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        $deleted = (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        $this->commitImplicitTransaction();
+
+        return $deleted;
     }
 
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
@@ -641,7 +660,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
             }
 
-            return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+            $requeued = (int) $this->guard(static fn (): int|string => $query->executeStatement());
+            $this->commitImplicitTransaction();
+
+            return $requeued;
         };
 
         if (null === $sign) {
@@ -683,8 +705,75 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function setup(?\Closure $onWait = null): void
     {
-        $this->schema->setup($onWait);
+        // With auto-commit off, DBAL keeps a transaction of its own open, in which the setup would
+        // refuse to change the table: it runs with auto-commit on (DBAL commits that transaction).
+        $implicit = !$this->connection->isAutoCommit() && $this->connection->getTransactionNestingLevel() <= 1;
+        if ($implicit) {
+            $this->connection->setAutoCommit(true);
+        }
+
+        try {
+            $this->schema->setup($onWait);
+        } finally {
+            if ($implicit) {
+                $this->connection->setAutoCommit(false);
+            }
+        }
         $this->setupDone = true;
+    }
+
+    /**
+     * @internal
+     */
+    public function dispatchInUnitOfWork(\Closure $dispatch): mixed
+    {
+        // Only with auto-commit off: the handlers the relay runs in its own process would otherwise
+        // share DBAL's implicit transaction with the relay's writes (a failed handler's writes
+        // committed with the next publish mark, or an aborted PostgreSQL transaction failing them).
+        if ($this->connection->isAutoCommit()) {
+            return $dispatch();
+        }
+        // DBAL opens its implicit transaction when it connects.
+        $this->connection->getNativeConnection();
+        if (1 !== $this->connection->getTransactionNestingLevel()) {
+            return $dispatch();
+        }
+
+        $this->connection->beginTransaction();
+        try {
+            $result = $dispatch();
+        } catch (\Throwable $exception) {
+            try {
+                $this->connection->rollBack();
+            } catch (\Throwable) {
+                $this->discardConnection();
+
+                // The error may be a missing savepoint of a middleware (doctrine_transaction), not the cause.
+                throw new \RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $exception->getMessage()), 0, $exception);
+            }
+
+            throw $exception;
+        }
+        try {
+            $this->connection->commit();
+        } catch (\Throwable $exception) {
+            $this->discardConnection();
+
+            throw $exception;
+        }
+        $this->commitImplicitTransaction();
+
+        return $result;
+    }
+
+    /**
+     * The database ended the transaction itself (a deadlock on MySQL rolls back the savepoint too):
+     * DBAL's nesting level no longer matches the session. Everything the relay wrote is committed
+     * already (publish marks wait in memory), so the next statement starts over on a new connection.
+     */
+    private function discardConnection(): void
+    {
+        $this->connection->close();
     }
 
     /**
@@ -1107,6 +1196,19 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     private function guard(\Closure $operation): mixed
     {
         return $this->schema->guard($operation);
+    }
+
+    /**
+     * With auto-commit off, DBAL keeps every statement in a transaction it opened itself, rolled back
+     * when the process exits: the writes of the relay and the maintenance commands are committed.
+     * Messages are stored in the caller's transaction (never committed here), and a transaction the
+     * application opened on top (nesting level above 1) is left alone.
+     */
+    private function commitImplicitTransaction(): void
+    {
+        if (!$this->connection->isAutoCommit() && 1 === $this->connection->getTransactionNestingLevel()) {
+            $this->connection->commit();
+        }
     }
 
     private static function now(): DateTimeImmutable

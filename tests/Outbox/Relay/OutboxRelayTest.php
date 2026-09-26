@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayReporter;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayResult;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
@@ -157,6 +158,25 @@ final class OutboxRelayTest extends TestCase
         self::assertSame(3, $result->relayed);
         self::assertSame([[false, false], [true, false], [true, true]], $publishedWhenSending);
         self::assertTrue($this->storage->isPublished('m3'));
+    }
+
+    public function test_each_dispatch_runs_in_the_unit_of_work_of_the_storage(): void
+    {
+        $unitOfWork = new class implements RelayUnitOfWork {
+            public int $dispatches = 0;
+
+            public function dispatchInUnitOfWork(\Closure $dispatch): mixed
+            {
+                ++$this->dispatches;
+
+                return $dispatch();
+            }
+        };
+
+        $result = (new OutboxRelay($this->storage, new PhpSerializer(), new RecordingBus(), unitOfWork: $unitOfWork))->run(10, $this->reporter());
+
+        self::assertSame(3, $result->relayed);
+        self::assertSame(3, $unitOfWork->dispatches);
     }
 
     private function relay(): OutboxRelay

@@ -8,11 +8,16 @@ use Doctrine\DBAL\Connection;
 use Psr\Log\NullLogger;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ArchiveTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskArchivedHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\FakeDoctrineTransactionMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
@@ -51,7 +56,9 @@ final class OutboxTestKernel extends Kernel
                     'command.bus' => null,
                     'command.async_bus' => null,
                     'event.bus' => null,
-                    'event.async_bus' => null,
+                    // Application middleware runs when a message is stored through the bus, also when
+                    // listed after Doctrine's transaction middleware, which only runs in the relay.
+                    'event.async_bus' => ['middleware' => ['doctrine_transaction', CallerContextMiddleware::class]],
                 ],
                 'transports' => [
                     'async' => 'in-memory://?serialize=true',
@@ -70,6 +77,10 @@ final class OutboxTestKernel extends Kernel
                 'command_async' => ['default' => 'async'],
                 'event_async' => ['default' => 'async'],
             ],
+            // TaskArchivedEvent carries #[Outbox]; ArchiveTaskCommand goes through the outbox by configuration.
+            'dispatch_modes' => [
+                'command' => ['map' => [ArchiveTaskCommand::class => 'outbox']],
+            ],
             'outbox' => ['enabled' => true, 'auto_setup' => false, 'max_attempts' => 2],
         ]);
 
@@ -83,12 +94,16 @@ final class OutboxTestKernel extends Kernel
             ->factory([TestDatabase::class, 'connect'])
             ->public();
         $services->set(TaskRecorder::class)->public();
+        $services->set(CallerContextMiddleware::class)->public();
+        $services->set('messenger.middleware.doctrine_transaction', FakeDoctrineTransactionMiddleware::class)->public();
         // Private and unused otherwise, so the test container would not have it.
         $services->alias('test.outbox_writer', OutboxWriter::class)->public();
         $services->set(CreateTaskHandler::class);
         $services->set(AsyncTaskHandler::class);
         $services->set(TaskAuditTrailHandler::class);
         $services->set(TaskProjectionHandler::class);
+        $services->set(ArchiveTaskHandler::class);
+        $services->set(TaskArchivedHandler::class);
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void

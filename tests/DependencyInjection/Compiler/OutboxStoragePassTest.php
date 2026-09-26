@@ -43,6 +43,9 @@ final class OutboxStoragePassTest extends TestCase
         $relay = $container->get('somework_cqrs.outbox.relay_command');
         self::assertInstanceOf(DecoratingOutboxStorage::class, self::argument($relay, 'outboxStorage'), 'The relay uses the decorated storage.');
         self::assertInstanceOf(DbalOutboxStorage::class, self::argument($relay, 'table'));
+        $relayLoop = self::argument($relay, 'relay');
+        self::assertIsObject($relayLoop);
+        self::assertInstanceOf(DbalOutboxStorage::class, self::argument($relayLoop, 'unitOfWork'), 'Dispatches run in units of work of the DBAL storage.');
         self::assertInstanceOf(DecoratingOutboxStorage::class, $container->get('app.logging_outbox'));
     }
 
@@ -84,7 +87,28 @@ final class OutboxStoragePassTest extends TestCase
         $relay = $container->get('somework_cqrs.outbox.relay_command');
         self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($relay, 'outboxStorage'));
         self::assertNull(self::argument($relay, 'table'));
+        $relayLoop = self::argument($relay, 'relay');
+        self::assertIsObject($relayLoop);
+        self::assertNull(self::argument($relayLoop, 'unitOfWork'));
         self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($container->get('somework_cqrs.outbox.setup_command'), 'outboxStorage'));
+    }
+
+    public function test_the_writer_checks_transactions_on_the_storage_behind_the_decorators(): void
+    {
+        $container = $this->container(['require_transaction' => true]);
+        $container->getDefinition('somework_cqrs.outbox.writer')->setPublic(true);
+        $container->compile();
+
+        $writer = $container->get('somework_cqrs.outbox.writer');
+        self::assertInstanceOf(DbalOutboxStorage::class, self::argument($writer, 'transaction'));
+        self::assertTrue(self::argument($writer, 'requireTransaction'));
+
+        // A storage that cannot tell whether a transaction is open is not checked.
+        $custom = $this->container(['storage' => 'app.outbox']);
+        $custom->register('app.outbox', InMemoryOutboxStorage::class);
+        $custom->getDefinition('somework_cqrs.outbox.writer')->setPublic(true);
+        $custom->compile();
+        self::assertNull(self::argument($custom->get('somework_cqrs.outbox.writer'), 'transaction'));
     }
 
     public function test_capabilities_autowire_to_the_storage_that_implements_them(): void

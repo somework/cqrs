@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use ReflectionClass;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
+use SomeWork\CqrsBundle\Attribute\Outbox;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Support\MessageTypeLocator;
@@ -14,8 +15,8 @@ use SomeWork\CqrsBundle\Support\MessageTypeLocator;
  * Resolves the effective dispatch mode for a message requested with DispatchMode::DEFAULT.
  *
  * Resolution order for commands and events: exact class entry in the configured map,
- * the #[Asynchronous] attribute on the message class, parent classes, interfaces (most
- * specific first), the per-type default. Queries are always synchronous.
+ * the #[Outbox] or #[Asynchronous] attribute on the message class, parent classes, interfaces
+ * (most specific first), the per-type default. Queries are always synchronous.
  *
  * @internal
  */
@@ -83,8 +84,12 @@ final class DispatchModeDecider
             return $map[$message::class];
         }
 
-        // ...and the #[Asynchronous] attribute wins over mappings of parents and interfaces.
-        if ([] !== (new ReflectionClass($message))->getAttributes(Asynchronous::class)) {
+        // ...and the #[Outbox] or #[Asynchronous] attribute wins over mappings of parents and interfaces.
+        $reflection = new ReflectionClass($message);
+        if ([] !== $reflection->getAttributes(Outbox::class)) {
+            return DispatchMode::OUTBOX;
+        }
+        if ([] !== $reflection->getAttributes(Asynchronous::class)) {
             return DispatchMode::ASYNC;
         }
 

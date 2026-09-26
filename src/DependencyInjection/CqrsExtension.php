@@ -46,7 +46,9 @@ use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
+use function array_keys;
 use function class_exists;
+use function implode;
 use function is_array;
 use function is_bool;
 use function is_int;
@@ -92,6 +94,16 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         /* @phpstan-ignore argument.type */
         $this->guardAsyncBusConfiguration($config);
+        // Messages stored through the buses need the outbox.
+        if (true !== $config['outbox']['enabled']) {
+            foreach (['command', 'event'] as $type) {
+                $modes = $config['dispatch_modes'][$type];
+                $outboxMessages = array_keys(array_filter($modes['map'], static fn (string $mode): bool => DispatchMode::OUTBOX->value === $mode));
+                if (DispatchMode::OUTBOX->value === $modes['default'] || [] !== $outboxMessages) {
+                    throw new InvalidConfigurationException(sprintf('"somework_cqrs.dispatch_modes.%s" stores messages in the outbox (%s), but the outbox is disabled. Enable "somework_cqrs.outbox".', $type, DispatchMode::OUTBOX->value === $modes['default'] ? '"default: outbox"' : implode(', ', $outboxMessages)));
+                }
+            }
+        }
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
@@ -368,16 +380,20 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      *         event: array{default: list<string>, map: array<string, list<string>>},
      *         event_async: array{default: list<string>, map: array<string, list<string>>},
      *     },
+     *     outbox: array{enabled: bool, ...},
      * } $config
      */
     private function guardAsyncBusConfiguration(array $config): void
     {
         $commandAsyncBus = $config['buses']['command_async'] ?? null;
         $eventAsyncBus = $config['buses']['event_async'] ?? null;
+        // The outbox stores its rows for the async transports: they need no async bus then.
+        $outbox = true === $config['outbox']['enabled'];
 
         $commandAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['command'],
-            $config['transports']['command_async']
+            $config['transports']['command_async'],
+            $outbox,
         );
         if (null === $commandAsyncBus && $this->hasAsyncConfiguration($commandAsyncSources)) {
             $this->throwMissingAsyncBusException('command', $commandAsyncSources, 'command_async');
@@ -385,7 +401,8 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         $eventAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['event'],
-            $config['transports']['event_async']
+            $config['transports']['event_async'],
+            $outbox,
         );
         if (null === $eventAsyncBus && $this->hasAsyncConfiguration($eventAsyncSources)) {
             $this->throwMissingAsyncBusException('event', $eventAsyncSources, 'event_async');
@@ -403,7 +420,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      *     transport_messages: array<string, list<string>>,
      * }
      */
-    private function collectAsyncSources(array $dispatchConfig, array $transportConfig): array
+    private function collectAsyncSources(array $dispatchConfig, array $transportConfig, bool $outbox): array
     {
         $dispatchMessages = [];
 
@@ -416,8 +433,8 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         return [
             'dispatch_default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
             'dispatch_messages' => $dispatchMessages,
-            'transport_default' => $transportConfig['default'],
-            'transport_messages' => array_filter(
+            'transport_default' => $outbox ? [] : $transportConfig['default'],
+            'transport_messages' => $outbox ? [] : array_filter(
                 $transportConfig['map'],
                 static fn (array $transports): bool => [] !== $transports
             ),

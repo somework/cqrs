@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Connections\PrimaryReadReplicaConnection;
 use Doctrine\DBAL\Driver\AbstractException;
@@ -1387,6 +1388,154 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $status->retrying);
         self::assertSame('2026-01-01T10:00:00+00:00', $status->oldestRetrying?->format(DATE_ATOM));
         self::assertSame(1, $status->failed);
+    }
+
+    public function test_reports_whether_a_transaction_is_open_on_its_connection(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        self::assertFalse($storage->isInTransaction());
+
+        $this->connection->transactional(static fn () => self::assertTrue($storage->isInTransaction()));
+    }
+
+    public function test_a_connection_without_auto_commit_is_always_in_a_transaction(): void
+    {
+        // DBAL opens the transaction when it connects: before that, isTransactionActive() is false.
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true], $configuration);
+
+        self::assertTrue((new DbalOutboxStorage($connection, autoSetup: false))->isInTransaction());
+    }
+
+    public function test_the_relay_and_maintenance_writes_are_committed_on_a_connection_without_auto_commit(): void
+    {
+        // Otherwise they are rolled back when the process exits: every relay run would resend every row.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $writer = new DbalOutboxStorage($other);
+            $writer->setup();
+            $writer->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+            $writer->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+            $other->executeStatement('UPDATE somework_cqrs_outbox SET failed_at = CURRENT_TIMESTAMP WHERE id = ?', [self::ID_2]);
+
+            $storage = new DbalOutboxStorage(DriverManager::getConnection($params, $configuration), autoSetup: false);
+            $rows = $storage->fetchUnpublished(10);
+            self::assertSame([self::ID_1], $storage->claim($rows, [0 => new DateTimeImmutable('+1 minute')], 'token'));
+            $storage->markPublished([self::ID_1]);
+            self::assertSame(1, $storage->deleteFailed([self::ID_2]));
+
+            self::assertNotNull($other->fetchOne('SELECT published_at FROM somework_cqrs_outbox WHERE id = ?', [self::ID_1]), 'Seen by another connection: committed.');
+            self::assertFalse($other->fetchOne('SELECT id FROM somework_cqrs_outbox WHERE id = ?', [self::ID_2]));
+
+            self::assertSame(1, $storage->purgePublished(new DateTimeImmutable('+1 day')));
+            self::assertSame(0, (int) $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox'));
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public function test_a_dispatch_of_the_relay_is_a_unit_of_work_of_its_own_without_auto_commit(): void
+    {
+        // A handler the relay runs in its own process must not share DBAL's implicit transaction.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $other->executeStatement('CREATE TABLE handled (id VARCHAR(10) NOT NULL)');
+            $connection = DriverManager::getConnection($params, $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+
+            $handle = static function (string $id) use ($connection): string {
+                $connection->insert('handled', ['id' => $id]);
+                if ('failed' === $id) {
+                    throw new \RuntimeException('The handler failed.');
+                }
+
+                return $id;
+            };
+            try {
+                $storage->dispatchInUnitOfWork(static fn (): string => $handle('failed'));
+                self::fail('The exception of the dispatch is rethrown.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('The handler failed.', $exception->getMessage());
+            }
+            self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
+
+            self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'), 'The failed dispatch is rolled back, the other committed.');
+            self::assertSame(1, $connection->getTransactionNestingLevel());
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public function test_a_unit_of_work_the_database_ended_itself_starts_over_on_a_new_connection(): void
+    {
+        // A deadlock on MySQL rolls back the whole transaction, savepoint included: rolling back to
+        // it fails, and DBAL's nesting level no longer matches the session.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $other->executeStatement('CREATE TABLE handled (id VARCHAR(10) NOT NULL)');
+            $connection = DriverManager::getConnection($params, $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+            $handle = static function (string $id) use ($connection): string {
+                $connection->insert('handled', ['id' => $id]);
+                if ('deadlock' === $id) {
+                    $connection->executeStatement('ROLLBACK');
+
+                    throw new \RuntimeException('Deadlock found when trying to get lock.');
+                }
+
+                return $id;
+            };
+
+            try {
+                $storage->dispatchInUnitOfWork(static fn (): string => $handle('deadlock'));
+                self::fail('The exception of the dispatch is rethrown.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): Deadlock found when trying to get lock.', $exception->getMessage());
+                self::assertSame('Deadlock found when trying to get lock.', $exception->getPrevious()?->getMessage(), 'The handler\'s error, not the savepoint\'s.');
+            }
+            self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
+
+            self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'));
+            self::assertSame(1, $connection->getTransactionNestingLevel(), 'The next dispatches are units of work again.');
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public function test_the_setup_runs_on_a_connection_without_auto_commit(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $file], $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+
+            $storage->setup();
+
+            self::assertFalse($connection->isAutoCommit());
+            self::assertSame([], $storage->pendingChanges());
+            self::assertTrue(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $file])->createSchemaManager()->tablesExist(['somework_cqrs_outbox']));
+        } finally {
+            unlink($file);
+        }
     }
 
     public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void

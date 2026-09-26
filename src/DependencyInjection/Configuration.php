@@ -338,6 +338,8 @@ final class Configuration implements ConfigurationInterface
             ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.'));
         $outboxChildren->booleanNode('auto_setup')->defaultTrue()
             ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+        $outboxChildren->booleanNode('require_transaction')->defaultTrue()
+            ->info('Refuse to store a message outside a transaction on the outbox connection (OutboxWriter and DispatchMode::OUTBOX): it would not be part of the business change.');
         // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
         $outboxChildren->integerNode('max_attempts')->defaultValue(10)
             ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
@@ -407,9 +409,9 @@ final class Configuration implements ConfigurationInterface
 
         $children
             ->enumNode('default')
-            ->values([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
+            ->values([DispatchMode::SYNC->value, DispatchMode::ASYNC->value, DispatchMode::OUTBOX->value])
             ->defaultValue(DispatchMode::SYNC->value)
-            ->info(sprintf('Fallback dispatch mode used for %s messages.', $type));
+            ->info(sprintf('Fallback dispatch mode used for %s messages: "sync", "async", or "outbox" (stored in the transactional outbox, in the current transaction).', $type));
 
         $map = $children->arrayNode('map');
         $map
@@ -417,8 +419,8 @@ final class Configuration implements ConfigurationInterface
             ->defaultValue([])
             ->scalarPrototype()
                 ->validate()
-                    ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
-                    ->thenInvalid('Invalid dispatch mode %s. Expected "sync" or "async".')
+                    ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value, DispatchMode::OUTBOX->value])
+                    ->thenInvalid('Invalid dispatch mode %s. Expected "sync", "async" or "outbox".')
                 ->end()
             ->end()
             ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));

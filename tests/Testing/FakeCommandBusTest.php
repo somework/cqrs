@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
@@ -265,5 +266,16 @@ final class FakeCommandBusTest extends TestCase
         $this->expectExceptionMessage('the fake bus matches messages by their exact class');
 
         $bus->willThrow(new \RuntimeException('boom'), Command::class);
+    }
+
+    public function test_an_outbox_dispatch_returns_the_envelope_of_a_stored_message(): void
+    {
+        $bus = new FakeCommandBus();
+
+        $stored = $bus->dispatch(new CreateTaskCommand('1', 'a'), DispatchMode::OUTBOX)->last(OutboxStoredStamp::class);
+
+        self::assertInstanceOf(OutboxStoredStamp::class, $stored);
+        self::assertSame([null], $stored->transportNames);
+        self::assertNull($bus->dispatch(new CreateTaskCommand('2', 'b'))->last(OutboxStoredStamp::class));
     }
 }

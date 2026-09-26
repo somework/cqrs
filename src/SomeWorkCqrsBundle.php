@@ -16,6 +16,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoreMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\RemoveHandlerMetadataParameterPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateBusIdsPass;
@@ -50,11 +51,13 @@ final class SomeWorkCqrsBundle extends Bundle
         // the optimization passes so references to aliases (tracer provider, lock factory) resolve.
         // Each inserts right after "dispatch_after_current_bus", so the resulting order is:
         // OpenTelemetry, CausationId, AllowNoHandler, then Messenger's own middleware; the
-        // deduplication lock release goes right after Messenger's "deduplicate_middleware".
+        // deduplication lock release goes right after Messenger's "deduplicate_middleware", and the
+        // outbox store (DispatchMode::OUTBOX) right before "send_message".
         $container->addCompilerPass(new AllowNoHandlerMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CausationIdMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new OpenTelemetryMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new DeduplicationLockReleasePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
+        $container->addCompilerPass(new OutboxStoreMiddlewarePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CqrsRetryStrategyPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new TransportRoutingPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new OutboxRelayLockPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);

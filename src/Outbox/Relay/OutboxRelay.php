@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
+use SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
@@ -153,6 +154,7 @@ final class OutboxRelay
         private readonly ?ContainerInterface $transports = null,
         private readonly ?OutboxSigner $signer = null,
         private readonly bool $acceptUnsigned = false,
+        private readonly ?RelayUnitOfWork $unitOfWork = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -703,8 +705,18 @@ final class OutboxRelay
 
     private function send(OutboxMessage $message, Envelope $envelope, RelayReporter $reporter): void
     {
-        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is kept).
-        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope);
+        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is
+        // kept). Its middleware already ran when the message was stored through a CQRS bus: the stamps
+        // it adds again here (a context of the relay's process) give way to the stored ones.
+        $stored = [];
+        foreach ($envelope->all() as $class => $stamps) {
+            $stored[$class] = count($stamps);
+        }
+        $bus = $this->busFor($envelope->getMessage());
+        $envelope = $envelope->with(new RelayedFromOutboxStamp($stored));
+        $envelope = null === $this->unitOfWork
+            ? $bus->dispatch($envelope)
+            : $this->unitOfWork->dispatchInUnitOfWork(static fn (): Envelope => $bus->dispatch($envelope));
 
         if (null !== $envelope->last(SentStamp::class)) {
             return;

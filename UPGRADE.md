@@ -73,7 +73,11 @@ rejects the new options.
    - events implementing `SequenceAware`, which need `getAggregateType()` ([Event ordering](#event-ordering));
    - custom `OutboxStorage` implementations and decorators, and imports of `Contract\OutboxStorage` (now
      `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
-   - tests that read `getDispatched()` of the fake buses as arrays.
+   - tests that read `getDispatched()` of the fake buses as arrays;
+   - a `match` over `DispatchMode` without a `default` arm, which needs the new `OUTBOX` case
+     ([Dispatch through the outbox](#dispatch-through-the-outbox));
+   - `OutboxWriter::store()` calls outside a transaction on the outbox connection, which now throw
+     ([Dispatch through the outbox](#dispatch-through-the-outbox)).
 2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
    deleted classes or of another message type, `#[Asynchronous]` on queries, and `%env()%` values in
    compile-time options
@@ -303,6 +307,28 @@ correlation id and names the handled message as its cause.
   handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous events)
   failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
   Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
+
+### Dispatch through the outbox
+
+- **Breaking:** `DispatchMode` has a new case, `OUTBOX`. A `match` over `DispatchMode` without a `default` arm
+  fails with `UnhandledMatchError` when it meets it: in bus decorators or wrappers implementing
+  `CommandBusInterface`/`EventBusInterface`, and in tests reading `RecordedDispatch::$mode` of the fake buses.
+  Stamp deciders, retry policies, serializers and metadata providers never see it: a message dispatched through
+  the outbox has its stamps decided as an `ASYNC` dispatch, so they cannot tell the two apart.
+- **Breaking:** `OutboxWriter::store()` refuses to store outside a transaction on the outbox connection
+  (`OutboxRequiresTransactionException`) unless `outbox.require_transaction: false` is set. A connection with
+  `auto_commit: false` counts as being in a transaction.
+- `OutboxWriter::store()` refuses a transport that is not a Messenger transport (`UnknownOutboxTransportException`)
+  instead of storing a row the relay gives up on.
+- With the outbox enabled, the bundle's outbox middleware sits right after Messenger's
+  `add_default_stamps_middleware` and right before `send_message` on the CQRS buses, and wraps Doctrine's
+  `doctrine_transaction` and `doctrine_open_transaction_logger` there. It only acts on messages dispatched through
+  the outbox: the middleware before the store runs when they are stored (except those two Doctrine middleware),
+  and again when the relay sends them (the stamps it adds again give way to the stored ones). Middleware must call
+  the next middleware for such a dispatch. The relay's run has no caller context and no `ReceivedStamp`: middleware
+  that checks the dispatching context (authorization) should skip envelopes with `RelayedFromOutboxStamp`.
+- With the outbox enabled, `transports.command_async`/`event_async` no longer require an async bus: the outbox
+  stores its rows for them.
 
 ### Event ordering
 
