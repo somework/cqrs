@@ -102,7 +102,7 @@ final class ConfigurationOverridesTest extends KernelTestCase
         $display = $tester->getDisplay(true);
         self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $display);
         self::assertStringContainsString(sprintf('Handler "%s" is resolvable', CreateTaskHandler::class), $display);
-        self::assertStringContainsString('Transport "async" can be created (the connection is not tested)', $display);
+        self::assertStringContainsString('Transport "async" can be created (this does not check that its broker is reachable)', $display);
         self::assertStringNotContainsString('CRITICAL', $display);
     }
 }

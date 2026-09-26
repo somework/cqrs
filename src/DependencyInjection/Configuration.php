@@ -518,8 +518,7 @@ final class Configuration implements ConfigurationInterface
     /**
      * Keys of per-message maps are message classes or interfaces. A leading backslash is dropped,
      * and unknown names (typos, removed classes) are rejected instead of silently never matching.
-     */
-    /**
+     *
      * @param string $type "command", "query" or "event": a key of another message type never matches
      */
     private static function messageKeyedMap(ArrayNodeDefinition $map, string $type): void
