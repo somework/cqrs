@@ -782,7 +782,7 @@ final class OutboxRelay
             ? 'Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.'
             : 'Message "%s" (%s) was neither sent to a transport nor handled (e.g. Messenger\'s deduplication dropped it as a duplicate of another message, or it is an event without handlers); it is marked as published.';
 
-        $reporter->notSent(sprintf($warning, $message->id, $envelope->getMessage()::class));
+        $reporter->notSent(sprintf($warning, self::clean($message->id), $envelope->getMessage()::class));
         $this->logger?->warning(sprintf($warning, '{id}', '{class}'), ['id' => $message->id, 'class' => $envelope->getMessage()::class]);
     }
 

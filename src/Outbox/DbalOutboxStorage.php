@@ -75,6 +75,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 {
     private const PURGE_BATCH_SIZE = 1000;
 
+    /** Given-up rows read at once when requeueing them with new signatures (their bodies are read). */
+    private const REQUEUE_BATCH_SIZE = 100;
+
     /**
      * Bytes of bodies and headers one fetch reads at most (it always reads one row): a batch
      * of large messages must not exhaust the memory of the relay before any of them is claimed.
@@ -673,21 +676,32 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             return $requeue();
         }
 
-        // Each row is signed as stored, and requeued in the same statement.
-        $query = $this->connection->createQueryBuilder()
-            ->select('id', 'body', 'headers', 'transport_name', 'created_at')
-            ->from($this->tableName)
-            ->where('published_at IS NULL')
-            ->andWhere('failed_at IS NOT NULL');
-        if ([] !== $ids) {
-            $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
-        }
+        // Each row is signed as stored, and requeued in the same statement. The bodies are read in
+        // batches, in id order: all given-up rows (no ids) may not fit in memory at once.
         $platform = $this->connection->getDatabasePlatform();
         $requeued = 0;
-        foreach ($this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative()) as $row) {
-            $message = new OutboxMessage((string) $row['id'], (string) $row['body'], (string) $row['headers'], self::readUtc($row['created_at'], $platform), null === $row['transport_name'] ? null : (string) $row['transport_name']);
-            $requeued += $requeue($message->id, $sign($message));
-        }
+        $after = null;
+        do {
+            $query = $this->connection->createQueryBuilder()
+                ->select('id', 'body', 'headers', 'transport_name', 'created_at')
+                ->from($this->tableName)
+                ->where('published_at IS NULL')
+                ->andWhere('failed_at IS NOT NULL')
+                ->orderBy('id')
+                ->setMaxResults(self::REQUEUE_BATCH_SIZE);
+            if ([] !== $ids) {
+                $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
+            }
+            if (null !== $after) {
+                $query->andWhere('id > :after')->setParameter('after', $after);
+            }
+            $rows = $this->guard(static fn (): array => $query->executeQuery()->fetchAllAssociative());
+            foreach ($rows as $row) {
+                $message = new OutboxMessage((string) $row['id'], (string) $row['body'], (string) $row['headers'], self::readUtc($row['created_at'], $platform), null === $row['transport_name'] ? null : (string) $row['transport_name']);
+                $requeued += $requeue($message->id, $sign($message));
+                $after = (string) $row['id'];
+            }
+        } while (self::REQUEUE_BATCH_SIZE === count($rows));
 
         return $requeued;
     }
