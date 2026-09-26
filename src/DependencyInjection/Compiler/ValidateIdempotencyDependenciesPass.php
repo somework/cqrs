@@ -72,7 +72,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             return;
         }
 
-        $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $store) : sprintf('"%s"', $store);
+        $shown = self::withoutCredentials($store);
+        $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $shown) : sprintf('"%s"', $shown);
 
         if (1 === preg_match('/^in-memory$/', $store)) {
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
@@ -109,6 +110,17 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             // "%" would read as a parameter (the advice contains "%env(LOCK_DSN)%").
             $container->getDefinition(self::DECIDER)->setArgument('$problem', str_replace('%', '%%', $problem));
         }
+    }
+
+    /**
+     * The DSN without its user info and password, secret or token parameters: the message is
+     * logged, and an environment variable is resolved with its value.
+     */
+    private static function withoutCredentials(string $dsn): string
+    {
+        $dsn = (string) preg_replace('#(://)[^/@\s]*@#', '$1***@', $dsn);
+
+        return (string) preg_replace('#((?:^|[?&;:])[\w.-]*(?:password|passwd|pass|pwd|secret|token)=)[^&;\s]*#i', '$1***', $dsn);
     }
 
     /**

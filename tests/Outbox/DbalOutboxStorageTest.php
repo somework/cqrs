@@ -1441,6 +1441,7 @@ final class DbalOutboxStorageTest extends TestCase
     {
         // Otherwise they are rolled back when the process exits: every relay run would resend every row.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file];
         $configuration = new Configuration();
         $configuration->setAutoCommit(false);
@@ -1474,6 +1475,7 @@ final class DbalOutboxStorageTest extends TestCase
         // An idle "outbox:relay --watch" fetches every second: its reads must not hold a transaction
         // (and a snapshot) open, which here keeps the writers of other connections out.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file, 'driverOptions' => [\PDO::ATTR_TIMEOUT => 1]];
         $configuration = new Configuration();
         $configuration->setAutoCommit(false);
@@ -1500,6 +1502,7 @@ final class DbalOutboxStorageTest extends TestCase
     {
         // A handler the relay runs in its own process must not share DBAL's implicit transaction.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file];
         $configuration = new Configuration();
         $configuration->setAutoCommit(false);
@@ -1548,6 +1551,7 @@ final class DbalOutboxStorageTest extends TestCase
         // Otherwise every later write of a --watch relay goes into it, and is rolled back when the
         // process exits: the messages it sent meanwhile are sent again.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file];
         $configuration = new Configuration();
         $configuration->setAutoCommit($autoCommit);
@@ -1603,6 +1607,7 @@ final class DbalOutboxStorageTest extends TestCase
         // A deadlock on MySQL rolls back the whole transaction, savepoint included: rolling back to
         // it fails, and DBAL's nesting level no longer matches the session.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file];
         $configuration = new Configuration();
         $configuration->setAutoCommit(false);
@@ -1642,6 +1647,7 @@ final class DbalOutboxStorageTest extends TestCase
     public function test_the_setup_runs_on_a_connection_without_auto_commit(): void
     {
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $configuration = new Configuration();
         $configuration->setAutoCommit(false);
 
@@ -1663,6 +1669,7 @@ final class DbalOutboxStorageTest extends TestCase
     {
         // A lagging replica would show the relay rows already published, or none that are due.
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        self::assertIsString($file);
         $params = ['driver' => 'pdo_sqlite', 'path' => $file];
         $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'wrapperClass' => PrimaryReadReplicaConnection::class, 'primary' => $params, 'replica' => [$params]]);
 
