@@ -206,6 +206,8 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
         // The lock lives in a database file, so it outlives the process like a Redis or PDO lock.
         $database = tempnam(sys_get_temp_dir(), 'cqrs-lock');
         $script = tempnam(sys_get_temp_dir(), 'cqrs-fatal');
+        self::assertIsString($database);
+        self::assertIsString($script);
         file_put_contents($script, sprintf(<<<'PHP'
             <?php
             require %s;
