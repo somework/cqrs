@@ -62,13 +62,25 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             return;
         }
 
-        $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $store) : sprintf('"%s"', $store);
+        $shown = self::withoutCredentials($store);
+        $origin = $fromEnvironment ? sprintf('"%s" (the environment value when the container was compiled)', $shown) : sprintf('"%s"', $shown);
 
         if (1 === preg_match('/^(flock|semaphore|in-memory)(:|$)/', $store)) {
             $container->log($this, sprintf('Idempotency is enabled but the lock store %s only lives in one process or host: it does not deduplicate across servers, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
             $container->log($this, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages, so asynchronous dispatches with an IdempotencyStamp fail. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
         }
+    }
+
+    /**
+     * The DSN without its user info and password, secret or token parameters: the message is
+     * logged, and an environment variable is resolved with its value.
+     */
+    private static function withoutCredentials(string $dsn): string
+    {
+        $dsn = (string) preg_replace('#(://)[^/@\s]*@#', '$1***@', $dsn);
+
+        return (string) preg_replace('#((?:^|[?&;:])[\w.-]*(?:password|passwd|pass|pwd|secret|token)=)[^&;\s]*#i', '$1***', $dsn);
     }
 
     /**
