@@ -219,6 +219,59 @@ final class OutboxRelayTest extends TestCase
         self::assertSame(2, $resetter->resets);
     }
 
+    public function test_control_characters_in_the_id_of_a_message_handled_in_this_process_do_not_reach_the_warning(): void
+    {
+        $storage = new InMemoryOutboxStorage();
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('1', 'task')), new PhpSerializer());
+        $storage->store(new OutboxMessage("id\e[2J", $encoded->body, $encoded->headers, new DateTimeImmutable()));
+        $bus = new class implements MessageBusInterface {
+            public function dispatch(object $message, array $stamps = []): Envelope
+            {
+                return Envelope::wrap($message, $stamps)->with(new HandledStamp(null, 'handler'));
+            }
+        };
+        $reporter = new class implements RelayReporter {
+            /** @var list<string> */
+            public array $warnings = [];
+
+            public function attemptFailed(OutboxMessage $message, int $attempt, int $maxAttempts, DateTimeImmutable $retryAt, string $error): void
+            {
+            }
+
+            public function claimedElsewhereAfterFailure(OutboxMessage $message, string $error): void
+            {
+            }
+
+            public function gaveUp(OutboxMessage $message, int $attempts, string $error): void
+            {
+            }
+
+            public function notSent(string $warning): void
+            {
+                $this->warnings[] = $warning;
+            }
+
+            public function transportPaused(?string $transportName, int $failures, int $seconds): void
+            {
+            }
+
+            public function continueAfterMessage(): bool
+            {
+                return true;
+            }
+
+            public function stopRequested(): bool
+            {
+                return false;
+            }
+        };
+
+        (new OutboxRelay($storage, new PhpSerializer(), $bus))->run(10, $reporter);
+
+        self::assertCount(1, $reporter->warnings);
+        self::assertStringStartsWith('Message "id [2j" (', $reporter->warnings[0]);
+    }
+
     public function test_a_failing_reset_does_not_fail_the_handled_message(): void
     {
         $bus = new class implements MessageBusInterface {

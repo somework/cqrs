@@ -1033,6 +1033,34 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame([], $storage->fetchFailed(10));
     }
 
+    public function test_requeueing_every_given_up_row_with_signatures_reads_them_in_batches(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        $ids = [];
+        for ($i = 1; $i <= 250; ++$i) {
+            $ids[] = $id = sprintf('00000000-0000-7000-8000-%012d', $i);
+            $storage->store(self::message($id, '2026-01-01 10:00:00', 'async'));
+            OutboxRows::fail($storage, $id, 3, 'not signed', null);
+        }
+        $signer = new OutboxSigner('secret');
+        /** @var \ArrayObject<int, string> $signed */
+        $signed = new \ArrayObject();
+
+        self::assertSame(250, $storage->requeueFailed([], null, static function (OutboxMessage $message) use ($signer, $signed): string {
+            $signed[] = $message->id;
+
+            return $signer->sign($message);
+        }));
+
+        self::assertSame($ids, $signed->getArrayCopy(), 'Every row once, in id order.');
+        self::assertSame([], $storage->fetchFailed(10));
+        $relayable = $storage->fetchUnpublished(300);
+        self::assertCount(250, $relayable);
+        foreach ($relayable as $message) {
+            self::assertTrue($signer->verify($message));
+        }
+    }
+
     public function test_requeueing_with_signatures_signs_and_counts_only_the_given_up_rows(): void
     {
         $storage = new DbalOutboxStorage($this->connection);

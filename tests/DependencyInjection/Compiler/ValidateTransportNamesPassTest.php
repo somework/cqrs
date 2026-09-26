@@ -249,6 +249,39 @@ final class ValidateTransportNamesPassTest extends TestCase
         $this->expectNotToPerformAssertions();
     }
 
+    public function test_the_transport_of_an_asynchronous_attribute_is_checked_when_the_message_is_mapped_to_the_outbox(): void
+    {
+        // The attribute's transport is where the relay sends the stored message.
+        $container = $this->asyncContainer([SendNotificationCommand::class]);
+        $container->register('somework_cqrs.outbox.writer', \stdClass::class);
+        $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$commandMap', [SendNotificationCommand::class => DispatchMode::OUTBOX]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[Asynchronous(transport: "notifications")] on "%s" names a Messenger transport that is not defined.', SendNotificationCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_a_bare_outbox_attribute_mapped_to_async_needs_the_async_bus_and_a_transport(): void
+    {
+        $container = $this->outboxContainer([TaskArchivedEvent::class]);
+        $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$eventMap', [TaskArchivedEvent::class => DispatchMode::ASYNC]);
+
+        try {
+            (new ValidateTransportNamesPass())->process($container);
+            self::fail('Expected the build to fail without an async bus.');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertStringContainsString(sprintf('"%s" carries #[Outbox] and "somework_cqrs.dispatch_modes.event" maps it to "async", but "somework_cqrs.buses.event_async" is not configured', TaskArchivedEvent::class), $exception->getMessage());
+        }
+
+        $container->setParameter('somework_cqrs.bus.event_async', 'event.async_bus');
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries #[Outbox] and "somework_cqrs.dispatch_modes.event" maps it to "async" without a transport, but there is no "async" transport', TaskArchivedEvent::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
     /**
      * @param list<class-string> $messages
      */
