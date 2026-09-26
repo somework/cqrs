@@ -151,6 +151,28 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
     }
 
+    public function test_the_credentials_of_the_lock_store_are_not_logged(): void
+    {
+        $container = $this->enabledContainer();
+        $container->setParameter('env(CQRS_TEST_LOCK_DSN)', 'postgresql+advisory://app:s3cret@db:5432/app?sslpassword=s3cret&password=s3cret');
+        $placeholder = $container->getParameterBag()->resolveValue('%env(CQRS_TEST_LOCK_DSN)%');
+        self::assertIsString($placeholder);
+        $container = $this->containerWithLockStore($placeholder, $container);
+
+        $container->register('somework_cqrs.stamp_decider.idempotency', IdempotencyStampDecider::class);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        // Nor handed to the decider, which logs it at runtime and is dumped in the compiled container.
+        $problem = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$problem');
+        self::assertIsString($problem);
+        self::assertStringNotContainsString('s3cret', $problem);
+        $log = $container->getCompiler()->getLog();
+        self::assertCount(1, $log);
+        self::assertStringNotContainsString('s3cret', $log[0]);
+        self::assertStringContainsString('"postgresql+advisory://***@db:5432/app?sslpassword=***&password=***" (the environment value when the container was compiled)', $log[0]);
+    }
+
     private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder
     {
         $container ??= $this->enabledContainer();
