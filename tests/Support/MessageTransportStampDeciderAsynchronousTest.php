@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -24,7 +25,7 @@ use function array_values;
 /**
  * Transport precedence for messages carrying #[Asynchronous]: exact-class configuration, then the
  * attribute's transport, then parent/interface/default configuration, then "async" for a bare
- * attribute unless Messenger's routing routes the message.
+ * attribute unless Messenger's routing (or #[AsMessage(transport: ...)]) routes the message.
  */
 #[CoversClass(MessageTransportStampDecider::class)]
 #[CoversClass(MessageTransportResolver::class)]
@@ -46,6 +47,7 @@ final class MessageTransportStampDeciderAsynchronousTest extends TestCase
         yield 'bare attribute respects a namespace route' => [new AsyncTaskCommand('1'), [], ['SomeWork\\CqrsBundle\\Tests\\Fixture\\*'], null];
         yield 'bare attribute respects an interface route' => [new AsyncTaskCommand('1'), [], [\SomeWork\CqrsBundle\Contract\Command::class], null];
         yield 'a route for another namespace does not count' => [new AsyncTaskCommand('1'), [], ['App\\Message\\*'], ['async']];
+        yield 'bare attribute leaves messages routed by #[AsMessage] to Messenger' => [new AttributeRoutedCommand(), [], [], null];
     }
 
     /**

@@ -12,8 +12,9 @@ use function sprintf;
 /**
  * Instantiates every Messenger transport to verify that its DSN and options are valid.
  *
- * Creating a transport does not open a connection for the built-in transports, so this
- * check does not require the broker to be reachable.
+ * Most built-in transports connect on first use, so this check does not need the broker. The
+ * Redis transport connects when it is created unless its "lazy" option is true: an unreachable
+ * Redis server is then reported as CRITICAL, after the transport's "timeout" (unlimited by default).
  *
  * @internal
  */

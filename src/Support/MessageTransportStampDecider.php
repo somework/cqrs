@@ -161,10 +161,14 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * Whether framework.messenger.routing routes the message.
+     * Whether framework.messenger.routing, or #[AsMessage(transport: ...)], routes the message.
      */
     private function isRouted(object $message): bool
     {
+        if (AsMessageRouting::hasTransport($message::class)) {
+            return true;
+        }
+
         if ([] === $this->routedMessageTypes) {
             return false;
         }

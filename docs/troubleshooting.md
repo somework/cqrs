@@ -409,7 +409,8 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `Handler "..." cannot be instantiated: ...` A handler's constructor or one of
   its dependencies fails (often a missing environment variable).
 * `Transport "..." cannot be created: ...` The transport DSN or options are
-  invalid.
+  invalid, or, for a Redis transport without `lazy: true`, the Redis server
+  cannot be reached.
 * `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.
 
 It exits with `1` for warnings, for example
