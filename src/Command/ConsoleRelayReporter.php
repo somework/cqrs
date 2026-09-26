@@ -51,12 +51,12 @@ final class ConsoleRelayReporter implements RelayReporter
         $this->io->warning($warning);
     }
 
-    public function transportPaused(?string $transportName, int $failures): void
+    public function transportPaused(?string $transportName, int $failures, int $seconds): void
     {
         if (null === $transportName) {
-            $this->io->warning(sprintf('Messages without a transport name failed to be sent %d times in a row; the other ones wait for the next run.', $failures));
+            $this->io->warning(sprintf('Messages without a transport name failed to be sent %d times in a row; the other ones wait for the next run (%d seconds with --watch).', $failures, $seconds));
         } else {
-            $this->io->warning(sprintf('Transport "%s" failed %d times in a row; its other messages wait for the next run.', $transportName, $failures));
+            $this->io->warning(sprintf('Transport "%s" failed %d times in a row; its other messages wait for the next run (%d seconds with --watch).', $transportName, $failures, $seconds));
         }
     }
 

@@ -95,13 +95,16 @@ final class OutboxStoragePassTest extends TestCase
 
     public function test_the_writer_checks_transactions_on_the_storage_behind_the_decorators(): void
     {
-        $container = $this->container(['require_transaction' => true]);
+        $container = $this->container(['require_transaction' => true, 'relay_on_terminate' => true]);
         $container->getDefinition('somework_cqrs.outbox.writer')->setPublic(true);
+        $container->getDefinition('somework_cqrs.outbox.relay_on_terminate')->setPublic(true);
         $container->compile();
 
         $writer = $container->get('somework_cqrs.outbox.writer');
         self::assertInstanceOf(DbalOutboxStorage::class, self::argument($writer, 'transaction'));
         self::assertTrue(self::argument($writer, 'requireTransaction'));
+        // The relay on terminate waits for the transaction to be committed.
+        self::assertInstanceOf(DbalOutboxStorage::class, self::argument($container->get('somework_cqrs.outbox.relay_on_terminate'), 'transaction'));
 
         // A storage that cannot tell whether a transaction is open is not checked.
         $custom = $this->container(['storage' => 'app.outbox']);

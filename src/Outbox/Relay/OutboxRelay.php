@@ -28,6 +28,7 @@ use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
 use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 use function array_filter;
 use function array_flip;
@@ -54,7 +55,8 @@ use const JSON_THROW_ON_ERROR;
 /**
  * Relays unpublished outbox messages to their transports (at-least-once delivery): claims each
  * message before sending it, retries failing ones with a backoff, gives up after the last attempt,
- * and pauses a transport that keeps failing for the rest of the run.
+ * and pauses a transport that keeps failing for the rest of the run (and, for the next runs of the
+ * same instance, for 30 seconds, doubling up to 5 minutes until one of its messages goes through).
  *
  * @internal
  */
@@ -68,6 +70,11 @@ final class OutboxRelay
      * more likely rejections of single messages (e.g. too large) than an outage.
      */
     private const MAX_CONSECUTIVE_FAILURES_OF_A_WORKING_TRANSPORT = 10;
+
+    /** Seconds the next runs of the same relay (--watch) leave a paused transport alone; doubles with every pause, up to MAX_PAUSE_SECONDS. */
+    private const PAUSE_SECONDS = 30;
+
+    private const MAX_PAUSE_SECONDS = 300;
 
     /** Seconds of consecutive failures after which even a transport that worked earlier in the run is paused (e.g. it went down and every send waits for a timeout). */
     private const MAX_FAILING_SECONDS = 10;
@@ -137,6 +144,18 @@ final class OutboxRelay
     private array $pausedTransports = [];
 
     /**
+     * @var array<string, array{string|null, float}> The transport and when its pause ends, for the next
+     *                                               runs of this instance (--watch, or the relay on
+     *                                               terminate in a long-running process)
+     */
+    private array $pausedUntil = [];
+
+    /** @var array<string, int> The length of the last pause of a transport, doubled for the next one until a message goes through */
+    private array $pauseSeconds = [];
+
+    private ?ResetInterface $resetter = null;
+
+    /**
      * @param ContainerInterface|null  $buses       Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
      * @param int                      $maxAttempts Attempts after which a failing message is given up (three times as many when its transport fails)
      * @param (\Closure(): float)|null $clock       Seconds since the epoch, microtime(true) by default (for tests)
@@ -164,15 +183,27 @@ final class OutboxRelay
     /**
      * Relays up to $limit due messages.
      *
+     * @param ResetInterface|null $resetter Resets the application's services after each message
+     *                                      whose handlers ran in this process (no transport,
+     *                                      sync://), as Messenger's workers do between messages
+     *
      * @throws \RuntimeException when the storage fails, which stops the run
      */
-    public function run(int $limit, RelayReporter $reporter): RelayResult
+    public function run(int $limit, RelayReporter $reporter, ?ResetInterface $resetter = null): RelayResult
     {
+        $this->resetter = $resetter;
         $this->token = bin2hex(random_bytes(16));
         $this->sent = [];
         $this->flushedAt = $this->now();
         $this->processed = $this->relayed = $this->failed = $this->claimedElsewhere = 0;
         $this->consecutiveTransportFailures = $this->workingTransports = $this->failingSince = $this->pausedTransports = [];
+        foreach ($this->pausedUntil as $key => [$transportName, $until]) {
+            if ($until > $this->flushedAt) {
+                $this->pausedTransports[] = $transportName;
+            } else {
+                unset($this->pausedUntil[$key]);
+            }
+        }
 
         try {
             $aborted = $this->relay($limit, $reporter);
@@ -356,7 +387,7 @@ final class OutboxRelay
             ++$this->relayed;
             $this->consecutiveTransportFailures[$key] = 0;
             $this->workingTransports[$key] = true;
-            unset($this->failingSince[$key]);
+            unset($this->failingSince[$key], $this->pauseSeconds[$key], $this->pausedUntil[$key]);
 
             return;
         }
@@ -375,8 +406,10 @@ final class OutboxRelay
             : self::MAX_CONSECUTIVE_TRANSPORT_FAILURES <= $failures;
         if ($pause) {
             $this->pausedTransports[] = $message->transportName;
-            $reporter->transportPaused($message->transportName, $failures);
-            $this->logger?->warning('The outbox relay paused transport {transport} for this run after {count} consecutive failures.', ['transport' => $message->transportName ?? '(routing)', 'count' => $failures]);
+            $seconds = $this->pauseSeconds[$key] = isset($this->pauseSeconds[$key]) ? min(2 * $this->pauseSeconds[$key], self::MAX_PAUSE_SECONDS) : self::PAUSE_SECONDS;
+            $this->pausedUntil[$key] = [$message->transportName, $this->now() + $seconds];
+            $reporter->transportPaused($message->transportName, $failures, $seconds);
+            $this->logger?->warning('The outbox relay paused transport {transport} after {count} consecutive failures, for this run ({seconds} seconds for the next runs of --watch).', ['transport' => $message->transportName ?? '(routing)', 'count' => $failures, 'seconds' => $seconds]);
         }
     }
 
@@ -714,9 +747,23 @@ final class OutboxRelay
         }
         $bus = $this->busFor($envelope->getMessage());
         $envelope = $envelope->with(new RelayedFromOutboxStamp($stored));
-        $envelope = null === $this->unitOfWork
-            ? $bus->dispatch($envelope)
-            : $this->unitOfWork->dispatchInUnitOfWork(static fn (): Envelope => $bus->dispatch($envelope));
+        try {
+            $envelope = null === $this->unitOfWork
+                ? $bus->dispatch($envelope)
+                : $this->unitOfWork->dispatchInUnitOfWork(static fn (): Envelope => $bus->dispatch($envelope));
+        } catch (\Throwable $exception) {
+            if (!self::isTransportFailure($exception)) {
+                $this->resetServices();
+            }
+
+            throw $exception;
+        }
+
+        // Handled in this process (no transport, sync://): the handlers may leave state behind, e.g.
+        // a closed entity manager.
+        if (null !== $envelope->last(HandledStamp::class)) {
+            $this->resetServices();
+        }
 
         if (null !== $envelope->last(SentStamp::class)) {
             return;
@@ -737,6 +784,16 @@ final class OutboxRelay
 
         $reporter->notSent(sprintf($warning, $message->id, $envelope->getMessage()::class));
         $this->logger?->warning(sprintf($warning, '{id}', '{class}'), ['id' => $message->id, 'class' => $envelope->getMessage()::class]);
+    }
+
+    private function resetServices(): void
+    {
+        try {
+            $this->resetter?->reset();
+        } catch (\Throwable $exception) {
+            // The message was handled: a failing reset must not make the relay send it again.
+            $this->logger?->error('Could not reset the services after relaying an outbox message: {error}', ['error' => self::describe($exception), 'exception' => $exception]);
+        }
     }
 
     private function busFor(object $message): MessageBusInterface

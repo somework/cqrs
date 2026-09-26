@@ -18,10 +18,18 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\CallbackBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\RecordingLogger;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\Exception\TransportException;
+use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
+use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+use Symfony\Contracts\Service\ResetInterface;
 
 use function sprintf;
+use function str_contains;
 
 #[CoversClass(OutboxRelay::class)]
 #[CoversClass(RelayResult::class)]
@@ -179,6 +187,113 @@ final class OutboxRelayTest extends TestCase
         self::assertSame(3, $unitOfWork->dispatches);
     }
 
+    public function test_the_services_are_reset_after_each_message_handled_in_this_process(): void
+    {
+        // m1 is handled inline (no transport, sync://), m2 sent to a transport, m3 fails in its handler.
+        $bus = new class implements MessageBusInterface {
+            public function dispatch(object $message, array $stamps = []): Envelope
+            {
+                $envelope = Envelope::wrap($message, $stamps);
+
+                $task = $envelope->getMessage();
+
+                return match ($task instanceof CreateTaskCommand ? $task->id : null) {
+                    'm1' => $envelope->with(new HandledStamp(null, 'handler')),
+                    'm2' => $envelope->with(new SentStamp('transport')),
+                    default => throw new HandlerFailedException($envelope, [new \RuntimeException('handler failed')]),
+                };
+            }
+        };
+        $resetter = new class implements ResetInterface {
+            public int $resets = 0;
+
+            public function reset(): void
+            {
+                ++$this->resets;
+            }
+        };
+
+        $result = (new OutboxRelay($this->storage, new PhpSerializer(), $bus))->run(10, $this->reporter(), $resetter);
+
+        self::assertSame([3, 2, 1], [$result->processed, $result->relayed, $result->failed]);
+        self::assertSame(2, $resetter->resets);
+    }
+
+    public function test_a_failing_reset_does_not_fail_the_handled_message(): void
+    {
+        $bus = new class implements MessageBusInterface {
+            public function dispatch(object $message, array $stamps = []): Envelope
+            {
+                return Envelope::wrap($message, $stamps)->with(new HandledStamp(null, 'handler'));
+            }
+        };
+        $logger = new RecordingLogger();
+        $resetter = new class implements ResetInterface {
+            public function reset(): void
+            {
+                throw new \RuntimeException('reset failed');
+            }
+        };
+
+        $result = (new OutboxRelay($this->storage, new PhpSerializer(), $bus, logger: $logger))->run(10, $this->reporter(), $resetter);
+
+        self::assertSame(3, $result->relayed);
+        self::assertTrue($logger->hasRecordContaining('error', 'Could not reset the services after relaying an outbox message'));
+    }
+
+    public function test_a_paused_transport_stays_paused_for_the_next_runs_of_the_same_relay(): void
+    {
+        // outbox:relay --watch runs every second: a broker that is down is tried again after 30
+        // seconds, then 60, 120 … up to 5 minutes, instead of 3 failed sends every second.
+        $this->storage->postponeFailures = false;
+        $time = 1_000.0;
+        $broker = new class {
+            public bool $down = true;
+        };
+        $attempts = 0;
+        $bus = new CallbackBus(static function () use ($broker, &$attempts): void {
+            ++$attempts;
+            if ($broker->down) {
+                throw new TransportException('Connection refused');
+            }
+        });
+        $logger = new RecordingLogger();
+        $relay = new OutboxRelay($this->storage, new PhpSerializer(), $bus, logger: $logger, clock: static function () use (&$time): float {
+            return $time;
+        });
+        $pauses = static fn (): array => array_values(array_map(
+            static fn (array $record): mixed => $record['context']['seconds'] ?? null,
+            array_filter($logger->records, static fn (array $record): bool => str_contains($record['message'], 'paused transport')),
+        ));
+
+        self::assertSame(3, $relay->run(10, $this->reporter())->failed);
+        self::assertSame([30], $pauses());
+
+        $time += 29;
+        self::assertSame(0, $relay->run(10, $this->reporter())->processed, 'Still paused.');
+        self::assertSame(3, $attempts);
+
+        $time += 2;
+        $relay->run(10, $this->reporter());
+        self::assertSame([30, 60], $pauses(), 'Paused again, twice as long.');
+
+        $time += 61;
+        $broker->down = false;
+        self::assertSame(3, $relay->run(10, $this->reporter())->relayed);
+
+        // A transport that went through starts over at 30 seconds.
+        foreach (['m4', 'm5', 'm6'] as $id) {
+            $encoded = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand($id, 'task')), new PhpSerializer(), 'async');
+            $this->storage->store(new OutboxMessage($id, $encoded->body, $encoded->headers, new DateTimeImmutable(), 'async'));
+        }
+        $broker->down = true;
+        $relay->run(10, $this->reporter());
+        self::assertSame([30, 60, 30], $pauses());
+
+        // Another instance (a cron run) does not know about the pause.
+        self::assertSame(3, (new OutboxRelay($this->storage, new PhpSerializer(), $bus))->run(10, $this->reporter())->processed);
+    }
+
     private function relay(): OutboxRelay
     {
         return new OutboxRelay($this->storage, new PhpSerializer(), new RecordingBus());
@@ -207,7 +322,7 @@ final class OutboxRelayTest extends TestCase
             {
             }
 
-            public function transportPaused(?string $transportName, int $failures): void
+            public function transportPaused(?string $transportName, int $failures, int $seconds): void
             {
             }
 

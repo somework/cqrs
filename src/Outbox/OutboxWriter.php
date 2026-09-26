@@ -7,10 +7,12 @@ namespace SomeWork\CqrsBundle\Outbox;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
@@ -40,7 +42,7 @@ use function sprintf;
  *
  * @api
  */
-final class OutboxWriter
+final class OutboxWriter implements OutboxWriterInterface
 {
     /** Stores that call Key::markUnserializable(): their keys cannot be sent with a message. */
     private const LOCAL_LOCK_STORES = [
@@ -58,13 +60,14 @@ final class OutboxWriter
      * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
      * OutboxWriter): the constructor takes internal services and may change in any release.
      *
-     * @param StampDecider|null         $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
-     * @param CausationIdContext|null   $causation           The message being handled, whose flow a stored message continues
-     * @param bool                      $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
-     * @param TransactionalOutbox|null  $transaction         The storage behind any decorator, when it can tell whether a transaction is open
-     * @param bool                      $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
-     * @param list<string>|null         $transportNames      The Messenger transports; a row for another transport is refused
-     * @param (\Closure(): object)|null $lockStore           The store behind Messenger's deduplication: one that ties its keys to the process refuses messages with a DeduplicateStamp
+     * @param StampDecider|null               $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param CausationIdContext|null         $causation           The message being handled, whose flow a stored message continues
+     * @param bool                            $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
+     * @param TransactionalOutbox|null        $transaction         The storage behind any decorator, when it can tell whether a transaction is open
+     * @param bool                            $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
+     * @param list<string>|null               $transportNames      The Messenger transports; a row for another transport is refused
+     * @param (\Closure(): object)|null       $lockStore           The store behind Messenger's deduplication: one that ties its keys to the process refuses messages with a DeduplicateStamp
+     * @param RelayOnTerminateSubscriber|null $afterStore          Relays the stored messages when the request, command or worker message ends (outbox.relay_on_terminate)
      *
      * @internal
      */
@@ -78,6 +81,7 @@ final class OutboxWriter
         private readonly bool $requireTransaction = false,
         private readonly ?array $transportNames = null,
         private readonly ?\Closure $lockStore = null,
+        private readonly ?RelayOnTerminateSubscriber $afterStore = null,
     ) {
     }
 
@@ -171,6 +175,7 @@ final class OutboxWriter
             $this->storage->store($row);
             $stored[] = $row;
         }
+        $this->afterStore?->stored();
 
         return $stored;
     }

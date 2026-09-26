@@ -54,6 +54,7 @@ final class OutboxStoragePass implements CompilerPassInterface
         ['somework_cqrs.outbox.relay_command', '$table', OutboxSchema::class],
         ['somework_cqrs.outbox.relay_command', '$unitOfWork', RelayUnitOfWork::class],
         ['somework_cqrs.outbox.writer', '$transaction', TransactionalOutbox::class],
+        ['somework_cqrs.outbox.relay_on_terminate', '$transaction', TransactionalOutbox::class],
     ];
 
     public function process(ContainerBuilder $container): void

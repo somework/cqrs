@@ -27,6 +27,9 @@ use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\TerminableInterface;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 
@@ -143,6 +146,22 @@ final class OutboxDispatchKernelTest extends KernelTestCase
         $this->eventBus()->dispatchAsync(new TaskArchivedEvent('task-6'));
 
         self::assertSame('archived', $this->recorder()->task('task-5'));
+        self::assertCount(1, $this->transport()->getSent());
+        self::assertSame([], $this->storage()->fetchUnpublished(10));
+    }
+
+    public function test_with_relay_on_terminate_the_request_that_stored_messages_relays_them(): void
+    {
+        self::ensureKernelShutdown();
+        $kernel = self::bootKernel(['environment' => 'relay_on_terminate']);
+        self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:setup')->getStatusCode());
+
+        $this->connection()->transactional(fn () => $this->eventBus()->dispatch(new TaskArchivedEvent('task-8')));
+        self::assertCount(0, $this->transport()->getSent(), 'Stored until the request ends.');
+
+        self::assertInstanceOf(TerminableInterface::class, $kernel);
+        $kernel->terminate(new Request(), new Response());
+
         self::assertCount(1, $this->transport()->getSent());
         self::assertSame([], $this->storage()->fetchUnpublished(10));
     }

@@ -17,12 +17,15 @@ use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\StockReservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\RecordingRelayCommand;
+use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Lock\Store\CombinedStore;
 use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
@@ -159,6 +162,20 @@ final class OutboxWriterTest extends TestCase
         $this->expectExceptionMessage('its DeduplicateStamp');
 
         $writer->store(new StockReservedEvent('A'), 'async');
+    }
+
+    public function test_tells_the_relay_on_terminate_that_messages_were_stored(): void
+    {
+        $relay = new RecordingRelayCommand();
+        $afterStore = new RelayOnTerminateSubscriber(static fn (): Command => $relay);
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), afterStore: $afterStore);
+
+        $afterStore->relay();
+        self::assertCount(0, $relay->runs);
+
+        $writer->store(new CreateTaskCommand('1', 'a'), 'async');
+        $afterStore->relay();
+        self::assertCount(1, $relay->runs);
     }
 
     public function test_a_stored_message_continues_the_current_trace_when_opentelemetry_is_enabled(): void

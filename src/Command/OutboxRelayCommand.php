@@ -8,6 +8,7 @@ use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Outbox\Relay\LimitedRelayRun;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
@@ -25,23 +26,28 @@ use Symfony\Component\Lock\Exception\LockReleasingException;
 use Symfony\Component\Lock\LockFactory;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 use function class_exists;
 use function defined;
 use function filter_var;
 use function implode;
 use function microtime;
+use function min;
 use function register_shutdown_function;
 use function sprintf;
+use function usleep;
 
 use const FILTER_VALIDATE_BOOL;
+use const FILTER_VALIDATE_FLOAT;
 use const FILTER_VALIDATE_INT;
 use const SIGINT;
 use const SIGTERM;
 
 /**
  * Runs OutboxRelay from the console: validates the limit, holds the relay lock, stops after the
- * current message on SIGTERM or SIGINT, and reports the outcome.
+ * current message on SIGTERM or SIGINT, and reports the outcome. With --watch it keeps relaying
+ * until it is stopped, like messenger:consume.
  *
  * @internal
  */
@@ -49,7 +55,7 @@ use const SIGTERM;
     name: 'somework:cqrs:outbox:relay',
     description: 'Relay unpublished outbox messages to their transports.',
 )]
-final class OutboxRelayCommand extends Command implements SignalableCommandInterface
+final class OutboxRelayCommand extends Command implements SignalableCommandInterface, LimitedRelayRun
 {
     use LockableTrait;
 
@@ -62,6 +68,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
      */
     public const LOCK_TTL_SECONDS = 60.0;
 
+    /** Exit code of a run that --wait-for-lock gave up on: another relay kept the lock. */
+    public const LOCK_TAKEN = 3;
+
     /** When the relay lock was last extended. */
     private ?float $lockRefreshedAt = null;
 
@@ -70,16 +79,23 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
     private bool $releasesLockOnShutdown = false;
 
+    private bool $resetServices = true;
+
+    /** Whether the last run (without --watch) processed --limit messages. */
+    private bool $limitReached = false;
+
     private readonly OutboxRelay $relay;
 
     /**
-     * @param ContainerInterface|null  $buses          Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
-     * @param int                      $maxAttempts    Attempts after which a failing message is given up (three times as many when its transport fails)
-     * @param (\Closure(): float)|null $clock          Seconds since the epoch, microtime(true) by default (for tests)
-     * @param OutboxSchema|null        $table          The storage behind a decorated $outboxStorage, for the report of pending schema changes
-     * @param ContainerInterface|null  $transports     Messenger's transports by name; a message stored for another transport is given up at once
-     * @param OutboxSigner|null        $signer         Verifies every message before it is decoded (outbox.signing)
-     * @param bool|string              $acceptUnsigned Relay messages without a signature (outbox.signing.accept_unsigned, possibly from an environment variable)
+     * @param ContainerInterface|null      $buses          Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     * @param int                          $maxAttempts    Attempts after which a failing message is given up (three times as many when its transport fails)
+     * @param (\Closure(): float)|null     $clock          Seconds since the epoch, microtime(true) by default (for tests)
+     * @param OutboxSchema|null            $table          The storage behind a decorated $outboxStorage, for the report of pending schema changes
+     * @param ContainerInterface|null      $transports     Messenger's transports by name; a message stored for another transport is given up at once
+     * @param OutboxSigner|null            $signer         Verifies every message before it is decoded (outbox.signing)
+     * @param bool|string                  $acceptUnsigned Relay messages without a signature (outbox.signing.accept_unsigned, possibly from an environment variable)
+     * @param ResetInterface|null          $resetter       Resets the application's services after each message the relay handled itself, as Messenger's workers do between messages
+     * @param (\Closure(float): void)|null $sleep          Waits the given seconds, usleep() by default (for tests)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
@@ -96,6 +112,8 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         ?OutboxSigner $signer = null,
         bool|string $acceptUnsigned = false,
         ?RelayUnitOfWork $unitOfWork = null,
+        private readonly ?ResetInterface $resetter = null,
+        private readonly ?\Closure $sleep = null,
     ) {
         $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports, $signer, true === filter_var($acceptUnsigned, FILTER_VALIDATE_BOOL), $unitOfWork);
 
@@ -127,11 +145,22 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
     protected function configure(): void
     {
-        $this->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to process in this run', '100');
+        $this->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to process in this run (with --watch: in each run)', '100');
+        $this->addOption('watch', 'w', InputOption::VALUE_NONE, 'Keep relaying until SIGTERM, SIGINT or --time-limit: runs again as soon as messages are due');
+        $this->addOption('sleep', null, InputOption::VALUE_REQUIRED, 'Seconds to wait before looking again when no message is due (with --watch)', '1');
+        $this->addOption('time-limit', null, InputOption::VALUE_REQUIRED, 'Stop watching after this many seconds (with --watch)');
+        $this->addOption('wait-for-lock', null, InputOption::VALUE_REQUIRED, 'Seconds to wait for another relay to release the lock, then exit with 3 (--watch waits as long as it runs)', '0');
+        $this->addOption('no-reset', null, InputOption::VALUE_NONE, 'Do not reset the application\'s services after the messages the relay handles itself (no transport, sync://)');
+    }
+
+    public function limitReached(): bool
+    {
+        return $this->limitReached;
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $this->limitReached = false;
         $io = new SymfonyStyle($input, $output);
         $limit = filter_var($input->getOption('limit'), FILTER_VALIDATE_INT);
 
@@ -141,21 +170,39 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             return self::INVALID;
         }
 
+        $watch = (bool) $input->getOption('watch');
+        $sleep = filter_var($input->getOption('sleep'), FILTER_VALIDATE_FLOAT);
+        $timeLimit = null === $input->getOption('time-limit') ? null : filter_var($input->getOption('time-limit'), FILTER_VALIDATE_INT);
+        $waitForLock = filter_var($input->getOption('wait-for-lock'), FILTER_VALIDATE_FLOAT);
+        if (false === $sleep || $sleep <= 0 || false === $timeLimit || (null !== $timeLimit && $timeLimit < 1) || false === $waitForLock || $waitForLock < 0) {
+            $io->error('--sleep must be a positive number of seconds, --time-limit a positive integer and --wait-for-lock a number of seconds.');
+
+            return self::INVALID;
+        }
+        if (!$watch && null !== $timeLimit) {
+            $io->error('--time-limit only applies with --watch.');
+
+            return self::INVALID;
+        }
+
+        $this->resetServices = true !== $input->getOption('no-reset');
+
         // Overlapping runs (cron) would publish the same rows twice.
         try {
-            if (class_exists(LockFactory::class) && !$this->acquireLock()) {
-                $io->note('Another outbox relay is already running.');
-
-                return self::SUCCESS;
-            }
+            $acquired = $this->waitForLock($io, $watch ? null : $waitForLock, $sleep, $timeLimit);
         } catch (LockException $exception) {
             return $this->stop($io, 'the relay lock could not be acquired', $exception);
+        }
+        if (true !== $acquired) {
+            $this->stopSignal = null;
+
+            return $acquired;
         }
 
         $this->releaseLockOnShutdown();
 
         try {
-            return $this->relayMessages($io, $limit);
+            return $watch ? $this->watch($io, $limit, $sleep, $timeLimit) : $this->relayMessages($io, $limit);
         } catch (\Throwable $exception) {
             // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
             return $this->stop($io, 'the outbox storage failed', $exception);
@@ -167,6 +214,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             } catch (LockReleasingException $exception) {
                 // The lock expires on its own; the outcome of the run matters more.
                 $io->warning(sprintf('Could not release the relay lock: %s', $exception->getMessage()));
+                $this->lock = null;
             }
         }
     }
@@ -177,10 +225,11 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             $io,
             fn (): bool => $this->keepLock($io),
             fn (): bool => null !== $this->stopSignal,
-        ));
+        ), $this->resetServices ? $this->resetter : null);
         if ($result->aborted) {
             return self::FAILURE;
         }
+        $this->limitReached = $result->processed >= $limit;
 
         // The storage behind a decorated one still tells what its schema needs.
         $table = $this->table ?? ($this->outboxStorage instanceof OutboxSchema ? $this->outboxStorage : null);
@@ -212,6 +261,123 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         }
 
         return 0 === $result->failed ? self::SUCCESS : self::FAILURE;
+    }
+
+    /**
+     * Relays in runs of up to $limit messages until a signal or the time limit stops it, waiting
+     * $sleep seconds when no message was due. Failed messages wait for their retry time; the
+     * storage failing, or the lock being lost, stops the command.
+     */
+    private function watch(SymfonyStyle $io, int $limit, float $sleep, ?int $timeLimit): int
+    {
+        $started = $this->now();
+        $io->note(sprintf('Watching the outbox%s. Stop with Ctrl+C or SIGTERM.', null === $timeLimit ? '' : sprintf(' for %d seconds', $timeLimit)));
+        $reporter = new ConsoleRelayReporter(
+            $io,
+            fn (): bool => $this->keepLock($io),
+            fn (): bool => null !== $this->stopSignal,
+        );
+        $expired = static fn (float $now): bool => null !== $timeLimit && $now - $started >= $timeLimit;
+
+        for ($run = 0;; ++$run) {
+            $result = $this->relay->run($limit, $reporter, $this->resetServices ? $this->resetter : null);
+            if ($result->aborted) {
+                return self::FAILURE;
+            }
+            if (0 === $run) {
+                $table = $this->table ?? ($this->outboxStorage instanceof OutboxSchema ? $this->outboxStorage : null);
+                if (null !== $table) {
+                    $this->reportPendingChanges($table, $io);
+                }
+            }
+            if ($result->relayed > 0) {
+                $io->text(sprintf('Relayed %d message(s).', $result->relayed));
+            }
+            if (null !== $this->stopSignal) {
+                $io->success(sprintf('Stopped by signal %d.', $this->stopSignal));
+
+                return self::SUCCESS;
+            }
+            if ($expired($this->now())) {
+                $io->success('Stopped: the time limit was reached.');
+
+                return self::SUCCESS;
+            }
+
+            // A full run leaves more due messages: go on at once.
+            if ($result->processed < $limit) {
+                $until = $this->now() + $sleep;
+                while (null === $this->stopSignal && ($now = $this->now()) < $until && !$expired($now)) {
+                    $this->pause(min(0.1, $until - $now));
+                    if (!$this->keepLock($io)) {
+                        return self::FAILURE;
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Takes the relay lock. When another relay holds it, a single run waits up to $seconds for it
+     * (0: not at all), and --watch ($seconds null) waits as long as it runs: a second watcher is a
+     * standby that takes over when the first one stops.
+     *
+     * @return true|int True with the lock, else the exit code
+     */
+    private function waitForLock(SymfonyStyle $io, ?float $seconds, float $sleep, ?int $timeLimit): true|int
+    {
+        if (!class_exists(LockFactory::class) || $this->acquireLock()) {
+            return true;
+        }
+
+        if (0.0 === $seconds) {
+            $io->note('Another outbox relay is already running.');
+
+            return self::SUCCESS;
+        }
+
+        $started = $this->now();
+        $until = null === $seconds ? null : $started + $seconds;
+        $retryAfter = null === $seconds ? $sleep : min($sleep, 0.5);
+        $io->note('Waiting for the relay lock held by another relay.');
+        $this->logger?->info('The outbox relay is waiting for the relay lock held by another relay.');
+        $retryAt = $started + $retryAfter;
+        while (null === $this->stopSignal) {
+            $now = $this->now();
+            if (null !== $until && $now >= $until) {
+                $io->note('Another outbox relay kept the lock.');
+
+                return self::LOCK_TAKEN;
+            }
+            if (null !== $timeLimit && $now - $started >= $timeLimit) {
+                $io->success('Stopped: the time limit was reached.');
+
+                return self::SUCCESS;
+            }
+            if ($now >= $retryAt) {
+                if ($this->acquireLock()) {
+                    return true;
+                }
+                $retryAt = $now + $retryAfter;
+                continue;
+            }
+            $this->pause(min(0.1, $retryAt - $now, null === $until ? 0.1 : $until - $now));
+        }
+
+        $io->success(sprintf('Stopped by signal %d.', $this->stopSignal));
+
+        return self::SUCCESS;
+    }
+
+    private function pause(float $seconds): void
+    {
+        if (null !== $this->sleep) {
+            ($this->sleep)($seconds);
+
+            return;
+        }
+
+        usleep((int) ($seconds * 1_000_000));
     }
 
     /**
@@ -284,7 +450,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             return $this->lock($this->lockName);
         }
 
-        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS);
+        // Released by execute() and at shutdown: a lock that releases itself when it is destroyed would
+        // try again after its store failed (e.g. Redis went away), and fail with an uncaught exception.
+        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS, false);
         if (!$lock->acquire()) {
             return false;
         }
