@@ -13,8 +13,11 @@ use function base64_decode;
 use function ctype_digit;
 use function ctype_xdigit;
 use function is_string;
+use function ltrim;
 use function preg_match_all;
 use function str_ends_with;
+use function str_starts_with;
+use function strcasecmp;
 use function stripslashes;
 use function strlen;
 use function strpos;
@@ -73,7 +76,7 @@ final class SerializedBody
         }
 
         $messageClass = null;
-        if (Envelope::class === $value['class'] && is_string($value['message'])) {
+        if (null !== $value['class'] && self::isEnvelope($value['class']) && is_string($value['message'])) {
             $messageClass = $value['message'];
         }
 
@@ -164,7 +167,7 @@ final class SerializedBody
                     $property = $this->key();
                     $value = $this->value($depth + 1);
                     // Private, protected or public: PHP accepts every form of the property name.
-                    if (Envelope::class === $class && null !== $property && ('message' === $property || str_ends_with($property, "\0message"))) {
+                    if (self::isEnvelope($class) && null !== $property && self::isMessageProperty($property)) {
                         $message = $value['class'];
                     }
                 }
@@ -174,6 +177,27 @@ final class SerializedBody
             default:
                 throw new \UnexpectedValueException('Not a serialized value.');
         }
+    }
+
+    /**
+     * Class names are case-insensitive: unserialize() builds an envelope from any spelling.
+     */
+    public static function isEnvelope(string $class): bool
+    {
+        return 0 === strcasecmp(ltrim($class, '\\'), Envelope::class);
+    }
+
+    /**
+     * The names under which unserialize() sets Envelope::$message: public, protected or private
+     * (mangled with the class, in any case). Any other name is a dynamic property.
+     */
+    private static function isMessageProperty(string $property): bool
+    {
+        if ('message' === $property || "\0*\0message" === $property) {
+            return true;
+        }
+
+        return str_starts_with($property, "\0") && str_ends_with($property, "\0message") && self::isEnvelope(substr($property, 1, -strlen("\0message")));
     }
 
     /**

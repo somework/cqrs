@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Outbox\SerializedBody;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Outbox\Signing\SignableBody;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -18,8 +19,8 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
-use Symfony\Component\Messenger\Envelope;
 
+use function array_filter;
 use function array_key_exists;
 use function array_map;
 use function array_unique;
@@ -29,7 +30,6 @@ use function count;
 use function filter_var;
 use function hash_equals;
 use function implode;
-use function in_array;
 use function is_array;
 use function is_string;
 use function ltrim;
@@ -238,7 +238,7 @@ final class OutboxFailedCommand extends Command
                 return self::FAILURE;
             }
             // An envelope whose message cannot be found was not written by the serializer.
-            if (null === $message->bodyClass && in_array(Envelope::class, $message->bodyClasses, true)) {
+            if (null === $message->bodyClass && [] !== array_filter($message->bodyClasses, SerializedBody::isEnvelope(...))) {
                 $io->error(sprintf('The message of the envelope in the body of message "%s" cannot be found: the row was not stored by this application. Nothing was signed.', self::printable($message->id)));
 
                 return self::FAILURE;

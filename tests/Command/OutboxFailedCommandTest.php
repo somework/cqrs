@@ -25,6 +25,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
+use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\NoAutoAckStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
@@ -36,6 +37,7 @@ use function serialize;
 use function str_replace;
 use function strlen;
 use function strtoupper;
+use function substr;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -184,6 +186,24 @@ final class OutboxFailedCommandTest extends TestCase
 
         self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
         self::assertStringContainsString('does not match the class in its body ('.UnserializeGadget::class.')', self::display($tester));
+    }
+
+    public function test_signing_is_not_fooled_by_another_spelling_of_the_envelope(): void
+    {
+        $body = serialize(new Envelope(new DelayStamp(5)));
+        // unserialize() resolves class names case-insensitively, and a decoy key is only a dynamic property.
+        $lowercase = str_replace('O:36:"Symfony\\Component\\Messenger\\Envelope"', 'O:36:"symfony\\component\\messenger\\envelope"', $body);
+        $decoy = substr($body, 0, -1).'s:10:"'."\0X\0message".'";'.serialize(new CreateTaskCommand('1', 'a')).'}';
+        $decoy = str_replace('O:36:"Symfony\\Component\\Messenger\\Envelope":2:', 'O:36:"Symfony\\Component\\Messenger\\Envelope":3:', $decoy);
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+
+        foreach (['00000000-0000-7000-8000-000000000003' => $lowercase, '00000000-0000-7000-8000-000000000004' => $decoy] as $id => $forged) {
+            $this->storage->store(new OutboxMessage($id, addslashes($forged), json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+            OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+            self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]), $id);
+            self::assertStringContainsString('does not match the class in its body ('.DelayStamp::class.')', self::display($tester));
+        }
     }
 
     public function test_signing_refuses_stamps_that_are_never_stored(): void
