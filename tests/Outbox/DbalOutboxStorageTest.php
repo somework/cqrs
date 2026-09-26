@@ -1408,6 +1408,38 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertTrue((new DbalOutboxStorage($connection, autoSetup: false))->isInTransaction());
     }
 
+    public function test_the_relay_and_maintenance_writes_are_committed_on_a_connection_without_auto_commit(): void
+    {
+        // Otherwise they are rolled back when the process exits: every relay run would resend every row.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $writer = new DbalOutboxStorage($other);
+            $writer->setup();
+            $writer->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+            $writer->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+            $other->executeStatement('UPDATE somework_cqrs_outbox SET failed_at = CURRENT_TIMESTAMP WHERE id = ?', [self::ID_2]);
+
+            $storage = new DbalOutboxStorage(DriverManager::getConnection($params, $configuration), autoSetup: false);
+            $rows = $storage->fetchUnpublished(10);
+            self::assertSame([self::ID_1], $storage->claim($rows, [0 => new DateTimeImmutable('+1 minute')], 'token'));
+            $storage->markPublished([self::ID_1]);
+            self::assertSame(1, $storage->deleteFailed([self::ID_2]));
+
+            self::assertNotNull($other->fetchOne('SELECT published_at FROM somework_cqrs_outbox WHERE id = ?', [self::ID_1]), 'Seen by another connection: committed.');
+            self::assertFalse($other->fetchOne('SELECT id FROM somework_cqrs_outbox WHERE id = ?', [self::ID_2]));
+
+            self::assertSame(1, $storage->purgePublished(new DateTimeImmutable('+1 day')));
+            self::assertSame(0, (int) $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox'));
+        } finally {
+            unlink($file);
+        }
+    }
+
     public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void
     {
         // A lagging replica would show the relay rows already published, or none that are due.

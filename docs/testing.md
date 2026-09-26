@@ -235,8 +235,9 @@ final class AssertionExamplesTest extends CqrsTestCase
 }
 ```
 
-On failure, the message names the classes that were actually dispatched
-(`Actually dispatched: App\Application\Command\CreateTask`), or says
+On failure, the message names the classes that were actually dispatched, with
+the mode each dispatch was recorded with
+(`Actually dispatched: App\Application\Command\CreateTask (DispatchMode::DEFAULT)`), or says
 `No messages were dispatched.`
 
 ### CqrsTestCase or CqrsAssertionsTrait
@@ -252,8 +253,9 @@ you never need to call it yourself.
 
 ### Using the constraint directly
 
-`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null)`.
-You can combine it with PHPUnit's logical constraints:
+`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null, ?DispatchMode $mode = null)`;
+with a mode, it only matches dispatches with that mode (`new DispatchedMessage(OrderPlaced::class, null, DispatchMode::OUTBOX)`
+is what `assertStoredInOutbox()` uses). You can combine it with PHPUnit's logical constraints:
 
 ```php
 <?php

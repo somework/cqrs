@@ -149,6 +149,7 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         // Escaped: the advice names "%env(LOCK_DSN)%", which must not become an environment variable.
         self::assertStringContainsString('"%%env(LOCK_DSN)%%"', $problem);
         self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
+        self::assertTrue($container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$keysCannotBeSent'), 'An outbox dispatch with an IdempotencyStamp is refused.');
     }
 
     private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder

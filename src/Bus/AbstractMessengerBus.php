@@ -7,15 +7,12 @@ namespace SomeWork\CqrsBundle\Bus;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
 use SomeWork\CqrsBundle\Exception\OutboxNotConfiguredException;
-use SomeWork\CqrsBundle\Messenger\OutboxStoreMiddleware;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
 use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
-use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_map;
@@ -81,7 +78,7 @@ abstract class AbstractMessengerBus
      * and the envelope goes through the bus the relay sends it on, so the application's middleware
      * (validation, context stamps) runs in the caller. OutboxStoreMiddleware then stores it now, in
      * the current transaction, instead of sending it: it is never deferred until the current
-     * handler has finished.
+     * handler has finished (OutboxPrepareMiddleware).
      *
      * @param array<array-key, StampInterface> $stamps
      */
@@ -95,19 +92,9 @@ abstract class AbstractMessengerBus
         // the bus middleware, which may open a transaction of its own ("doctrine_transaction").
         $this->outbox->assertCanStore($message);
 
-        $decided = $this->stampsDecider->decide($message, DispatchMode::ASYNC, [...array_values($stamps), new StoreInOutboxStamp()]);
-
-        $stamps = [];
-        $deduplicate = [];
-        foreach ($decided as $stamp) {
-            if ($stamp instanceof DeduplicateStamp) {
-                // Messenger's deduplication would take the lock now and drop the relay's dispatch.
-                $deduplicate[] = $stamp;
-            } elseif (!$stamp instanceof DispatchAfterCurrentBusStamp && !$stamp instanceof StoreInOutboxStamp) {
-                $stamps[] = $stamp;
-            }
-        }
-        $stamps[] = new StoreInOutboxStamp($deduplicate);
+        // OutboxPrepareMiddleware keeps the DeduplicateStamps from Messenger's deduplication until the
+        // relay sends the message, and drops the DispatchAfterCurrentBusStamps: it is stored now.
+        $stamps = $this->stampsDecider->decide($message, DispatchMode::ASYNC, [...array_values($stamps), new StoreInOutboxStamp()]);
 
         $bus = $this->asyncBus ?? $this->syncBus;
         $this->logger?->debug('Storing {message} in the outbox through the {bus} bus', [
@@ -115,15 +102,14 @@ abstract class AbstractMessengerBus
             'requested_mode' => $requested->value,
             'mode' => DispatchMode::OUTBOX->value,
             'bus' => static::BUS_NAME,
-            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, [...$stamps, ...$deduplicate]),
+            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
         ]);
 
         $envelope = $bus->dispatch($message, $stamps);
 
         $stored = $envelope->last(OutboxStoredStamp::class);
         if (!$stored instanceof OutboxStoredStamp) {
-            // The compiler pass adds the middleware to every CQRS bus; a bus built another way lacks it.
-            throw new \LogicException(sprintf('The %s bus did not store "%s" in the outbox: its Messenger bus lacks the bundle\'s outbox middleware ("%s").', static::BUS_NAME, $message::class, OutboxStoreMiddleware::class));
+            throw new \LogicException(sprintf('The %s bus did not store "%s" in the outbox: a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.', static::BUS_NAME, $message::class));
         }
 
         $this->logger?->debug('Stored {message} in the outbox for the {transports} transport(s)', [

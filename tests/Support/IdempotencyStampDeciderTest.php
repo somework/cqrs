@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\RecordingLogger;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -70,6 +71,21 @@ final class IdempotencyStampDeciderTest extends TestCase
             'message' => 'The IdempotencyStamp of {message} may not prevent duplicates: {problem}',
             'context' => ['message' => $message::class, 'problem' => 'the lock store "flock" releases a key as soon as the dispatch returns'],
         ]], $warnings);
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_an_outbox_dispatch_is_refused_when_the_lock_store_cannot_send_its_keys(): void
+    {
+        $decider = new IdempotencyStampDecider(keysCannotBeSent: true);
+        $message = new class implements Command {};
+
+        // An asynchronous dispatch fails when it is sent; a stored message would fail in the relay.
+        self::assertCount(2, $decider->decide($message, DispatchMode::ASYNC, [new IdempotencyStamp('key')]));
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('cannot be stored in the outbox: the lock store');
+
+        $decider->decide($message, DispatchMode::ASYNC, [new IdempotencyStamp('key'), new StoreInOutboxStamp()]);
     }
 
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]

@@ -16,18 +16,27 @@ use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\OutboxNotConfiguredException;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
+use SomeWork\CqrsBundle\Messenger\OutboxPrepareMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxStoreMiddleware;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
+use SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp;
 use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\StockReservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Lock\LockFactory;
+use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Middleware\AddDefaultStampsMiddleware;
+use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
+use Symfony\Component\Messenger\Middleware\DispatchAfterCurrentBusMiddleware;
 use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
 use Symfony\Component\Messenger\Middleware\StackInterface;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -44,8 +53,10 @@ use function sprintf;
 #[CoversClass(EventBus::class)]
 #[CoversClass(DispatchModeDecider::class)]
 #[CoversClass(OutboxStoreMiddleware::class)]
+#[CoversClass(OutboxPrepareMiddleware::class)]
 #[CoversClass(OutboxStoredStamp::class)]
 #[CoversClass(StoreInOutboxStamp::class)]
+#[CoversClass(RelayedFromOutboxStamp::class)]
 #[CoversClass(OutboxNotConfiguredException::class)]
 final class OutboxDispatchTest extends TestCase
 {
@@ -146,6 +157,39 @@ final class OutboxDispatchTest extends TestCase
         self::assertNotNull($envelope->last(DeduplicateStamp::class));
     }
 
+    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
+    public function test_default_stamps_of_the_message_neither_lock_nor_defer_the_store(): void
+    {
+        // Messenger's default stamps come after the bus hid its own: a lock taken now would make the
+        // next dispatch of the key a "duplicate" that is never stored, and a deferral would wait for
+        // the current handler.
+        $locks = new LockFactory(new InMemoryStore());
+        $handling = new class implements MiddlewareInterface {
+            public function handle(Envelope $envelope, StackInterface $stack): Envelope
+            {
+                throw new \LogicException('The message should have been stored, not handled.');
+            }
+        };
+        $bus = new EventBus(new MessageBus([
+            new AddDefaultStampsMiddleware(),
+            new OutboxPrepareMiddleware(),
+            new DispatchAfterCurrentBusMiddleware(),
+            new DeduplicateMiddleware($locks),
+            new OutboxStoreMiddleware($this->writer()),
+            $handling,
+        ]), outbox: $this->writer());
+
+        $bus->dispatch(new StockReservedEvent('A'), DispatchMode::OUTBOX, new TransportNamesStamp(['orders']));
+        $bus->dispatch(new StockReservedEvent('A'), DispatchMode::OUTBOX, new TransportNamesStamp(['orders']));
+
+        $rows = $this->storage->fetchUnpublished(10);
+        self::assertCount(2, $rows, 'Both stored: the relay deduplicates them.');
+        $stored = (new PhpSerializer())->decode(['body' => $rows[0]->body]);
+        self::assertSame('stock-A@orders', (string) $stored->last(DeduplicateStamp::class)?->getKey());
+        self::assertNull($stored->last(DispatchAfterCurrentBusStamp::class));
+        self::assertTrue($locks->createLock('stock-A')->acquire(), 'No lock is held after the store.');
+    }
+
     public function test_the_sync_bus_stores_the_message_without_an_async_bus(): void
     {
         $bus = new EventBus($this->storingBus(), outbox: $this->writer());
@@ -161,7 +205,7 @@ final class OutboxDispatchTest extends TestCase
         $bus = new EventBus(new MessageBus([]), outbox: $this->writer());
 
         $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('lacks the bundle\'s outbox middleware');
+        $this->expectExceptionMessage('a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware');
 
         $bus->dispatch(new TaskArchivedEvent('1'), DispatchMode::OUTBOX);
     }
@@ -195,6 +239,38 @@ final class OutboxDispatchTest extends TestCase
 
         // A rate limiter in the pipeline would otherwise consume a token for a refused store.
         self::assertSame(0, $pipeline->calls);
+    }
+
+    public function test_the_relay_keeps_the_stamps_stored_by_the_middleware_of_the_caller(): void
+    {
+        // Like Symfony's router_context middleware: it appends the context of the current process.
+        $context = new class implements MiddlewareInterface {
+            public string $context = 'caller';
+
+            public function handle(Envelope $envelope, StackInterface $stack): Envelope
+            {
+                return $stack->next()->handle($envelope->with(new DummyStamp($this->context)), $stack);
+            }
+        };
+        $sent = new class implements MiddlewareInterface {
+            public ?Envelope $envelope = null;
+
+            public function handle(Envelope $envelope, StackInterface $stack): Envelope
+            {
+                return $this->envelope = $envelope;
+            }
+        };
+        $messenger = new MessageBus([new OutboxPrepareMiddleware(), $context, new OutboxStoreMiddleware($this->writer()), $sent]);
+        (new EventBus($messenger, outbox: $this->writer()))->dispatch(new TaskArchivedEvent('1'), DispatchMode::OUTBOX);
+
+        // The relay dispatches the stored envelope on the bus again, in its own process.
+        $context->context = 'relay';
+        $stored = (new PhpSerializer())->decode(['body' => $this->storage->fetchUnpublished(10)[0]->body]);
+        $messenger->dispatch($stored->with(new RelayedFromOutboxStamp([DummyStamp::class => 1])));
+
+        self::assertNotNull($sent->envelope);
+        self::assertSame(['caller'], array_map(static fn (DummyStamp $stamp): string => $stamp->name, $sent->envelope->all(DummyStamp::class)));
+        self::assertNull($sent->envelope->last(RelayedFromOutboxStamp::class));
     }
 
     public function test_the_explicit_modes_bypass_the_outbox(): void
@@ -241,7 +317,7 @@ final class OutboxDispatchTest extends TestCase
             }
         };
 
-        return new MessageBus([...$before, new OutboxStoreMiddleware($this->writer()), $handling]);
+        return new MessageBus([new OutboxPrepareMiddleware(), ...$before, new OutboxStoreMiddleware($this->writer()), $handling]);
     }
 
     private function neverCalled(): MessageBusInterface

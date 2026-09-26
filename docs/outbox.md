@@ -107,11 +107,12 @@ The command and event buses store a message in the outbox instead of sending it 
 mode is `outbox`. The stamp pipeline runs as for an asynchronous dispatch (transports, retry,
 serializer, metadata and causation, idempotency, rate limiting), and so does the middleware of
 the bus the relay sends it on (`buses.<type>_async`, or the synchronous bus without one):
-validation, the stamps of your own middleware (tenant, user, `router_context`) and tracing run in
-the dispatching process, and a message they reject is not stored. Right before Messenger's
-`send_message`, the bundle's middleware stores the message instead of sending it, right away, in
-the current transaction: it is never deferred until the current handler has finished. Three ways
-select the mode:
+validation, the stamps of your own middleware and of `router_context` (tenant, user, request
+context) and tracing run in the dispatching process, and a message they reject is not stored.
+After that middleware, right before Doctrine's transaction middleware or Messenger's
+`send_message`, the bundle stores the message instead of sending it, right away, in the current
+transaction: it is never deferred until the current handler has finished, also when the message
+provides a `DispatchAfterCurrentBusStamp` among its default stamps. Three ways select the mode:
 
 ```php
 // 1. Explicitly, for one dispatch.
@@ -180,10 +181,16 @@ the outbox are stored in it without an explicit `transactional()`.
   `require_transaction: true` (the default), a message dispatched outside a transaction on
   `outbox.connection` (none is open, or it is open on another connection) throws
   `OutboxRequiresTransactionException` instead of being stored on its own. A connection with
-  `auto_commit: false` is always in a transaction.
+  `auto_commit: false` is always in a transaction (the relay and the maintenance commands commit
+  their own writes on it).
 - **Middleware runs twice.** Once when the message is stored and once when the relay dispatches
-  it on the same bus (then Messenger's deduplication, and the sending). Middleware that stamps
-  the caller's context should keep a stamp the envelope already carries.
+  it on the same bus (then Messenger's deduplication, and the sending). When the relay dispatches
+  it, a stamp that middleware adds again for a class the stored message already carries (the
+  request context of `router_context`, a tenant) is dropped: the caller's context wins. Middleware
+  with side effects runs twice too; Doctrine's `doctrine_transaction` and
+  `doctrine_open_transaction_logger` run only in the relay, after the store (they would flush the
+  caller's entity manager, or report its open transaction). Middleware must pass an outbox
+  dispatch on to the next one: one that returns early makes `dispatch()` throw a `LogicException`.
 - **The result.** `dispatch()` returns the envelope with an `OutboxStoredStamp`: the ids of the
   stored rows and their transports. Nothing is sent until the relay runs.
 - **The transports** are those of an asynchronous dispatch: `transports.command_async` /
@@ -197,7 +204,11 @@ the outbox are stored in it without an explicit `transactional()`.
 - **Idempotency.** An `IdempotencyStamp` becomes a `DeduplicateStamp` scoped to each row's
   transport (`<key>@<transport>`) when the message is stored, and deduplicates when the relay
   sends the row, not when it is stored: two dispatches with the same key in one transaction store
-  two rows, and the second is dropped when relayed.
+  two rows, and the second is dropped when relayed. A `DeduplicateStamp` among the default stamps
+  of the message (`DefaultStampsProviderInterface`) is scoped and applied the same way. With a
+  lock store that ties its keys to the process (`flock`, `semaphore`, PostgreSQL advisory locks,
+  ZooKeeper), a message with an `IdempotencyStamp` is refused when it is stored (`LogicException`),
+  since the relay could never send it.
 - **Tests.** `assertStoredInOutbox()` checks the fake buses for a dispatch with
   `DispatchMode::OUTBOX`, or with the default mode of a class carrying `#[Outbox]`, and the fakes
   return an envelope with an `OutboxStoredStamp` for it (see [Testing](testing.md)). A fake bus

@@ -15,7 +15,9 @@ runs the `StampsDecider` aggregator. The aggregator calls every registered
 `StampDecider` in priority order (highest first). Each decider receives the
 message, the resolved `DispatchMode` and the current stamp array, and returns
 the (possibly modified) array. The result is passed to Messenger's
-`MessageBusInterface::dispatch()` on the sync or async bus.
+`MessageBusInterface::dispatch()` on the sync or async bus. A message dispatched through the
+[outbox](outbox.md#through-the-buses) gets the stamps of an asynchronous dispatch and goes
+through the async bus (or the sync bus without one), which stores it instead of sending it.
 
 ```mermaid
 sequenceDiagram
@@ -24,11 +26,11 @@ sequenceDiagram
     participant D as DispatchModeDecider
     participant S as StampsDecider
     participant SD as Stamp deciders (by priority)
-    participant M as Messenger bus (sync or async)
+    participant M as Messenger bus (sync or async; async for the outbox)
 
     C->>B: dispatch(command, mode, ...stamps)
     B->>D: resolve(command, mode)
-    D-->>B: SYNC or ASYNC
+    D-->>B: SYNC, ASYNC or OUTBOX
     B->>S: decide(command, resolved mode, caller stamps)
     loop highest priority first
         S->>SD: decide(command, mode, stamps)
@@ -43,8 +45,8 @@ Things to know about the pipeline:
 * The initial stamps are the ones the caller passed. `dispatchSync()` and
   `ask()` remove a `DispatchAfterCurrentBusStamp` first, because they need the
   result immediately.
-* Deciders receive the resolved mode, `SYNC` or `ASYNC`, never `DEFAULT`.
-  `QueryBus::ask()` always passes `SYNC`.
+* Deciders receive the resolved mode, `SYNC` or `ASYNC`, never `DEFAULT`
+  (`ASYNC` for a dispatch through the outbox). `QueryBus::ask()` always passes `SYNC`.
 * Each decider sees the stamps added by the deciders before it.
 * The pipeline only runs for dispatches through the CQRS facades. It does not run
   when a worker handles a received message, when you dispatch on a
@@ -71,6 +73,8 @@ default middleware, a bus handled by the bundle looks like this (abridged;
 bundle middleware in brackets):
 
 ```
+add_default_stamps_middleware          Symfony 7.4+
+[OutboxPrepareMiddleware]              when the outbox is enabled
 add_bus_name_stamp_middleware
 reject_redelivered_message_middleware
 dispatch_after_current_bus
@@ -82,14 +86,15 @@ deduplicate_middleware                 Messenger 7.3+ with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
 ... your own middleware ...
 [OutboxStoreMiddleware]                when the outbox is enabled
+doctrine_transaction                   if you configured it
 send_message
 handle_message
 ```
 
 On a bus without `dispatch_after_current_bus` (for example with
 `default_middleware: false`), the bundle middleware is placed first, except
-`OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
-last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
+`OutboxStoreMiddleware`, which goes before the first of `doctrine_transaction`,
+`doctrine_open_transaction_logger`, `send_message` and `handle_message`, or last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
 
 The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
@@ -173,14 +178,23 @@ can retry with the same idempotency key. It is registered when the idempotency
 bridge is active and a `lock.factory` service exists. See
 [Idempotency](idempotency.md).
 
-### OutboxStoreMiddleware
+### OutboxPrepareMiddleware and OutboxStoreMiddleware
 
-Stores a message dispatched through the [outbox](outbox.md#through-the-buses) in
-the current transaction instead of sending or handling it, after your own
-middleware (validation, context stamps) has run. Other messages pass through
-it untouched. The `DeduplicateStamp` of an outbox dispatch is hidden from
-Messenger's `deduplicate_middleware` until the message is stored (the lock is
-taken when the relay sends it). Registered when the outbox is enabled.
+Registered when the outbox is enabled; other messages pass through them untouched.
+For a message dispatched through the [outbox](outbox.md#through-the-buses):
+
+* `OutboxPrepareMiddleware`, right after Messenger's `add_default_stamps_middleware`,
+  hides its `DeduplicateStamp`s (including default stamps) from
+  `deduplicate_middleware`, so the lock is taken when the relay sends the message, and
+  drops its `DispatchAfterCurrentBusStamp`s: the message is stored now.
+* `OutboxStoreMiddleware`, after your own middleware (validation, context stamps),
+  stores it in the current transaction instead of sending or handling it. When the
+  relay dispatches the stored message on the bus, it drops the stamps that middleware
+  adds again for a class the stored message already carries, so the caller's context
+  (e.g. `router_context`) wins over the relay's.
+
+Middleware between them must call the next middleware for an outbox dispatch:
+otherwise the bus throws a `LogicException`.
 
 ## Built-in stamp deciders
 

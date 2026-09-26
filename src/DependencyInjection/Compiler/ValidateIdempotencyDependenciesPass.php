@@ -73,8 +73,17 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^(flock|semaphore)(:|$)/', $store)) {
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s releases a key as soon as the dispatch returns and only lives on one host: a later dispatch with the same key goes through, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
+            $this->keysCannotBeSent($container);
         } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages (asynchronous dispatches with an IdempotencyStamp fail), and a key stays locked while the connection lives, whatever the TTL. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
+            $this->keysCannotBeSent($container);
+        }
+    }
+
+    private function keysCannotBeSent(ContainerBuilder $container): void
+    {
+        if ($container->hasDefinition(self::DECIDER)) {
+            $container->getDefinition(self::DECIDER)->setArgument('$keysCannotBeSent', true);
         }
     }
 

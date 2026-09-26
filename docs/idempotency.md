@@ -208,7 +208,9 @@ somework_cqrs:
   sends. Worker redeliveries are not checked again either. A `DeduplicateStamp` stored in the
   outbox (through the buses or with `OutboxWriter`) gets a key scoped to the row's transport
   (`<key>@<transport>`), so it does not deduplicate against the same key dispatched directly
-  on a bus.
+  on a bus. With a lock store whose keys cannot be sent (`flock`, `semaphore`, PostgreSQL
+  advisory locks, ZooKeeper), a dispatch through the outbox with an `IdempotencyStamp` is
+  refused when it is stored, since the relay could never send it.
 - **Time-bounded.** Deduplication lasts as long as the lock (see [Lock lifetime](#lock-lifetime)).
   It is not a permanent record of processed operations.
 - **Only as reliable as the lock store.** The local stores (flock, semaphore, in-memory) do

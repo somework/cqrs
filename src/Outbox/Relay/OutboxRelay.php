@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
+use SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
 use Symfony\Component\Messenger\Exception\HandlerFailedException;
@@ -703,8 +704,14 @@ final class OutboxRelay
 
     private function send(OutboxMessage $message, Envelope $envelope, RelayReporter $reporter): void
     {
-        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is kept).
-        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope);
+        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is
+        // kept). Its middleware already ran when the message was stored through a CQRS bus: the stamps
+        // it adds again here (a context of the relay's process) give way to the stored ones.
+        $stored = [];
+        foreach ($envelope->all() as $class => $stamps) {
+            $stored[$class] = count($stamps);
+        }
+        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope->with(new RelayedFromOutboxStamp($stored)));
 
         if (null !== $envelope->last(SentStamp::class)) {
             return;

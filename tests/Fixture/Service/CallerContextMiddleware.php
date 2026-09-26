@@ -13,7 +13,8 @@ use Symfony\Component\Messenger\Stamp\ReceivedStamp;
 
 /**
  * Application middleware on the async event bus: rejects an invalid event (as the validation
- * middleware would) and stamps the context of the dispatching process (a tenant, a user).
+ * middleware would) and stamps the context of the dispatching process on every dispatch (a tenant,
+ * a user), appending to the stamps already there as Symfony's router_context middleware does.
  */
 final class CallerContextMiddleware implements MiddlewareInterface
 {
@@ -25,7 +26,7 @@ final class CallerContextMiddleware implements MiddlewareInterface
             if ($envelope->getMessage() instanceof TaskArchivedEvent && 'invalid' === $envelope->getMessage()->taskId) {
                 throw new \InvalidArgumentException('The event is invalid.');
             }
-            if (null !== $this->context && null === $envelope->last(DummyStamp::class)) {
+            if (null !== $this->context) {
                 $envelope = $envelope->with(new DummyStamp($this->context));
             }
         }

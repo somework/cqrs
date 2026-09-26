@@ -23,7 +23,7 @@ Symfony Messenger is a powerful transport layer, but it leaves CQRS wiring as an
 ```mermaid
 flowchart LR
     A[Your code] --> B[CommandBus / QueryBus / EventBus]
-    B --> C[DispatchModeDecider: sync or async]
+    B --> C[DispatchModeDecider: sync, async or outbox]
     C --> D[StampsDecider pipeline]
     D --> E[Messenger bus]
     E --> F[Handler]

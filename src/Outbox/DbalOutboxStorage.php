@@ -230,6 +230,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             $claimed = (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
             $complete = $complete && $claimed === count($group);
         }
+        $this->commitImplicitTransaction();
 
         $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
         if ($complete) {
@@ -290,6 +291,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->setParameter('token', $token);
             $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
         }
+        $this->commitImplicitTransaction();
 
         // MySQL counts changed rows only (a renewal within the same second changes nothing): read back.
         $ids = array_map(static fn (OutboxMessage $message): string => $message->id, $messages);
@@ -334,6 +336,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->setParameter('token', $token)
                 ->executeStatement()));
         }
+        $this->commitImplicitTransaction();
     }
 
     public function markPublished(array $ids): void
@@ -358,6 +361,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->setParameter('published_at', self::now(), Types::DATETIME_IMMUTABLE)
             ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING)
             ->executeStatement()));
+        $this->commitImplicitTransaction();
     }
 
     public function recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool
@@ -383,7 +387,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->setParameter('token', $token);
 
         // Clearing the claim token always changes the row, so the count is exact on MySQL too.
-        return 0 !== (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+        $recorded = 0 !== (int) $this->retryOnce(fn (): int|string => $this->guard(static fn (): int|string => $query->executeStatement()));
+        $this->commitImplicitTransaction();
+
+        return $recorded;
     }
 
     public function purgePublished(DateTimeImmutable $publishedBefore): int
@@ -414,6 +421,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 ->where('id IN (:ids)')
                 ->setParameter('ids', $ids, ArrayParameterType::STRING)
                 ->executeStatement());
+            $this->commitImplicitTransaction();
         } while (self::PURGE_BATCH_SIZE === count($ids));
 
         return $deleted;
@@ -619,7 +627,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             ->andWhere('id IN (:ids)')
             ->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
 
-        return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        $deleted = (int) $this->guard(static fn (): int|string => $query->executeStatement());
+        $this->commitImplicitTransaction();
+
+        return $deleted;
     }
 
     public function requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int
@@ -648,7 +659,10 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 $query->andWhere('id IN (:ids)')->setParameter('ids', array_map(strtolower(...), $ids), ArrayParameterType::STRING);
             }
 
-            return (int) $this->guard(static fn (): int|string => $query->executeStatement());
+            $requeued = (int) $this->guard(static fn (): int|string => $query->executeStatement());
+            $this->commitImplicitTransaction();
+
+            return $requeued;
         };
 
         if (null === $sign) {
@@ -1114,6 +1128,19 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
     private function guard(\Closure $operation): mixed
     {
         return $this->schema->guard($operation);
+    }
+
+    /**
+     * With auto-commit off, DBAL keeps every statement in a transaction it opened itself, rolled back
+     * when the process exits: the writes of the relay and the maintenance commands are committed.
+     * Messages are stored in the caller's transaction (never committed here), and a transaction the
+     * application opened on top (nesting level above 1) is left alone.
+     */
+    private function commitImplicitTransaction(): void
+    {
+        if (!$this->connection->isAutoCommit() && 1 === $this->connection->getTransactionNestingLevel()) {
+            $this->connection->commit();
+        }
     }
 
     private static function now(): DateTimeImmutable

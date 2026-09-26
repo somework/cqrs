@@ -54,8 +54,10 @@ Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (lates
 Bus::dispatch(message, mode, ...stamps)
   → DispatchModeDecider resolves sync/async/outbox (exact map entry → #[Outbox]/#[Asynchronous] → parent/interface map entry → default)
   → outbox mode: the transaction is checked first, the stamp pipeline runs as for async, and the envelope goes
-    through the async bus (sync bus without one) with a StoreInOutboxStamp; OutboxStoreMiddleware, right before
-    send_message, stores it in the current transaction (OutboxStoredStamp) instead of sending it
+    through the async bus (sync bus without one) with a StoreInOutboxStamp; OutboxPrepareMiddleware (after
+    add_default_stamps) hides DeduplicateStamps and drops deferral, and OutboxStoreMiddleware (before
+    doctrine_transaction/send_message) stores it in the current transaction (OutboxStoredStamp) instead of sending
+    it; the relay's dispatch carries RelayedFromOutboxStamp, so re-added stamps give way to the stored ones
   → StampsDecider runs the stamp pipeline (rate limit, retry, transport, serializer, metadata, sequence,
     causation id, idempotency, dispatch-after-current-bus); caller stamps always win
   → Symfony Messenger MessageBusInterface::dispatch() on the sync or async bus
@@ -81,7 +83,7 @@ reports messages that were sent to a transport or deduplicated).
 - `CqrsHandlerPass` — normalises handler tags: infers messages from `__invoke()` types, assigns sync + async buses, resolves bus aliases, records `somework_cqrs.handler_metadata`
 - `EnvelopeAwareHandlersLocatorPass` — decorates each bus handlers locator for `EnvelopeAware` handlers
 - `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` — insert middleware via `MessengerMiddlewareInjector`
-- `OutboxStoreMiddlewarePass` — with the outbox enabled, inserts `OutboxStoreMiddleware` right before `send_message` on the CQRS buses and gives `OutboxWriter` the Messenger transport names
+- `OutboxStoreMiddlewarePass` — with the outbox enabled, inserts `OutboxPrepareMiddleware` after `add_default_stamps_middleware` and `OutboxStoreMiddleware` before `doctrine_transaction`/`send_message` on the CQRS buses, and gives `OutboxWriter` the Messenger transport names
 - `HealthCheckerLocatorPass` — service locators of handlers and transports for the health checkers
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
@@ -97,7 +99,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Registry** (`src/Registry/`) — `HandlerRegistry` provides read-only access to compiled handler metadata (`HandlerDescriptor` DTOs). Used by the `somework:cqrs:list` console command.
 
-**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `OutboxStoreMiddleware`.
+**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `OutboxPrepareMiddleware`, `OutboxStoreMiddleware`.
 
 **Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`; `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 

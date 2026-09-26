@@ -320,9 +320,11 @@ correlation id and names the handled message as its cause.
   `auto_commit: false` counts as being in a transaction.
 - `OutboxWriter::store()` refuses a transport that is not a Messenger transport (`UnknownOutboxTransportException`)
   instead of storing a row the relay gives up on.
-- With the outbox enabled, the bundle's outbox middleware sits right before Messenger's `send_message` on the CQRS
-  buses. It only acts on messages dispatched through the outbox; the middleware before it runs when they are
-  stored, and again when the relay sends them.
+- With the outbox enabled, the bundle's outbox middleware sits right after Messenger's
+  `add_default_stamps_middleware` and right before `doctrine_transaction` (or `send_message`) on the CQRS buses. It
+  only acts on messages dispatched through the outbox; the middleware before the store runs when they are stored,
+  and again when the relay sends them (the stamps it adds again give way to the stored ones). Middleware must call
+  the next middleware for such a dispatch.
 - With the outbox enabled, `transports.command_async`/`event_async` no longer require an async bus: the outbox
   stores its rows for them.
 
