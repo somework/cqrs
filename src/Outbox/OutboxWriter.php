@@ -16,6 +16,7 @@ use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Message\DefaultStampsProviderInterface;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -23,6 +24,7 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
+use function class_exists;
 use function in_array;
 use function sprintf;
 
@@ -37,17 +39,29 @@ use function sprintf;
  */
 final class OutboxWriter
 {
+    /** Stores that call Key::markUnserializable(): their keys cannot be sent with a message. */
+    private const LOCAL_LOCK_STORES = [
+        'Symfony\\Component\\Lock\\Store\\FlockStore',
+        'Symfony\\Component\\Lock\\Store\\SemaphoreStore',
+        'Symfony\\Component\\Lock\\Store\\PostgreSqlStore',
+        'Symfony\\Component\\Lock\\Store\\DoctrineDbalPostgreSqlStore',
+        'Symfony\\Component\\Lock\\Store\\ZookeeperStore',
+    ];
+
+    /** The class of a lock store whose keys stay in the process, '' for another store, null before the first check */
+    private ?string $localLockStore = null;
+
     /**
      * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
      * OutboxWriter): the constructor takes internal services and may change in any release.
      *
-     * @param StampDecider|null        $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
-     * @param CausationIdContext|null  $causation           The message being handled, whose flow a stored message continues
-     * @param bool                     $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
-     * @param TransactionalOutbox|null $transaction         The storage behind any decorator, when it can tell whether a transaction is open
-     * @param bool                     $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
-     * @param list<string>|null        $transportNames      The Messenger transports; a row for another transport is refused
-     * @param bool                     $lockKeysStayLocal   The lock store ties its keys to the process: a message with a DeduplicateStamp is refused
+     * @param StampDecider|null         $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param CausationIdContext|null   $causation           The message being handled, whose flow a stored message continues
+     * @param bool                      $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
+     * @param TransactionalOutbox|null  $transaction         The storage behind any decorator, when it can tell whether a transaction is open
+     * @param bool                      $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
+     * @param list<string>|null         $transportNames      The Messenger transports; a row for another transport is refused
+     * @param (\Closure(): object)|null $lockStore           The store behind Messenger's deduplication: one that ties its keys to the process refuses messages with a DeduplicateStamp
      *
      * @internal
      */
@@ -60,7 +74,7 @@ final class OutboxWriter
         private readonly ?TransactionalOutbox $transaction = null,
         private readonly bool $requireTransaction = false,
         private readonly ?array $transportNames = null,
-        private readonly bool $lockKeysStayLocal = false,
+        private readonly ?\Closure $lockStore = null,
     ) {
     }
 
@@ -125,9 +139,9 @@ final class OutboxWriter
                 throw new UnknownOutboxTransportException($envelope->getMessage()::class, $transport, $this->transportNames);
             }
         }
-        if ($this->lockKeysStayLocal && null !== $envelope->last(DeduplicateStamp::class)) {
+        if (self::deduplicates($envelope) && null !== ($store = $this->localLockStore())) {
             // Messenger's deduplication would take the lock in the relay and fail to send its key, on every attempt.
-            throw new \LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database (framework.lock), or dispatch it without the stamp.', $envelope->getMessage()::class));
+            throw new \LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (%s) ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database, or dispatch it without the stamp.', $envelope->getMessage()::class, $store));
         }
 
         if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {
@@ -155,6 +169,52 @@ final class OutboxWriter
         }
 
         return $stored;
+    }
+
+    /**
+     * Whether the envelope, or the default stamps the relay's bus adds to it, carries a DeduplicateStamp.
+     */
+    private static function deduplicates(Envelope $envelope): bool
+    {
+        if (!class_exists(DeduplicateStamp::class)) {
+            return false;
+        }
+        if (null !== $envelope->last(DeduplicateStamp::class)) {
+            return true;
+        }
+
+        $message = $envelope->getMessage();
+        foreach ($message instanceof DefaultStampsProviderInterface ? $message->getDefaultStamps() : [] as $stamp) {
+            if ($stamp instanceof DeduplicateStamp) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The class of the lock store the application runs with, when it ties its keys to the process
+     * or connection (Key::markUnserializable()), else null. Resolved once, on the first message with
+     * a DeduplicateStamp.
+     */
+    private function localLockStore(): ?string
+    {
+        if (null === $this->lockStore) {
+            return null;
+        }
+
+        if (null === $this->localLockStore) {
+            $store = ($this->lockStore)();
+            $this->localLockStore = '';
+            foreach (self::LOCAL_LOCK_STORES as $class) {
+                if ($store instanceof $class) {
+                    $this->localLockStore = $store::class;
+                }
+            }
+        }
+
+        return '' === $this->localLockStore ? null : $this->localLockStore;
     }
 
     /**

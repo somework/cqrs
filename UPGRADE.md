@@ -325,7 +325,8 @@ correlation id and names the handled message as its cause.
   `doctrine_transaction` and `doctrine_open_transaction_logger` there. It only acts on messages dispatched through
   the outbox: the middleware before the store runs when they are stored (except those two Doctrine middleware),
   and again when the relay sends them (the stamps it adds again give way to the stored ones). Middleware must call
-  the next middleware for such a dispatch.
+  the next middleware for such a dispatch. The relay's run has no caller context and no `ReceivedStamp`: middleware
+  that checks the dispatching context (authorization) should skip envelopes with `RelayedFromOutboxStamp`.
 - With the outbox enabled, `transports.command_async`/`event_async` no longer require an async bus: the outbox
   stores its rows for them.
 

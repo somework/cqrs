@@ -9,6 +9,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -151,27 +152,18 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
     }
 
-    #[DataProvider('outboxLockStores')]
-    public function test_the_outbox_writer_refuses_deduplication_with_a_store_whose_keys_stay_local(string $dsn, bool $refused): void
+    public function test_the_outbox_writer_gets_the_lock_store_to_check_at_runtime(): void
     {
-        // Also with idempotency disabled: a DeduplicateStamp may come from the caller or the message.
-        $container = $this->containerWithLockStore($dsn, new ContainerBuilder());
+        // Also with idempotency disabled (a DeduplicateStamp may come from the caller or the
+        // message), and lazily: an environment-based DSN is only known at runtime.
+        $container = $this->containerWithLockStore('%env(LOCK_DSN)%', new ContainerBuilder());
         $container->register('somework_cqrs.outbox.writer');
 
         (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
 
-        self::assertSame($refused, $container->getDefinition('somework_cqrs.outbox.writer')->getArguments()['$lockKeysStayLocal'] ?? false);
-    }
-
-    /**
-     * @return iterable<string, array{string, bool}>
-     */
-    public static function outboxLockStores(): iterable
-    {
-        yield 'flock' => ['flock', true];
-        yield 'semaphore' => ['semaphore', true];
-        yield 'advisory locks' => ['postgresql+advisory://db/app', true];
-        yield 'redis' => ['redis://localhost', false];
+        $store = $container->getDefinition('somework_cqrs.outbox.writer')->getArgument('$lockStore');
+        self::assertInstanceOf(ServiceClosureArgument::class, $store);
+        self::assertSame('.lock.default.store.abc', (string) $store->getValues()[0]);
     }
 
     private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder

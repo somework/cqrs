@@ -21,8 +21,12 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\StockReservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Lock\Store\FlockStore;
+use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Middleware\AddDefaultStampsMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
@@ -79,9 +83,21 @@ final class OutboxWriterTest extends TestCase
     #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_deduplicate_stamp_is_refused_when_the_lock_store_keys_stay_local(): void
     {
-        // The relay's deduplication would lock the key and fail to send it on every attempt.
-        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockKeysStayLocal: true);
+        // The relay's deduplication would lock the key and fail to send it on every attempt. The
+        // store is the one the application runs with, read when a DeduplicateStamp is stored.
+        $lockStore = new class {
+            public int $reads = 0;
+
+            public function __invoke(): FlockStore
+            {
+                ++$this->reads;
+
+                return new FlockStore();
+            }
+        };
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockStore: $lockStore(...));
         $writer->store(new CreateTaskCommand('1', 'a'), 'async');
+        self::assertSame(0, $lockStore->reads, 'Not read without a DeduplicateStamp.');
 
         foreach ([static fn () => $writer->store(new CreateTaskCommand('2', 'b'), 'async', new DeduplicateStamp('key')), static fn () => $writer->storeEnvelope(new Envelope(new CreateTaskCommand('3', 'c'), [new DeduplicateStamp('key')]))] as $store) {
             try {
@@ -89,10 +105,34 @@ final class OutboxWriterTest extends TestCase
                 self::fail('Expected the store to be refused.');
             } catch (\LogicException $exception) {
                 self::assertStringContainsString('was not stored in the outbox: its DeduplicateStamp', $exception->getMessage());
+                self::assertStringContainsString('('.FlockStore::class.')', $exception->getMessage());
             }
         }
 
+        self::assertSame(1, $lockStore->reads);
         self::assertCount(1, $this->storage->fetchUnpublished(10));
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_a_deduplicate_stamp_is_stored_with_a_lock_store_whose_keys_can_be_sent(): void
+    {
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockStore: static fn (): InMemoryStore => new InMemoryStore());
+
+        $writer->store(new CreateTaskCommand('1', 'a'), 'async', new DeduplicateStamp('key'));
+
+        self::assertCount(1, $this->storage->fetchUnpublished(10));
+    }
+
+    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
+    public function test_a_deduplicate_stamp_among_the_default_stamps_of_the_message_is_refused_too(): void
+    {
+        // The relay's bus adds it (add_default_stamps_middleware).
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockStore: static fn (): FlockStore => new FlockStore());
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('its DeduplicateStamp');
+
+        $writer->store(new StockReservedEvent('A'), 'async');
     }
 
     public function test_a_stored_message_continues_the_current_trace_when_opentelemetry_is_enabled(): void

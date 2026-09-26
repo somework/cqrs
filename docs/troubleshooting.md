@@ -426,7 +426,22 @@ was stored.
 
 **Fix.** Configure a lock store whose keys can be serialized, such as Redis,
 Memcached or a PDO/DBAL database (`framework.lock`), or dispatch the message
-without the stamp.
+without the stamp. The message names the store `lock.factory` uses at runtime.
+
+### The relay fails on a message that application middleware rejects
+
+**Symptom.** `somework:cqrs:outbox:relay` reports `Could not relay message …` with an
+exception from your own middleware (an access denied, a missing tenant), on every
+attempt, for messages that were accepted when they were stored.
+
+**Cause.** The relay dispatches the stored message on its bus again, in its own
+process: there is no request, user or tenant, and no `ReceivedStamp`. Middleware
+that checks the dispatching context rejects it.
+
+**Fix.** Skip envelopes carrying `SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp`
+in that middleware, as you skip `ReceivedStamp` (see
+[Through the buses](outbox.md#through-the-buses)); then requeue the given-up rows with
+`somework:cqrs:outbox:failed --requeue`.
 
 ### "did not store … in the outbox: a middleware of its Messenger bus returned before …"
 

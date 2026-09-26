@@ -743,14 +743,34 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         try {
             $result = $dispatch();
         } catch (\Throwable $exception) {
-            $this->connection->rollBack();
+            try {
+                $this->connection->rollBack();
+            } catch (\Throwable) {
+                $this->discardConnection();
+            }
 
             throw $exception;
         }
-        $this->connection->commit();
+        try {
+            $this->connection->commit();
+        } catch (\Throwable $exception) {
+            $this->discardConnection();
+
+            throw $exception;
+        }
         $this->commitImplicitTransaction();
 
         return $result;
+    }
+
+    /**
+     * The database ended the transaction itself (a deadlock on MySQL rolls back the savepoint too):
+     * DBAL's nesting level no longer matches the session. Everything the relay wrote is committed
+     * already (publish marks wait in memory), so the next statement starts over on a new connection.
+     */
+    private function discardConnection(): void
+    {
+        $this->connection->close();
     }
 
     /**

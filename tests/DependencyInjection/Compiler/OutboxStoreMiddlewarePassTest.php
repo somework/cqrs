@@ -42,8 +42,11 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         $bypass = $container->getDefinition(self::BYPASS);
         self::assertSame(OutboxBypassMiddleware::class, $bypass->getClass());
         self::assertSame('messenger.bus.default.middleware.doctrine_transaction', (string) $bypass->getArgument(0));
-        // A bus without Messenger's default middleware: first and last.
-        self::assertSame([OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID], $this->middlewareIds($container, 'event.async_bus'));
+        // Listed twice (e.g. one per entity manager), the second gets a hash suffix; not the logger of another bundle.
+        self::assertSame(
+            [OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.messenger.middleware.doctrine_open_transaction_logger', 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.event.async_bus.middleware.doctrine_transaction.kaQ27bZ', 'app.my_doctrine_transaction_audit', OutboxStoreMiddlewarePass::MIDDLEWARE_ID],
+            $this->middlewareIds($container, 'event.async_bus'),
+        );
     }
 
     public function test_gives_the_writer_the_messenger_transport_names(): void
@@ -104,8 +107,12 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
             new Reference('messenger.bus.default.middleware.send_message'),
             new Reference('messenger.bus.default.middleware.handle_message'),
         ])));
+        // A bus without Messenger's default middleware: the outbox middleware goes first and last.
         $container->setDefinition('event.async_bus', (new Definition())->setArgument(0, new IteratorArgument([
+            new Reference('messenger.middleware.doctrine_open_transaction_logger'),
             new Reference('app.validation'),
+            new Reference('event.async_bus.middleware.doctrine_transaction.kaQ27bZ'),
+            new Reference('app.my_doctrine_transaction_audit'),
         ])));
 
         return $container;

@@ -1477,6 +1477,46 @@ final class DbalOutboxStorageTest extends TestCase
         }
     }
 
+    public function test_a_unit_of_work_the_database_ended_itself_starts_over_on_a_new_connection(): void
+    {
+        // A deadlock on MySQL rolls back the whole transaction, savepoint included: rolling back to
+        // it fails, and DBAL's nesting level no longer matches the session.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $other->executeStatement('CREATE TABLE handled (id VARCHAR(10) NOT NULL)');
+            $connection = DriverManager::getConnection($params, $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+            $handle = static function (string $id) use ($connection): string {
+                $connection->insert('handled', ['id' => $id]);
+                if ('deadlock' === $id) {
+                    $connection->executeStatement('ROLLBACK');
+
+                    throw new \RuntimeException('Deadlock found when trying to get lock.');
+                }
+
+                return $id;
+            };
+
+            try {
+                $storage->dispatchInUnitOfWork(static fn (): string => $handle('deadlock'));
+                self::fail('The exception of the dispatch is rethrown.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('Deadlock found when trying to get lock.', $exception->getMessage(), 'The handler\'s error, not the savepoint\'s.');
+            }
+            self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
+
+            self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'));
+            self::assertSame(1, $connection->getTransactionNestingLevel(), 'The next dispatches are units of work again.');
+        } finally {
+            unlink($file);
+        }
+    }
+
     public function test_the_setup_runs_on_a_connection_without_auto_commit(): void
     {
         $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');

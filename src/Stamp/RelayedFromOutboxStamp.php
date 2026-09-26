@@ -8,17 +8,24 @@ use Symfony\Component\Messenger\Stamp\NonSendableStampInterface;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
- * Added by the relay when it dispatches a stored envelope on its bus. The middleware of the bus ran
- * when the message was stored, in the dispatching process: OutboxStoreMiddleware drops the stamps
- * that middleware adds again in the relay (router_context, a tenant) when the stored envelope
- * already carries stamps of that class, so the caller's context wins.
+ * Carried by the relay's dispatch of a stored message on its bus. That dispatch runs in the relay's
+ * process, without the caller's request, user or tenant, and without a ReceivedStamp: middleware
+ * that checks the dispatching context (e.g. authorization) and skips received messages should skip
+ * envelopes with this stamp too, since the message was checked when it was stored.
  *
- * @internal
+ * The middleware of the bus ran when the message was stored, in the dispatching process:
+ * OutboxStoreMiddleware drops the stamps that middleware adds again in the relay (router_context,
+ * a tenant) when the stored envelope already carries stamps of that class, so the caller's context
+ * wins, and removes this stamp before the message is sent or handled.
+ *
+ * @api
  */
 final class RelayedFromOutboxStamp implements NonSendableStampInterface
 {
     /**
      * @param array<class-string<StampInterface>, int> $storedStamps The number of stamps of each class the stored envelope carries
+     *
+     * @internal
      */
     public function __construct(
         public readonly array $storedStamps,

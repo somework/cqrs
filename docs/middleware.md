@@ -192,9 +192,13 @@ For a message dispatched through the [outbox](outbox.md#through-the-buses):
   adds again for a class the stored message already carries, so the caller's context
   (e.g. `router_context`) wins over the relay's.
 * Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger`, wherever
-  they are listed on a CQRS bus, are wrapped so that a message being stored skips them
-  (they would flush the caller's entity manager, or report its open transaction); they
-  run when the relay dispatches it.
+  they are listed on a CQRS bus (also more than once), are wrapped so that a message
+  being stored skips them (they would flush the caller's entity manager, or report its
+  open transaction); they run when the relay dispatches it.
+
+The relay's dispatch carries `RelayedFromOutboxStamp` and runs without the caller's
+context and without a `ReceivedStamp`: middleware that checks the dispatching context
+(authorization) should skip it as it skips received messages.
 
 Middleware between them must call the next middleware for an outbox dispatch:
 otherwise the bus throws a `LogicException`.

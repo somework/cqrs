@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
 use Closure;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -47,7 +48,7 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
 
     public function process(ContainerBuilder $container): void
     {
-        $this->refuseOutboxDeduplicationOnLocalStores($container);
+        $this->giveTheOutboxWriterTheLockStore($container);
 
         if (!$container->hasParameter('somework_cqrs.idempotency.enabled')
             || true !== $container->getParameter('somework_cqrs.idempotency.enabled')) {
@@ -85,16 +86,18 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
     /**
      * A message stored in the outbox with a DeduplicateStamp is locked by the relay, whose sending
      * fails when the lock store ties its keys to the process: the outbox writer refuses to store it.
+     * It gets the store behind "lock.factory", lazily, and checks the store the application runs
+     * with (the DSN may come from the environment).
      */
-    private function refuseOutboxDeduplicationOnLocalStores(ContainerBuilder $container): void
+    private function giveTheOutboxWriterTheLockStore(ContainerBuilder $container): void
     {
         if (!$container->hasDefinition(self::OUTBOX_WRITER) || !$container->hasDefinition(self::DEDUPLICATE_MIDDLEWARE)) {
             return;
         }
 
-        [$store] = self::lockStoreDsn($container) ?? [null];
-        if (null !== $store && 1 === preg_match('/^((flock|semaphore)(:|$)|((pgsql|postgres|postgresql)\+advisory|zookeeper):)/', $store)) {
-            $container->getDefinition(self::OUTBOX_WRITER)->setArgument('$lockKeysStayLocal', true);
+        $store = self::lockStoreReference($container);
+        if (null !== $store) {
+            $container->getDefinition(self::OUTBOX_WRITER)->setArgument('$lockStore', new ServiceClosureArgument($store));
         }
     }
 
@@ -116,13 +119,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
      */
     private static function lockStoreDsn(ContainerBuilder $container): ?array
     {
-        if (!$container->has('lock.factory')) {
-            return null;
-        }
-
-        $factory = $container->findDefinition('lock.factory');
-        $storeReference = $factory->getArguments()['index_0'] ?? $factory->getArguments()[0] ?? null;
-        if (!$storeReference instanceof Reference || !$container->has((string) $storeReference)) {
+        $storeReference = self::lockStoreReference($container);
+        if (null === $storeReference) {
             return null;
         }
 
@@ -144,5 +142,20 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
         }
 
         return is_string($resolved) ? [$resolved, true] : null;
+    }
+
+    /**
+     * The store behind "lock.factory" as configured in framework.lock.
+     */
+    private static function lockStoreReference(ContainerBuilder $container): ?Reference
+    {
+        if (!$container->has('lock.factory')) {
+            return null;
+        }
+
+        $factory = $container->findDefinition('lock.factory');
+        $storeReference = $factory->getArguments()['index_0'] ?? $factory->getArguments()[0] ?? null;
+
+        return $storeReference instanceof Reference && $container->has((string) $storeReference) ? $storeReference : null;
     }
 }

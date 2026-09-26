@@ -16,9 +16,9 @@ use Symfony\Component\DependencyInjection\Reference;
 
 use function array_keys;
 use function is_string;
+use function preg_match;
 use function sort;
 use function sprintf;
-use function str_ends_with;
 use function str_starts_with;
 
 /**
@@ -38,10 +38,11 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
     public const PREPARE_MIDDLEWARE_ID = 'somework_cqrs.messenger.middleware.outbox_prepare';
 
     /**
-     * Middleware that belongs to handling: at store time it would flush the caller's entity manager,
-     * or report its open transaction.
+     * Middleware that belongs to handling (at store time it would flush the caller's entity manager,
+     * or report its open transaction), by the ids Messenger gives it: "messenger.middleware.<name>",
+     * "<bus>.middleware.<name>", with a hash suffix when a bus lists it more than once.
      */
-    private const BYPASSED = ['doctrine_transaction', 'doctrine_open_transaction_logger'];
+    private const BYPASSED = '/(?:^|\.)(?:doctrine_transaction|doctrine_open_transaction_logger)(?:\.[A-Za-z0-9_]+)?$/';
 
     private const WRITER_ID = 'somework_cqrs.outbox.writer';
 
@@ -89,16 +90,14 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
         $middlewares = [];
         foreach ($argument->getValues() as $middleware) {
             $id = (string) $middleware;
-            foreach (self::BYPASSED as $bypassed) {
-                if ($middleware instanceof Reference && str_ends_with($id, $bypassed) && !str_starts_with($id, self::MIDDLEWARE_ID)) {
-                    $wrapperId = self::MIDDLEWARE_ID.'.bypass.'.$id;
-                    if (!$container->hasDefinition($wrapperId)) {
-                        $container->setDefinition($wrapperId, (new Definition(OutboxBypassMiddleware::class))
-                            ->setArguments([new Reference($id)])
-                            ->setPublic(false));
-                    }
-                    $middleware = new Reference($wrapperId);
+            if ($middleware instanceof Reference && 1 === preg_match(self::BYPASSED, $id) && !str_starts_with($id, self::MIDDLEWARE_ID)) {
+                $wrapperId = self::MIDDLEWARE_ID.'.bypass.'.$id;
+                if (!$container->hasDefinition($wrapperId)) {
+                    $container->setDefinition($wrapperId, (new Definition(OutboxBypassMiddleware::class))
+                        ->setArguments([new Reference($id)])
+                        ->setPublic(false));
                 }
+                $middleware = new Reference($wrapperId);
             }
             $middlewares[] = $middleware;
         }

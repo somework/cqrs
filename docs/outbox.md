@@ -192,6 +192,16 @@ the outbox are stored in it without an explicit `transactional()`.
   listed, and run in the relay (they would flush the caller's entity manager, or report its open
   transaction). Middleware must pass an outbox dispatch on to the next one: one that returns early
   makes `dispatch()` throw a `LogicException`.
+- **The relay's run has no caller context.** It happens in the relay's process, without the
+  caller's request, user or tenant, and without a `ReceivedStamp`. Middleware that checks the
+  dispatching context (authorization, for example) and skips received messages should also skip
+  envelopes carrying `RelayedFromOutboxStamp`: the message was checked when it was stored.
+
+  ```php
+  if (null !== $envelope->last(ReceivedStamp::class) || null !== $envelope->last(RelayedFromOutboxStamp::class)) {
+      return $stack->next()->handle($envelope, $stack);
+  }
+  ```
 - **The result.** `dispatch()` returns the envelope with an `OutboxStoredStamp`: the ids of the
   stored rows and their transports. Nothing is sent until the relay runs.
 - **The transports** are those of an asynchronous dispatch: `transports.command_async` /
@@ -210,7 +220,8 @@ the outbox are stored in it without an explicit `transactional()`.
   lock store that ties its keys to the process (`flock`, `semaphore`, PostgreSQL advisory locks,
   ZooKeeper), a message with a `DeduplicateStamp` (from an `IdempotencyStamp`, its default stamps
   or the caller) is refused when it is stored (`LogicException`), since the relay could never
-  send it; `OutboxWriter::store()` refuses it too.
+  send it; `OutboxWriter::store()` refuses it too. The store is the one `lock.factory` uses at
+  runtime (a `LOCK_DSN` from the environment counts with its runtime value).
 - **Tests.** `assertStoredInOutbox()` checks the fake buses for a dispatch with
   `DispatchMode::OUTBOX`, or with the default mode of a class carrying `#[Outbox]`, and the fakes
   return an envelope with an `OutboxStoredStamp` for it (see [Testing](testing.md)). A fake bus
