@@ -24,6 +24,7 @@ use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
 use function in_array;
+use function sprintf;
 
 /**
  * Stores messages in the outbox: call it inside the database transaction of the business change.
@@ -46,6 +47,7 @@ final class OutboxWriter
      * @param TransactionalOutbox|null $transaction         The storage behind any decorator, when it can tell whether a transaction is open
      * @param bool                     $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
      * @param list<string>|null        $transportNames      The Messenger transports; a row for another transport is refused
+     * @param bool                     $lockKeysStayLocal   The lock store ties its keys to the process: a message with a DeduplicateStamp is refused
      *
      * @internal
      */
@@ -58,6 +60,7 @@ final class OutboxWriter
         private readonly ?TransactionalOutbox $transaction = null,
         private readonly bool $requireTransaction = false,
         private readonly ?array $transportNames = null,
+        private readonly bool $lockKeysStayLocal = false,
     ) {
     }
 
@@ -73,6 +76,7 @@ final class OutboxWriter
      *
      * @throws OutboxRequiresTransactionException outside a transaction on the outbox connection (outbox.require_transaction)
      * @throws UnknownOutboxTransportException    for a transport that is not a Messenger transport
+     * @throws \LogicException                    for a DeduplicateStamp with a lock store whose keys cannot be sent
      *
      * @return list<OutboxMessage> The stored rows
      */
@@ -120,6 +124,10 @@ final class OutboxWriter
                 // Refused before the business change commits: the relay could never send the row.
                 throw new UnknownOutboxTransportException($envelope->getMessage()::class, $transport, $this->transportNames);
             }
+        }
+        if ($this->lockKeysStayLocal && null !== $envelope->last(DeduplicateStamp::class)) {
+            // Messenger's deduplication would take the lock in the relay and fail to send its key, on every attempt.
+            throw new \LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database (framework.lock), or dispatch it without the stamp.', $envelope->getMessage()::class));
         }
 
         if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {

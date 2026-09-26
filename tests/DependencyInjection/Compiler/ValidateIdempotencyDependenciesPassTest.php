@@ -149,7 +149,29 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         // Escaped: the advice names "%env(LOCK_DSN)%", which must not become an environment variable.
         self::assertStringContainsString('"%%env(LOCK_DSN)%%"', $problem);
         self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
-        self::assertTrue($container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$keysCannotBeSent'), 'An outbox dispatch with an IdempotencyStamp is refused.');
+    }
+
+    #[DataProvider('outboxLockStores')]
+    public function test_the_outbox_writer_refuses_deduplication_with_a_store_whose_keys_stay_local(string $dsn, bool $refused): void
+    {
+        // Also with idempotency disabled: a DeduplicateStamp may come from the caller or the message.
+        $container = $this->containerWithLockStore($dsn, new ContainerBuilder());
+        $container->register('somework_cqrs.outbox.writer');
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        self::assertSame($refused, $container->getDefinition('somework_cqrs.outbox.writer')->getArguments()['$lockKeysStayLocal'] ?? false);
+    }
+
+    /**
+     * @return iterable<string, array{string, bool}>
+     */
+    public static function outboxLockStores(): iterable
+    {
+        yield 'flock' => ['flock', true];
+        yield 'semaphore' => ['semaphore', true];
+        yield 'advisory locks' => ['postgresql+advisory://db/app', true];
+        yield 'redis' => ['redis://localhost', false];
     }
 
     private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder

@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
+use SomeWork\CqrsBundle\Messenger\OutboxBypassMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxPrepareMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxStoreMiddleware;
+use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -16,14 +18,16 @@ use function array_keys;
 use function is_string;
 use function sort;
 use function sprintf;
+use function str_ends_with;
+use function str_starts_with;
 
 /**
  * With the outbox enabled, inserts the outbox middleware on the CQRS buses (DispatchMode::OUTBOX
  * stores through them): OutboxPrepareMiddleware right after Messenger's
  * "add_default_stamps_middleware" (or first), and OutboxStoreMiddleware after the application's
- * middleware, right before Doctrine's transaction middleware or "send_message". It also gives the
- * outbox writer the Messenger transport names, so a row for an unknown transport is refused before
- * it is stored.
+ * middleware, right before "send_message". Doctrine's transaction middleware is wrapped so that a
+ * message stored in the outbox skips it. It also gives the outbox writer the Messenger transport
+ * names, so a row for an unknown transport is refused before it is stored.
  *
  * @internal
  */
@@ -34,10 +38,10 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
     public const PREPARE_MIDDLEWARE_ID = 'somework_cqrs.messenger.middleware.outbox_prepare';
 
     /**
-     * The store goes before the first of these: Doctrine's transaction middleware belongs to handling
-     * (at store time it would flush the caller's entity manager, or log its open transaction).
+     * Middleware that belongs to handling: at store time it would flush the caller's entity manager,
+     * or report its open transaction.
      */
-    private const STORE_BEFORE = ['doctrine_transaction', 'doctrine_open_transaction_logger', 'send_message', 'handle_message'];
+    private const BYPASSED = ['doctrine_transaction', 'doctrine_open_transaction_logger'];
 
     private const WRITER_ID = 'somework_cqrs.outbox.writer';
 
@@ -66,10 +70,39 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
         $container->setDefinition(self::PREPARE_MIDDLEWARE_ID, (new Definition(OutboxPrepareMiddleware::class))->setPublic(false));
 
         foreach (CqrsBusIds::resolve($container) as $busId) {
-            if (!MessengerMiddlewareInjector::injectBefore($container, $busId, self::MIDDLEWARE_ID, self::STORE_BEFORE)
+            if (!MessengerMiddlewareInjector::injectBefore($container, $busId, self::MIDDLEWARE_ID)
                 || !MessengerMiddlewareInjector::inject($container, $busId, self::PREPARE_MIDDLEWARE_ID, 'add_default_stamps_middleware')) {
                 throw new LogicException(sprintf('The outbox needs its middleware on the Messenger bus "%s" (a CQRS bus), but the bundle cannot find the middleware list of that bus.', $busId));
             }
+            $this->bypassHandlingMiddleware($container, $busId);
         }
+    }
+
+    private function bypassHandlingMiddleware(ContainerBuilder $container, string $busId): void
+    {
+        $definition = MessengerMiddlewareInjector::findBusDefinition($container, $busId);
+        $argument = $definition?->getArgument(0);
+        if (null === $definition || !$argument instanceof IteratorArgument) {
+            return;
+        }
+
+        $middlewares = [];
+        foreach ($argument->getValues() as $middleware) {
+            $id = (string) $middleware;
+            foreach (self::BYPASSED as $bypassed) {
+                if ($middleware instanceof Reference && str_ends_with($id, $bypassed) && !str_starts_with($id, self::MIDDLEWARE_ID)) {
+                    $wrapperId = self::MIDDLEWARE_ID.'.bypass.'.$id;
+                    if (!$container->hasDefinition($wrapperId)) {
+                        $container->setDefinition($wrapperId, (new Definition(OutboxBypassMiddleware::class))
+                            ->setArguments([new Reference($id)])
+                            ->setPublic(false));
+                    }
+                    $middleware = new Reference($wrapperId);
+                }
+            }
+            $middlewares[] = $middleware;
+        }
+
+        $definition->replaceArgument(0, new IteratorArgument($middlewares));
     }
 }

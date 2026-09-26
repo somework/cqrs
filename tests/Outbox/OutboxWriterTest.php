@@ -76,6 +76,25 @@ final class OutboxWriterTest extends TestCase
         self::assertCount(1, $this->storage->fetchUnpublished(10), 'No row of a refused message, not even for its known transport.');
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_a_deduplicate_stamp_is_refused_when_the_lock_store_keys_stay_local(): void
+    {
+        // The relay's deduplication would lock the key and fail to send it on every attempt.
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockKeysStayLocal: true);
+        $writer->store(new CreateTaskCommand('1', 'a'), 'async');
+
+        foreach ([static fn () => $writer->store(new CreateTaskCommand('2', 'b'), 'async', new DeduplicateStamp('key')), static fn () => $writer->storeEnvelope(new Envelope(new CreateTaskCommand('3', 'c'), [new DeduplicateStamp('key')]))] as $store) {
+            try {
+                $store();
+                self::fail('Expected the store to be refused.');
+            } catch (\LogicException $exception) {
+                self::assertStringContainsString('was not stored in the outbox: its DeduplicateStamp', $exception->getMessage());
+            }
+        }
+
+        self::assertCount(1, $this->storage->fetchUnpublished(10));
+    }
+
     public function test_a_stored_message_continues_the_current_trace_when_opentelemetry_is_enabled(): void
     {
         $scope = Span::wrap(SpanContext::create('4bf92f3577b34da6a3ce929d0e0e4736', '00f067aa0ba902b7', TraceFlags::SAMPLED))->activate();

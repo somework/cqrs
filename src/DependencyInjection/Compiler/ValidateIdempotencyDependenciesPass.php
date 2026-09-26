@@ -30,6 +30,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
 {
     private const DEDUPLICATE_MIDDLEWARE = 'messenger.middleware.deduplicate_middleware';
 
+    private const OUTBOX_WRITER = 'somework_cqrs.outbox.writer';
+
     private const DECIDER = 'somework_cqrs.stamp_decider.idempotency';
 
     /** @var Closure(string): bool */
@@ -45,6 +47,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
 
     public function process(ContainerBuilder $container): void
     {
+        $this->refuseOutboxDeduplicationOnLocalStores($container);
+
         if (!$container->hasParameter('somework_cqrs.idempotency.enabled')
             || true !== $container->getParameter('somework_cqrs.idempotency.enabled')) {
             return;
@@ -73,17 +77,24 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s only deduplicates within one process. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
         } elseif (1 === preg_match('/^(flock|semaphore)(:|$)/', $store)) {
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s releases a key as soon as the dispatch returns and only lives on one host: a later dispatch with the same key goes through, and its keys cannot be sent with async messages. Configure a shared store that keeps keys until their TTL, e.g. framework.lock: "%%env(LOCK_DSN)%%" with Redis or a database.', $origin));
-            $this->keysCannotBeSent($container);
         } elseif (1 === preg_match('/^((pgsql|postgres|postgresql)\+advisory|zookeeper):/', $store)) {
             $this->report($container, sprintf('Idempotency is enabled but the lock store %s ties its keys to one connection: they cannot be sent with async messages (asynchronous dispatches with an IdempotencyStamp fail), and a key stays locked while the connection lives, whatever the TTL. Use Redis, Memcached or a PDO/DBAL store for idempotency.', $origin));
-            $this->keysCannotBeSent($container);
         }
     }
 
-    private function keysCannotBeSent(ContainerBuilder $container): void
+    /**
+     * A message stored in the outbox with a DeduplicateStamp is locked by the relay, whose sending
+     * fails when the lock store ties its keys to the process: the outbox writer refuses to store it.
+     */
+    private function refuseOutboxDeduplicationOnLocalStores(ContainerBuilder $container): void
     {
-        if ($container->hasDefinition(self::DECIDER)) {
-            $container->getDefinition(self::DECIDER)->setArgument('$keysCannotBeSent', true);
+        if (!$container->hasDefinition(self::OUTBOX_WRITER) || !$container->hasDefinition(self::DEDUPLICATE_MIDDLEWARE)) {
+            return;
+        }
+
+        [$store] = self::lockStoreDsn($container) ?? [null];
+        if (null !== $store && 1 === preg_match('/^((flock|semaphore)(:|$)|((pgsql|postgres|postgresql)\+advisory|zookeeper):)/', $store)) {
+            $container->getDefinition(self::OUTBOX_WRITER)->setArgument('$lockKeysStayLocal', true);
         }
     }
 

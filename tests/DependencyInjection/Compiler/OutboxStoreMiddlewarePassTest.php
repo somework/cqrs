@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\MessengerMiddlewareInjector;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoreMiddlewarePass;
+use SomeWork\CqrsBundle\Messenger\OutboxBypassMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxPrepareMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxStoreMiddleware;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
@@ -23,6 +24,8 @@ use function array_values;
 #[CoversClass(MessengerMiddlewareInjector::class)]
 final class OutboxStoreMiddlewarePassTest extends TestCase
 {
+    private const BYPASS = OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.messenger.bus.default.middleware.doctrine_transaction';
+
     public function test_inserts_the_middleware_after_the_default_stamps_and_before_handling_on_every_cqrs_bus(): void
     {
         $container = $this->createContainer();
@@ -32,9 +35,13 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         self::assertSame(OutboxStoreMiddleware::class, $container->getDefinition(OutboxStoreMiddlewarePass::MIDDLEWARE_ID)->getClass());
         self::assertSame(OutboxPrepareMiddleware::class, $container->getDefinition(OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID)->getClass());
         self::assertSame(
-            ['messenger.bus.default.middleware.add_default_stamps_middleware', OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, 'messenger.bus.default.middleware.add_bus_name_stamp_middleware', 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID, 'messenger.bus.default.middleware.doctrine_transaction', 'messenger.bus.default.middleware.send_message', 'messenger.bus.default.middleware.handle_message'],
+            ['messenger.bus.default.middleware.add_default_stamps_middleware', OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, 'messenger.bus.default.middleware.add_bus_name_stamp_middleware', self::BYPASS, 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID, 'messenger.bus.default.middleware.send_message', 'messenger.bus.default.middleware.handle_message'],
             $this->middlewareIds($container, 'messenger.bus.default'),
         );
+        // Doctrine's transaction middleware (listed before the application's here) is skipped by stored messages.
+        $bypass = $container->getDefinition(self::BYPASS);
+        self::assertSame(OutboxBypassMiddleware::class, $bypass->getClass());
+        self::assertSame('messenger.bus.default.middleware.doctrine_transaction', (string) $bypass->getArgument(0));
         // A bus without Messenger's default middleware: first and last.
         self::assertSame([OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID], $this->middlewareIds($container, 'event.async_bus'));
     }
@@ -92,8 +99,8 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         $container->setDefinition('messenger.bus.default', (new Definition())->setArgument(0, new IteratorArgument([
             new Reference('messenger.bus.default.middleware.add_default_stamps_middleware'),
             new Reference('messenger.bus.default.middleware.add_bus_name_stamp_middleware'),
-            new Reference('app.validation'),
             new Reference('messenger.bus.default.middleware.doctrine_transaction'),
+            new Reference('app.validation'),
             new Reference('messenger.bus.default.middleware.send_message'),
             new Reference('messenger.bus.default.middleware.handle_message'),
         ])));

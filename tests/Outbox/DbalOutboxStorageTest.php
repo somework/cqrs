@@ -1440,6 +1440,63 @@ final class DbalOutboxStorageTest extends TestCase
         }
     }
 
+    public function test_a_dispatch_of_the_relay_is_a_unit_of_work_of_its_own_without_auto_commit(): void
+    {
+        // A handler the relay runs in its own process must not share DBAL's implicit transaction.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $other->executeStatement('CREATE TABLE handled (id VARCHAR(10) NOT NULL)');
+            $connection = DriverManager::getConnection($params, $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+
+            $handle = static function (string $id) use ($connection): string {
+                $connection->insert('handled', ['id' => $id]);
+                if ('failed' === $id) {
+                    throw new \RuntimeException('The handler failed.');
+                }
+
+                return $id;
+            };
+            try {
+                $storage->dispatchInUnitOfWork(static fn (): string => $handle('failed'));
+                self::fail('The exception of the dispatch is rethrown.');
+            } catch (\RuntimeException $exception) {
+                self::assertSame('The handler failed.', $exception->getMessage());
+            }
+            self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
+
+            self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'), 'The failed dispatch is rolled back, the other committed.');
+            self::assertSame(1, $connection->getTransactionNestingLevel());
+        } finally {
+            unlink($file);
+        }
+    }
+
+    public function test_the_setup_runs_on_a_connection_without_auto_commit(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $file], $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+
+            $storage->setup();
+
+            self::assertFalse($connection->isAutoCommit());
+            self::assertSame([], $storage->pendingChanges());
+            self::assertTrue(DriverManager::getConnection(['driver' => 'pdo_sqlite', 'path' => $file])->createSchemaManager()->tablesExist(['somework_cqrs_outbox']));
+        } finally {
+            unlink($file);
+        }
+    }
+
     public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void
     {
         // A lagging replica would show the relay rows already published, or none that are due.

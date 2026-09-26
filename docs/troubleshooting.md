@@ -408,7 +408,41 @@ Idempotency is enabled but Messenger's deduplicate middleware is not registered,
 If neither appears, check the lock store: the local `flock` and `semaphore`
 stores release the lock immediately, so duplicates go through. Use a shared
 store that keeps locks until their TTL expires, such as Redis or a database.
-See [Production: idempotency](production.md#idempotency).
+See [Production: idempotency](production.md#idempotency). A message stored in
+the outbox with a `DeduplicateStamp` is refused with such a store (see below).
+
+### A `DeduplicateStamp` is refused by the outbox
+
+**Symptom.**
+
+```
+LogicException: Message "App\Domain\StockReserved" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection, so the relay could never send it.
+```
+
+**Cause.** Messenger's deduplication locks the key when the relay sends the
+message, and a lock of a process-bound store cannot be sent to a transport:
+every relay attempt would fail after the business change committed. Nothing
+was stored.
+
+**Fix.** Configure a lock store whose keys can be serialized, such as Redis,
+Memcached or a PDO/DBAL database (`framework.lock`), or dispatch the message
+without the stamp.
+
+### "did not store … in the outbox: a middleware of its Messenger bus returned before …"
+
+**Symptom.** `LogicException: The event bus did not store "App\Domain\OrderPlaced"
+in the outbox: a middleware of its Messenger bus returned before the bundle's
+OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.`
+
+**Cause.** A middleware on the bus returned the envelope without calling the next
+middleware (a filter, a feature flag, or a middleware that catches and swallows
+exceptions), so the message never reached the middleware that stores it. Nothing
+was stored.
+
+**Fix.** Make that middleware pass the envelope on when it carries the bundle's
+`StoreInOutboxStamp` (a message being stored in the outbox), or leave the message
+out of the outbox. `bin/console debug:container <bus id> --show-arguments` lists
+the middleware of the bus.
 
 ### Outbox table does not exist
 

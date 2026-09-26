@@ -84,17 +84,16 @@ dispatch_after_current_bus
 failed_message_processing_middleware
 deduplicate_middleware                 Messenger 7.3+ with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
-... your own middleware ...
+... your own middleware ...                (doctrine_transaction is skipped by outbox stores)
 [OutboxStoreMiddleware]                when the outbox is enabled
-doctrine_transaction                   if you configured it
 send_message
 handle_message
 ```
 
 On a bus without `dispatch_after_current_bus` (for example with
 `default_middleware: false`), the bundle middleware is placed first, except
-`OutboxStoreMiddleware`, which goes before the first of `doctrine_transaction`,
-`doctrine_open_transaction_logger`, `send_message` and `handle_message`, or last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
+`OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
+last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
 
 The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
@@ -192,6 +191,10 @@ For a message dispatched through the [outbox](outbox.md#through-the-buses):
   relay dispatches the stored message on the bus, it drops the stamps that middleware
   adds again for a class the stored message already carries, so the caller's context
   (e.g. `router_context`) wins over the relay's.
+* Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger`, wherever
+  they are listed on a CQRS bus, are wrapped so that a message being stored skips them
+  (they would flush the caller's entity manager, or report its open transaction); they
+  run when the relay dispatches it.
 
 Middleware between them must call the next middleware for an outbox dispatch:
 otherwise the bus throws a `LogicException`.

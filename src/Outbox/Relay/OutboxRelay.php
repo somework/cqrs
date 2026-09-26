@@ -154,6 +154,7 @@ final class OutboxRelay
         private readonly ?ContainerInterface $transports = null,
         private readonly ?OutboxSigner $signer = null,
         private readonly bool $acceptUnsigned = false,
+        private readonly ?RelayUnitOfWork $unitOfWork = null,
     ) {
         if ($maxAttempts < 1) {
             throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
@@ -711,7 +712,11 @@ final class OutboxRelay
         foreach ($envelope->all() as $class => $stamps) {
             $stored[$class] = count($stamps);
         }
-        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope->with(new RelayedFromOutboxStamp($stored)));
+        $bus = $this->busFor($envelope->getMessage());
+        $envelope = $envelope->with(new RelayedFromOutboxStamp($stored));
+        $envelope = null === $this->unitOfWork
+            ? $bus->dispatch($envelope)
+            : $this->unitOfWork->dispatchInUnitOfWork(static fn (): Envelope => $bus->dispatch($envelope));
 
         if (null !== $envelope->last(SentStamp::class)) {
             return;

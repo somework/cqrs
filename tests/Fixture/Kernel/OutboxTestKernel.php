@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\FakeDoctrineTransactionMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
 use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
@@ -55,8 +56,9 @@ final class OutboxTestKernel extends Kernel
                     'command.bus' => null,
                     'command.async_bus' => null,
                     'event.bus' => null,
-                    // Application middleware runs when a message is stored through the bus.
-                    'event.async_bus' => ['middleware' => [CallerContextMiddleware::class]],
+                    // Application middleware runs when a message is stored through the bus, also when
+                    // listed after Doctrine's transaction middleware, which only runs in the relay.
+                    'event.async_bus' => ['middleware' => ['doctrine_transaction', CallerContextMiddleware::class]],
                 ],
                 'transports' => [
                     'async' => 'in-memory://?serialize=true',
@@ -93,6 +95,7 @@ final class OutboxTestKernel extends Kernel
             ->public();
         $services->set(TaskRecorder::class)->public();
         $services->set(CallerContextMiddleware::class)->public();
+        $services->set('messenger.middleware.doctrine_transaction', FakeDoctrineTransactionMiddleware::class)->public();
         // Private and unused otherwise, so the test container would not have it.
         $services->alias('test.outbox_writer', OutboxWriter::class)->public();
         $services->set(CreateTaskHandler::class);

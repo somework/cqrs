@@ -21,6 +21,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\FakeDoctrineTransactionMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -128,6 +129,12 @@ final class OutboxDispatchKernelTest extends KernelTestCase
         $sent = $this->transport()->getSent();
         self::assertCount(1, $sent);
         self::assertSame('caller', $sent[0]->last(DummyStamp::class)?->name);
+        self::assertSame(['caller'], array_map(static fn (DummyStamp $stamp): string => $stamp->name, $sent[0]->all(DummyStamp::class)), 'The stamp the middleware adds again in the relay gives way.');
+
+        // Doctrine's transaction middleware ran in the relay only.
+        $doctrine = self::getContainer()->get('messenger.middleware.doctrine_transaction');
+        self::assertInstanceOf(FakeDoctrineTransactionMiddleware::class, $doctrine);
+        self::assertSame(1, $doctrine->calls);
     }
 
     public function test_the_synchronous_and_asynchronous_dispatch_methods_bypass_the_outbox(): void

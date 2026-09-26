@@ -23,6 +23,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 
 use function array_chunk;
 use function array_column;
@@ -70,7 +71,7 @@ use const JSON_THROW_ON_ERROR;
  *
  * @api
  */
-final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox
+final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox, RelayUnitOfWork
 {
     private const PURGE_BATCH_SIZE = 1000;
 
@@ -704,8 +705,52 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function setup(?\Closure $onWait = null): void
     {
-        $this->schema->setup($onWait);
+        // With auto-commit off, DBAL keeps a transaction of its own open, in which the setup would
+        // refuse to change the table: it runs with auto-commit on (DBAL commits that transaction).
+        $implicit = !$this->connection->isAutoCommit() && $this->connection->getTransactionNestingLevel() <= 1;
+        if ($implicit) {
+            $this->connection->setAutoCommit(true);
+        }
+
+        try {
+            $this->schema->setup($onWait);
+        } finally {
+            if ($implicit) {
+                $this->connection->setAutoCommit(false);
+            }
+        }
         $this->setupDone = true;
+    }
+
+    /**
+     * @internal
+     */
+    public function dispatchInUnitOfWork(\Closure $dispatch): mixed
+    {
+        // Only with auto-commit off: the handlers the relay runs in its own process would otherwise
+        // share DBAL's implicit transaction with the relay's writes (a failed handler's writes
+        // committed with the next publish mark, or an aborted PostgreSQL transaction failing them).
+        if ($this->connection->isAutoCommit()) {
+            return $dispatch();
+        }
+        // DBAL opens its implicit transaction when it connects.
+        $this->connection->getNativeConnection();
+        if (1 !== $this->connection->getTransactionNestingLevel()) {
+            return $dispatch();
+        }
+
+        $this->connection->beginTransaction();
+        try {
+            $result = $dispatch();
+        } catch (\Throwable $exception) {
+            $this->connection->rollBack();
+
+            throw $exception;
+        }
+        $this->connection->commit();
+        $this->commitImplicitTransaction();
+
+        return $result;
     }
 
     /**

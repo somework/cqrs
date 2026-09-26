@@ -9,6 +9,7 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
@@ -94,8 +95,9 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         ?ContainerInterface $transports = null,
         ?OutboxSigner $signer = null,
         bool|string $acceptUnsigned = false,
+        ?RelayUnitOfWork $unitOfWork = null,
     ) {
-        $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports, $signer, true === filter_var($acceptUnsigned, FILTER_VALIDATE_BOOL));
+        $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports, $signer, true === filter_var($acceptUnsigned, FILTER_VALIDATE_BOOL), $unitOfWork);
 
         parent::__construct();
 

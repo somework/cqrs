@@ -43,6 +43,9 @@ final class OutboxStoragePassTest extends TestCase
         $relay = $container->get('somework_cqrs.outbox.relay_command');
         self::assertInstanceOf(DecoratingOutboxStorage::class, self::argument($relay, 'outboxStorage'), 'The relay uses the decorated storage.');
         self::assertInstanceOf(DbalOutboxStorage::class, self::argument($relay, 'table'));
+        $relayLoop = self::argument($relay, 'relay');
+        self::assertIsObject($relayLoop);
+        self::assertInstanceOf(DbalOutboxStorage::class, self::argument($relayLoop, 'unitOfWork'), 'Dispatches run in units of work of the DBAL storage.');
         self::assertInstanceOf(DecoratingOutboxStorage::class, $container->get('app.logging_outbox'));
     }
 
@@ -84,6 +87,9 @@ final class OutboxStoragePassTest extends TestCase
         $relay = $container->get('somework_cqrs.outbox.relay_command');
         self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($relay, 'outboxStorage'));
         self::assertNull(self::argument($relay, 'table'));
+        $relayLoop = self::argument($relay, 'relay');
+        self::assertIsObject($relayLoop);
+        self::assertNull(self::argument($relayLoop, 'unitOfWork'));
         self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($container->get('somework_cqrs.outbox.setup_command'), 'outboxStorage'));
     }
 

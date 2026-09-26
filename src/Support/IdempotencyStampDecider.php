@@ -9,12 +9,9 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
-use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use Symfony\Component\Lock\Key;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
-
-use function sprintf;
 
 /**
  * Adds a Symfony DeduplicateStamp (FQCN-namespaced key) next to every IdempotencyStamp.
@@ -34,16 +31,13 @@ final class IdempotencyStampDecider implements StampDecider
     private bool $problemReported = false;
 
     /**
-     * @param string|null $problem          Why deduplication does not work (missing packages, a lock store
-     *                                      that cannot hold keys), logged as a warning once per process
-     * @param bool        $keysCannotBeSent The lock store ties its keys to the process or connection: a
-     *                                      message stored in the outbox with one could never be relayed
+     * @param string|null $problem Why deduplication does not work (missing packages, a lock store
+     *                             that cannot hold keys), logged as a warning once per process
      */
     public function __construct(
         private readonly float $defaultTtl = 300.0,
         private readonly ?LoggerInterface $logger = null,
         private readonly ?string $problem = null,
-        private readonly bool $keysCannotBeSent = false,
     ) {
     }
 
@@ -64,11 +58,6 @@ final class IdempotencyStampDecider implements StampDecider
 
         if (null === $idempotencyStamp) {
             return $stamps;
-        }
-
-        if ($this->keysCannotBeSent && self::storesInOutbox($stamps)) {
-            // The relay's send would fail on every attempt, after the business change committed.
-            throw new \LogicException(sprintf('The IdempotencyStamp of "%s" cannot be stored in the outbox: the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection, so the relay could never send the message. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database (framework.lock), or dispatch it without the stamp.', $message::class));
         }
 
         if (null !== $this->problem && !$this->problemReported) {
@@ -99,19 +88,5 @@ final class IdempotencyStampDecider implements StampDecider
         ]);
 
         return $stamps;
-    }
-
-    /**
-     * @param array<int, StampInterface> $stamps
-     */
-    private static function storesInOutbox(array $stamps): bool
-    {
-        foreach ($stamps as $stamp) {
-            if ($stamp instanceof StoreInOutboxStamp) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }
