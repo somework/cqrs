@@ -507,9 +507,11 @@ bin/console somework:cqrs:outbox:relay --watch    # keeps relaying until stopped
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--limit`, `-l` | `100` | Maximum number of rows to process (relay or fail) in this run, or in each run with `--watch` (positive integer). |
-| `--watch`, `-w` | off | Keeps relaying, like `messenger:consume`: runs again at once after a full run, and waits `--sleep` seconds when no row was due. Stops after the current row on `SIGTERM` or `SIGINT` (exit code 0), or at `--time-limit`. It holds the relay lock the whole time, and resets the application's services (`services_resetter`) after each run that processed rows, as Messenger's workers do between messages. |
-| `--sleep` | `1` | Seconds to wait before looking again when no row was due (with `--watch`). |
+| `--watch`, `-w` | off | Keeps relaying, like `messenger:consume`: runs again at once after a full run, and waits `--sleep` seconds when no row was due. Stops after the current row on `SIGTERM` or `SIGINT` (exit code 0), or at `--time-limit`. It holds the relay lock the whole time; when another relay holds it, it waits for it (a standby that takes over when the other relay stops), checking every `--sleep` seconds. |
+| `--sleep` | `1` | Seconds to wait before looking again when no row was due, or for the lock (with `--watch`). |
 | `--time-limit` | none | Stops watching after this many seconds (with `--watch`), e.g. to let a process manager restart it. |
+| `--wait-for-lock` | `0` | Without `--watch`: seconds to wait for another relay to release the lock; if it keeps it, exits with `3`. With `0`, a run that finds the lock taken exits at once with `0`. |
+| `--no-reset` | off | Does not reset the application's services after the rows the relay handles itself. By default, after each row handled in the relay's process (a row without a transport, or a `sync://` transport) or failing in a handler there, the relay resets the services (`services_resetter`: e.g. the entity manager, closed by a failed flush), as Messenger's workers do between messages. |
 
 The relay fetches up to 50 due rows at a time and:
 
@@ -559,9 +561,10 @@ What happens in special cases:
   counts against three times `max_attempts`: 30 attempts by default, about a day of retries,
   so a broker outage of some hours gives no row up. After 3 such failures in a row for one
   transport, the relay prints
-  `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
+  `Transport "<name>" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).`
   and skips the rows of that transport for the rest of the run instead of walking its whole
-  backlog. The rows of the other transports are relayed as usual. As new rows come first,
+  backlog. With `--watch`, the next runs skip them too, for 30 seconds, doubling with every
+  pause up to 5 minutes until a row of that transport goes through. The rows of the other transports are relayed as usual. As new rows come first,
   3 new rows are enough to detect an outage, and the attempts of older rows are not used up.
   A transport that accepted a message earlier in the run is up: single messages it rejects
   (e.g. too large) do not pause it before 10 failures in a row, or 3 failures in a row that
@@ -646,9 +649,10 @@ What happens in special cases:
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | All selected rows were relayed, no row was due, or another relay holds the lock |
+| `0` | All selected rows were relayed, no row was due, or another relay holds the lock (without `--wait-for-lock`); with `--watch`, it was stopped by a signal or `--time-limit` |
 | `1` | At least one row failed (which includes a paused transport), the storage failed (e.g. the database is down), a signal stopped the run, or the lock could not be acquired or was lost |
-| `2` | Invalid `--limit` |
+| `2` | Invalid options |
+| `3` | Another relay kept the lock for `--wait-for-lock` seconds |
 
 **Throughput.** Each fetch lists the transports with pending rows once per run (again when a
 fetch comes back short, or after 10 seconds), reads as many rows of each transport as the batch
@@ -674,10 +678,18 @@ outbox within `--sleep` seconds instead of up to a minute:
 [program:outbox-relay]
 command=php /path/to/project/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autorestart=true
+; exits with 1 when the database or the lock store fails: restart it, with a delay that grows
+startsecs=0
+startretries=10
 stopsignal=TERM
+stopwaitsecs=30
 ```
 
-A second relay, from cron or a second process, finds the lock taken and exits at once.
+A second relay from cron finds the lock taken and exits at once with `0`. A second `--watch`
+(another server, or a process that restarts while the old one finishes its row) waits for the
+lock and takes over when the first one stops: run one or two, not one per server for
+throughput, as only the relay holding the lock works. See
+[Production](production.md#relay) for running it under a process manager.
 
 ## Development
 
@@ -703,8 +715,29 @@ Two ways to see the messages handled while developing:
               relay_on_terminate: true
   ```
 
-  Errors of the relay are logged; the request is already answered. When a relay with `--watch`
-  runs, it holds the lock and relays the messages itself.
+  What to expect:
+
+  - **Where the handlers run.** After the response, in the same PHP process: before the
+    profiler stores the profile of the request, so their log lines show in its *Logs* panel.
+    Exceptions of the relayed handlers do not reach the error page: the relay records the
+    failure on the row and logs it (`cqrs` channel), like a worker would.
+  - **Failed rows.** A row whose handler failed is retried after the backoff (1 minute, then 2,
+    4 … minutes): by the relay that runs after the next request that stores a message, or by
+    `bin/console somework:cqrs:outbox:relay` (or `--watch`) at any time. After
+    `max_attempts`, the relay gives it up: `somework:cqrs:outbox:failed` lists it, and
+    `--requeue` retries it after you fixed the handler. `failed` also works for a row whose
+    message class you renamed.
+  - **When it does not run.** While a transaction is still open on the outbox connection (the
+    rows are not committed yet): with Doctrine's `auto_commit: false` that is always the case,
+    so use `--watch` there. After a command that a signal interrupted, and after the relay
+    command itself (its handlers' messages wait for its next run). A notice in the log tells
+    when the relay was skipped for an open transaction.
+  - **Several requests at once.** Only one relay runs at a time: the next one waits up to
+    2 seconds for the lock, then leaves its messages to the next request (or to the relay
+    holding the lock, which may have taken them already). Use either `relay_on_terminate` or a
+    relay with `--watch`, not both: the watcher keeps the lock, so each request that stores
+    messages would wait those 2 seconds before leaving them to it.
+  - **Services** are not reset between the rows it handles, as with `sync://` in a request.
 - **A watching relay.** Keep `bin/console somework:cqrs:outbox:relay --watch` running in a
   terminal (or in `docker compose`, next to `messenger:consume`).
 

@@ -284,7 +284,8 @@ time) and marks each one published after dispatching it.
 * The transports take turns, the one whose next row has waited longest first,
   so one transport's backlog does not hold up the others.
 * A transport that fails 3 times in a row with a `TransportException` (broker
-  down, or rejecting messages) is paused until the next run, while the rows of
+  down, or rejecting messages) is paused until the next run (with `--watch`, for
+  30 seconds, doubling up to 5 minutes until it accepts a message), while the rows of
   the other transports are relayed (10 times, or 3 times taking more than 10
   seconds, when it accepted a message earlier in the run: it is up and only
   rejects some messages). Its rows get three times `max_attempts`
@@ -298,7 +299,9 @@ time) and marks each one published after dispatching it.
   transport's timeout, and a wait for another process upgrading the table (at
   most 30 seconds) ends first; a second signal stops the relay at once.
 * When symfony/lock is installed, only one relay runs at a time; a second one
-  prints "Another outbox relay is already running." and exits with `0`. The lock
+  prints "Another outbox relay is already running." and exits with `0`
+  (`--wait-for-lock=<seconds>` waits for the lock first, then exits with `3`;
+  `--watch` waits as long as it runs). The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
   lock, which only protects relays on the same host. The lock name includes
   `framework.cache.prefix_seed`; set it to a stable value when every release is
@@ -312,15 +315,44 @@ Run the relay from cron:
 0 3 * * * cd /var/www/app && php bin/console somework:cqrs:outbox:purge --older-than="7 days"
 ```
 
-or as a supervised loop when a minute of latency is too much:
+or keep it running with `--watch` when a minute of latency is too much:
 
 ```ini
 [program:cqrs-outbox-relay]
-command=/bin/sh -c 'while true; do php /var/www/app/bin/console somework:cqrs:outbox:relay --limit=100; sleep 1; done'
+command=php /var/www/app/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autostart=true
 autorestart=true
+; exit code 1 (database or lock store down): restart with a growing delay
+startsecs=0
+startretries=10
+stopsignal=TERM
+stopwaitsecs=30
 user=www-data
 ```
+
+What the watching relay does:
+
+* It looks for due rows every `--sleep` seconds (default 1) and relays them in
+  runs of `--limit`. `--time-limit` restarts it now and then, like
+  `messenger:consume`, and lets a deploy's new code take over.
+* It holds the relay lock while it runs. A second watcher (another server, or
+  the new process of a deploy while the old one finishes its row) prints
+  "Waiting for the relay lock held by another relay." and waits: it takes over
+  when the first one stops. Only the relay that holds the lock works, so more
+  watchers add failover, not throughput.
+* After each row that its own process handled (no transport, `sync://`), it
+  resets the services, as a worker does between messages (`--no-reset` turns
+  that off).
+* A transport that keeps failing is left alone for 30 seconds, doubling up to
+  5 minutes, instead of being tried again every second.
+* When the database or the lock store fails, it exits with `1`: the process
+  manager restarts it, and the rows wait in the table meanwhile.
+* With Doctrine's `auto_commit: false`, the relay commits after each fetch, so an
+  idle watcher holds no snapshot and no locks. DBAL starts the next transaction
+  right after each commit, though: PostgreSQL shows the connection as `idle in
+  transaction`, and `idle_in_transaction_session_timeout` ends it (the relay
+  exits with `1` and is restarted). Give the relay a connection with auto-commit,
+  or exempt its database user from that timeout.
 
 ### Purge
 

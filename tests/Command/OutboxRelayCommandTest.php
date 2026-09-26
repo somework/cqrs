@@ -659,7 +659,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester->execute(['--limit' => '100']);
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).', self::display($tester));
         self::assertCount(3, $bus->messageClasses(), 'The backlog of a transport that is down is not walked.');
         self::assertCount(20, $this->storage->unpublishedIds());
         self::assertCount(3, $this->storage->failures, 'Only the messages that were tried are postponed.');
@@ -794,7 +794,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(['events' => new UnavailableTransport()]), $this->locks));
         $tester->execute([]);
 
-        self::assertStringContainsString('Messages without a transport name failed to be sent 3 times in a row; the other ones wait for the next run.', self::display($tester));
+        self::assertStringContainsString('Messages without a transport name failed to be sent 3 times in a row; the other ones wait for the next run (30 seconds with --watch).', self::display($tester));
         self::assertCount(3, $this->storage->failures);
         self::assertCount(1, $this->async->getSent());
     }
@@ -835,7 +835,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester->execute([]);
 
         self::assertTrue($this->storage->isPublished($rows['ok2']), 'Three rejections in a row do not pause a transport that works.');
-        self::assertStringContainsString('Transport "async" failed 10 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertStringContainsString('Transport "async" failed 10 times in a row; its other messages wait for the next run (30 seconds with --watch).', self::display($tester));
         self::assertFalse($this->storage->isPublished($rows['ok3']));
     }
 
@@ -859,7 +859,7 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks, clock: $clock));
         $tester->execute([]);
 
-        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertStringContainsString('Transport "async" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).', self::display($tester));
         self::assertSame(0, $this->storage->attempts($rows['r4']));
     }
 
@@ -1145,9 +1145,10 @@ final class OutboxRelayCommandTest extends TestCase
         $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: static function () use (&$time): float {
             return $time;
         }, resetter: $resetter, sleep: function (float $seconds) use (&$time, &$sleeps): void {
-            // A message arrives while the relay waits.
+            // Messages arrive while the relay waits, one of them handled by the relay itself.
             if (0 === $sleeps++) {
                 $this->store(new CreateTaskCommand('2', 'second'), 'async');
+                $this->store(new \stdClass());
             }
             $time += $seconds;
         });
@@ -1158,8 +1159,116 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertStringContainsString('Stopped: the time limit was reached.', self::display($tester));
         self::assertSame(['1', '2'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
-        self::assertSame(2, $resetter->resets, 'The services are reset after each run that processed messages.');
+        self::assertCount(1, $this->handledInline);
+        self::assertSame(1, $resetter->resets, 'The services are reset after each message the relay handled itself, as a worker does.');
         self::assertTrue($this->locks->createLock('somework:cqrs:outbox:relay')->acquire(), 'The lock is released when watching stops.');
+    }
+
+    public function test_no_reset_keeps_the_services_of_the_messages_handled_inline(): void
+    {
+        $this->store(new \stdClass());
+        $this->store(new \stdClass());
+        $resetter = new class implements ResetInterface {
+            public int $resets = 0;
+
+            public function reset(): void
+            {
+                ++$this->resets;
+            }
+        };
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, resetter: $resetter);
+
+        (new CommandTester($command))->execute(['--limit' => '1']);
+        self::assertSame(1, $resetter->resets);
+
+        (new CommandTester($command))->execute(['--no-reset' => true]);
+        self::assertSame(1, $resetter->resets);
+        self::assertCount(2, $this->handledInline);
+    }
+
+    public function test_watch_waits_for_the_lock_of_another_relay(): void
+    {
+        // A second watcher (another server, a restarted process) is a standby, not a crash loop.
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $held = $this->locks->createLock('somework:cqrs:outbox:relay');
+        $held->acquire();
+        $time = 1_000.0;
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: static function () use (&$time): float {
+            return $time;
+        }, sleep: function (float $seconds) use (&$time, $held): void {
+            $time += $seconds;
+            if ($time >= 1_005.0 && $held->isAcquired()) {
+                self::assertSame([], $this->async->getSent(), 'Nothing is relayed while the other relay holds the lock.');
+                $held->release();
+            }
+        });
+
+        $tester = new CommandTester($command);
+        $tester->execute(['--watch' => true, '--sleep' => '2', '--time-limit' => '10']);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Waiting for the relay lock held by another relay.', self::display($tester));
+        self::assertStringContainsString('Stopped: the time limit was reached.', self::display($tester));
+        self::assertCount(1, $this->async->getSent());
+        self::assertGreaterThanOrEqual(1_010.0, $time);
+    }
+
+    public function test_watch_stops_on_a_signal_or_the_time_limit_while_it_waits_for_the_lock(): void
+    {
+        $held = $this->locks->createLock('somework:cqrs:outbox:relay');
+        $held->acquire();
+        $time = 1_000.0;
+        $clock = static function () use (&$time): float {
+            return $time;
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: $clock, sleep: static function (float $seconds) use (&$time): void {
+            $time += $seconds;
+        }));
+        $tester->execute(['--watch' => true, '--time-limit' => '3']);
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Stopped: the time limit was reached.', self::display($tester));
+
+        $command = null;
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: $clock, sleep: static function () use (&$command): void {
+            self::assertInstanceOf(OutboxRelayCommand::class, $command);
+            $command->handleSignal(SIGTERM);
+        });
+        $tester = new CommandTester($command);
+        $tester->execute(['--watch' => true]);
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Stopped by signal '.SIGTERM.'.', self::display($tester));
+        self::assertTrue($held->isAcquired(), 'The lock of the other relay is left alone.');
+    }
+
+    public function test_wait_for_lock_waits_for_the_other_relay_then_exits_with_lock_taken(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'a'), 'async');
+        $held = $this->locks->createLock('somework:cqrs:outbox:relay');
+        $held->acquire();
+        $time = 1_000.0;
+        $clock = static function () use (&$time): float {
+            return $time;
+        };
+        $sleep = static function (float $seconds) use (&$time): void {
+            $time += $seconds;
+        };
+
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: $clock, sleep: $sleep));
+        $tester->execute(['--wait-for-lock' => '2']);
+        self::assertSame(OutboxRelayCommand::LOCK_TAKEN, $tester->getStatusCode());
+        self::assertStringContainsString('Another outbox relay kept the lock.', self::display($tester));
+        self::assertEqualsWithDelta(1_002.0, $time, 0.2);
+        self::assertSame([], $this->async->getSent());
+
+        // The other relay finishes while this one waits.
+        $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: $clock, sleep: static function (float $seconds) use (&$time, $held): void {
+            $time += $seconds;
+            $held->release();
+        }));
+        $tester->execute(['--wait-for-lock' => '2']);
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertCount(1, $this->async->getSent());
     }
 
     public function test_watch_stops_on_a_signal_while_it_waits(): void
@@ -1197,6 +1306,7 @@ final class OutboxRelayCommandTest extends TestCase
         yield 'time limit without watch' => [['--time-limit' => '5'], '--time-limit only applies with --watch.'];
         yield 'zero sleep' => [['--watch' => '1', '--sleep' => '0'], '--sleep must be a positive number of seconds'];
         yield 'negative time limit' => [['--watch' => '1', '--time-limit' => '-1'], '--time-limit a positive integer'];
+        yield 'negative lock wait' => [['--wait-for-lock' => '-1'], '--wait-for-lock a number of seconds'];
     }
 
     private function store(object $message, ?string $transportName = null): OutboxMessage

@@ -161,6 +161,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 $this->transports = null;
             }
         }
+        // With auto-commit off, an idle "--watch" would otherwise keep the transaction of its
+        // reads open ("idle in transaction"), and with REPEATABLE READ its snapshot, blind to new rows.
+        $this->commitImplicitTransaction();
 
         $platform = $this->connection->getDatabasePlatform();
 

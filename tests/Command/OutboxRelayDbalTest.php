@@ -82,7 +82,7 @@ final class OutboxRelayDbalTest extends TestCase
         $tester = $this->relay($this->bus());
 
         self::assertSame(Command::FAILURE, $tester->getStatusCode());
-        self::assertStringContainsString('Transport "ext" failed 3 times in a row; its other messages wait for the next run.', self::display($tester));
+        self::assertStringContainsString('Transport "ext" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).', self::display($tester));
         self::assertSame(['async-1', 'async-2'], $this->sentTaskIds());
         self::assertSame(3, $this->ext->sendAttempts);
 

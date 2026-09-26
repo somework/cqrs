@@ -143,6 +143,8 @@ final class OutboxRegistrar
             $container->setDefinition('somework_cqrs.outbox.relay_on_terminate', (new Definition(RelayOnTerminateSubscriber::class))
                 ->setArgument('$relayCommand', new ServiceClosureArgument(new Reference('somework_cqrs.outbox.relay_command')))
                 ->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+                // The storage behind any decorator, when it implements TransactionalOutbox (OutboxStoragePass).
+                ->setArgument('$transaction', null)
                 ->addTag('kernel.event_subscriber')
                 ->setPublic(false));
             $writerDef->setArgument('$afterStore', new Reference('somework_cqrs.outbox.relay_on_terminate'));

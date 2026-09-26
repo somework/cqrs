@@ -34,9 +34,10 @@ interface RelayReporter
     public function notSent(string $warning): void;
 
     /**
-     * The messages of $transportName wait for the next run after $failures consecutive failures.
+     * The messages of $transportName wait for the next run after $failures consecutive failures;
+     * the next runs of the same relay (--watch) leave them alone for $seconds.
      */
-    public function transportPaused(?string $transportName, int $failures): void;
+    public function transportPaused(?string $transportName, int $failures, int $seconds): void;
 
     /**
      * Called after every message; false aborts the run at once (e.g. the relay lock was lost).

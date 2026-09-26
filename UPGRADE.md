@@ -458,6 +458,10 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   ignore retry times, given-up rows and claims.
 - The relay lock expires after 60 seconds (it was the lock factory's default, 300 seconds) and is extended every
   10 seconds; a relay killed without cleanup blocks the next runs for at most a minute.
+- The relay resets the application's services (`services_resetter`) after each row it handles in its own process
+  (a row without a transport, or a `sync://` transport), as Messenger's workers do; pass `--no-reset` to keep the
+  0.4 behaviour. Replace a shell loop around the relay with `--watch` (see
+  [Production](docs/production.md#relay)).
 - `OutboxWriter::store()` called while a handler runs adds a `MessageMetadataStamp` that continues the flow of the
   handled message, unless you pass one.
 - Each application needs its own outbox table: a relay gives up the rows of another application sharing its table

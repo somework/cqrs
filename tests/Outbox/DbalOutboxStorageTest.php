@@ -1440,6 +1440,33 @@ final class DbalOutboxStorageTest extends TestCase
         }
     }
 
+    public function test_a_fetch_does_not_keep_its_transaction_open_without_auto_commit(): void
+    {
+        // An idle "outbox:relay --watch" fetches every second: its reads must not hold a transaction
+        // (and a snapshot) open, which here keeps the writers of other connections out.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file, 'driverOptions' => [\PDO::ATTR_TIMEOUT => 1]];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $writer = new DbalOutboxStorage($other);
+            $writer->setup();
+            $writer->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+
+            $storage = new DbalOutboxStorage(DriverManager::getConnection($params, $configuration), autoSetup: false);
+            $before = $storage->fetchUnpublished(10);
+            $writer->store(self::message(self::ID_2, '2026-01-01 10:01:00'));
+            $after = $storage->fetchUnpublished(10);
+
+            self::assertCount(1, $before);
+            self::assertCount(2, $after, 'The row stored meanwhile is seen.');
+        } finally {
+            unlink($file);
+        }
+    }
+
     public function test_a_dispatch_of_the_relay_is_a_unit_of_work_of_its_own_without_auto_commit(): void
     {
         // A handler the relay runs in its own process must not share DBAL's implicit transaction.

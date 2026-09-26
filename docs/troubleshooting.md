@@ -535,7 +535,7 @@ commit a lost message.
   The row is postponed (1 minute, doubling up to 1 hour) and the rows behind it
   are relayed; the command exits with `1`. The maximum is three times
   `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
-* `Transport "<name>" failed 3 times in a row; its other messages wait for the next run.`
+* `Transport "<name>" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).`
   The broker is down or rejects the messages. When it accepted a message earlier
   in the run, it is paused after 10 failures in a row, or after 3 once its
   failures have lasted 10 seconds (e.g. every send waits for a timeout). The rows of the other transports
