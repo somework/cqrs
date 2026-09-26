@@ -23,7 +23,7 @@ Symfony Messenger is a powerful transport layer, but it leaves CQRS wiring as an
 ```mermaid
 flowchart LR
     A[Your code] --> B[CommandBus / QueryBus / EventBus]
-    B --> C[DispatchModeDecider: sync or async]
+    B --> C[DispatchModeDecider: sync, async or outbox]
     C --> D[StampsDecider pipeline]
     D --> E[Messenger bus]
     E --> F[Handler]
@@ -32,7 +32,7 @@ flowchart LR
     H --> F
 ```
 
-The stamp pipeline runs the built-in deciders for rate limiting, retry policies, the `#[Asynchronous]` attribute, transport names, serializers, metadata, event sequence numbers, causation IDs, idempotency, and `DispatchAfterCurrentBusStamp`, followed by any decider you register. Queries skip the dispatch-mode step; they are always handled synchronously.
+The stamp pipeline runs the built-in deciders for rate limiting, retry policies, the `#[Asynchronous]` attribute, transport names, serializers, metadata, event sequence numbers, causation IDs, idempotency, and `DispatchAfterCurrentBusStamp`; deciders you register run by their priority (by default after the built-in ones and before the `DispatchAfterCurrentBusStamp` decider). Queries skip the dispatch-mode step; they are always handled synchronously.
 
 ### How does it compare with plain Messenger?
 
@@ -46,7 +46,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 | **Stamps** | Added by the caller | Composable `StampDecider` pipeline with priority ordering |
 | **Testing** | `InMemoryTransport` or mocks | Fake buses plus `assertDispatched()` / `assertNotDispatched()` |
 | **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` |
-| **Transactional outbox** | Not built-in | `OutboxStorage` interface + DBAL implementation and relay command |
+| **Transactional outbox** | Only with a Doctrine transport on the business connection | `#[Outbox]` / `dispatch_modes` / `DispatchMode::OUTBOX` on the buses (or `OutboxWriter`), DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
 | **OpenTelemetry** | Not built-in | Middleware producing dispatch and consume spans |
 
 > **Choose plain Messenger** when your app has simple dispatch needs and you want no additional dependency.
@@ -59,8 +59,8 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - `CommandBus` with sync/async dispatch; `dispatchSync()` returns the handler result
 - `QueryBus::ask()` returns the result of the single handler
 - `EventBus` with zero-to-many handlers and fire-and-forget semantics
-- Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`); handler marker interfaces and abstract base handlers are optional alternatives
-- Compile-time check that every command and query has at most one handler per bus
+- Attribute-based handler discovery (`#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]`); implementing the handler marker interface (`CommandHandler`, …) with a typed `__invoke()` is the alternative
+- Compile-time check that every command and query has at most one handler per bus, counting handlers of its parent classes and interfaces
 
 **Stamp pipeline**
 - Composable `StampDecider` system with priority ordering (`@api` -- extend it yourself)
@@ -75,7 +75,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - Idempotency bridge (`IdempotencyStamp` to Messenger's `DeduplicateStamp`)
 - Event ordering metadata with `SequenceAware` and `AggregateSequenceStamp`
 - Rate limiting via Symfony Rate Limiter
-- Transactional outbox with DBAL storage and relay, setup, and purge commands
+- Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands; messages reach it through the buses (`DispatchMode::OUTBOX`, `#[Outbox]`, `dispatch_modes`) or `OutboxWriter`
 
 **Developer experience**
 - `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing
@@ -87,7 +87,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 
 **Observability**
 - OpenTelemetry middleware (spans for dispatching and for consuming messages in workers, trace context carried across transports)
-- PSR-3 logging across buses, deciders, and resolvers
+- PSR-3 logging on a `cqrs` Monolog channel, with a warning when an async dispatch ran synchronously
 
 **Integration**
 - `CommandBusInterface`, `QueryBusInterface`, `EventBusInterface` for dependency injection and test doubles
@@ -189,6 +189,14 @@ final class CreateTaskHandler
 }
 ```
 
+An asynchronous event dispatched from a handler is sent once the handler has returned, after its
+transaction committed; if the broker is down then, the event is lost and `dispatchSync()` throws
+`DeferredDispatchFailedException`. For events that must not be lost, enable the
+[transactional outbox](docs/outbox.md#through-the-buses), mark the event class `#[Outbox]` (or map
+it to `outbox` in `dispatch_modes`) and run the handler's database work in a transaction on the
+outbox connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+middleware): the same `dispatch()` then stores the event in that transaction.
+
 ### Step 3 -- Define a query and its handler
 
 Queries implement `Query`; their handler returns the result:
@@ -200,6 +208,9 @@ namespace App\Task;
 
 use SomeWork\CqrsBundle\Contract\Query;
 
+/**
+ * @implements Query<array{id: string, name: string}> the result type of QueryBus::ask() for static analysis
+ */
 final class FindTask implements Query
 {
     public function __construct(
@@ -219,7 +230,10 @@ use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
 #[AsQueryHandler(FindTask::class)]
 final class FindTaskHandler
 {
-    public function __invoke(FindTask $query): mixed
+    /**
+     * @return array{id: string, name: string}
+     */
+    public function __invoke(FindTask $query): array
     {
         // Load the task from your storage...
         return ['id' => $query->id, 'name' => 'Write the docs'];
@@ -345,7 +359,7 @@ somework_cqrs:
             default: [async]
 ```
 
-`MESSENGER_TRANSPORT_DSN` must point to a transport you have installed (Doctrine, AMQP, Redis, ...). Now `$commandBus->dispatchAsync($command)` sends the command to the `async` transport, and so does a plain `dispatch()` of a command class marked with `#[Asynchronous]` (`SomeWork\CqrsBundle\Attribute\Asynchronous`) or mapped to `async` under `dispatch_modes.command.map`. Handlers without an explicit `bus` are registered on the async bus automatically, so the worker finds them:
+`MESSENGER_TRANSPORT_DSN` must point to a transport you have installed (Doctrine, AMQP, Redis, ...); for the Flex default `doctrine://default?auto_setup=0`, run `composer require symfony/doctrine-messenger` and `bin/console messenger:setup-transports`. Now `$commandBus->dispatchAsync($command)` sends the command to the `async` transport, and so does a plain `dispatch()` of a command class marked with `#[Asynchronous]` (`SomeWork\CqrsBundle\Attribute\Asynchronous`) or mapped to `async` under `dispatch_modes.command.map`. Handlers without an explicit `bus` are registered on the async bus automatically, so the worker finds them:
 
 ```bash
 bin/console messenger:consume async
@@ -365,6 +379,7 @@ Full documentation is available at **[somework.github.io/cqrs](https://somework.
 * [Testing Guide](docs/testing.md) -- fake buses, assertions, integration testing
 * [Production Guide](docs/production.md) -- deployment, workers, monitoring
 * [Troubleshooting](docs/troubleshooting.md) -- common issues and solutions
+* [Example application](docs/example-app/) -- a runnable Symfony application with commands, queries, events and an async transport
 * [Upgrade Guide](UPGRADE.md) -- upgrading between versions of the bundle
 * [Changelog](CHANGELOG.md)
 

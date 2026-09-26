@@ -160,7 +160,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
   - published messages twice under concurrent relays, and stalled on a failing row;
   - ordered messages randomly within a second, and stored dates without a time zone;
   - generated index names longer than 63 characters;
-  - marked rows as published when their message class could not be loaded (symfony/messenger 7.4+);
+  - marked rows as published when their message class could not be loaded;
   - marked a retry as published when Messenger's deduplication dropped it because an earlier attempt of the same row still held the lock;
   - dispatched relayed messages on the default bus;
   - read from the replica of a `PrimaryReadReplicaConnection`, where rows already published could look pending;

@@ -60,11 +60,25 @@ argument:
   type (`buses.command_async` or `buses.event_async`). Workers consuming
   asynchronous messages therefore find the handler without extra
   configuration.
-* With `bus: 'my.bus'`, the handler is registered on that Messenger bus only.
+* With `bus: 'my.bus'`, the handler is registered on that Messenger bus only. The
+  facades dispatch on the buses configured under `buses`: a handler pinned to another
+  bus is not found by them (a command fails with `NoHandlerException`, an event is
+  ignored), and a handler pinned to the sync bus is not found by a worker consuming
+  the async bus.
+
+`#[AsEventHandler]` also accepts `priority` (handlers of the same event with a
+higher priority run first) and `fromTransport`: a worker then only runs the
+handler for messages it received from that transport, e.g. to keep a slow
+projection on its own transport. Synchronous dispatches still run the handler,
+because Messenger only restricts handlers of received messages. Both are passed
+to Messenger's handler tag, and a `fromTransport` that is not a Messenger
+transport fails the compilation.
 
 Commands and queries must have exactly one handler. Two handlers for the same
-command or query on the same bus make the container compilation fail; a
-missing handler is reported when the message is dispatched. Events may have
+command or query on the same bus make the container compilation fail, and so
+does a handler registered for a parent class or interface of the message next
+to the message's own handler (Messenger would run both). A missing handler is
+reported when the message is dispatched. Events may have
 any number of handlers.
 
 ### Fire-and-forget events
@@ -156,35 +170,31 @@ compilation); for a message that implements none of them, the attribute type
 decides. When a class has both the attribute and a handler marker interface,
 the attribute defines the registration.
 
-## Abstract base handlers
+## Receiving the envelope
 
-`SomeWork\CqrsBundle\Handler` provides base classes that implement the marker
-interface and `EnvelopeAware` for you:
-
-* `AbstractCommandHandler` -- implement `protected function handle(Command $command): mixed`.
-* `AbstractQueryHandler` -- implement `protected function fetch(Query $query): mixed`.
-* `AbstractEventHandler` -- implement `protected function on(Event $event): void`.
-
-Their `__invoke()` is untyped, so combine them with the attribute to declare the
-handled message. `$this->getEnvelope()` returns the Messenger envelope of the
-message being handled.
+A handler that needs the Messenger envelope of the message it handles (stamps, metadata,
+the idempotency key) implements `EnvelopeAware` and uses `EnvelopeAwareTrait`. The bundle
+passes the envelope right before it calls the handler; `$this->getEnvelope()` returns it.
+Call it only while the handler runs: afterwards the handler service still holds the envelope
+of the last message it handled.
 
 ```php
 <?php
 
 namespace App\Application\Command;
 
-use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Handler\AbstractCommandHandler;
+use SomeWork\CqrsBundle\Contract\CommandHandler;
+use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 
-/** @extends AbstractCommandHandler<CancelOrder> */
-#[AsCommandHandler(command: CancelOrder::class)]
-final class CancelOrderHandler extends AbstractCommandHandler
+final class CancelOrderHandler implements CommandHandler, EnvelopeAware
 {
-    protected function handle(Command $command): mixed
+    use EnvelopeAwareTrait;
+
+    public function __invoke(CancelOrder $command): mixed
     {
-        \assert($command instanceof CancelOrder);
+        $correlationId = $this->getEnvelope()->last(MessageMetadataStamp::class)?->getCorrelationId();
 
         // Cancel the order…
         return null;
@@ -200,9 +210,9 @@ The bundle registers these console commands:
 * `somework:cqrs:generate` -- scaffolds a message class and its handler.
 * `somework:cqrs:debug-transports` -- the transport configuration of the bundle.
 * `somework:cqrs:health` -- checks that handlers and transports can be built.
-* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup`, and
-  `somework:cqrs:outbox:purge` -- only when the transactional outbox is
-  enabled; see [Transactional Outbox](outbox.md).
+* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup`,
+  `somework:cqrs:outbox:failed` and `somework:cqrs:outbox:purge` -- only when
+  the transactional outbox is enabled; see [Transactional Outbox](outbox.md).
 
 ### Listing handlers
 
@@ -216,7 +226,9 @@ $ bin/console somework:cqrs:list --type=command --type=query
 ```
 
 Pass `--details` to inspect the configuration the bundle resolves for each
-message:
+message (the transports shown come from the `transports` configuration; the
+`#[Asynchronous]` attribute and `framework.messenger.routing` also send
+messages to transports, see `somework:cqrs:debug-transports`):
 
 ```
 $ bin/console somework:cqrs:list --type=command --details
@@ -236,9 +248,9 @@ Commands
 ║ Async Defers      │ yes                                                           ║
 ║ Sync Transports   │ None                                                          ║
 ║ Async Transports  │ async                                                         ║
-║ Retry Policy      │ SomeWork\CqrsBundle\Support\NullRetryPolicy                   ║
-║ Serializer        │ SomeWork\CqrsBundle\Support\NullMessageSerializer             ║
-║ Metadata Provider │ SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider ║
+║ Retry Policy      │ SomeWork\CqrsBundle\Policy\NullRetryPolicy                   ║
+║ Serializer        │ SomeWork\CqrsBundle\Policy\NullMessageSerializer             ║
+║ Metadata Provider │ SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider ║
 ╚═══════════════════╧═══════════════════════════════════════════════════════════════╝
 ```
 
@@ -260,8 +272,8 @@ The **Message** column uses the configured naming strategy (`naming`); the
 default strategy shows the short class name.
 
 `SomeWork\CqrsBundle\Registry\HandlerRegistry` holds the metadata behind the
-command and offers `all()`, `byType()`, and `getDisplayName()`. It is an
-internal service and may change between releases.
+command and offers `all()`, `byType()`, and `getDisplayName()`. It is part of
+the public API; autowire it to inspect the registered handlers.
 
 ### Generating a message and its handler
 
@@ -273,7 +285,10 @@ the class name so that the shell keeps the backslashes:
 bin/console somework:cqrs:generate command 'App\Application\Command\ShipOrder'
 ```
 
-The files are placed according to the PSR-4 mapping in your `composer.json`,
+The files are placed according to the PSR-4 mapping in your `composer.json`
+(a namespace that no PSR-4 prefix covers is refused unless `--dir` is given:
+Composer could not load the classes, and the service import of `src/` would
+fail),
 so `App\Application\Command\ShipOrder` becomes
 `src/Application/Command/ShipOrder.php` and
 `src/Application/Command/ShipOrderHandler.php`. The generated message
@@ -327,12 +342,14 @@ metadata via `$this->getEnvelope()`.
 
 `CommandBus::dispatch()` and `EventBus::dispatch()` accept an optional
 `SomeWork\CqrsBundle\Bus\DispatchMode` argument with the cases `SYNC`, `ASYNC`,
-and `DEFAULT` (the default). `SYNC` and `ASYNC` are used as given. For
-`DEFAULT`, the bundle resolves the mode per message class, first match wins:
+`OUTBOX` and `DEFAULT` (the default). `SYNC`, `ASYNC` and `OUTBOX` are used as
+given; `OUTBOX` stores the message in the [transactional outbox](outbox.md#through-the-buses)
+instead of sending it. For `DEFAULT`, the bundle resolves the mode per message
+class, first match wins:
 
 1. An entry for the exact message class in `dispatch_modes.<type>.map`.
-2. The `#[Asynchronous]` attribute on the message class itself (PHP
-   attributes are not inherited), which selects `async`.
+2. The `#[Outbox]` or `#[Asynchronous]` attribute on the message class itself
+   (PHP attributes are not inherited), which selects `outbox` or `async`.
 3. An entry in `dispatch_modes.<type>.map` for a parent class (nearest first),
    then for an implemented interface (most specific first).
 4. `dispatch_modes.<type>.default` (`sync` unless configured otherwise).
@@ -364,7 +381,8 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 
 $commandBus->dispatch($command);                     // Uses the resolved mode
 $commandBus->dispatch($command, DispatchMode::ASYNC);
-$commandBus->dispatchAsync($command);                // Always asynchronous
+$commandBus->dispatch($command, DispatchMode::OUTBOX); // Stored in the outbox, in the current transaction
+$commandBus->dispatchAsync($command);                // Always on the async bus (sent to a transport when one is configured or routed)
 $result = $commandBus->dispatchSync($command);       // Always synchronous, returns the handler result
 ```
 
@@ -377,7 +395,8 @@ The asynchronous bus only decides which Messenger bus handles the message. To
 actually send it to a transport, configure `transports.command_async` /
 `transports.event_async` (or use `#[Asynchronous]`, which names a transport);
 without a transport name or a `framework.messenger.routing` entry the message
-is handled right away on the asynchronous bus.
+is handled right away on the asynchronous bus, in the calling process, and the
+bundle logs a warning.
 
 ### Toggling DispatchAfterCurrentBusStamp
 
@@ -385,18 +404,21 @@ Asynchronous commands and events automatically receive Messenger's
 `DispatchAfterCurrentBusStamp`. When such a message is dispatched while another
 message is being handled (for example from inside a command handler), Messenger
 holds it back until the outer handler has finished successfully and drops it if
-the handler fails. You can turn this off globally or per message:
+the handler fails. The message is then sent after the handler's database
+transaction committed: when that send fails, the change stays and the message is
+lost (`dispatchSync()` reports it with `DeferredDispatchFailedException`). Use the
+[transactional outbox](outbox.md) for messages that must not be lost. You can turn
+the stamp off globally or per message:
 
 ```yaml
 somework_cqrs:
-    async:
-        dispatch_after_current_bus:
-            command:
-                default: true
-                map:
-                    App\Application\Command\ShipOrder: false
-            event:
-                default: true
+    dispatch_after_current_bus:
+        command:
+            default: true
+            map:
+                App\Application\Command\ShipOrder: false
+        event:
+            default: true
 ```
 
 With the override above `ShipOrder` commands are sent to the async bus
@@ -474,14 +496,18 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 | Exception | Thrown when |
 |---|---|
 | `NoHandlerException` | No handler handled the message on the bus (Messenger's `NoHandlerForMessageException` is converted and kept as the previous exception). A missing handler of a message dispatched *inside* a handler is not converted. |
-| `MultipleHandlersException` | More than one handler handled the query (`ask()` only). |
-| `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. |
+| `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry. |
+| `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. It is queued and a worker will handle it: do not dispatch it again. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
+| `DeferredDispatchFailedException` | The handler succeeded (`$result` holds its result), but a message it dispatched with `DispatchAfterCurrentBusStamp` (by default: an asynchronous event) failed once the handler had returned: sending it failed, or a synchronous handler of it threw. What the handler did stays done, so do not retry the whole command; the failed message is lost unless dispatched again (Messenger's `DelayedMessageHandlingException` is the previous exception). |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |
 
 `AsyncBusNotConfiguredException` is thrown by asynchronous dispatches
 (`dispatchAsync()`, `DispatchMode::ASYNC`, or a `DEFAULT` that resolves to
 `async`) when no async bus is configured for the message type.
+
+Every exception of the bundle implements `SomeWork\CqrsBundle\Exception\CqrsException`,
+so `catch (CqrsException $exception)` catches them all (and none of your handlers' exceptions).
 
 When exactly one handler throws, `dispatchSync()` and `ask()` rethrow that
 exception as is instead of wrapping it in Messenger's
@@ -529,6 +555,41 @@ final class InvoiceApiController
 }
 ```
 
+Declare the result type on the query, and static analysis (PHPStan, Psalm)
+knows what `ask()` returns; without it the result is `mixed`:
+
+```php
+<?php
+
+namespace App\ReadModel\Query;
+
+use App\ReadModel\InvoiceView;
+use SomeWork\CqrsBundle\Contract\Query;
+
+/**
+ * @implements Query<InvoiceView|null>
+ */
+final class FindInvoice implements Query
+{
+    public function __construct(
+        public readonly string $invoiceId,
+    ) {
+    }
+}
+```
+
+`$this->queryBus->ask(new FindInvoice($id))` is then `InvoiceView|null`.
+`FakeQueryBus::willReturnFor(FindInvoice::class, $result)` does not check the type
+of `$result`.
+
+PHPStan uses the defaults of the templates (`Query<mixed>`, `CommandHandler<Command>`,
+…) when a class declares none. Psalm does not support template defaults: it reports
+`MissingTemplateParam` for a query or handler without them, so with Psalm declare them
+everywhere (`@implements Query<mixed>` when the result is untyped, and
+`@implements CommandHandler<CreateTask>` on handlers). The message interfaces are also
+`@psalm-immutable`, so Psalm asks for that annotation on every message class
+(`somework:cqrs:generate` adds it).
+
 The query bus enforces exactly one handler per query: a second handler on the
 same bus is rejected at compile time, and `ask()` throws the exceptions listed
 in [Exceptions from dispatchSync() and ask()](#exceptions-from-dispatchsync-and-ask)
@@ -570,6 +631,27 @@ final class ApproveInvoiceHandler
 
 Events dispatched without any registered handler do not throw an exception
 (see [Fire-and-forget events](#fire-and-forget-events)).
+
+!!! warning "An event dispatched this way can be lost"
+    An asynchronous event dispatched inside a handler is held back until the handler has
+    returned ([`DispatchAfterCurrentBusStamp`](#toggling-dispatchaftercurrentbusstamp)), so
+    it is only sent after the handler's transaction committed. When sending it fails then (the
+    broker is down), the change stays committed and the event is lost:
+    `dispatchSync()` throws `DeferredDispatchFailedException`, whose `$result` is the result
+    of the handler, which succeeded. Do not retry the whole command then. In a worker, Messenger
+    retries the command, skips the handler because it already ran, and acknowledges it: the
+    event is lost with only a warning in the Messenger log.
+
+    For events that must not be lost, store them in the
+    [transactional outbox](outbox.md#through-the-buses) in the same transaction instead:
+    enable the outbox, mark the event class `#[Outbox]` (or map it to `outbox` in
+    `dispatch_modes`), and run the handler's database work in a transaction on the outbox
+    connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+    middleware): the `dispatch()` above then stores the event in that transaction (outside
+    one, it throws `OutboxRequiresTransactionException`). With a
+    Doctrine transport on the connection of your business data, disabling
+    `dispatch_after_current_bus` for those events also makes the send part of the transaction
+    (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
 Multiple handlers can subscribe to the same event; each is a class of its own:
 
@@ -636,7 +718,7 @@ The attribute has two effects when the message is dispatched with
   the attribute's `transport`, then entries for parent classes or interfaces and
   the section's `default`. A bare `#[Asynchronous]` (no `transport`) falls back
   to the `async` transport only when nothing is configured and
-  `framework.messenger.routing` does not route the message.
+  neither `framework.messenger.routing` nor `#[AsMessage(transport: ...)]` routes the message.
 
 The default transport name is `async`. Pass a custom transport name when your
 infrastructure uses a different name:
@@ -655,10 +737,11 @@ interface, a namespace wildcard (`App\Message\*`) or `*`.
 
 ## Metadata providers and correlation IDs
 
-Each dispatch can attach a `MessageMetadataStamp` carrying a correlation ID,
-an optional causation ID, and arbitrary key/value extras. The default
-`RandomCorrelationMetadataProvider` generates a random correlation ID, which you
-can read inside a handler:
+Each dispatch can attach a `MessageMetadataStamp` carrying a message ID, a
+correlation ID, an optional causation ID, and arbitrary key/value extras. The
+default `RandomCorrelationMetadataProvider` generates a random message ID, which
+is also the correlation ID of the first message of a flow. You can read them
+inside a handler:
 
 ```php
 <?php
@@ -681,7 +764,7 @@ final class ShipOrderHandler implements EnvelopeAware
 
         if ($metadataStamp instanceof MessageMetadataStamp) {
             $correlationId = $metadataStamp->getCorrelationId();
-            $causationId = $metadataStamp->getCausationId(); // correlation ID of the parent message, if any
+            $causationId = $metadataStamp->getCausationId(); // message ID of the parent message, if any
             // Pass the IDs to your logger or tracing system…
         }
 
@@ -690,9 +773,9 @@ final class ShipOrderHandler implements EnvelopeAware
 }
 ```
 
-When a message is dispatched while another one is being handled, the causation
-ID of the new message is set to the correlation ID of the message being handled
-(`causation_id` configuration).
+When a message is dispatched while another one is being handled, the new
+message inherits the correlation ID of the message being handled, and its
+causation ID is the message ID of that message (`causation_id` configuration).
 
 To change the metadata for a specific message, implement
 `MessageMetadataProvider` and register it in the configuration. The example

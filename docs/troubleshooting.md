@@ -12,7 +12,7 @@ problems appear when a message is dispatched or handled.
 **Symptom.** `CommandBus::dispatchSync()` and `QueryBus::ask()` throw
 
 ```
-SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus.
+SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus. Register one with #[AsCommandHandler(CreateTask::class)] or by implementing CommandHandler; "bin/console somework:cqrs:list" shows the registered handlers.
 ```
 
 (the previous exception is Messenger's `NoHandlerForMessageException`). Other
@@ -78,12 +78,9 @@ Events without handlers are not an error.
 Cannot determine the message handled by "App\Application\Command\CreateTaskHandler" (service "App\Application\Command\CreateTaskHandler"). Type-hint the first parameter of App\Application\Command\CreateTaskHandler::__invoke() with the message class or declare it explicitly, e.g. #[AsCommandHandler(command: YourMessage::class)].
 ```
 
-**Cause.** The handler is registered through a marker interface (or extends
-`AbstractCommandHandler`, `AbstractQueryHandler` or `AbstractEventHandler`), and
-the first parameter of `__invoke()` has no class type (it is untyped, `object`,
-a scalar type, or missing). The bundle infers the handled message from that
-type. The `Abstract*Handler` classes declare an untyped `__invoke()`, so they
-always need the attribute.
+**Cause.** The handler is registered through a marker interface, and the first
+parameter of `__invoke()` has no class type (it is untyped, `object`, a scalar
+type, or missing). The bundle infers the handled message from that type.
 
 **Fix.** Type-hint the message class (`public function __invoke(CreateTask $command): mixed`)
 or add the attribute: `#[AsCommandHandler(CreateTask::class)]`.
@@ -113,15 +110,17 @@ CQRS handler validation failed (commands and queries must have exactly one handl
 Command App\Application\Command\ShipOrder has 2 handlers on bus "messenger.bus.commands": App\Application\Command\ShipOrderHandler, App\Legacy\ShipOrderHandler.
 ```
 
-At runtime, `ask()` can also throw
+At runtime, `ask()` and `dispatchSync()` can also throw
 `MultipleHandlersException: Message "App\Application\Query\FindOrder" was handled by 2 handlers on the query bus. Exactly one handler is required.`
 
 **Cause.** Commands and queries must have exactly one handler per bus (events
 may have any number). The check counts distinct services per bus; one service on
-the sync and the async bus is fine. The runtime error typically comes from a
-second handler the check does not attribute to that bus, such as a Messenger
-`#[AsMessageHandler]` handler without a bus, which Messenger registers on every
-bus.
+the sync and the async bus is fine. Messenger also runs the handlers registered
+for parent classes, interfaces and `*` of a message, so a catch-all handler such
+as `__invoke(Command $command)` counts for every command on its bus (the message
+then says `including handlers of ...`). The runtime error comes from what the
+check cannot see, such as handlers wired outside the bundle's discovery (a
+decorated handlers locator). When it is thrown, the handlers have already run.
 
 **Fix.** Keep one handler per command or query and bus: remove the extra
 handler, or register the handlers on different buses with the `bus` argument.
@@ -171,7 +170,7 @@ Check the result with `bin/console somework:cqrs:list --details` (the
 **Symptom.** At runtime:
 
 ```
-SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode.
+SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode. Set "somework_cqrs.buses.command_async" to a Messenger bus.
 ```
 
 or, when the configuration asks for async delivery, during compilation:
@@ -200,17 +199,24 @@ somework_cqrs:
         command_async: messenger.bus.commands_async
 ```
 
-### `#[Asynchronous]` fails with "Invalid senders configuration"
+### `#[Asynchronous]` message without a transport
 
-**Symptom.**
+**Symptom.** The container compilation fails:
 
 ```
-Symfony\Component\Messenger\Exception\RuntimeException: Invalid senders configuration: sender "async" is not in the senders locator.
+"App\Application\Command\SendWelcomeEmail" carries #[Asynchronous] without a transport, but there is no "async" transport, no "somework_cqrs.transports.command_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.
 ```
+
+(`#[Asynchronous(transport: 'x')]` with an unknown transport, or a missing
+`buses.command_async` / `buses.event_async`, fail the same way, and so does
+`#[Outbox]` without a transport or without the outbox.) Messages without a
+handler in the application are not checked; dispatching them fails with
+`Invalid senders configuration: sender "async" is not in the senders locator.`,
+or, for `#[Outbox]`, with `UnknownOutboxTransportException` (see below).
 
 **Cause.** `#[Asynchronous]` without an argument sends the message to a
-transport named `async`, and there is no such transport. Transport names from
-the attribute are not validated at compile time.
+transport named `async` when nothing else chooses a transport, and there is no
+such transport.
 
 **Fix.** Define an `async` transport, or name an existing one:
 `#[Asynchronous(transport: 'async_commands')]`.
@@ -247,6 +253,29 @@ seconds ago, or an asynchronous one has not been handled by a worker yet.
 **Fix.** This is the deduplication working: treat the operation as already done
 (catch the exception), use a key that identifies one logical operation, or lower
 `idempotency.ttl`. See [Idempotency](idempotency.md).
+
+An **asynchronous** dispatch (`dispatch()`, `dispatchAsync()`) dropped as a duplicate throws
+nothing and the bundle logs nothing about it: the only trace is the Lock component's
+`Failed to acquire the "…" lock` at info level on the `lock` log channel. When a message with an
+`IdempotencyStamp` never reaches its worker, check that channel and the lock store: the key
+stays locked until a worker handled the earlier message, or until the TTL expires when that
+message went to the failure transport.
+
+### `DeferredDispatchFailedException`
+
+**Symptom.** `dispatchSync()` or `ask()` throws `DeferredDispatchFailedException`: "The handler
+of message … succeeded, but a message it dispatched with DispatchAfterCurrentBusStamp failed
+afterwards".
+
+**Cause.** The handler returned (and committed its transaction), then a message it dispatched
+(by default an asynchronous event, which is held back until the handler returned) could not be
+sent, or one of its synchronous handlers threw.
+
+**Fix.** Do not retry the whole command: its work is done, and `$exception->result` holds its
+result. The exception does not carry the lost message; Messenger's log names it ("Sending message
+… with … sender"), and its handler's effects are missing. Store messages that must not be lost
+with the [transactional outbox](outbox.md) instead (see
+[When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
 ### `RateLimitExceededException`
 
@@ -298,22 +327,27 @@ the option allows it.
 ### Unknown service id
 
 ```
-The service "somework_cqrs.retry.command_resolver" has a dependency on a non-existent service "app.retry.payment".
+The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\Application\Command\ProcessPayment" does not exist.
+The rate limiter "send_notifications" configured at "somework_cqrs.rate_limiting.command.default" does not exist. Define it under "framework.rate_limiter".
 ```
 
-A service id under `naming`, `retry_policies`, `serialization` or `metadata`
-does not exist. Define the service, or use the fully-qualified name of a
+A service id under `naming`, `retry_policies`, `serialization`, `metadata` or
+`outbox`, or a limiter name under `rate_limiting`, does not exist. The message
+names the option. Define the service, or use the fully-qualified name of a
 concrete class: the bundle registers such classes as services automatically.
 
-### Environment variable in an `enabled` flag
+### Environment variable in the configuration
 
 ```
 "somework_cqrs.outbox.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.
+"somework_cqrs.transports.command_async.default" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.
 ```
 
-The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and
-`rate_limiting` choose which services exist. Use a literal `true`/`false`, per
-environment if needed (`when@prod:` in the configuration file).
+The `enabled` flags choose which services exist, and most other options name
+services, buses, transports or dispatch modes the container compilation needs.
+Use literal values, per environment if needed (`when@prod:` in the
+configuration file). The options that accept `%env(...)%` are listed in the
+[configuration reference](reference.md#rules-that-apply-to-every-section).
 
 ### Unknown transport name
 
@@ -345,7 +379,7 @@ List bus service ids as declared under `framework.messenger.buses`.
 ### Missing optional packages
 
 ```
-Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove the mappings.
+Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.
 ```
 
 ```
@@ -374,7 +408,56 @@ Idempotency is enabled but Messenger's deduplicate middleware is not registered,
 If neither appears, check the lock store: the local `flock` and `semaphore`
 stores release the lock immediately, so duplicates go through. Use a shared
 store that keeps locks until their TTL expires, such as Redis or a database.
-See [Production: idempotency](production.md#idempotency).
+See [Production: idempotency](production.md#idempotency). A message stored in
+the outbox with a `DeduplicateStamp` is refused with such a store (see below).
+
+### A `DeduplicateStamp` is refused by the outbox
+
+**Symptom.**
+
+```
+LogicException: Message "App\Domain\StockReserved" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (Symfony\Component\Lock\Store\FlockStore) ties its keys to the current process or connection, so the relay could never send it.
+```
+
+**Cause.** Messenger's deduplication locks the key when the relay sends the
+message, and a lock of a process-bound store cannot be sent to a transport:
+every relay attempt would fail after the business change committed. Nothing
+was stored.
+
+**Fix.** Configure a lock store whose keys can be serialized, such as Redis,
+Memcached or a PDO/DBAL database (`framework.lock`), or dispatch the message
+without the stamp. The message names the store `lock.factory` uses at runtime.
+
+### The relay fails on a message that application middleware rejects
+
+**Symptom.** `somework:cqrs:outbox:relay` reports `Could not relay message …` with an
+exception from your own middleware (an access denied, a missing tenant), on every
+attempt, for messages that were accepted when they were stored.
+
+**Cause.** The relay dispatches the stored message on its bus again, in its own
+process: there is no request, user or tenant, and no `ReceivedStamp`. Middleware
+that checks the dispatching context rejects it.
+
+**Fix.** Skip envelopes carrying `SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp`
+in that middleware, as you skip `ReceivedStamp` (see
+[Through the buses](outbox.md#through-the-buses)); then requeue the given-up rows with
+`somework:cqrs:outbox:failed --requeue`.
+
+### "did not store … in the outbox: a middleware of its Messenger bus returned before …"
+
+**Symptom.** `LogicException: The event bus did not store "App\Domain\OrderPlaced"
+in the outbox: a middleware of its Messenger bus returned before the bundle's
+OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.`
+
+**Cause.** A middleware on the bus returned the envelope without calling the next
+middleware (a filter, a feature flag, or a middleware that catches and swallows
+exceptions), so the message never reached the middleware that stores it. Nothing
+was stored.
+
+**Fix.** Make that middleware pass the envelope on when it carries the bundle's
+`StoreInOutboxStamp` (a message being stored in the outbox), or leave the message
+out of the outbox. `bin/console debug:container <bus id> --show-arguments` lists
+the middleware of the bus.
 
 ### Outbox table does not exist
 
@@ -391,6 +474,52 @@ several databases a `CREATE TABLE` commits or aborts the open transaction.
 **Fix.** Run `bin/console somework:cqrs:outbox:setup` during deployment, or add
 the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 
+### `OutboxRequiresTransactionException`
+
+**Symptom.**
+
+```
+Message "App\Domain\OrderPlaced" was not stored in the outbox: no transaction is open on the outbox connection ("somework_cqrs.outbox.connection"), so it would not be part of the business change.
+```
+
+**Cause.** The message goes to the outbox (`DispatchMode::OUTBOX`, `#[Outbox]` or
+`dispatch_modes`), and no transaction is open on the outbox connection: the code
+dispatches it outside a transaction, or in a transaction on another connection.
+Nothing was stored.
+
+**Fix.** Dispatch it inside the transaction of the business change:
+`$connection->transactional()` or `EntityManagerInterface::wrapInTransaction()` on
+the outbox connection, or Messenger's `doctrine_transaction` middleware on the bus
+of the handler. Set `outbox.require_transaction: false` only when storing it on
+its own is intended.
+
+### `OutboxNotConfiguredException`
+
+**Symptom.** `Message "App\Domain\OrderPlaced" was dispatched on the event bus with
+DispatchMode::OUTBOX (resolved from #[Outbox] or "somework_cqrs.dispatch_modes"), but
+the transactional outbox is disabled.`
+
+**Cause.** The message goes to the outbox, but `outbox.enabled` is off. The build
+catches this for `dispatch_modes` entries and for `#[Outbox]` messages with a
+handler in the application, not for a message without one.
+
+**Fix.** Enable `somework_cqrs.outbox` (see [Transactional outbox](outbox.md)), or
+remove the attribute.
+
+### `UnknownOutboxTransportException`
+
+**Symptom.** `Message "App\Integration\OrderExported" was not stored in the outbox:
+"ordrs" is not a Messenger transport (defined: async, orders).`
+
+**Cause.** The message would be stored for a transport that is not defined, typically
+a typo in `#[Outbox(transport: ...)]` on a message without a handler in the
+application (the build only checks messages it knows through their handlers). The
+relay could never send the row, so nothing was stored and the transaction does not
+commit a lost message.
+
+**Fix.** Correct the transport name, or define the transport under
+`framework.messenger.transports`.
+
 ### The outbox relay reports problems
 
 * `Another outbox relay is already running.` Another relay holds the lock; the
@@ -399,8 +528,69 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 * `Message "..." (...) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.`
   The row has no transport name and no `framework.messenger.routing` entry
   matches it.
-* `Failed to relay message "...": ...` The row was skipped and stays unpublished;
-  the command exits with `1` and retries it on the next run.
+* `Message "..." (...) was neither sent to a transport nor handled …` Nothing
+  received the message: Messenger's deduplication dropped it as a duplicate, or
+  it is an event without handlers or routing. The row is marked as published.
+* `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
+  The row is postponed (1 minute, doubling up to 1 hour) and the rows behind it
+  are relayed; the command exits with `1`. The maximum is three times
+  `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
+* `Transport "<name>" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).`
+  The broker is down or rejects the messages. When it accepted a message earlier
+  in the run, it is paused after 10 failures in a row, or after 3 once its
+  failures have lasted 10 seconds (e.g. every send waits for a timeout). The rows of the other transports
+  are still relayed; the paused ones are tried again by the next run.
+  `Messages without a transport name failed to be sent 3 times in a row; the
+  other ones wait for the next run.` is the same for the rows that follow
+  `framework.messenger.routing`, which share one count.
+* `The outbox table setup was stopped by signal <number>; run it again.` The
+  setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
+  it did so far stays.
+* `Another process is building the index "…" of the outbox table …` (PostgreSQL)
+  Another setup, a migration, or the database session of a setup that was
+  stopped is building the index. Run the setup again once it has finished; the
+  health check says `is being built` meanwhile.
+* `The outbox table "…" is not set up through a pooler in transaction mode …`,
+  `… is set up; it ran through a pooler …` or `… was not set up (…); it ran
+  through a pooler …` Run the setup command over a direct database connection,
+  not through PgBouncer. In the last two cases the setup lock, and possibly a
+  `statement_timeout` of 0, stays with a server connection of the pooler until it
+  closes (e.g. `RECONNECT` in PgBouncer's admin console).
+* `… lacks the columns of this version, which this database cannot add without
+  rebuilding the table` (MySQL, MariaDB) The relay only adds columns that take no
+  time; run `somework:cqrs:outbox:setup`.
+* `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
+  `outbox.max_attempts` times (three times as many for transport failures). Fix
+  the cause, then list and requeue it with `somework:cqrs:outbox:failed
+  [--requeue]`. A reason of `The last attempt did not finish …` means that
+  the process died during the last attempt: a PHP fatal error or running out of
+  memory caused by the row, a killed process, or a lost database connection
+  (such rows get three times `outbox.max_attempts`; `Previous error:` shows the
+  failure before). The message may have been sent; check the consumer before
+  requeuing it.
+* `Skipped <n> message(s) that another relay claimed first.` Two relays ran at
+  the same time (no `symfony/lock`, or a lock store that only guards one host).
+  The other relay claimed each skipped row and made the attempt; only a send
+  that outlasts the retry delay can be sent twice. Configure a shared lock store.
+* `Stopped by signal <number> after <count> message(s) …` The process received
+  SIGTERM or SIGINT and stopped after the current row; the next run continues.
+* `Failed to relay message "<id>", but another relay claimed it in the meantime: <reason>`
+  Two relays overlapped while a send failed; the other relay's attempt counts.
+* `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
+  table does not exist or lacks the columns of this version (run
+  `somework:cqrs:outbox:setup`). With `could not be changed: another session (…)
+  kept it locked for more than 1 second(s)`, the relay tried to add the columns while a
+  transaction (or an autovacuum that does not give way, or one the relay's role
+  cannot recognise without `pg_read_all_stats`) held the table; with `is not changed while a transaction of the
+  database server has been open for more than 1 second(s)` (MySQL), any long
+  transaction of the server, also of other databases, kept it from trying; with `Another process has been setting up the outbox
+  table … for more than 30 seconds`, another process was upgrading it. Run
+  `somework:cqrs:outbox:setup`, which waits longer.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …` The table
+  lacks the index of this version, or has an invalid one (an interrupted build),
+  or still has the index of 0.4. The relay works, only slower: it fetches in the
+  order the rows were stored, without turns between transports. Run the setup
+  command (over a direct database connection).
 
 ## Health check failures
 
@@ -408,13 +598,21 @@ the table with a Doctrine migration (and set `outbox.auto_setup: false`).
 
 * `Handler "..." cannot be instantiated: ...` A handler's constructor or one of
   its dependencies fails (often a missing environment variable).
+* `The outbox storage cannot be read: ...` The outbox database or table is not
+  usable.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …; N outbox
+  message(s) wait, the oldest for M minute(s), and the relay cannot send them
+  until then` The table still lacks the columns of this version and the relay
+  could not add them (see `Stopping: the outbox storage failed` above): run the
+  setup command.
 * `Transport "..." cannot be created: ...` The transport DSN or options are
   invalid, or, for a Redis transport without `lazy: true`, the Redis server
   cannot be reached.
 * `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.
 
 It exits with `1` for warnings, for example
-`No handlers registered — this may indicate a configuration issue`. Before 0.5.0
+`No handlers registered — this may indicate a configuration issue`, or given-up
+and long-waiting outbox rows. Before 0.5.0
 the command reported every handler and transport as `CRITICAL`; upgrade if you
 see that.
 

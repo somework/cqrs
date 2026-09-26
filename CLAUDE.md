@@ -61,9 +61,10 @@ Bus::dispatch(message, mode, ...stamps)
   → StampsDecider runs the stamp pipeline (rate limit, retry, transport, serializer, metadata, sequence,
     causation id, idempotency, dispatch-after-current-bus); caller stamps always win
   → Symfony Messenger MessageBusInterface::dispatch() on the sync or async bus
-  → bundle middleware right after dispatch_after_current_bus (OpenTelemetry, causation id,
-    allow-no-handler for events), the deduplication lock release right after Messenger's
-    deduplicate middleware, then Messenger's handlers/senders
+  → bundle middleware: the trace context capture first on the bus, then right after
+    dispatch_after_current_bus (OpenTelemetry, causation id, allow-no-handler for events), the
+    deduplication lock release right after Messenger's deduplicate middleware, then Messenger's
+    handlers/senders
 ```
 `dispatchSync()` and `ask()` read the result through `SynchronousResult` (unwraps a single handler exception,
 reports messages that were sent to a transport or deduplicated).
@@ -99,7 +100,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Registry** (`src/Registry/`) — `HandlerRegistry` provides read-only access to compiled handler metadata (`HandlerDescriptor` DTOs). Used by the `somework:cqrs:list` console command.
 
-**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `OutboxPrepareMiddleware`, `OutboxStoreMiddleware`.
+**Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `TraceContextCaptureMiddleware` (records the dispatching trace context before a message is deferred), `OutboxPrepareMiddleware`, `OutboxStoreMiddleware`, `OutboxBypassMiddleware` (wraps `doctrine_transaction` so a message stored in the outbox skips it).
 
 **Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`; `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 

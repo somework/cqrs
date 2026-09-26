@@ -15,7 +15,9 @@ runs the `StampsDecider` aggregator. The aggregator calls every registered
 `StampDecider` in priority order (highest first). Each decider receives the
 message, the resolved `DispatchMode` and the current stamp array, and returns
 the (possibly modified) array. The result is passed to Messenger's
-`MessageBusInterface::dispatch()` on the sync or async bus.
+`MessageBusInterface::dispatch()` on the sync or async bus. A message dispatched through the
+[outbox](outbox.md#through-the-buses) gets the stamps of an asynchronous dispatch and goes
+through the async bus (or the sync bus without one), which stores it instead of sending it.
 
 ```mermaid
 sequenceDiagram
@@ -24,11 +26,11 @@ sequenceDiagram
     participant D as DispatchModeDecider
     participant S as StampsDecider
     participant SD as Stamp deciders (by priority)
-    participant M as Messenger bus (sync or async)
+    participant M as Messenger bus (sync or async; async for the outbox)
 
     C->>B: dispatch(command, mode, ...stamps)
     B->>D: resolve(command, mode)
-    D-->>B: SYNC or ASYNC
+    D-->>B: SYNC, ASYNC or OUTBOX
     B->>S: decide(command, resolved mode, caller stamps)
     loop highest priority first
         S->>SD: decide(command, mode, stamps)
@@ -43,8 +45,8 @@ Things to know about the pipeline:
 * The initial stamps are the ones the caller passed. `dispatchSync()` and
   `ask()` remove a `DispatchAfterCurrentBusStamp` first, because they need the
   result immediately.
-* Deciders receive the resolved mode, `SYNC` or `ASYNC`, never `DEFAULT`.
-  `QueryBus::ask()` always passes `SYNC`.
+* Deciders receive the resolved mode, `SYNC` or `ASYNC`, never `DEFAULT`
+  (`ASYNC` for a dispatch through the outbox). `QueryBus::ask()` always passes `SYNC`.
 * Each decider sees the stamps added by the deciders before it.
 * The pipeline only runs for dispatches through the CQRS facades. It does not run
   when a worker handles a received message, when you dispatch on a
@@ -54,7 +56,7 @@ Things to know about the pipeline:
   `MessageMetadataStamp`, `SerializerStamp`, `TransportNamesStamp`,
   `AggregateSequenceStamp`, `DeduplicateStamp` or `DispatchAfterCurrentBusStamp`
   passed by the caller, and an explicit causation id is kept. Retry policy
-  stamps are always appended.
+  stamps are added only for stamp classes the caller did not pass.
 
 ## Middleware classes
 
@@ -71,6 +73,8 @@ default middleware, a bus handled by the bundle looks like this (abridged;
 bundle middleware in brackets):
 
 ```
+add_default_stamps_middleware          Symfony 7.4+
+[OutboxPrepareMiddleware]              when the outbox is enabled
 add_bus_name_stamp_middleware
 reject_redelivered_message_middleware
 dispatch_after_current_bus
@@ -80,14 +84,16 @@ dispatch_after_current_bus
 failed_message_processing_middleware
 deduplicate_middleware                 Messenger 7.3+ with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
-... your own middleware ...
+... your own middleware ...                (doctrine_transaction is skipped by outbox stores)
+[OutboxStoreMiddleware]                when the outbox is enabled
 send_message
 handle_message
 ```
 
 On a bus without `dispatch_after_current_bus` (for example with
-`default_middleware: false`), the bundle middleware is placed first.
-`DeduplicationLockReleaseMiddleware` is only added to buses that contain
+`default_middleware: false`), the bundle middleware is placed first, except
+`OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
+last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
 
 The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
@@ -105,11 +111,15 @@ by commands and events still reports commands without a handler.
 
 ### CausationIdMiddleware
 
-While a message is handled, pushes the correlation id of its
-`MessageMetadataStamp` onto the `CausationIdContext` stack and pops it
-afterwards (also when the handler throws). `CausationIdStampDecider` reads this
-stack: a message dispatched from inside the handler gets the parent's
-correlation id as its causation id.
+While a message is handled, pushes its `MessageMetadataStamp` onto the
+`CausationIdContext` stack and pops it afterwards (also when the handler
+throws). The metadata deciders read this stack: a message dispatched from
+inside the handler inherits the parent's correlation id and gets the parent's
+message id as its causation id. A message without a `MessageMetadataStamp` is
+pushed as "no parent", so the messages its handlers dispatch start a new flow.
+With `buses`, the other CQRS buses get a variant
+(`somework_cqrs.messenger.middleware.causation_id_isolation`) that only pushes
+"no parent".
 
 Configure it under `somework_cqrs.causation_id`:
 
@@ -143,9 +153,11 @@ Creates one span each time a message passes through a CQRS bus:
 * The status is `OK`, or `ERROR` with the exception recorded when the rest of
   the stack throws.
 
-**Trace propagation.** On dispatch, the middleware adds a `TraceContextStamp`
-holding the W3C `traceparent`/`tracestate` headers of the dispatch span, unless
-the envelope already has one. The stamp travels with the message through the
+**Trace propagation.** On dispatch, the middleware sets a `TraceContextStamp`
+holding the W3C `traceparent`/`tracestate` headers of the dispatch span; a
+`TraceContextStamp` already on the envelope (for example one passed by the
+caller or captured for a deferred dispatch) becomes the parent of that span and
+is replaced. The stamp travels with the message through the
 transport, and the worker's `cqrs.consume` span uses it as its parent, so the
 consumer continues the producer's trace.
 
@@ -165,6 +177,32 @@ can retry with the same idempotency key. It is registered when the idempotency
 bridge is active and a `lock.factory` service exists. See
 [Idempotency](idempotency.md).
 
+### OutboxPrepareMiddleware and OutboxStoreMiddleware
+
+Registered when the outbox is enabled; other messages pass through them untouched.
+For a message dispatched through the [outbox](outbox.md#through-the-buses):
+
+* `OutboxPrepareMiddleware`, right after Messenger's `add_default_stamps_middleware`,
+  hides its `DeduplicateStamp`s (including default stamps) from
+  `deduplicate_middleware`, so the lock is taken when the relay sends the message, and
+  drops its `DispatchAfterCurrentBusStamp`s: the message is stored now.
+* `OutboxStoreMiddleware`, after your own middleware (validation, context stamps),
+  stores it in the current transaction instead of sending or handling it. When the
+  relay dispatches the stored message on the bus, it drops the stamps that middleware
+  adds again for a class the stored message already carries, so the caller's context
+  (e.g. `router_context`) wins over the relay's.
+* Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger`, wherever
+  they are listed on a CQRS bus (also more than once), are wrapped so that a message
+  being stored skips them (they would flush the caller's entity manager, or report its
+  open transaction); they run when the relay dispatches it.
+
+The relay's dispatch carries `RelayedFromOutboxStamp` and runs without the caller's
+context and without a `ReceivedStamp`: middleware that checks the dispatching context
+(authorization) should skip it as it skips received messages.
+
+Middleware between them must call the next middleware for an outbox dispatch:
+otherwise the bus throws a `LogicException`.
+
 ## Built-in stamp deciders
 
 All built-in deciders are registered with fixed priorities. Deciders marked
@@ -174,14 +212,14 @@ events.
 | Priority | Decider | Applies to | Registered when | Leaves alone |
 |----------|---------|------------|-----------------|--------------|
 | 225 | `RateLimitStampDecider` | per type | a limiter is mapped under `rate_limiting` | - |
-| 200 | `RetryPolicyStampDecider` | per type | always | - (stamps are appended) |
+| 200 | `RetryPolicyStampDecider` | per type | always | policy stamps of a class the caller passed |
 | 175 | `MessageTransportStampDecider` | commands, queries, events | always | an existing `TransportNamesStamp` |
 | 150 | `MessageSerializerStampDecider` | per type | always | an existing `SerializerStamp` |
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
 | 100 | `CausationIdStampDecider` | all messages | `causation_id.enabled` (default `true`) | an explicit causation id |
 | 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`), symfony/messenger 7.3+ and symfony/lock installed | an existing `DeduplicateStamp` |
-| 0 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
+| -10 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
 
 ### RateLimitStampDecider (225)
 
@@ -209,7 +247,7 @@ A `TransportNamesStamp` passed by the caller wins; otherwise, in this order:
 3. the transports configured for a parent class or interface, then the section's
    `default`;
 4. on asynchronous dispatches of a class with a bare `#[Asynchronous]`, the
-   `async` transport, unless `framework.messenger.routing` routes the message.
+   `async` transport, unless `framework.messenger.routing` or `#[AsMessage(transport: ...)]` routes the message.
 
 When nothing applies it adds nothing and Messenger's routing decides. See
 [`transports`](reference.md#transports) and
@@ -224,20 +262,27 @@ if any.
 ### MessageMetadataStampDecider (125)
 
 Adds the `MessageMetadataStamp` returned by the `MessageMetadataProvider`
-resolved for the message. The default provider generates a random correlation
-id.
+resolved for the message. The default provider generates a random message id,
+which is also the correlation id of the first message of a flow. While another
+message is handled, the provider's stamp takes the correlation id of that
+message and its message id as causation id (unless the provider set a
+causation id).
 
 ### SequenceStampDecider (110)
 
 For events implementing `SequenceAware`, adds an `AggregateSequenceStamp` with
-the aggregate id, the sequence number and the event class. See
+the aggregate type, the aggregate id and the sequence number. See
 [Event ordering](event-ordering.md).
 
 ### CausationIdStampDecider (100)
 
-When a message is dispatched while another one is being handled, sets the
-causation id of the last `MessageMetadataStamp` to the parent's correlation id.
-It runs after the metadata deciders, so the stamp already exists.
+When a message is dispatched while another one is being handled with a
+`MessageMetadataStamp` passed by the caller, sets its causation id to the
+parent's message id and keeps the caller's correlation id. A copy of the
+handled message's own stamp (forwarded, e.g. `$received->withExtra(...)`)
+becomes a new stamp: new message id, same correlation id and extras, the
+handled message as cause. It runs after the
+metadata deciders, so the stamp already exists.
 
 ### IdempotencyStampDecider (50)
 
@@ -245,15 +290,15 @@ Turns an `IdempotencyStamp` into Messenger's `DeduplicateStamp`, with the key
 `<message class>::<idempotency key>` and the TTL from `idempotency.ttl`. The
 `IdempotencyStamp` stays on the envelope. See [Idempotency](idempotency.md).
 
-### DispatchAfterCurrentBusStampDecider (0)
+### DispatchAfterCurrentBusStampDecider (-10)
 
 For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
-`async.dispatch_after_current_bus` disables it for the message. See
-[`async.dispatch_after_current_bus`](reference.md#asyncdispatch_after_current_bus).
+`dispatch_after_current_bus` disables it for the message. See
+[`dispatch_after_current_bus`](reference.md#dispatch_after_current_bus).
 
 ## Creating custom stamp deciders
 
-Implement `SomeWork\CqrsBundle\Support\StampDecider` (`@api`) to add your own
+Implement `SomeWork\CqrsBundle\Contract\StampDecider` (`@api`) to add your own
 stamps to every dispatch through the facades.
 
 ### 1. Implement the interface
@@ -266,7 +311,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 
@@ -314,9 +359,12 @@ keep stamps passed by the caller unless you have a reason not to.
 ### 2. Register it
 
 With autoconfiguration, implementing `StampDecider` adds the
-`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`. Set
-the priority explicitly to control where the decider runs, either in the service
-definition:
+`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`: the
+decider runs after every built-in decider except
+`DispatchAfterCurrentBusStampDecider` (-10), so it can add its own
+`DispatchAfterCurrentBusStamp`. Use a priority below -10 to see the final
+stamps. Set the priority explicitly to control where the decider runs, either in
+the service definition:
 
 ```yaml
 services:
@@ -330,7 +378,7 @@ or with Symfony's attribute on the class:
 ```php
 <?php
 
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\DependencyInjection\Attribute\AsTaggedItem;
 
 #[AsTaggedItem(priority: 130)]
@@ -344,7 +392,7 @@ Without autoconfiguration, add the tag (with its priority) yourself.
 
 ### 3. Restrict it to message types (optional)
 
-Implement `SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider` (`@api`) to
+Implement `SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider` (`@api`) to
 run the decider only for some messages. `messageTypes()` returns classes or
 interfaces; the decider is called only for messages that are an instance of one
 of them:
@@ -358,7 +406,7 @@ namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 final class CommandAuditStampDecider implements MessageTypeAwareStampDecider
