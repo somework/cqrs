@@ -17,6 +17,7 @@ use function ord;
 use function random_bytes;
 use function random_int;
 use function sprintf;
+use function strtolower;
 use function substr;
 
 use const JSON_THROW_ON_ERROR;
@@ -31,15 +32,34 @@ use const JSON_THROW_ON_ERROR;
  */
 final class OutboxMessage
 {
+    /** Lowercase: stored ids are compared as text on some platforms. */
+    public readonly string $id;
+
     public function __construct(
-        public readonly string $id,
+        string $id,
         public readonly string $body,
         public readonly string $headers,
         public readonly DateTimeImmutable $createdAt,
         public readonly ?string $transportName = null,
+        /** Attempts to publish the message so far (the relay counts an attempt when it claims the message). */
+        public readonly int $attempts = 0,
+        /** Error of the last failed attempt, null when there was none or the message was requeued. */
+        public readonly ?string $lastError = null,
+        /** When a relay claimed the message for an attempt it has not finished; set on a fetched message, that attempt was interrupted. */
+        public readonly ?DateTimeImmutable $claimedAt = null,
+        /** Retry time of the last attempt, null when the message was never attempted (or requeued). */
+        public readonly ?DateTimeImmutable $availableAt = null,
+        /** Signature of the id, body and headers, set by the storage when outbox signing is enabled. */
+        public readonly ?string $signature = null,
     ) {
-        if ('' === $this->id) {
+        if ('' === $id) {
             throw new \InvalidArgumentException('Outbox message id cannot be empty.');
+        }
+
+        $this->id = strtolower($id);
+
+        if ($this->attempts < 0) {
+            throw new \InvalidArgumentException('Outbox message attempts cannot be negative.');
         }
 
         if ('' === $this->body) {
@@ -58,11 +78,15 @@ final class OutboxMessage
     public static function fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null): self
     {
         $encoded = $serializer->encode($envelope);
+        // The message class, for the listing of given-up rows and the relay's logs: Messenger's PHP
+        // serializer writes no headers (and ignores them when decoding).
+        $headers = $encoded['headers'] ?? [];
+        $headers['type'] ??= $envelope->getMessage()::class;
 
         return new self(
             id: self::generateUuidV7(),
             body: $encoded['body'],
-            headers: json_encode($encoded['headers'] ?? [], JSON_THROW_ON_ERROR),
+            headers: json_encode($headers, JSON_THROW_ON_ERROR),
             createdAt: $createdAt ?? new DateTimeImmutable(),
             transportName: $transportName,
         );

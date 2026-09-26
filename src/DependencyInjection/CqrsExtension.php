@@ -134,14 +134,18 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         }
 
         if (true === $config['outbox']['enabled']) {
-            if (!($this->classExists)(Connection::class)) {
-                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
+            if (null === $config['outbox']['storage'] && !($this->classExists)(Connection::class)) {
+                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal", configure another storage under somework_cqrs.outbox.storage, or set somework_cqrs.outbox.enabled to false.');
             }
-            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId);
+            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
         if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
             throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
+        }
+
+        if (is_int($config['outbox']['max_attempts']) && $config['outbox']['max_attempts'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
         }
 
         // Registered without symfony/lock too, so the first IdempotencyStamp logs that it is ignored.
@@ -193,7 +197,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      * Options read only at runtime; every other option names services, buses, transports, dispatch
      * modes or message classes that must be known when the container is compiled.
      */
-    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'dispatch_after_current_bus'];
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'outbox.signing.secret', 'outbox.signing.previous_secrets', 'outbox.signing.accept_unsigned', 'dispatch_after_current_bus'];
 
     /**
      * Without this check an environment variable in such an option fails later with Symfony's
@@ -247,6 +251,11 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             if (!is_bool($value)) {
                 throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.', $section));
             }
+        }
+
+        $signing = $config['outbox']['signing'] ?? null;
+        if (is_array($signing) && !is_bool($signing['enabled'] ?? null)) {
+            throw new InvalidConfigurationException('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.');
         }
     }
 

@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\MergeExtensionConfigurationPass;
+use Symfony\Component\DependencyInjection\Compiler\ValidateEnvPlaceholdersPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
 use function sprintf;
@@ -63,6 +64,21 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         self::assertSame('%env(int:CQRS_IDEMPOTENCY_TTL)%', $container->resolveEnvPlaceholders($ttl, '%%env(%s)%%'));
     }
 
+    public function test_the_signing_secrets_accept_environment_variables(): void
+    {
+        $container = $this->container(['outbox' => ['enabled' => true, 'signing' => [
+            'secret' => '%env(CQRS_OUTBOX_SECRET)%',
+            'previous_secrets' => ['%env(CQRS_OUTBOX_OLD_SECRET)%'],
+        ]]]);
+
+        (new MergeExtensionConfigurationPass())->process($container);
+        // Symfony re-processes the configuration with dummy values ('' for a string) in every kernel.
+        (new ValidateEnvPlaceholdersPass())->process($container);
+
+        $signer = $container->getDefinition('somework_cqrs.outbox.signer');
+        self::assertSame('%env(CQRS_OUTBOX_SECRET)%', $container->resolveEnvPlaceholders($signer->getArgument('$secret'), '%%env(%s)%%'));
+    }
+
     /**
      * @return iterable<string, array{array<string, mixed>, string}>
      */
@@ -96,12 +112,23 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         $container = $this->container([
             'retry_strategy' => ['jitter' => '%env(float:JITTER)%', 'max_delay' => '%env(int:MAX_DELAY)%'],
             'dispatch_after_current_bus' => ['command' => ['default' => '%env(bool:DEFER)%']],
-            'outbox' => ['enabled' => true, 'auto_setup' => '%env(bool:OUTBOX_AUTO_SETUP)%'],
+            'outbox' => ['enabled' => true, 'signing' => ['secret' => '%env(OUTBOX_SECRET)%', 'previous_secrets' => ['%env(OLD_OUTBOX_SECRET)%'], 'accept_unsigned' => '%env(bool:ACCEPT_UNSIGNED)%']],
         ]);
 
         (new MergeExtensionConfigurationPass())->process($container);
 
         self::assertIsString($container->getParameter('somework_cqrs.retry_strategy.jitter'));
+        self::assertSame('%env(OUTBOX_SECRET)%', $container->resolveEnvPlaceholders($container->getDefinition('somework_cqrs.outbox.signer')->getArgument('$secret'), '%%env(%s)%%'));
+    }
+
+    public function test_the_outbox_signing_switch_rejects_an_environment_variable(): void
+    {
+        $container = $this->container(['outbox' => ['enabled' => true, 'signing' => ['enabled' => '%env(bool:SIGN)%']]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled');
+
+        (new MergeExtensionConfigurationPass())->process($container);
     }
 
     /**

@@ -17,7 +17,7 @@ use function sprintf;
  *
  * What the handler did stays done (a transaction it committed stays committed), and the deferred
  * message is lost unless it is dispatched again: do not retry the whole command. Messages that must
- * not be lost are stored with the transactional outbox instead.
+ * not be lost are stored with the transactional outbox (OutboxWriter) instead.
  *
  * @api
  */
@@ -35,7 +35,7 @@ final class DeferredDispatchFailedException extends \RuntimeException implements
         $failures = count($previous->getWrappedExceptions());
 
         parent::__construct(
-            sprintf('The handler of message "%s" dispatched on the %s bus succeeded, but %s it dispatched with DispatchAfterCurrentBusStamp failed afterwards (%s). What the handler did stays done; the failed message(s) are lost unless dispatched again. Store messages that must not be lost with the transactional outbox.', $messageClass, $busName, 1 === $failures ? 'a message' : sprintf('%d messages', $failures), $previous->getPrevious()?->getMessage() ?? $previous->getMessage()),
+            sprintf('The handler of message "%s" dispatched on the %s bus succeeded, but %s it dispatched with DispatchAfterCurrentBusStamp failed afterwards (%s). What the handler did stays done; the failed message(s) are lost unless dispatched again. Store messages that must not be lost with the transactional outbox (OutboxWriter).', $messageClass, $busName, 1 === $failures ? 'a message' : sprintf('%d messages', $failures), $previous->getPrevious()?->getMessage() ?? $previous->getMessage()),
             0,
             $previous,
         );

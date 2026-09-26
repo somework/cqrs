@@ -6,13 +6,16 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Registration;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Reference;
@@ -24,9 +27,9 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar();
 
-        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame(DbalOutboxStorage::class, $definition->getClass());
     }
 
@@ -39,6 +42,15 @@ final class OutboxRegistrarTest extends TestCase
             'somework_cqrs.outbox.storage',
             (string) $container->getAlias(OutboxStorage::class),
         );
+    }
+
+    public function test_rejects_an_empty_signing_secret(): void
+    {
+        // An environment variable arrives as a non-empty placeholder; only a literal '' is an error.
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Invalid configuration for path "somework_cqrs.outbox.signing.secret": Expected a non-empty string or null, got "".');
+
+        (new OutboxRegistrar())->register(new ContainerBuilder(), ['enabled' => true, 'table_name' => 'outbox', 'signing' => ['enabled' => true, 'secret' => ' ', 'previous_secrets' => [], 'accept_unsigned' => false]]);
     }
 
     public function test_registers_relay_command(): void
@@ -80,7 +92,7 @@ final class OutboxRegistrarTest extends TestCase
             'auto_setup' => false,
         ], true);
 
-        $storage = $container->getDefinition('somework_cqrs.outbox.storage');
+        $storage = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame('doctrine.dbal.orders_connection', (string) $storage->getArgument('$connection'));
         self::assertFalse($storage->getArgument('$autoSetup'));
         self::assertSame('app.outbox_serializer', (string) $container->getAlias('somework_cqrs.outbox.serializer'));
@@ -88,15 +100,30 @@ final class OutboxRegistrarTest extends TestCase
         self::assertSame('orders', $container->getDefinition('somework_cqrs.outbox.schema_subscriber')->getTag('doctrine.event_listener')[0]['connection']);
     }
 
-    public function test_registers_setup_and_purge_commands(): void
+    public function test_registers_setup_failed_and_purge_commands(): void
     {
         $container = $this->createContainerWithRegistrar();
+
+        self::assertSame(OutboxFailedCommand::class, $container->getDefinition('somework_cqrs.outbox.failed_command')->getClass());
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.health_checker')->hasTag('somework_cqrs.health_checker'));
+        self::assertSame('logger', (string) $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$logger'));
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.failed_command')->hasTag('console.command'));
 
         self::assertSame(OutboxSetupCommand::class, $container->getDefinition('somework_cqrs.outbox.setup_command')->getClass());
         self::assertSame(OutboxPurgeCommand::class, $container->getDefinition('somework_cqrs.outbox.purge_command')->getClass());
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.setup_command')->hasTag('console.command'));
         self::assertTrue($container->getDefinition('somework_cqrs.outbox.purge_command')->hasTag('console.command'));
-        self::assertSame('somework_cqrs.outbox.storage', (string) $container->getAlias(DbalOutboxStorage::class));
+        self::assertFalse($container->hasAlias(DbalOutboxStorage::class), 'Storing through it would bypass the decorators (signing).');
+        self::assertSame('somework_cqrs.outbox.base_storage', (string) $container->getAlias(FailedOutboxMessages::class));
+    }
+
+    public function test_the_relay_lock_is_scoped_to_the_connection_and_table(): void
+    {
+        $container = new ContainerBuilder();
+        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'orders_outbox', 'connection' => 'orders']);
+
+        // OutboxRelayLockPass adds the application scope.
+        self::assertSame('orders.orders_outbox', $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$lockName'));
     }
 
     public function test_relay_uses_the_lock_factory_when_available(): void
@@ -112,7 +139,7 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar(['table_name' => 'custom_outbox_table']);
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         self::assertSame('custom_outbox_table', $definition->getArgument('$tableName'));
     }
 
@@ -144,7 +171,7 @@ final class OutboxRegistrarTest extends TestCase
     {
         $container = $this->createContainerWithRegistrar();
 
-        $definition = $container->getDefinition('somework_cqrs.outbox.storage');
+        $definition = $container->getDefinition('somework_cqrs.outbox.dbal_storage');
         $connection = $definition->getArgument('$connection');
         self::assertSame('doctrine.dbal.default_connection', (string) $connection);
     }
@@ -154,7 +181,7 @@ final class OutboxRegistrarTest extends TestCase
         $container = $this->createContainerWithRegistrar(schemaToolAvailable: false);
 
         self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
-        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
     }
 
     /**
@@ -171,5 +198,21 @@ final class OutboxRegistrarTest extends TestCase
         ], $schemaToolAvailable);
 
         return $container;
+    }
+
+    public function test_a_custom_storage_replaces_the_dbal_storage(): void
+    {
+        $container = new ContainerBuilder();
+        (new OutboxRegistrar())->register($container, ['enabled' => true, 'table_name' => 'outbox', 'storage' => 'app.outbox'], schemaToolAvailable: true);
+
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.dbal_storage'));
+        self::assertFalse($container->hasAlias(DbalOutboxStorage::class));
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'), 'The schema of another storage is not DBAL\'s.');
+        self::assertSame('app.outbox', (string) $container->getAlias('somework_cqrs.outbox.storage'));
+        self::assertSame('storage.app.outbox', $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$lockName'));
+        $configured = $container->getParameter('somework_cqrs.configured_services');
+        self::assertIsArray($configured);
+        self::assertContains(['outbox.storage', 'app.outbox', null], $configured);
+        self::assertNotContains(['outbox.connection', 'doctrine.dbal.default_connection', null], $configured);
     }
 }

@@ -9,11 +9,13 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Tester\CommandTester;
+
+use const DATE_ATOM;
 
 #[CoversClass(OutboxPurgeCommand::class)]
 final class OutboxPurgeCommandTest extends TestCase
@@ -41,13 +43,24 @@ final class OutboxPurgeCommandTest extends TestCase
         $storage = new InMemoryOutboxStorage();
         $storage->store(new OutboxMessage('published', 'body', '{}', new DateTimeImmutable()));
         $storage->store(new OutboxMessage('pending', 'body', '{}', new DateTimeImmutable()));
-        $storage->markPublished('published');
+        $storage->markPublished(['published']);
 
         $tester = new CommandTester(new OutboxPurgeCommand($storage));
 
         self::assertSame(Command::SUCCESS, $tester->execute(['--older-than' => '0 seconds']));
         self::assertSame(['pending'], array_map(static fn (OutboxMessage $message): string => $message->id, $storage->fetchUnpublished(10)));
         self::assertFalse($storage->isPublished('published'));
+    }
+
+    public function test_a_failing_storage_exits_with_1(): void
+    {
+        $storage = self::createStub(OutboxStorage::class);
+        $storage->method('purgePublished')->willThrowException(new \RuntimeException('Connection refused'));
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::FAILURE, $tester->execute([]));
+        self::assertStringContainsString('The outbox storage failed: Connection refused', $tester->getDisplay());
     }
 
     /**
@@ -61,6 +74,20 @@ final class OutboxPurgeCommandTest extends TestCase
         yield 'bare number (a time zone offset for DateTime)' => ['7'];
         yield 'unknown unit' => ['7 fortnights'];
         yield 'relative expression' => ['last monday'];
+        yield 'overflowing number (would become a future cut-off)' => ['99999999999999999999 days'];
+    }
+
+    public function test_a_very_old_cutoff_is_clamped_to_year_one(): void
+    {
+        $storage = $this->createMock(OutboxStorage::class);
+        $storage->expects(self::once())
+            ->method('purgePublished')
+            ->with(self::callback(static fn (DateTimeImmutable $before): bool => '0001-01-01T00:00:00+00:00' === $before->format(DATE_ATOM)))
+            ->willReturn(0);
+
+        $tester = new CommandTester(new OutboxPurgeCommand($storage));
+
+        self::assertSame(Command::SUCCESS, $tester->execute(['--older-than' => '999999 years']));
     }
 
     #[DataProvider('invalidAges')]

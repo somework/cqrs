@@ -5,40 +5,42 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Command;
 
 use Psr\Container\ContainerInterface;
-use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
-use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Contract\Query;
-use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
+use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Command\LockableTrait;
+use Symfony\Component\Console\Command\SignalableCommandInterface;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\SignalRegistry\SignalRegistry;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\Lock\Exception\ExceptionInterface as LockException;
 use Symfony\Component\Lock\Exception\LockReleasingException;
 use Symfony\Component\Lock\LockFactory;
-use Symfony\Component\Messenger\Envelope;
-use Symfony\Component\Messenger\Exception\MessageDecodingFailedException;
 use Symfony\Component\Messenger\MessageBusInterface;
-use Symfony\Component\Messenger\Stamp\MessageDecodingFailedStamp;
-use Symfony\Component\Messenger\Stamp\SentStamp;
-use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function class_exists;
-use function count;
+use function defined;
 use function filter_var;
-use function json_decode;
+use function implode;
+use function microtime;
+use function register_shutdown_function;
 use function sprintf;
 
+use const FILTER_VALIDATE_BOOL;
 use const FILTER_VALIDATE_INT;
-use const JSON_THROW_ON_ERROR;
+use const SIGINT;
+use const SIGTERM;
 
 /**
- * Relays unpublished outbox messages to their transports (at-least-once delivery).
+ * Runs OutboxRelay from the console: validates the limit, holds the relay lock, stops after the
+ * current message on SIGTERM or SIGINT, and reports the outcome.
  *
  * @internal
  */
@@ -46,31 +48,84 @@ use const JSON_THROW_ON_ERROR;
     name: 'somework:cqrs:outbox:relay',
     description: 'Relay unpublished outbox messages to their transports.',
 )]
-final class OutboxRelayCommand extends Command
+final class OutboxRelayCommand extends Command implements SignalableCommandInterface
 {
     use LockableTrait;
 
-    private const MAX_CONSECUTIVE_SEND_FAILURES = 5;
+    /** Seconds between two extensions of the relay lock. */
+    private const LOCK_REFRESH_SECONDS = 10;
 
     /**
-     * @param ContainerInterface|null $buses Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     * TTL of the relay lock. A relay killed without cleanup (SIGKILL, OOM kill) keeps the next
+     * runs out until it expires; a running relay extends it every LOCK_REFRESH_SECONDS.
+     */
+    public const LOCK_TTL_SECONDS = 60.0;
+
+    /** When the relay lock was last extended. */
+    private ?float $lockRefreshedAt = null;
+
+    /** The signal that asked the run to stop after the current message. */
+    private ?int $stopSignal = null;
+
+    private bool $releasesLockOnShutdown = false;
+
+    private readonly OutboxRelay $relay;
+
+    /**
+     * @param ContainerInterface|null  $buses          Buses keyed by message type ("command", "query", "event"); other messages use $messageBus
+     * @param int                      $maxAttempts    Attempts after which a failing message is given up (three times as many when its transport fails)
+     * @param (\Closure(): float)|null $clock          Seconds since the epoch, microtime(true) by default (for tests)
+     * @param OutboxSchema|null        $table          The storage behind a decorated $outboxStorage, for the report of pending schema changes
+     * @param ContainerInterface|null  $transports     Messenger's transports by name; a message stored for another transport is given up at once
+     * @param OutboxSigner|null        $signer         Verifies every message before it is decoded (outbox.signing)
+     * @param bool|string              $acceptUnsigned Relay messages without a signature (outbox.signing.accept_unsigned, possibly from an environment variable)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
-        private readonly SerializerInterface $serializer,
-        private readonly MessageBusInterface $messageBus,
+        SerializerInterface $serializer,
+        MessageBusInterface $messageBus,
         ?LockFactory $lockFactory = null,
-        private readonly ?ContainerInterface $buses = null,
+        ?ContainerInterface $buses = null,
         private readonly string $lockName = 'somework:cqrs:outbox:relay',
+        int $maxAttempts = 10,
+        private readonly ?LoggerInterface $logger = null,
+        private readonly ?\Closure $clock = null,
+        private readonly ?OutboxSchema $table = null,
+        ?ContainerInterface $transports = null,
+        ?OutboxSigner $signer = null,
+        bool|string $acceptUnsigned = false,
     ) {
+        $this->relay = new OutboxRelay($outboxStorage, $serializer, $messageBus, $buses, $maxAttempts, $logger, $clock, $transports, $signer, true === filter_var($acceptUnsigned, FILTER_VALIDATE_BOOL));
+
         parent::__construct();
 
         $this->lockFactory = $lockFactory;
     }
 
+    /**
+     * @return list<int>
+     */
+    public function getSubscribedSignals(): array
+    {
+        return defined('SIGTERM') && SignalRegistry::isSupported() ? [SIGTERM, SIGINT] : [];
+    }
+
+    public function handleSignal(int $signal, int|false $previousExitCode = 0): int|false
+    {
+        // A second signal stops right away, like a process without a handler.
+        if (null !== $this->stopSignal) {
+            return 128 + $signal;
+        }
+
+        // Finish the current message instead of leaving it half done, then stop (see OutboxRelay::run()).
+        $this->stopSignal = $signal;
+
+        return false;
+    }
+
     protected function configure(): void
     {
-        $this->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to relay in this run', '100');
+        $this->addOption('limit', 'l', InputOption::VALUE_REQUIRED, 'Maximum number of messages to process in this run', '100');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -85,15 +140,26 @@ final class OutboxRelayCommand extends Command
         }
 
         // Overlapping runs (cron) would publish the same rows twice.
-        if (class_exists(LockFactory::class) && !$this->lock($this->lockName)) {
-            $io->note('Another outbox relay is already running.');
+        try {
+            if (class_exists(LockFactory::class) && !$this->acquireLock()) {
+                $io->note('Another outbox relay is already running.');
 
-            return self::SUCCESS;
+                return self::SUCCESS;
+            }
+        } catch (LockException $exception) {
+            return $this->stop($io, 'the relay lock could not be acquired', $exception);
         }
 
+        $this->releaseLockOnShutdown();
+
         try {
-            return $this->relay($io, $limit);
+            return $this->relayMessages($io, $limit);
+        } catch (\Throwable $exception) {
+            // e.g. the database is down: exit with 1 and say why, instead of the driver's error code.
+            return $this->stop($io, 'the outbox storage failed', $exception);
         } finally {
+            $this->stopSignal = null;
+
             try {
                 $this->release();
             } catch (LockReleasingException $exception) {
@@ -103,126 +169,84 @@ final class OutboxRelayCommand extends Command
         }
     }
 
-    private function relay(SymfonyStyle $io, int $limit): int
+    private function relayMessages(SymfonyStyle $io, int $limit): int
     {
-        $relayed = 0;
-        $failed = 0;
-        $consecutiveSendFailures = 0;
-
-        while ($relayed < $limit) {
-            $requested = $limit - $relayed;
-            // Messages that failed in this run stay unpublished at the head of the queue: skip them.
-            $batch = $this->outboxStorage->fetchUnpublished($requested, $failed);
-
-            foreach ($batch as $message) {
-                try {
-                    $envelope = $this->decode($message);
-                } catch (\Throwable $exception) {
-                    // Undecodable rows fail the same way on every run: skip them, they must not block the queue.
-                    ++$failed;
-                    $io->error(sprintf('Failed to relay message "%s": %s', $message->id, $exception->getMessage()));
-
-                    continue;
-                }
-
-                try {
-                    $this->send($message, $envelope, $io);
-                    ++$relayed;
-                    $consecutiveSendFailures = 0;
-                } catch (\Throwable $exception) {
-                    ++$failed;
-                    $io->error(sprintf('Failed to relay message "%s": %s', $message->id, $exception->getMessage()));
-
-                    // A transport or database outage fails every message: stop instead of walking the backlog.
-                    if (++$consecutiveSendFailures >= self::MAX_CONSECUTIVE_SEND_FAILURES) {
-                        $io->error(sprintf('Stopping after %d consecutive failures to send messages.', $consecutiveSendFailures));
-
-                        return self::FAILURE;
-                    }
-                }
-
-                if (!$this->keepLock($io)) {
-                    return self::FAILURE;
-                }
-
-                if ($relayed >= $limit) {
-                    break 2;
-                }
-            }
-
-            if (count($batch) < $requested) {
-                break;
-            }
+        $result = $this->relay->run($limit, new ConsoleRelayReporter(
+            $io,
+            fn (): bool => $this->keepLock($io),
+            fn (): bool => null !== $this->stopSignal,
+        ));
+        if ($result->aborted) {
+            return self::FAILURE;
         }
 
-        if (0 === $relayed && 0 === $failed) {
-            $io->info('No unpublished messages found.');
+        // The storage behind a decorated one still tells what its schema needs.
+        $table = $this->table ?? ($this->outboxStorage instanceof OutboxSchema ? $this->outboxStorage : null);
+        if (null !== $table) {
+            $this->reportPendingChanges($table, $io);
+        }
+
+        if ($result->claimedElsewhere > 0) {
+            $io->note(sprintf('Skipped %d message(s) that another relay claimed first.', $result->claimedElsewhere));
+        }
+
+        if ($result->relayed > 0) {
+            $io->success(sprintf('Relayed %d message(s).', $result->relayed));
+        }
+
+        if (null !== $this->stopSignal) {
+            $io->warning(sprintf('Stopped by signal %d after %d message(s); the remaining messages wait for the next run.', $this->stopSignal, $result->processed));
+            $this->logger?->warning('The outbox relay stopped on signal {signal} after {count} message(s).', ['signal' => $this->stopSignal, 'count' => $result->processed]);
+
+            return self::FAILURE;
+        }
+
+        if (0 === $result->processed) {
+            if (0 === $result->claimedElsewhere) {
+                $io->info('No outbox messages are due.');
+            }
 
             return self::SUCCESS;
         }
 
-        if ($relayed > 0) {
-            $io->success(sprintf('Relayed %d message(s).', $relayed));
-        }
-
-        return 0 === $failed ? self::SUCCESS : self::FAILURE;
-    }
-
-    private function decode(OutboxMessage $message): Envelope
-    {
-        $envelope = $this->serializer->decode([
-            'body' => $message->body,
-            'headers' => json_decode($message->headers, true, 512, JSON_THROW_ON_ERROR),
-        ]);
-
-        // Since Symfony 8, serializers report decoding failures inside the envelope instead of throwing.
-        $decoded = $envelope->getMessage();
-        if ($decoded instanceof MessageDecodingFailedException) {
-            throw $decoded;
-        }
-        if (null !== $envelope->last(MessageDecodingFailedStamp::class)) {
-            throw new MessageDecodingFailedException(sprintf('The class of the message (%s) cannot be loaded.', $decoded::class));
-        }
-
-        if (null !== $message->transportName) {
-            $envelope = $envelope->with(new TransportNamesStamp([$message->transportName]));
-        }
-
-        return $envelope;
-    }
-
-    private function send(OutboxMessage $message, Envelope $envelope, SymfonyStyle $io): void
-    {
-        // The bus of the message type adds the BusNameStamp workers use to pick the bus (a stored one is kept).
-        $envelope = $this->busFor($envelope->getMessage())->dispatch($envelope);
-
-        if (null === $envelope->last(SentStamp::class)) {
-            $io->warning(sprintf('Message "%s" (%s) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.', $message->id, $envelope->getMessage()::class));
-        }
-
-        $this->outboxStorage->markPublished($message->id);
-    }
-
-    private function busFor(object $message): MessageBusInterface
-    {
-        $type = match (true) {
-            $message instanceof CommandMessage => 'command',
-            $message instanceof Query => 'query',
-            $message instanceof Event => 'event',
-            default => null,
-        };
-
-        if (null === $type || null === $this->buses || !$this->buses->has($type)) {
-            return $this->messageBus;
-        }
-
-        $bus = $this->buses->get($type);
-
-        return $bus instanceof MessageBusInterface ? $bus : $this->messageBus;
+        return 0 === $result->failed ? self::SUCCESS : self::FAILURE;
     }
 
     /**
-     * Extends the relay lock so it cannot expire during a long run and let a second relay in.
+     * The automatic setup leaves indexes to the setup command: without them, every fetch reads the
+     * whole table.
+     */
+    private function reportPendingChanges(OutboxSchema $storage, SymfonyStyle $io): void
+    {
+        try {
+            $changes = $storage->pendingChanges();
+        } catch (\Throwable) {
+            return;
+        }
+
+        if ([] !== $changes) {
+            $io->warning(sprintf('The outbox table needs "bin/console somework:cqrs:outbox:setup": %s.', implode('; ', $changes)));
+            $this->logger?->warning('The outbox table needs "bin/console somework:cqrs:outbox:setup": {changes}.', ['changes' => implode('; ', $changes)]);
+        }
+    }
+
+    private function now(): float
+    {
+        return null === $this->clock ? microtime(true) : ($this->clock)();
+    }
+
+    private function stop(SymfonyStyle $io, string $reason, \Throwable $exception): int
+    {
+        $io->error(sprintf('Stopping: %s (%s).', $reason, OutboxRelay::describe($exception)));
+        $this->logger?->error('The outbox relay stopped: {reason}.', ['reason' => $reason, 'exception' => $exception]);
+
+        return self::FAILURE;
+    }
+
+    /**
+     * Extends the relay lock so it cannot expire during a long run and let a second relay in:
+     * every 10 seconds, not after every message, as that costs a round trip with a lock store on
+     * the network (Redis, a database).
      */
     private function keepLock(SymfonyStyle $io): bool
     {
@@ -230,14 +254,57 @@ final class OutboxRelayCommand extends Command
             return true;
         }
 
+        $now = $this->now();
+        if (null !== $this->lockRefreshedAt && $now - $this->lockRefreshedAt < self::LOCK_REFRESH_SECONDS) {
+            return true;
+        }
+        $this->lockRefreshedAt = $now;
+
         try {
             $this->lock->refresh();
         } catch (LockException $exception) {
-            $io->error(sprintf('Stopping: the relay lock was lost (%s). Another relay may be running.', $exception->getMessage()));
+            $this->stop($io, 'the relay lock was lost, another relay may be running', $exception);
 
             return false;
         }
 
         return true;
+    }
+
+    /**
+     * A PHP fatal error (e.g. running out of memory) skips "finally" blocks and destructors, so a
+     * lock store with a TTL would keep the next runs out until the lock expires.
+     */
+    private function acquireLock(): bool
+    {
+        // Without the application's lock factory, LockableTrait creates a local store.
+        if (null === $this->lockFactory) {
+            return $this->lock($this->lockName);
+        }
+
+        $lock = $this->lockFactory->createLock($this->lockName, self::LOCK_TTL_SECONDS);
+        if (!$lock->acquire()) {
+            return false;
+        }
+        $this->lock = $lock;
+
+        return true;
+    }
+
+    private function releaseLockOnShutdown(): void
+    {
+        if ($this->releasesLockOnShutdown) {
+            return;
+        }
+
+        $this->releasesLockOnShutdown = true;
+
+        register_shutdown_function(function (): void {
+            try {
+                $this->release();
+            } catch (\Throwable) {
+                // The lock expires on its own.
+            }
+        });
     }
 }

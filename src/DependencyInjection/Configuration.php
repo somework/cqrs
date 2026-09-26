@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Outbox\ReservedTableNames;
 use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
 use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
@@ -28,6 +29,7 @@ use function array_key_exists;
 use function array_key_first;
 use function array_keys;
 use function class_exists;
+use function explode;
 use function interface_exists;
 use function is_a;
 use function is_array;
@@ -307,20 +309,56 @@ final class Configuration implements ConfigurationInterface
         $outbox->addDefaultsIfNotSet()->info('Transactional outbox configuration.');
         $outboxChildren = $outbox->children();
         $outboxChildren->booleanNode('enabled')->defaultFalse()
-            ->info('Enable transactional outbox. Requires doctrine/dbal.');
+            ->info('Enable transactional outbox. Requires doctrine/dbal unless "storage" names another storage.');
+        self::requireName($outboxChildren->scalarNode('storage')->defaultNull()
+            ->info('Service id (or class) of the OutboxStorage; null for the DBAL storage configured by table_name, connection and auto_setup. The setup, failed and health features need it to implement OutboxSchema, FailedOutboxMessages and OutboxMonitoring.'), true);
         $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
             ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
         self::requireName($tableName);
         $tableName->validate()
-            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/', $value))
+            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/D', $value))
             ->thenInvalid('Invalid outbox table name %s: use letters, digits and underscores, optionally prefixed with a schema ("schema.table").')
+        ->end();
+        // The outbox queries do not quote the name, so a reserved word breaks them (e.g. "order", or "user" on PostgreSQL).
+        $tableName->validate()
+            ->ifTrue(static function (mixed $value): bool {
+                foreach (is_string($value) ? explode('.', $value) : [] as $part) {
+                    if (ReservedTableNames::isReserved($part)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->thenInvalid('Invalid outbox table name %s: it is a reserved SQL word in MySQL, MariaDB, PostgreSQL or SQLite. Choose another name, e.g. "somework_cqrs_outbox".')
         ->end();
         self::requireName($outboxChildren->scalarNode('connection')->defaultValue('default')->cannotBeEmpty()
             ->info('Doctrine DBAL connection name (service "doctrine.dbal.<name>_connection") holding the outbox table; use the connection of your business data.'));
         self::requireName($outboxChildren->scalarNode('serializer')->defaultValue('messenger.default_serializer')->cannotBeEmpty()
             ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.'));
         $outboxChildren->booleanNode('auto_setup')->defaultTrue()
-            ->info('Create the outbox table on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+            ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
+        $outboxChildren->integerNode('max_attempts')->defaultValue(10)
+            ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
+        $signing = $outboxChildren->arrayNode('signing');
+        $signing->addDefaultsIfNotSet()
+            ->info('HMAC-SHA256 signatures of stored rows: the relay only decodes (unserializes) rows this application signed.');
+        $signingChildren = $signing->children();
+        $signingChildren->booleanNode('enabled')->defaultTrue()
+            ->info('Sign every stored row and verify it before relaying it (no environment variables).');
+        // Not validated here: Symfony checks string environment variables with an empty dummy value.
+        // OutboxRegistrar rejects a literal empty secret, OutboxSigner an empty one at runtime.
+        $signingChildren->scalarNode('secret')->defaultNull()
+            ->info('Secret of the signatures; null uses kernel.secret ("framework.secret"). Environment variables are allowed.');
+        $signingChildren->arrayNode('previous_secrets')
+            ->info('Secrets whose signatures are still accepted, e.g. the old secret after a rotation, until the rows signed with it are relayed.')
+            ->scalarPrototype()->end()
+            ->defaultValue([]);
+        $signingChildren->booleanNode('accept_unsigned')->defaultFalse()
+            ->info('Relay rows without a signature (stored before signing was enabled) while they drain. Rows with a wrong signature are always given up.');
+        $signingChildren->end();
+        $signing->end();
         $outboxChildren->end();
         $outbox->end();
 

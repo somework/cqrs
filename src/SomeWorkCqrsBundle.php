@@ -13,6 +13,9 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocato
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxRelayLockPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\RemoveHandlerMetadataParameterPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\TransportRoutingPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateBusIdsPass;
@@ -54,6 +57,9 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new DeduplicationLockReleasePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -8);
         $container->addCompilerPass(new CqrsRetryStrategyPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new TransportRoutingPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
+        $container->addCompilerPass(new OutboxRelayLockPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
+        $container->addCompilerPass(new OutboxStoragePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
+        $container->addCompilerPass(new OutboxSigningSecretPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
         // After every pass of the bundle that adds a service with a logger.
         $container->addCompilerPass(new LoggerChannelPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -9);

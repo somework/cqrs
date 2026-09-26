@@ -44,6 +44,11 @@ final class OpenTelemetryMiddlewarePass implements CompilerPassInterface
 
         $container->setDefinition(self::CAPTURE_MIDDLEWARE_ID, (new Definition(TraceContextCaptureMiddleware::class))->setPublic(false));
 
+        // Messages stored in the outbox continue the trace they were stored in when relayed.
+        if ($container->hasDefinition('somework_cqrs.outbox.writer')) {
+            $container->getDefinition('somework_cqrs.outbox.writer')->setArgument('$captureTraceContext', true);
+        }
+
         foreach ($busIds as $busId) {
             MessengerMiddlewareInjector::inject($container, $busId, self::MIDDLEWARE_ID);
             // Before dispatch_after_current_bus: deferred messages keep the trace they were dispatched in.
