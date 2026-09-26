@@ -70,14 +70,6 @@ final class DbalOutboxSchema
     /** The same for the automatic setup, which runs every time a table lacks columns: writes queue behind the change. */
     private const AUTO_DDL_LOCK_TIMEOUT = 1;
 
-    /**
-     * Indexes by name suffix. "pending" serves the relay: per transport, the pending rows
-     * (published_at and failed_at NULL), new ones by created_at (available_at NULL), retries by
-     * available_at. The purge uses its first column. (0.4 had an index on published_at and
-     * created_at instead.).
-     *
-     * @var array<string, non-empty-list<string>>
-     */
     /** The columns of the table, in the order they are created. */
     private const COLUMNS = [
         'id' => ['type' => Types::GUID, 'notnull' => true],
@@ -100,6 +92,14 @@ final class DbalOutboxSchema
         'signature' => ['type' => Types::STRING, 'notnull' => false, 'length' => 64],
     ];
 
+    /**
+     * Indexes by name suffix. "pending" serves the relay: per transport, the pending rows
+     * (published_at and failed_at NULL), new ones by created_at (available_at NULL), retries by
+     * available_at. The purge uses its first column; 0.4 had an index on published_at and
+     * created_at instead.
+     *
+     * @var array<string, non-empty-list<string>>
+     */
     private const INDEXES = [
         'pending' => ['published_at', 'failed_at', 'transport_name', 'available_at', 'created_at', 'id'],
         // Monitoring finds unfinished claims without reading the pending rows.

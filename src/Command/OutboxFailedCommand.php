@@ -206,17 +206,17 @@ final class OutboxFailedCommand extends Command
         $io->table(
             ['Id', 'Type header', 'Class in the body', 'Classes the body instantiates', 'Body', 'Transport', 'Last error'],
             array_map(static fn (FailedOutboxMessage $message): array => [
-                self::printable($message->id),
-                self::printable($message->messageType ?? '-'),
-                self::printable($message->bodyClass ?? '-'),
+                self::cell($message->id),
+                self::cell($message->messageType ?? '-'),
+                self::cell($message->bodyClass ?? '-'),
                 match (true) {
                     null === $message->bodyClasses => '?',
                     null === $message->bodyClass && [] === $message->bodyClasses => 'not a PHP-serialized body: the type header names the class',
-                    default => self::printable(implode(', ', $message->bodyClasses)),
+                    default => self::cell(implode(', ', $message->bodyClasses)),
                 },
                 null === $message->digest ? '?' : 'sha256 '.substr($message->digest, 0, 16),
-                self::printable($message->transportName ?? '(routing)'),
-                self::printable($message->lastError ?? ''),
+                self::cell($message->transportName ?? '(routing)'),
+                self::cell($message->lastError ?? ''),
             ], $failed),
         );
 
@@ -361,24 +361,33 @@ final class OutboxFailedCommand extends Command
         $io->table(
             ['Id', 'Message', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
             array_map(static fn (FailedOutboxMessage $message): array => [
-                self::printable($message->id),
-                self::printable($message->messageType ?? '?'),
-                self::printable($message->transportName ?? '(routing)'),
+                self::cell($message->id),
+                self::cell($message->messageType ?? '?'),
+                self::cell($message->transportName ?? '(routing)'),
                 $message->createdAt->format(DATE_ATOM),
                 $message->failedAt->format(DATE_ATOM),
                 $message->attempts,
-                self::printable($message->lastError ?? ''),
+                self::cell($message->lastError ?? ''),
             ], $failed),
         );
     }
 
     /**
-     * Text read from the table, without control characters and with console formatter tags
-     * escaped: escape sequences or tags such as <href=…> stored in a row would reach the terminal
-     * of the operator.
+     * Text read from the table, without control characters: escape sequences stored in a row
+     * would reach the terminal of the operator. SymfonyStyle's error and warning blocks escape
+     * console formatter tags themselves.
      */
     private static function printable(string $text): string
     {
-        return OutputFormatter::escape((string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8')));
+        return (string) preg_replace('/[\x00-\x1F\x7F\x{80}-\x{9F}]+/u', ' ', mb_scrub($text, 'UTF-8'));
+    }
+
+    /**
+     * {@see printable()} for a table cell, which also escapes console formatter tags such as
+     * <href=…>: tables do not.
+     */
+    private static function cell(string $text): string
+    {
+        return OutputFormatter::escape(self::printable($text));
     }
 }

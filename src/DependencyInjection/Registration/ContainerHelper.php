@@ -22,8 +22,7 @@ final class ContainerHelper
     /**
      * Remembers that the option at $path (below "somework_cqrs.") names the service $serviceId, so
      * a missing service is reported with that option instead of an internal service id.
-     */
-    /**
+     *
      * @param class-string|null $interface What the service must implement
      */
     public function recordConfiguredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): void
@@ -36,8 +35,7 @@ final class ContainerHelper
 
     /**
      * {@see ensureServiceExists()} for a service the option at $path names.
-     */
-    /**
+     *
      * @param class-string|null $interface What the service must implement
      */
     public function configuredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): string
