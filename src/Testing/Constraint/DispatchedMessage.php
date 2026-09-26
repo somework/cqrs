@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Testing\Constraint;
 
 use PHPUnit\Framework\Constraint\Constraint;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Testing\RecordedDispatch;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
 
@@ -21,16 +22,22 @@ final class DispatchedMessage extends Constraint
 {
     private readonly ?\Closure $callback;
 
+    /**
+     * @param DispatchMode|null $mode Only dispatches requested with this mode (e.g. DispatchMode::OUTBOX)
+     */
     public function __construct(
         private readonly string $expectedClass,
         ?callable $callback = null,
+        private readonly ?DispatchMode $mode = null,
     ) {
         $this->callback = null !== $callback ? $callback(...) : null;
     }
 
     public function toString(): string
     {
-        $description = 'has dispatched a message of class "'.$this->expectedClass.'"';
+        $description = null === $this->mode
+            ? 'has dispatched a message of class "'.$this->expectedClass.'"'
+            : 'has dispatched a message of class "'.$this->expectedClass.'" with DispatchMode::'.$this->mode->name;
 
         if (null !== $this->callback) {
             $description .= ' matching callback';
@@ -46,7 +53,7 @@ final class DispatchedMessage extends Constraint
         }
 
         foreach ($other->getDispatched() as $record) {
-            if (!$record->message instanceof $this->expectedClass) {
+            if (!$record->message instanceof $this->expectedClass || (null !== $this->mode && $this->mode !== $record->mode)) {
                 continue;
             }
 

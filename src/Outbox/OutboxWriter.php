@@ -7,13 +7,16 @@ namespace SomeWork\CqrsBundle\Outbox;
 use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
+use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
@@ -35,9 +38,11 @@ final class OutboxWriter
      * Get the writer from the container (service "somework_cqrs.outbox.writer", autowired as
      * OutboxWriter): the constructor takes internal services and may change in any release.
      *
-     * @param StampDecider|null       $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
-     * @param CausationIdContext|null $causation           The message being handled, whose flow a stored message continues
-     * @param bool                    $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
+     * @param StampDecider|null        $transports          The bundle's transport stamp decider; without it, messages follow the Messenger routing
+     * @param CausationIdContext|null  $causation           The message being handled, whose flow a stored message continues
+     * @param bool                     $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
+     * @param TransactionalOutbox|null $transaction         The storage behind any decorator, when it can tell whether a transaction is open
+     * @param bool                     $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
      *
      * @internal
      */
@@ -47,6 +52,8 @@ final class OutboxWriter
         private readonly ?StampDecider $transports = null,
         private readonly ?CausationIdContext $causation = null,
         private readonly bool $captureTraceContext = false,
+        private readonly ?TransactionalOutbox $transaction = null,
+        private readonly bool $requireTransaction = false,
     ) {
     }
 
@@ -64,11 +71,43 @@ final class OutboxWriter
      */
     public function store(object $message, ?string $transportName = null, StampInterface ...$stamps): array
     {
+        $this->assertInTransaction($message);
+
         $envelope = new Envelope($message, array_values($stamps));
         $parent = $this->causation?->current();
         if (null !== $parent && null === $envelope->last(MessageMetadataStamp::class)) {
             $envelope = $envelope->with(new MessageMetadataStamp($parent->getCorrelationId(), [], $parent->getMessageId()));
         }
+
+        return $this->storeRows($envelope, null !== $transportName ? [$transportName] : $this->transportsFor($message));
+    }
+
+    /**
+     * Stores an envelope whose stamps the bus decided (DispatchMode::OUTBOX): one row per transport
+     * of its TransportNamesStamp, or one row that follows the Messenger routing without it.
+     *
+     * @return non-empty-list<OutboxMessage> The stored rows
+     *
+     * @internal
+     */
+    public function storeEnvelope(Envelope $envelope): array
+    {
+        $this->assertInTransaction($envelope->getMessage());
+
+        $names = $envelope->last(TransportNamesStamp::class)?->getTransportNames() ?? [];
+        // The relay sends each row to its own transport; stored now, never after the current handler.
+        $envelope = $envelope->withoutAll(TransportNamesStamp::class)->withoutAll(DispatchAfterCurrentBusStamp::class);
+
+        return $this->storeRows($envelope, [] === $names ? [null] : array_values($names));
+    }
+
+    /**
+     * @param non-empty-list<string|null> $transports
+     *
+     * @return non-empty-list<OutboxMessage>
+     */
+    private function storeRows(Envelope $envelope, array $transports): array
+    {
         if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {
             $headers = [];
             TraceContextPropagator::getInstance()->inject($headers);
@@ -77,7 +116,6 @@ final class OutboxWriter
             }
         }
         $stored = [];
-        $transports = null !== $transportName ? [$transportName] : $this->transportsFor($message);
         // The deduplication key is scoped to the row's transport: the rows of one message for several
         // transports (stored at once or one by one) would otherwise drop each other when relayed.
         $deduplicate = $envelope->last(DeduplicateStamp::class);
@@ -95,6 +133,13 @@ final class OutboxWriter
         }
 
         return $stored;
+    }
+
+    private function assertInTransaction(object $message): void
+    {
+        if ($this->requireTransaction && null !== $this->transaction && !$this->transaction->isInTransaction()) {
+            throw new OutboxRequiresTransactionException($message::class);
+        }
     }
 
     /**

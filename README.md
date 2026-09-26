@@ -46,7 +46,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 | **Stamps** | Added by the caller | Composable `StampDecider` pipeline with priority ordering |
 | **Testing** | `InMemoryTransport` or mocks | Fake buses plus `assertDispatched()` / `assertNotDispatched()` |
 | **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` |
-| **Transactional outbox** | Only with a Doctrine transport on the business connection | `OutboxWriter` + DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
+| **Transactional outbox** | Only with a Doctrine transport on the business connection | `#[Outbox]` / `dispatch_modes` / `DispatchMode::OUTBOX` on the buses (or `OutboxWriter`), DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
 | **OpenTelemetry** | Not built-in | Middleware producing dispatch and consume spans |
 
 > **Choose plain Messenger** when your app has simple dispatch needs and you want no additional dependency.
@@ -75,7 +75,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - Idempotency bridge (`IdempotencyStamp` to Messenger's `DeduplicateStamp`)
 - Event ordering metadata with `SequenceAware` and `AggregateSequenceStamp`
 - Rate limiting via Symfony Rate Limiter
-- Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands
+- Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands; messages reach it through the buses (`DispatchMode::OUTBOX`, `#[Outbox]`, `dispatch_modes`) or `OutboxWriter`
 
 **Developer experience**
 - `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing
@@ -191,8 +191,9 @@ final class CreateTaskHandler
 
 An asynchronous event dispatched from a handler is sent once the handler has returned, after its
 transaction committed; if the broker is down then, the event is lost and `dispatchSync()` throws
-`DeferredDispatchFailedException`. Store events that must not be lost with the
-[transactional outbox](docs/outbox.md) instead.
+`DeferredDispatchFailedException`. For events that must not be lost, mark the event class
+`#[Outbox]` (or map it to `outbox` in `dispatch_modes`): the same `dispatch()` then stores it in the
+[transactional outbox](docs/outbox.md#through-the-buses), inside the handler's transaction.
 
 ### Step 3 -- Define a query and its handler
 

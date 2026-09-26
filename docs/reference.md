@@ -77,6 +77,7 @@ somework_cqrs:
         serializer: messenger.default_serializer
         storage: null
         auto_setup: true
+        require_transaction: true
         max_attempts: 10
         signing:
             enabled: true
@@ -168,17 +169,18 @@ What happens when nothing matches depends on the section:
 | `dispatch_after_current_bus.<type>` | `dispatch_after_current_bus.<type>.default` |
 
 **Dispatch modes** follow a slightly different order because the
-`#[Asynchronous]` attribute takes part. For a command or event dispatched with
+`#[Outbox]` and `#[Asynchronous]` attributes take part. For a command or event dispatched with
 `DispatchMode::DEFAULT` (that is, `dispatch()` without a mode):
 
 1. an entry for the exact class in `dispatch_modes.<type>.map`;
-2. the `#[Asynchronous]` attribute on the message class (`SomeWork\CqrsBundle\Attribute\Asynchronous`) selects `async`;
+2. the `#[Outbox]` attribute on the message class (`SomeWork\CqrsBundle\Attribute\Outbox`) selects `outbox`, the `#[Asynchronous]` attribute (`SomeWork\CqrsBundle\Attribute\Asynchronous`) selects `async` (a class carrying both fails the compilation);
 3. an entry for a parent class;
 4. an entry for an interface, the most derived interface first;
 5. `dispatch_modes.<type>.default`.
 
 An explicit mode always wins: `dispatch($message, DispatchMode::ASYNC)`,
-`dispatchSync()` and `dispatchAsync()` skip this resolution. Queries are always
+`dispatch($message, DispatchMode::OUTBOX)`, `dispatchSync()` and
+`dispatchAsync()` skip this resolution. Queries are always
 synchronous.
 
 ## default_bus
@@ -455,17 +457,19 @@ One section each for `command` and `event` (queries are always synchronous):
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `sync` | `sync` or `async` |
-| `map` | `{}` | message class or interface => `sync` or `async` |
+| `default` | `sync` | `sync`, `async` or `outbox` |
+| `map` | `{}` | message class or interface => `sync`, `async` or `outbox` |
 
 The mode is used when the caller does not choose one (`dispatch()` with
 `DispatchMode::DEFAULT`). See the [resolution order](#resolution-order-for-per-message-maps)
-above, including the `#[Asynchronous]` attribute. Any `async` value requires
-the matching async bus (`buses.command_async` / `buses.event_async`). An invalid
-value fails the compilation:
+above, including the `#[Outbox]` and `#[Asynchronous]` attributes. Any `async`
+value requires the matching async bus (`buses.command_async` / `buses.event_async`),
+and any `outbox` value requires `outbox.enabled` (see
+[Through the buses](outbox.md#through-the-buses)). An invalid value fails the
+compilation:
 
 ```
-Invalid configuration for path "somework_cqrs.dispatch_modes.command.map.App\Application\Command\GenerateReport": Invalid dispatch mode ""later"". Expected "sync" or "async".
+Invalid configuration for path "somework_cqrs.dispatch_modes.command.map.App\Application\Command\GenerateReport": Invalid dispatch mode ""later"". Expected "sync", "async" or "outbox".
 ```
 
 ```yaml
@@ -692,6 +696,7 @@ somework_cqrs:
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
+| `require_transaction` | `true` | boolean: `OutboxWriter` and `DispatchMode::OUTBOX` refuse to store outside a transaction on the outbox connection (`OutboxRequiresTransactionException`); checked with storages that implement `TransactionalOutbox` |
 | `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
 | `signing.enabled` | `true` | boolean (no environment variables): sign stored rows and verify them before the relay decodes them |
 | `signing.secret` | `null` | string; `null` uses `kernel.secret` (`framework.secret`) |

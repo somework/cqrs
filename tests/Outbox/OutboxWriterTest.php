@@ -11,15 +11,20 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
+use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
+use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
@@ -65,6 +70,60 @@ final class OutboxWriterTest extends TestCase
         self::assertInstanceOf(TraceContextStamp::class, $stamp);
         self::assertStringContainsString('4bf92f3577b34da6a3ce929d0e0e4736', $stamp->headers['traceparent'] ?? '');
         self::assertNull((new PhpSerializer())->decode(['body' => $untraced[0]->body])->last(TraceContextStamp::class));
+    }
+
+    public function test_an_envelope_decided_by_a_bus_is_stored_once_per_transport_of_its_stamp(): void
+    {
+        $envelope = new Envelope(new CreateTaskCommand('1', 'a'), [new TransportNamesStamp(['async', 'audit']), new DispatchAfterCurrentBusStamp(), new DelayStamp(5)]);
+
+        $rows = (new OutboxWriter($this->storage, new PhpSerializer()))->storeEnvelope($envelope);
+
+        self::assertSame(['async', 'audit'], array_map(static fn (OutboxMessage $row): ?string => $row->transportName, $rows));
+        foreach ($rows as $row) {
+            $decoded = (new PhpSerializer())->decode(['body' => $row->body]);
+            self::assertNull($decoded->last(TransportNamesStamp::class), 'The relay adds the transport of the row.');
+            self::assertNull($decoded->last(DispatchAfterCurrentBusStamp::class), 'Stored now, never deferred.');
+            self::assertNotNull($decoded->last(DelayStamp::class));
+        }
+    }
+
+    public function test_an_envelope_without_transports_follows_the_routing(): void
+    {
+        $rows = (new OutboxWriter($this->storage, new PhpSerializer()))->storeEnvelope(new Envelope(new CreateTaskCommand('1', 'a')));
+
+        self::assertCount(1, $rows);
+        self::assertNull($rows[0]->transportName);
+    }
+
+    public function test_storing_outside_a_transaction_is_refused_when_required(): void
+    {
+        $transaction = new class implements TransactionalOutbox {
+            public bool $active = false;
+
+            public function isInTransaction(): bool
+            {
+                return $this->active;
+            }
+        };
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), transaction: $transaction, requireTransaction: true);
+
+        foreach ([static fn () => $writer->store(new CreateTaskCommand('1', 'a')), static fn () => $writer->storeEnvelope(new Envelope(new CreateTaskCommand('1', 'a')))] as $store) {
+            try {
+                $store();
+                self::fail('Expected the store to be refused.');
+            } catch (OutboxRequiresTransactionException $exception) {
+                self::assertStringContainsString('outside a transaction on the outbox connection', $exception->getMessage());
+            }
+        }
+        self::assertSame([], $this->storage->fetchUnpublished(10));
+
+        $transaction->active = true;
+        self::assertCount(1, $writer->store(new CreateTaskCommand('1', 'a')));
+
+        // Without the requirement, or with a storage that cannot tell, it stores anyway.
+        $transaction->active = false;
+        self::assertCount(1, (new OutboxWriter($this->storage, new PhpSerializer(), transaction: $transaction))->store(new CreateTaskCommand('2', 'a')));
+        self::assertCount(1, (new OutboxWriter($this->storage, new PhpSerializer(), requireTransaction: true))->store(new CreateTaskCommand('3', 'a')));
     }
 
     public function test_stores_one_row_per_configured_transport(): void

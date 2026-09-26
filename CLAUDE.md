@@ -52,7 +52,8 @@ Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (lates
 
 ```
 Bus::dispatch(message, mode, ...stamps)
-  → DispatchModeDecider resolves sync/async (exact map entry → #[Asynchronous] → parent/interface map entry → default)
+  → DispatchModeDecider resolves sync/async/outbox (exact map entry → #[Outbox]/#[Asynchronous] → parent/interface map entry → default)
+  → outbox mode: the stamp pipeline runs as for async, then OutboxWriter::storeEnvelope() stores the envelope in the current transaction (OutboxStoredStamp) instead of the steps below
   → StampsDecider runs the stamp pipeline (rate limit, retry, transport, serializer, metadata, sequence,
     causation id, idempotency, dispatch-after-current-bus); caller stamps always win
   → Symfony Messenger MessageBusInterface::dispatch() on the sync or async bus
@@ -65,9 +66,9 @@ reports messages that were sent to a transport or deduplicated).
 
 ### Key Layers
 
-**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `Contract\Outbox\OutboxStorage` (claim-token contract: `claim`/`renew`/`release`/`markPublished`/`recordFailure`; plus the optional capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
+**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `Contract\Outbox\OutboxStorage` (claim-token contract: `claim`/`renew`/`release`/`markPublished`/`recordFailure`; plus the optional capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
 
-**Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
+**Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async/outbox dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
 
 **Attributes** (`src/Attribute/`) — `#[AsCommandHandler]`, `#[AsQueryHandler]`, `#[AsEventHandler]` — repeatable PHP attributes that accept message FQCN and optional bus name. Registered for autoconfiguration in `CqrsExtension`.
 

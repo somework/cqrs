@@ -32,9 +32,9 @@ use function trim;
 final class OutboxRegistrar
 {
     /**
-     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
-     * @param bool                                                                                                                                                                                                                                                                       $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
-     * @param array<string, string|null>                                                                                                                                                                                                                                                 $buses               The "somework_cqrs.buses" configuration
+     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, require_transaction?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
+     * @param bool                                                                                                                                                                                                                                                                                                   $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
+     * @param array<string, string|null>                                                                                                                                                                                                                                                                             $buses               The "somework_cqrs.buses" configuration
      */
     public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus', ?ContainerHelper $helper = null): void
     {
@@ -102,6 +102,9 @@ final class OutboxRegistrar
         $writerDef->setArgument('$serializer', $serializer);
         $writerDef->setArgument('$transports', new Reference('somework_cqrs.stamp_decider.message_transport', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $writerDef->setArgument('$causation', new Reference('somework_cqrs.causation_id_context', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+        // $transaction is the storage behind any decorator, when it implements TransactionalOutbox (OutboxStoragePass).
+        $writerDef->setArgument('$transaction', null);
+        $writerDef->setArgument('$requireTransaction', $config['require_transaction'] ?? true);
         $writerDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.writer', $writerDef);
         $container->setAlias(OutboxWriter::class, 'somework_cqrs.outbox.writer')->setPublic(false);

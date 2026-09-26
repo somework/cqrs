@@ -39,6 +39,7 @@ final class BusWiringRegistrar
             $commandBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $commandBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
             $commandBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+            $commandBusDefinition->setArgument('$outbox', new Reference('somework_cqrs.outbox.writer', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
@@ -62,6 +63,7 @@ final class BusWiringRegistrar
             $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $eventBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
             $eventBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+            $eventBusDefinition->setArgument('$outbox', new Reference('somework_cqrs.outbox.writer', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
     }
 }

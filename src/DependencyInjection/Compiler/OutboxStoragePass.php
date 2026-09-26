@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -42,7 +43,7 @@ final class OutboxStoragePass implements CompilerPassInterface
     public const DBAL_STORAGE_ID = 'somework_cqrs.outbox.dbal_storage';
 
     /** Interfaces autowired to the configured storage when it implements them. */
-    public const CAPABILITIES = [OutboxSchema::class, FailedOutboxMessages::class, OutboxMonitoring::class];
+    public const CAPABILITIES = [OutboxSchema::class, FailedOutboxMessages::class, OutboxMonitoring::class, TransactionalOutbox::class];
 
     /** Service => [argument, interface the argument requires (null: any OutboxStorage, checked at runtime)] */
     private const CAPABILITY_CONSUMERS = [
@@ -50,6 +51,7 @@ final class OutboxStoragePass implements CompilerPassInterface
         'somework_cqrs.outbox.failed_command' => ['$outboxStorage', null],
         'somework_cqrs.outbox.health_checker' => ['$outboxStorage', null],
         'somework_cqrs.outbox.relay_command' => ['$table', OutboxSchema::class],
+        'somework_cqrs.outbox.writer' => ['$transaction', TransactionalOutbox::class],
     ];
 
     public function process(ContainerBuilder $container): void

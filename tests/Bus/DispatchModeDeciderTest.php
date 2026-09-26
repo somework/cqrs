@@ -17,6 +17,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\HighPriorityEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ImportLegacyDataCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 
 #[CoversClass(DispatchModeDecider::class)]
@@ -217,5 +218,12 @@ final class DispatchModeDeciderTest extends TestCase
         $decider = new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [Command::class => DispatchMode::SYNC]);
 
         self::assertSame(DispatchMode::ASYNC, $decider->resolve(new AsyncTaskCommand('1'), DispatchMode::DEFAULT));
+    }
+
+    public function test_the_outbox_attribute_resolves_to_the_outbox_unless_the_class_is_mapped(): void
+    {
+        self::assertSame(DispatchMode::OUTBOX, DispatchModeDecider::syncDefaults()->resolve(new TaskArchivedEvent('1'), DispatchMode::DEFAULT));
+        self::assertSame(DispatchMode::ASYNC, (new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [], [TaskArchivedEvent::class => DispatchMode::ASYNC]))->resolve(new TaskArchivedEvent('1'), DispatchMode::DEFAULT));
+        self::assertSame(DispatchMode::SYNC, DispatchModeDecider::syncDefaults()->resolve(new TaskArchivedEvent('1'), DispatchMode::SYNC));
     }
 }

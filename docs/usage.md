@@ -342,12 +342,14 @@ metadata via `$this->getEnvelope()`.
 
 `CommandBus::dispatch()` and `EventBus::dispatch()` accept an optional
 `SomeWork\CqrsBundle\Bus\DispatchMode` argument with the cases `SYNC`, `ASYNC`,
-and `DEFAULT` (the default). `SYNC` and `ASYNC` are used as given. For
-`DEFAULT`, the bundle resolves the mode per message class, first match wins:
+`OUTBOX` and `DEFAULT` (the default). `SYNC`, `ASYNC` and `OUTBOX` are used as
+given; `OUTBOX` stores the message in the [transactional outbox](outbox.md#through-the-buses)
+instead of sending it. For `DEFAULT`, the bundle resolves the mode per message
+class, first match wins:
 
 1. An entry for the exact message class in `dispatch_modes.<type>.map`.
-2. The `#[Asynchronous]` attribute on the message class itself (PHP
-   attributes are not inherited), which selects `async`.
+2. The `#[Outbox]` or `#[Asynchronous]` attribute on the message class itself
+   (PHP attributes are not inherited), which selects `outbox` or `async`.
 3. An entry in `dispatch_modes.<type>.map` for a parent class (nearest first),
    then for an implemented interface (most specific first).
 4. `dispatch_modes.<type>.default` (`sync` unless configured otherwise).
@@ -379,6 +381,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 
 $commandBus->dispatch($command);                     // Uses the resolved mode
 $commandBus->dispatch($command, DispatchMode::ASYNC);
+$commandBus->dispatch($command, DispatchMode::OUTBOX); // Stored in the outbox, in the current transaction
 $commandBus->dispatchAsync($command);                // Always on the async bus (sent to a transport when one is configured or routed)
 $result = $commandBus->dispatchSync($command);       // Always synchronous, returns the handler result
 ```
@@ -639,8 +642,10 @@ Events dispatched without any registered handler do not throw an exception
     retries the command, skips the handler because it already ran, and acknowledges it: the
     event is lost with only a warning in the Messenger log.
 
-    For events that must not be lost, store them with the
-    [transactional outbox](outbox.md) (`OutboxWriter`) in the same transaction instead. With a
+    For events that must not be lost, store them in the
+    [transactional outbox](outbox.md#through-the-buses) in the same transaction instead:
+    mark the event class `#[Outbox]` (or map it to `outbox` in `dispatch_modes`), and the
+    `dispatch()` above stores it in the handler's transaction. With a
     Doctrine transport on the connection of your business data, disabling
     `dispatch_after_current_bus` for those events also makes the send part of the transaction
     (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).

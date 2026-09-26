@@ -14,8 +14,9 @@ database table **in the same transaction** as the business change. The
 
 ## How it works
 
-1. Inside your database transaction, you write the business data and store the message with
-   `OutboxWriter::store()`.
+1. Inside your database transaction, you write the business data and store the message: through
+   the buses (`DispatchMode::OUTBOX`, `#[Outbox]` or `dispatch_modes`, see
+   [Through the buses](#through-the-buses)), or with `OutboxWriter::store()`.
 2. The transaction commits. The message row is saved only if the business change is.
 3. `somework:cqrs:outbox:relay` reads due rows, transport by transport, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
@@ -24,8 +25,9 @@ database table **in the same transaction** as the business change. The
    retried later with an increasing delay, and given up after `max_attempts` attempts (see
    [Failures](#failures)).
 
-Writing to the outbox is always explicit. The CQRS buses (`EventBus::dispatch()` and so on)
-never write to the outbox.
+A message reaches the outbox only when you ask for it: with `DispatchMode::OUTBOX`, with the
+`#[Outbox]` attribute or an `outbox` entry of `dispatch_modes` (then `dispatch()` stores it), or
+with `OutboxWriter`. Everything else the buses dispatch is sent as usual.
 
 ## When do I need the outbox?
 
@@ -66,7 +68,8 @@ is set`: remove that section, or install the ORM (`composer require symfony/orm-
 
 1. Enable the outbox (`somework_cqrs.outbox.enabled: true`, see [Configuration](#configuration)).
 2. Create the table: `bin/console somework:cqrs:outbox:setup`, or a Doctrine migration.
-3. Store messages with `OutboxWriter::store()` inside your transaction (see
+3. Inside your transaction, dispatch the messages through the outbox (see
+   [Through the buses](#through-the-buses)), or store them with `OutboxWriter::store()` (see
    [Writing to the outbox](#writing-to-the-outbox)).
 4. Run `bin/console somework:cqrs:outbox:relay` every minute (see [Relaying](#relaying)) and
    purge published rows every night (see [Purging published rows](#purging-published-rows)).
@@ -94,12 +97,99 @@ somework_cqrs:
 | `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`: without a database selected on the connection, its `dbname`, the automatic setup is skipped, and the Doctrine schema listener only adds a table of the connection's database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
+| `require_transaction` | `true` | Refuses to store a message outside a transaction on the outbox connection (`OutboxRequiresTransactionException`): the message would not be part of the business change. Checked by storages that implement `TransactionalOutbox` (`DbalOutboxStorage` does). |
 | `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
 | `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See [Failures](#failures). |
 
+## Through the buses
+
+The command and event buses store a message in the outbox instead of sending it when its dispatch
+mode is `outbox`. The stamp pipeline runs as for an asynchronous dispatch (transports, retry,
+serializer, metadata and causation, idempotency, rate limiting), and the message is stored right
+away, in the current transaction: it is never deferred until the current handler has finished.
+Three ways select the mode:
+
+```php
+// 1. Explicitly, for one dispatch.
+$this->eventBus->dispatch(new OrderPlaced($orderId), DispatchMode::OUTBOX);
+```
+
+```php
+// 2. On the message class: every dispatch() with the default mode stores it.
+#[Outbox]                                   // or #[Outbox(transport: 'orders')]
+final class OrderPlaced implements Event { /* ... */ }
+```
+
+```yaml
+# 3. In the configuration, per message class or interface, or for a whole type.
+somework_cqrs:
+    dispatch_modes:
+        event:
+            default: outbox               # every event, unless mapped otherwise
+            map:
+                App\Event\AuditTrail: async
+        command:
+            map:
+                App\Application\Command\ChargeCard: outbox
+```
+
+The attribute and the configuration take part in the usual
+[resolution order](reference.md#resolution-order-for-per-message-maps): an exact `map` entry
+wins over the attribute, which wins over entries for parents and interfaces and over the
+default. A class with both `#[Outbox]` and `#[Asynchronous]`, `#[Outbox]` on a query, and an
+`outbox` mode while `outbox.enabled` is off fail the compilation.
+
+The handler code stays the same: dispatch inside the transaction of the business change.
+
+```php
+#[AsCommandHandler(command: PlaceOrder::class)]
+final class PlaceOrderHandler
+{
+    public function __construct(
+        private readonly Connection $connection,
+        private readonly EventBusInterface $eventBus,
+    ) {
+    }
+
+    public function __invoke(PlaceOrder $command): mixed
+    {
+        $this->connection->transactional(function () use ($command): void {
+            $this->connection->insert('orders', ['id' => $command->orderId]);
+            $this->eventBus->dispatch(new OrderPlaced($command->orderId)); // OrderPlaced is #[Outbox]
+        });
+
+        return null;
+    }
+}
+```
+
+With Messenger's `doctrine_transaction` middleware on the command bus, every handler already
+runs in a transaction of the entity manager's connection, and the events it dispatches through
+the outbox are stored in it without an explicit `transactional()`.
+
+- **The transaction is checked.** With `require_transaction: true` (the default), a message stored
+  outside a transaction on `outbox.connection` (none is open, or it is open on another
+  connection) throws `OutboxRequiresTransactionException` instead of being stored on its own.
+- **The result.** `dispatch()` returns the envelope with an `OutboxStoredStamp`: the ids of the
+  stored rows and their transports. Nothing is sent until the relay runs.
+- **The transports** are those of an asynchronous dispatch: `transports.command_async` /
+  `transports.event_async`, the transport of `#[Outbox(transport: ...)]`, or
+  `framework.messenger.routing` when the relay sends the row. No async bus is needed: the relay
+  dispatches on `buses.<type>_async`, or on the synchronous bus without one.
+- **What bypasses the outbox.** `dispatchSync()` and `ask()` (they need the result) and
+  `dispatchAsync()` (an explicit asynchronous dispatch) ignore the `outbox` mode.
+- **Idempotency.** An `IdempotencyStamp` deduplicates when the relay sends the row, not when it is
+  stored: two dispatches with the same key in one transaction store two rows, and the second
+  is dropped when relayed.
+- **Tests.** The fake buses record `DispatchMode::OUTBOX` when you pass it explicitly;
+  `assertStoredInOutbox()` checks it (see [Testing](testing.md)). A fake bus does not resolve the
+  attribute or the configuration.
+
 ## Writing to the outbox
 
-Inject `OutboxWriter` and call `store()` inside your transaction:
+`OutboxWriter` stores a message without the stamp pipeline of the buses: use it for messages
+that are not commands or events, or to choose every stamp yourself. Inject it and call `store()`
+inside your transaction:
 
 ```php
 <?php
@@ -144,7 +234,8 @@ final class PlaceOrderHandler
 returns the stored rows. The main points:
 
 - **Use the same connection.** `Connection` must be the connection named in
-  `outbox.connection`. With Doctrine ORM, call `store()` inside
+  `outbox.connection`; with `require_transaction: true`, a store outside a transaction on it
+  throws `OutboxRequiresTransactionException`. With Doctrine ORM, call `store()` inside
   `EntityManagerInterface::wrapInTransaction()`. The entity manager of that connection
   shares the same `Connection` instance.
 - **The transport.** Without a transport name, the writer sends the message where an

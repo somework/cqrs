@@ -1389,6 +1389,14 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertSame(1, $status->failed);
     }
 
+    public function test_reports_whether_a_transaction_is_open_on_its_connection(): void
+    {
+        $storage = new DbalOutboxStorage($this->connection);
+        self::assertFalse($storage->isInTransaction());
+
+        $this->connection->transactional(static fn () => self::assertTrue($storage->isInTransaction()));
+    }
+
     public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void
     {
         // A lagging replica would show the relay rows already published, or none that are due.

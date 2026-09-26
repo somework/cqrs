@@ -87,6 +87,24 @@ final class OutboxStoragePassTest extends TestCase
         self::assertInstanceOf(InMemoryOutboxStorage::class, self::argument($container->get('somework_cqrs.outbox.setup_command'), 'outboxStorage'));
     }
 
+    public function test_the_writer_checks_transactions_on_the_storage_behind_the_decorators(): void
+    {
+        $container = $this->container(['require_transaction' => true]);
+        $container->getDefinition('somework_cqrs.outbox.writer')->setPublic(true);
+        $container->compile();
+
+        $writer = $container->get('somework_cqrs.outbox.writer');
+        self::assertInstanceOf(DbalOutboxStorage::class, self::argument($writer, 'transaction'));
+        self::assertTrue(self::argument($writer, 'requireTransaction'));
+
+        // A storage that cannot tell whether a transaction is open is not checked.
+        $custom = $this->container(['storage' => 'app.outbox']);
+        $custom->register('app.outbox', InMemoryOutboxStorage::class);
+        $custom->getDefinition('somework_cqrs.outbox.writer')->setPublic(true);
+        $custom->compile();
+        self::assertNull(self::argument($custom->get('somework_cqrs.outbox.writer'), 'transaction'));
+    }
+
     public function test_capabilities_autowire_to_the_storage_that_implements_them(): void
     {
         $container = $this->container(['storage' => 'app.outbox']);

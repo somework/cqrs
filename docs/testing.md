@@ -187,10 +187,13 @@ final class TaskCreatedEventTest extends TestCase
 
 ## Assertions
 
-`CqrsAssertionsTrait` provides two `protected static` assertions:
+`CqrsAssertionsTrait` provides these `protected static` assertions:
 
 - `assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 - `assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
+- `assertStoredInOutbox()` and `assertNotStoredInOutbox()`, with the same parameters: they only
+  match dispatches recorded with `DispatchMode::OUTBOX` (see
+  [Code that stores messages in the outbox](#code-that-stores-messages-in-the-outbox)).
 
 Their parameters work as follows:
 
@@ -506,6 +509,20 @@ the `messenger:consume async --limit=1 --time-limit=5` command through `CommandT
 `AsyncBusNotConfiguredException`.
 
 ## Code that stores messages in the outbox
+
+Code that stores messages through the buses (`dispatch($message, DispatchMode::OUTBOX)`) is tested
+with the fake buses, which record the mode:
+
+```php
+$eventBus = new FakeEventBus();
+(new PlaceOrderHandler($connection, $eventBus))(new PlaceOrder('order-1'));
+
+self::assertStoredInOutbox($eventBus, OrderPlaced::class, static fn (OrderPlaced $event): bool => 'order-1' === $event->orderId);
+```
+
+A fake bus does not resolve the configuration: a `dispatch()` with the default mode that
+`#[Outbox]` or `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEFAULT`, so
+check it with `assertDispatched()`, or test the resolution in a kernel test as below.
 
 `OutboxWriter` has no fake: test the code that uses it against a real outbox table. In the
 `test` environment, point the outbox at a connection of its own (an SQLite file or in-memory

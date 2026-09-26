@@ -46,7 +46,9 @@ use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
+use function array_keys;
 use function class_exists;
+use function implode;
 use function is_array;
 use function is_bool;
 use function is_int;
@@ -92,6 +94,16 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         /* @phpstan-ignore argument.type */
         $this->guardAsyncBusConfiguration($config);
+        // Messages stored through the buses need the outbox.
+        if (true !== $config['outbox']['enabled']) {
+            foreach (['command', 'event'] as $type) {
+                $modes = $config['dispatch_modes'][$type];
+                $outboxMessages = array_keys(array_filter($modes['map'], static fn (string $mode): bool => DispatchMode::OUTBOX->value === $mode));
+                if (DispatchMode::OUTBOX->value === $modes['default'] || [] !== $outboxMessages) {
+                    throw new InvalidConfigurationException(sprintf('"somework_cqrs.dispatch_modes.%s" stores messages in the outbox (%s), but the outbox is disabled. Enable "somework_cqrs.outbox".', $type, DispatchMode::OUTBOX->value === $modes['default'] ? '"default: outbox"' : implode(', ', $outboxMessages)));
+                }
+            }
+        }
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');

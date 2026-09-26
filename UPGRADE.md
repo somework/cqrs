@@ -304,6 +304,15 @@ correlation id and names the handled message as its cause.
   failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
   Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
 
+### Dispatch through the outbox
+
+- `DispatchMode` has a new case, `OUTBOX`. A `match` over `DispatchMode` without a `default` arm, and a
+  `StampDecider`, `RetryPolicy`, `MessageSerializer` or `MessageMetadataProvider` of yours that compares the mode,
+  need to handle it. The stamp pipeline itself never sees `OUTBOX`: a message dispatched through the outbox has
+  its stamps decided as an `ASYNC` dispatch.
+- `OutboxWriter::store()` refuses to store outside a transaction on the outbox connection
+  (`OutboxRequiresTransactionException`) unless `outbox.require_transaction: false` is set.
+
 ### Event ordering
 
 - **Breaking:** `SequenceAware` has a new method, `getAggregateType(): string`. Return the same value for every event

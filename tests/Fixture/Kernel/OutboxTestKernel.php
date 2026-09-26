@@ -8,10 +8,13 @@ use Doctrine\DBAL\Connection;
 use Psr\Log\NullLogger;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ArchiveTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskArchivedHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
@@ -70,6 +73,10 @@ final class OutboxTestKernel extends Kernel
                 'command_async' => ['default' => 'async'],
                 'event_async' => ['default' => 'async'],
             ],
+            // TaskArchivedEvent carries #[Outbox]; ArchiveTaskCommand goes through the outbox by configuration.
+            'dispatch_modes' => [
+                'command' => ['map' => [ArchiveTaskCommand::class => 'outbox']],
+            ],
             'outbox' => ['enabled' => true, 'auto_setup' => false, 'max_attempts' => 2],
         ]);
 
@@ -89,6 +96,8 @@ final class OutboxTestKernel extends Kernel
         $services->set(AsyncTaskHandler::class);
         $services->set(TaskAuditTrailHandler::class);
         $services->set(TaskProjectionHandler::class);
+        $services->set(ArchiveTaskHandler::class);
+        $services->set(TaskArchivedHandler::class);
     }
 
     protected function configureRoutes(RoutingConfigurator $routes): void

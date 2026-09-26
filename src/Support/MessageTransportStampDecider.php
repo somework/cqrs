@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
+use SomeWork\CqrsBundle\Attribute\Outbox;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
@@ -21,9 +22,10 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
  *
  * Transports are chosen in this order (a TransportNamesStamp passed by the caller always wins):
  *  1. the transports configured for exactly the message class;
- *  2. the transport named by #[Asynchronous(transport: ...)] on asynchronous dispatches;
+ *  2. the transport named by #[Asynchronous(transport: ...)] or #[Outbox(transport: ...)] on
+ *     asynchronous dispatches (DispatchMode::OUTBOX decides its stamps as an asynchronous dispatch);
  *  3. the transports configured for a parent class or interface, then the type default;
- *  4. for a bare #[Asynchronous] on an asynchronous dispatch, the "async" transport, unless
+ *  4. for a bare #[Asynchronous] or #[Outbox] on an asynchronous dispatch, the "async" transport, unless
  *     framework.messenger.routing routes the message (then Messenger's routing applies).
  *
  * @internal
@@ -38,7 +40,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     private array $routedMessageTypes;
 
     /**
-     * @var array<class-string, Asynchronous|false>
+     * @var array<class-string, Asynchronous|Outbox|false>
      */
     private array $asynchronousAttributes = [];
 
@@ -134,10 +136,11 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         return $map?->resolverFor($mode);
     }
 
-    private function asynchronousAttribute(object $message): ?Asynchronous
+    private function asynchronousAttribute(object $message): Asynchronous|Outbox|null
     {
         if (!isset($this->asynchronousAttributes[$message::class])) {
-            $attributes = (new \ReflectionClass($message))->getAttributes(Asynchronous::class);
+            $reflection = new \ReflectionClass($message);
+            $attributes = [...$reflection->getAttributes(Outbox::class), ...$reflection->getAttributes(Asynchronous::class)];
             $this->asynchronousAttributes[$message::class] = [] === $attributes ? false : $attributes[0]->newInstance();
         }
 

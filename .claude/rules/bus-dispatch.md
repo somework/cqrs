@@ -19,14 +19,15 @@ paths:
 - **`DEFAULT`** — Let `DispatchModeDecider` decide based on message class, hierarchy, and per-type defaults. This is the standard path.
 - **`SYNC`** — Execute handler in the current process. Use when the caller needs the result immediately.
 - **`ASYNC`** — Route to the async bus. Requires `command_async` or `event_async` bus to be configured — throws `AsyncBusNotConfiguredException` if not. No handler result available to the caller.
+- **`OUTBOX`** — Run the stamp pipeline as for `ASYNC`, then store the envelope with `OutboxWriter::storeEnvelope()` (one row per transport, never deferred) instead of dispatching; the returned envelope carries `OutboxStoredStamp`. Requires the outbox (`OutboxNotConfiguredException`) and, with `outbox.require_transaction`, an open transaction on the outbox connection. The relay dispatches on Messenger buses directly, never through the CQRS buses, so a stored message is not stored again.
 
-Explicit mode (`SYNC`/`ASYNC`) bypasses the decider entirely. Use `DEFAULT` unless you have a specific reason to override.
+Explicit mode (`SYNC`/`ASYNC`/`OUTBOX`) bypasses the decider entirely. Use `DEFAULT` unless you have a specific reason to override.
 
 ## DispatchModeDecider Resolution Order
 
-When mode is `DEFAULT`, the decider resolves to SYNC or ASYNC by checking (first match wins):
+When mode is `DEFAULT`, the decider resolves to SYNC, ASYNC or OUTBOX by checking (first match wins):
 1. Exact message class entry in the `dispatch_modes.<type>.map`
-2. `#[Asynchronous]` attribute on the message class
+2. `#[Outbox]` or `#[Asynchronous]` attribute on the message class (both on one class fail the build)
 3. Map entries for parent classes (walking up inheritance), then interfaces
 4. Per-type default (`dispatch_modes.<type>.default`)
 5. Fallback: `SYNC` for unrecognized message types

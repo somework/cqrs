@@ -21,6 +21,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 
 use function array_chunk;
@@ -69,7 +70,7 @@ use const JSON_THROW_ON_ERROR;
  *
  * @api
  */
-final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring
+final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox
 {
     private const PURGE_BATCH_SIZE = 1000;
 
@@ -558,6 +559,11 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         $since = array_filter($since);
 
         return [] === $since ? null : min($since);
+    }
+
+    public function isInTransaction(): bool
+    {
+        return $this->connection->isTransactionActive();
     }
 
     public function fetchFailed(int $limit, array $ids = []): array

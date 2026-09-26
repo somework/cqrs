@@ -16,8 +16,10 @@ use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditedOutboxEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use stdClass;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -311,5 +313,14 @@ final class MessageTransportStampDeciderTest extends TestCase
                 throw new \RuntimeException('This resolver should not be used.');
             },
         ]));
+    }
+
+    public function test_the_transport_of_an_outbox_attribute_is_used_on_asynchronous_dispatches(): void
+    {
+        $decider = $this->createDecider();
+
+        self::assertSame(['audit'], $decider->transportsFor(new AuditedOutboxEvent(), DispatchMode::ASYNC));
+        self::assertSame([MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT], $decider->transportsFor(new TaskArchivedEvent('1'), DispatchMode::ASYNC), 'A bare attribute, as for #[Asynchronous].');
+        self::assertNull($decider->transportsFor(new AuditedOutboxEvent(), DispatchMode::SYNC));
     }
 }
