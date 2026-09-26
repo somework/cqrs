@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use Symfony\Component\Lock\Store\CombinedStore;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Message\DefaultStampsProviderInterface;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -26,6 +27,8 @@ use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 use function array_values;
 use function class_exists;
 use function in_array;
+use function is_iterable;
+use function is_object;
 use function sprintf;
 
 /**
@@ -139,7 +142,9 @@ final class OutboxWriter
                 throw new UnknownOutboxTransportException($envelope->getMessage()::class, $transport, $this->transportNames);
             }
         }
-        if (self::deduplicates($envelope) && null !== ($store = $this->localLockStore())) {
+        // The DeduplicateStamp of the envelope, or of the default stamps the relay's bus adds to it.
+        $deduplicate = self::deduplicateStamp($envelope);
+        if (null !== $deduplicate && null !== ($store = $this->localLockStore())) {
             // Messenger's deduplication would take the lock in the relay and fail to send its key, on every attempt.
             throw new \LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (%s) ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database, or dispatch it without the stamp.', $envelope->getMessage()::class, $store));
         }
@@ -153,9 +158,8 @@ final class OutboxWriter
         }
         $stored = [];
         // The deduplication key is scoped to the row's transport: the rows of one message for several
-        // transports (stored at once or one by one) would otherwise drop each other when relayed.
-        $deduplicate = $envelope->last(DeduplicateStamp::class);
-
+        // transports (stored at once or one by one) would otherwise drop each other when relayed. A
+        // stored stamp also keeps the relay's bus from adding the unscoped default one.
         foreach ($transports as $transport) {
             $row = OutboxMessage::fromEnvelope(
                 $deduplicate instanceof DeduplicateStamp && null !== $transport
@@ -172,25 +176,27 @@ final class OutboxWriter
     }
 
     /**
-     * Whether the envelope, or the default stamps the relay's bus adds to it, carries a DeduplicateStamp.
+     * The DeduplicateStamp of the envelope, else the one among the default stamps of the message,
+     * which the relay's bus adds (add_default_stamps_middleware).
      */
-    private static function deduplicates(Envelope $envelope): bool
+    private static function deduplicateStamp(Envelope $envelope): ?DeduplicateStamp
     {
         if (!class_exists(DeduplicateStamp::class)) {
-            return false;
+            return null;
         }
-        if (null !== $envelope->last(DeduplicateStamp::class)) {
-            return true;
+        $stamp = $envelope->last(DeduplicateStamp::class);
+        if ($stamp instanceof DeduplicateStamp) {
+            return $stamp;
         }
 
         $message = $envelope->getMessage();
-        foreach ($message instanceof DefaultStampsProviderInterface ? $message->getDefaultStamps() : [] as $stamp) {
-            if ($stamp instanceof DeduplicateStamp) {
-                return true;
+        foreach ($message instanceof DefaultStampsProviderInterface ? $message->getDefaultStamps() : [] as $default) {
+            if ($default instanceof DeduplicateStamp) {
+                return $default;
             }
         }
 
-        return false;
+        return null;
     }
 
     /**
@@ -204,17 +210,34 @@ final class OutboxWriter
             return null;
         }
 
-        if (null === $this->localLockStore) {
-            $store = ($this->lockStore)();
-            $this->localLockStore = '';
-            foreach (self::LOCAL_LOCK_STORES as $class) {
-                if ($store instanceof $class) {
-                    $this->localLockStore = $store::class;
+        $this->localLockStore ??= self::findLocalStore(($this->lockStore)()) ?? '';
+
+        return '' === $this->localLockStore ? null : $this->localLockStore;
+    }
+
+    /**
+     * The class of $store, or of a store it combines (framework.lock with several DSNs), whose keys
+     * stay in the process.
+     */
+    private static function findLocalStore(object $store): ?string
+    {
+        foreach (self::LOCAL_LOCK_STORES as $class) {
+            if ($store instanceof $class) {
+                return $store::class;
+            }
+        }
+
+        if ($store instanceof CombinedStore) {
+            $stores = (new \ReflectionProperty(CombinedStore::class, 'stores'))->getValue($store);
+            foreach (is_iterable($stores) ? $stores : [] as $inner) {
+                $local = is_object($inner) ? self::findLocalStore($inner) : null;
+                if (null !== $local) {
+                    return $local;
                 }
             }
         }
 
-        return '' === $this->localLockStore ? null : $this->localLockStore;
+        return null;
     }
 
     /**

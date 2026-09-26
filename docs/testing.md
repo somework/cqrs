@@ -577,6 +577,9 @@ final class PlaceOrderOutboxTest extends KernelTestCase
 }
 ```
 
+To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
+`new Envelope($message, [new RelayedFromOutboxStamp()])`.
+
 ## Tips
 
 - **Type-hint the interfaces** (`CommandBusInterface`, `QueryBusInterface`,

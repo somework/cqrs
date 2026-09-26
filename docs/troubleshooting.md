@@ -416,7 +416,7 @@ the outbox with a `DeduplicateStamp` is refused with such a store (see below).
 **Symptom.**
 
 ```
-LogicException: Message "App\Domain\StockReserved" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection, so the relay could never send it.
+LogicException: Message "App\Domain\StockReserved" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (Symfony\Component\Lock\Store\FlockStore) ties its keys to the current process or connection, so the relay could never send it.
 ```
 
 **Cause.** Messenger's deduplication locks the key when the relay sends the

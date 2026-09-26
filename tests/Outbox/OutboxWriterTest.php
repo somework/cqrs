@@ -23,8 +23,10 @@ use SomeWork\CqrsBundle\Support\CausationIdContext;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\StockReservedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
+use Symfony\Component\Lock\Store\CombinedStore;
 use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
+use Symfony\Component\Lock\Strategy\UnanimousStrategy;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Middleware\AddDefaultStampsMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
@@ -121,6 +123,30 @@ final class OutboxWriterTest extends TestCase
         $writer->store(new CreateTaskCommand('1', 'a'), 'async', new DeduplicateStamp('key'));
 
         self::assertCount(1, $this->storage->fetchUnpublished(10));
+    }
+
+    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
+    public function test_a_deduplicate_stamp_among_the_default_stamps_is_scoped_to_each_transport(): void
+    {
+        // Otherwise the relay's bus adds the same key to every row, and drops all but the first.
+        $rows = (new OutboxWriter($this->storage, new PhpSerializer()))->store(new StockReservedEvent('A'), null);
+        self::assertCount(1, $rows);
+
+        $rows = (new OutboxWriter($this->storage, new PhpSerializer(), $this->transports(['t1', 't2'])))->store(new StockReservedEvent('B'));
+
+        self::assertSame(['stock-B@t1', 'stock-B@t2'], array_map(static fn (OutboxMessage $row): string => (string) (new PhpSerializer())->decode(['body' => $row->body])->last(DeduplicateStamp::class)?->getKey(), $rows));
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
+    public function test_a_lock_store_combining_a_local_store_is_refused(): void
+    {
+        $combined = new CombinedStore([new InMemoryStore(), new FlockStore()], new UnanimousStrategy());
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockStore: static fn (): CombinedStore => $combined);
+
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('('.FlockStore::class.')');
+
+        $writer->store(new CreateTaskCommand('1', 'a'), 'async', new DeduplicateStamp('key'));
     }
 
     #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]

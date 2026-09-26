@@ -1506,7 +1506,8 @@ final class DbalOutboxStorageTest extends TestCase
                 $storage->dispatchInUnitOfWork(static fn (): string => $handle('deadlock'));
                 self::fail('The exception of the dispatch is rethrown.');
             } catch (\RuntimeException $exception) {
-                self::assertSame('Deadlock found when trying to get lock.', $exception->getMessage(), 'The handler\'s error, not the savepoint\'s.');
+                self::assertSame('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): Deadlock found when trying to get lock.', $exception->getMessage());
+                self::assertSame('Deadlock found when trying to get lock.', $exception->getPrevious()?->getMessage(), 'The handler\'s error, not the savepoint\'s.');
             }
             self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
 

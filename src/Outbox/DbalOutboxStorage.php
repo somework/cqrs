@@ -747,6 +747,9 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
                 $this->connection->rollBack();
             } catch (\Throwable) {
                 $this->discardConnection();
+
+                // The error may be a missing savepoint of a middleware (doctrine_transaction), not the cause.
+                throw new \RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $exception->getMessage()), 0, $exception);
             }
 
             throw $exception;

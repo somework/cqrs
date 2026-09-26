@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Messenger\OutboxBypassMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxPrepareMiddleware;
 use SomeWork\CqrsBundle\Messenger\OutboxStoreMiddleware;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\LogicException;
@@ -44,7 +45,7 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         self::assertSame('messenger.bus.default.middleware.doctrine_transaction', (string) $bypass->getArgument(0));
         // Listed twice (e.g. one per entity manager), the second gets a hash suffix; not the logger of another bundle.
         self::assertSame(
-            [OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.messenger.middleware.doctrine_open_transaction_logger', 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.event.async_bus.middleware.doctrine_transaction.kaQ27bZ', 'app.my_doctrine_transaction_audit', OutboxStoreMiddlewarePass::MIDDLEWARE_ID],
+            [OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID, OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.messenger.middleware.doctrine_open_transaction_logger', 'app.validation', OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.event.async_bus.middleware.doctrine_transaction.kaQ27bZ', OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.event.async_bus.middleware.doctrine_transaction.xrFKpV.', 'app.my_doctrine_transaction_audit', 'app.transactions', OutboxStoreMiddlewarePass::MIDDLEWARE_ID],
             $this->middlewareIds($container, 'event.async_bus'),
         );
     }
@@ -112,8 +113,14 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
             new Reference('messenger.middleware.doctrine_open_transaction_logger'),
             new Reference('app.validation'),
             new Reference('event.async_bus.middleware.doctrine_transaction.kaQ27bZ'),
+            // ContainerBuilder::hash() maps "/" to ".": e.g. the entity manager "reporting".
+            new Reference('event.async_bus.middleware.doctrine_transaction.xrFKpV.'),
             new Reference('app.my_doctrine_transaction_audit'),
+            // A child of another middleware, whatever its id.
+            new Reference('app.transactions'),
         ])));
+        $container->setDefinition('event.async_bus.middleware.doctrine_transaction.xrFKpV.', new ChildDefinition('messenger.middleware.doctrine_transaction'));
+        $container->setDefinition('app.transactions', new ChildDefinition('app.other_middleware'));
 
         return $container;
     }

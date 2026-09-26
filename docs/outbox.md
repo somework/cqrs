@@ -195,7 +195,9 @@ the outbox are stored in it without an explicit `transactional()`.
 - **The relay's run has no caller context.** It happens in the relay's process, without the
   caller's request, user or tenant, and without a `ReceivedStamp`. Middleware that checks the
   dispatching context (authorization, for example) and skips received messages should also skip
-  envelopes carrying `RelayedFromOutboxStamp`: the message was checked when it was stored.
+  envelopes carrying `RelayedFromOutboxStamp`: a message stored through the buses was checked
+  when it was stored. A message written with `OutboxWriter::store()` passed no bus middleware, so
+  such a guard lets it through unchecked: check it before calling `store()`.
 
   ```php
   if (null !== $envelope->last(ReceivedStamp::class) || null !== $envelope->last(RelayedFromOutboxStamp::class)) {
@@ -229,9 +231,9 @@ the outbox are stored in it without an explicit `transactional()`.
 
 ## Writing to the outbox
 
-`OutboxWriter` stores a message without the stamp pipeline of the buses: use it for messages
-that are not commands or events, or to choose every stamp yourself. Inject it and call `store()`
-inside your transaction:
+`OutboxWriter` stores a message without the stamp pipeline and the middleware of the buses (no
+validation or authorization when it is stored): use it for messages that are not commands or
+events, or to choose every stamp yourself. Inject it and call `store()` inside your transaction:
 
 ```php
 <?php
