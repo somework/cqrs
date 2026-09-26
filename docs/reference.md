@@ -21,25 +21,26 @@ somework_cqrs:
         event: null
         event_async: null
     naming:
-        default: SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy
-        command: null
-        query: null
-        event: null
+        default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
+        command: { default: null }
+        query: { default: null }
+        event: { default: null }
     retry_policies:
-        command: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
-        query: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
-        event: { default: SomeWork\CqrsBundle\Support\NullRetryPolicy, map: {} }
+        default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+        command: { default: null, map: {} }
+        query: { default: null, map: {} }
+        event: { default: null, map: {} }
     retry_strategy:
         transports: {}
         jitter: 0.0
         max_delay: 0
     serialization:
-        default: SomeWork\CqrsBundle\Support\NullMessageSerializer
+        default: SomeWork\CqrsBundle\Policy\NullMessageSerializer
         command: { default: null, map: {} }
         query: { default: null, map: {} }
         event: { default: null, map: {} }
     metadata:
-        default: SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider
+        default: SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider
         command: { default: null, map: {} }
         query: { default: null, map: {} }
         event: { default: null, map: {} }
@@ -47,15 +48,14 @@ somework_cqrs:
         command: { default: sync, map: {} }
         event: { default: sync, map: {} }
     transports:
-        command: { stamp: transport_names, default: [], map: {} }
-        command_async: { stamp: transport_names, default: [], map: {} }
-        query: { stamp: transport_names, default: [], map: {} }
-        event: { stamp: transport_names, default: [], map: {} }
-        event_async: { stamp: transport_names, default: [], map: {} }
-    async:
-        dispatch_after_current_bus:
-            command: { default: true, map: {} }
-            event: { default: true, map: {} }
+        command: { default: [], map: {} }
+        command_async: { default: [], map: {} }
+        query: { default: [], map: {} }
+        event: { default: [], map: {} }
+        event_async: { default: [], map: {} }
+    dispatch_after_current_bus:
+        command: { default: true, map: {} }
+        event: { default: true, map: {} }
     idempotency:
         enabled: true
         ttl: 300
@@ -66,9 +66,10 @@ somework_cqrs:
         enabled: true
     rate_limiting:
         enabled: true
-        command: { map: {} }
-        query: { map: {} }
-        event: { map: {} }
+        default: null
+        command: { default: null, map: {} }
+        query: { default: null, map: {} }
+        event: { default: null, map: {} }
     outbox:
         enabled: false
         table_name: somework_cqrs_outbox
@@ -93,7 +94,19 @@ For `naming`, `retry_policies`, `serialization` and `metadata` you may use a
 fully-qualified class name instead of a service id. When no service with that
 id exists and the class is concrete, the bundle registers it as a private,
 autowired and autoconfigured service. Any other unknown id makes the container
-compilation fail with Symfony's "non-existent service" error.
+compilation fail with the option that names it:
+
+```
+The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\Command\ChargePayment" does not exist.
+```
+
+**One shape for every per-message section.** `retry_policies`, `serialization`,
+`metadata` and `rate_limiting` have a global `default` and, per message type, a
+`default` (`null` falls back to the global one) and a `map`. `naming` has the
+defaults only. `dispatch_modes`, `transports` and `dispatch_after_current_bus`
+have no global default, because it would also apply to synchronous messages.
+Options of earlier versions fail with where they moved, e.g.
+`"somework_cqrs.async.dispatch_after_current_bus" moved to "somework_cqrs.dispatch_after_current_bus".`
 
 **Per-message maps.** Every `map` is keyed by a message class or interface.
 Keys must name an existing class or interface; a leading backslash is removed.
@@ -112,6 +125,16 @@ rejected:
 "somework_cqrs.outbox.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.
 ```
 
+**Environment variables.** Only options read at runtime accept `%env(...)%`:
+`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
+`outbox.auto_setup` and the `dispatch_after_current_bus` flags. Every other option names services,
+buses, transports, dispatch modes or message classes that the container
+compilation needs, and rejects an environment variable:
+
+```
+"somework_cqrs.dispatch_modes.command.default" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.
+```
+
 ## Resolution order for per-message maps
 
 All `map` sections resolve a message the same way. For a dispatched message the
@@ -122,18 +145,18 @@ bundle looks for, in this order:
 3. an entry for an interface the message implements (including interfaces
    inherited from parents and parent interfaces);
 4. the `default` of the message type section;
-5. the global `default`, for `serialization` and `metadata` only.
+5. the global `default` of the section, where it has one.
 
 What happens when nothing matches depends on the section:
 
 | Section | Fallback after the map |
 |---------|------------------------|
-| `retry_policies.<type>` | `retry_policies.<type>.default` |
+| `retry_policies.<type>` | `retry_policies.<type>.default`, then `retry_policies.default` |
 | `serialization.<type>` | `serialization.<type>.default`, then `serialization.default` |
 | `metadata.<type>` | `metadata.<type>.default`, then `metadata.default` |
+| `rate_limiting.<type>` | `rate_limiting.<type>.default`, then `rate_limiting.default`, then no limiter |
 | `transports.<bus>` | `transports.<bus>.default`; when that is empty, no stamp is added and Messenger routing applies |
-| `async.dispatch_after_current_bus.<type>` | `async.dispatch_after_current_bus.<type>.default` |
-| `rate_limiting.<type>` | no limiter |
+| `dispatch_after_current_bus.<type>` | `dispatch_after_current_bus.<type>.default` |
 
 **Dispatch modes** follow a slightly different order because the
 `#[Asynchronous]` attribute takes part. For a command or event dispatched with
@@ -219,8 +242,8 @@ somework_cqrs:
 
 | Key | Default |
 |-----|---------|
-| `default` | `SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy` |
-| `command`, `query`, `event` | `null` (use `default`) |
+| `default` | `SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy` |
+| `command.default`, `query.default`, `event.default` | `null` (use the global `default`) |
 
 Services implementing `SomeWork\CqrsBundle\Contract\MessageNamingStrategy`
 (`getName(string $messageClass): string`). They only produce the display names
@@ -231,17 +254,20 @@ class name.
 ```yaml
 somework_cqrs:
     naming:
-        command: App\Infrastructure\Cqrs\CommandNamingStrategy
+        command:
+            default: App\Infrastructure\Cqrs\CommandNamingStrategy
 ```
 
 ## retry_policies
 
-One section per message type (`command`, `query`, `event`), each with:
+A global `default` plus one section per message type (`command`, `query`,
+`event`):
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\NullRetryPolicy` | service id or class name |
-| `map` | `{}` | message class or interface => service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\NullRetryPolicy` | service id or class name |
+| `<type>.default` | `null` (use the global `default`) | service id or class name |
+| `<type>.map` | `{}` | message class or interface => service id or class name |
 
 Services implement `SomeWork\CqrsBundle\Contract\RetryPolicy`:
 
@@ -262,7 +288,8 @@ interface RetryPolicy
 }
 ```
 
-The returned stamps are appended to every dispatch of a matching message. When
+The returned stamps are added to every dispatch of a matching message, except
+stamps of a class the caller already passed. When
 the policy also implements `SomeWork\CqrsBundle\Contract\RetryConfiguration`
 (`getMaxRetries()`, `getInitialDelay()`, `getMultiplier()`), transports listed
 under [`retry_strategy`](#retry_strategy) use these values to retry failed
@@ -277,7 +304,8 @@ The bundle ships two policies:
   `somework_cqrs.exponential_backoff_retry_policy`; define your own service of
   the class to change the arguments (see [Retry strategy bridge](retry.md)).
 
-Resolution: exact class, parent classes, interfaces, then the type `default`.
+Resolution: exact class, parent classes, interfaces, the type `default`, then
+the global `default`.
 
 ```yaml
 somework_cqrs:
@@ -295,7 +323,7 @@ which applies the per-message `RetryConfiguration` described above.
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `transports` | `{}` | Messenger transport name => `command`, `query` or `event` |
+| `transports` | `{}` | list of Messenger transport names, or transport name => `command`, `query` or `event` |
 | `jitter` | `0.0` | float between `0.0` and `1.0` |
 | `max_delay` | `0` | integer >= 0, in milliseconds; `0` means no cap |
 
@@ -306,10 +334,10 @@ which applies the per-message `RetryConfiguration` described above.
   Transport "async_comands" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "async_commands", "failed".
   ```
 
-* The value selects which `retry_policies` section resolves the policies of
-  messages received from that transport. A transport carries one type: if
-  commands and events share a transport mapped to `command`, the events are
-  resolved against `retry_policies.command`.
+* Each message received from the transport uses the `retry_policies` section of
+  its own type, so commands and events can share a transport. The value is the
+  section used for messages that are neither commands, queries nor events; a
+  plain list (`transports: [async]`) uses `command` for them.
 * For a message whose policy implements `RetryConfiguration`, the message is
   retried while its retry count is below `getMaxRetries()`, with a delay of
   `initialDelay * multiplier ^ retryCount`. The delay is capped at `max_delay`,
@@ -332,7 +360,7 @@ somework_cqrs:
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\NullMessageSerializer` | service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\NullMessageSerializer` | service id or class name |
 | `command.default`, `query.default`, `event.default` | `null` (use `serialization.default`) | service id, class name or `null` |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => service id or class name |
 
@@ -373,7 +401,7 @@ somework_cqrs:
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider` | service id or class name |
+| `default` | `SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider` | service id or class name |
 | `command.default`, `query.default`, `event.default` | `null` (use `metadata.default`) | service id, class name or `null` |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => service id or class name |
 
@@ -393,10 +421,12 @@ interface MessageMetadataProvider
 }
 ```
 
-The default provider adds a `MessageMetadataStamp` with a random 32-character
-hexadecimal correlation id. A `MessageMetadataStamp` passed by the caller wins
-(use it to propagate a correlation id you received). When a message is
-dispatched from inside a handler, the causation id is filled in afterwards (see
+A provider returns a new stamp for each call (or `null`): the stamp carries the
+message id. The default provider adds a `MessageMetadataStamp` with a random
+32-character hexadecimal message id, which is also its correlation id. A
+`MessageMetadataStamp` passed by the caller wins (use it to propagate a
+correlation id you received). When a message is dispatched from inside a
+handler, it inherits the correlation id of the handled message (see
 [`causation_id`](#causation_id)).
 
 Resolution: exact class, parent classes, interfaces, type `default`, global
@@ -450,7 +480,6 @@ dispatched asynchronously uses `command_async`).
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `stamp` | `transport_names` | `transport_names` (the only stamp type) |
 | `default` | `[]` | list of transport names (a single string is accepted) |
 | `map` | `{}` | message class or interface => list of transport names (or one string) |
 
@@ -468,7 +497,7 @@ message: Messenger sends it to exactly these transports.
   `#[Asynchronous(transport: '...')]` beats parent/interface entries and the
   `default`, but not an entry for exactly the message class; a bare
   `#[Asynchronous]` only adds the `async` transport when nothing is configured
-  and `framework.messenger.routing` does not route the message.
+  and neither `framework.messenger.routing` nor `#[AsMessage(transport: ...)]` routes the message.
 * Transports on the synchronous sections (`command`, `query`, `event`) send the
   message away instead of handling it in-process (unless the transport is
   `sync://`). `CommandBus::dispatchSync()` and `QueryBus::ask()` then throw
@@ -491,7 +520,7 @@ somework_cqrs:
                 App\Domain\Event\OrderShipped: [async_events, audit_log]
 ```
 
-## async.dispatch_after_current_bus
+## dispatch_after_current_bus
 
 Controls Messenger's `DispatchAfterCurrentBusStamp` on asynchronous dispatches.
 With the stamp, a message dispatched while another message is being handled is
@@ -511,11 +540,10 @@ Resolution: exact class, parent classes, interfaces, then the type `default`.
 
 ```yaml
 somework_cqrs:
-    async:
-        dispatch_after_current_bus:
-            command:
-                map:
-                    App\Application\Command\SendAlert: false
+    dispatch_after_current_bus:
+        command:
+            map:
+                App\Application\Command\SendAlert: false
 ```
 
 ## idempotency
@@ -561,13 +589,17 @@ somework_cqrs:
 | `enabled` | `true` | boolean (no environment variables) |
 | `buses` | `[]` | list of Messenger bus service ids |
 
-While a handler runs, `CausationIdMiddleware` keeps the correlation id of the
-message being handled. Messages dispatched from that handler get it as the
-causation id of their `MessageMetadataStamp` (an explicit causation id is kept).
+While a handler runs, `CausationIdMiddleware` keeps the `MessageMetadataStamp`
+of the message being handled. Messages dispatched from that handler get its
+message id as their causation id (an explicit causation id is kept) and, unless
+the caller passed its own stamp, its correlation id. With `enabled: false`,
+every message starts its own flow.
 
 `buses` limits the middleware to the listed buses; the empty default means all
-buses used by the bundle (`default_bus` and every configured `buses.*`). Each
-entry must be a Messenger bus:
+buses used by the bundle (`default_bus` and every configured `buses.*`). The
+other CQRS buses get a variant that only hides the outer message: messages
+dispatched by their handlers start a new flow instead of naming an unrelated
+message as their cause. Each entry must be a Messenger bus:
 
 ```
 "somework_cqrs.causation_id.buses" contains "messenger.bus.comands", which is not a Messenger bus service id.
@@ -590,8 +622,8 @@ somework_cqrs:
 | `enabled` | `true` | boolean (no environment variables) |
 
 Events implementing `SomeWork\CqrsBundle\Contract\SequenceAware`
-(`getAggregateId()`, `getSequenceNumber()`) receive an `AggregateSequenceStamp`
-(aggregate id, sequence number and the event class as aggregate type). A stamp
+(`getAggregateType()`, `getAggregateId()`, `getSequenceNumber()`) receive an
+`AggregateSequenceStamp` with these three values. A stamp
 passed by the caller is kept. See [Event ordering](event-ordering.md).
 
 ```yaml
@@ -605,20 +637,25 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `true` | boolean (no environment variables) |
+| `default` | `null` | rate limiter name applied to every message without a more specific entry |
+| `command.default`, `query.default`, `event.default` | `null` (use the global `default`) | rate limiter name |
 | `command.map`, `query.map`, `event.map` | `{}` | message class or interface => rate limiter name |
 
 Values are limiter names from `framework.rate_limiter` (the bundle uses the
-`limiter.<name>` service). Rate limiting is inactive while no limiter is mapped.
-Mapping a limiter requires symfony/rate-limiter:
+`limiter.<name>` service; a name that is not defined fails the compilation).
+Rate limiting is inactive while no limiter is configured. Configuring a limiter
+requires symfony/rate-limiter:
 
 ```
-Rate limiters are mapped under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove the mappings.
+Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.
 ```
 
-Each dispatch of a matching message consumes one token (the limiter key is the
-message class). When no token is left, the dispatch throws
+Each dispatch of a matching message consumes one token. The limiter key is the
+message class, so a `default` gives every message class its own bucket, not one
+shared bucket. When no token is left, the dispatch throws
 `RateLimitExceededException` before anything is sent. Resolution: exact class,
-parent classes, interfaces; unmatched messages are not limited. See
+parent classes, interfaces, the type `default`, then the global `default`;
+messages without any of them are not limited. See
 [Rate limiting](rate-limiting.md).
 
 ```yaml
@@ -641,7 +678,7 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `false` | boolean (no environment variables) |
-| `table_name` | `somework_cqrs_outbox` | non-empty string |
+| `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table` (`database.table` on MySQL); avoid reserved SQL words |
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
@@ -653,12 +690,14 @@ registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
 * Use the connection that holds your business data, so storing an outbox row
   is part of the same transaction.
 * With `auto_setup: true` the table is created on first use, but never inside an
-  open transaction: that throws a `LogicException` asking you to run
-  `somework:cqrs:outbox:setup`. Disable `auto_setup` when migrations manage the
-  table. With doctrine/orm installed, the table is also added to the schema of
-  the outbox connection, so `doctrine:migrations:diff` picks it up.
+  open transaction: storing into a missing table there throws a `LogicException`
+  asking you to run `somework:cqrs:outbox:setup`. Disable `auto_setup` when
+  migrations manage the table. With doctrine/orm installed, the table is also
+  added to the schema of the outbox connection, so `doctrine:migrations:diff`
+  picks it up.
 * The relay decodes stored rows with `serializer`; encode them with the same
-  serializer when you call `OutboxMessage::fromEnvelope()`.
+  serializer when you call `OutboxMessage::fromEnvelope()` (inject it as
+  `somework_cqrs.outbox.serializer`).
 
 See [Transactional outbox](outbox.md).
 
@@ -678,20 +717,23 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 
 | Command | Arguments and options | Exit codes |
 |---------|-----------------------|------------|
-| `somework:cqrs:list` | `[--type=TYPE ...] [--details]` | `0`; `2` for an unknown `--type` |
+| `somework:cqrs:list` | `[--type=TYPE ...] [--message=TEXT] [--details]` | `0`; `2` for an unknown `--type` |
 | `somework:cqrs:generate` | `<type> <name> [--handler=FQCN] [--dir=DIR] [--force]` | `0`; `1` when a file exists (without `--force`) or cannot be written; `2` for an invalid type, class name or path |
 | `somework:cqrs:debug-transports` | none | `0` |
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
-| `somework:cqrs:outbox:setup` | none | `0` |
-| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`; `1` when a row failed; `2` for an invalid limit |
+| `somework:cqrs:outbox:setup` | none | `0`; `1` when the storage is not `DbalOutboxStorage` |
+| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`, also when another relay holds the lock; `1` when a row failed or the relay lock was lost; `2` for an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list
 
-Prints one table per handler and bus with the type, display name of the message
-(see [`naming`](#naming)), handler class, service id and bus. `--type` accepts
-`command`, `query` or `event` and can be repeated. `--details` adds the
-configuration the bundle resolves for the message:
+Prints one table per message type with a row per handler and bus: the message
+class, its display name when the [`naming`](#naming) strategy gives it another
+name than the class name, the handler class and the bus. `--type` accepts
+`command`, `query` or `event` and can be repeated; `--message` keeps the messages
+whose class or display name contains the text (case-insensitive). `--details`
+prints one table per handler with its service id and the configuration the
+bundle resolves for the message:
 
 * **Dispatch Mode**: the mode used for `DispatchMode::DEFAULT`.
 * **Async Defers**: whether async dispatches get `DispatchAfterCurrentBusStamp`
@@ -700,7 +742,8 @@ configuration the bundle resolves for the message:
   `transports` configuration (`None` when nothing is configured, so Messenger
   routing applies; `n/a` for the async column of queries).
 * **Retry Policy**, **Serializer**, **Metadata Provider**: the resolved service
-  classes.
+  classes. A retry policy other than `NullRetryPolicy` is marked as not used while
+  no transport is listed under `retry_strategy.transports`.
 
 The details are resolved on an instance created without calling the
 constructor; they show `n/a` for abstract classes and interfaces.
@@ -716,7 +759,8 @@ and `<name>`, the fully-qualified message class. The handler class defaults to
 `<name>Handler`; change it with `--handler`.
 
 Files follow the PSR-4 mapping in the project's `composer.json`
-(`App\Command\ShipOrder` becomes `src/Command/ShipOrder.php` for `"App\\": "src/"`).
+(`App\Command\ShipOrder` becomes `src/Command/ShipOrder.php` for `"App\\": "src/"`); a
+namespace that no prefix covers is refused unless `--dir` is given.
 `--dir` is relative to the project directory and replaces the directory mapped
 to the namespace prefix. Existing files are only overwritten with `--force`.
 The generated handler uses the attribute and a typed `__invoke()`.
@@ -742,9 +786,12 @@ checks.
 ### Outbox commands
 
 * `somework:cqrs:outbox:setup` creates the outbox table if it does not exist.
-* `somework:cqrs:outbox:relay` sends unpublished rows in the order they were
-  stored and marks them published. Rows that fail are skipped for the rest of
-  the run and make the command exit with `1`.
+* `somework:cqrs:outbox:relay` sends up to `--limit` unpublished rows in the
+  order they were stored, each through the bus of its message type (the async
+  bus when one is configured), and marks them published. Rows that fail are
+  skipped for the rest of the run and make the command exit with `1`; after 5
+  consecutive send failures the run stops. With symfony/lock installed, a second
+  relay started while one is running exits without relaying.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.
 
 See [Production: outbox operations](production.md#outbox-operations).
@@ -753,11 +800,14 @@ See [Production: outbox operations](production.md#outbox-operations).
 
 `SomeWork\CqrsBundle\Registry\HandlerRegistry` exposes the handler map compiled
 into the container (it backs `somework:cqrs:list` and the health check). It is
-marked `@internal`, so its API may change between minor releases.
+part of the public API (`@api`); get it from the container (autowire
+`HandlerRegistry`) rather than constructing it.
 
 * `all()` returns every handler as a list of `HandlerDescriptor` objects
   (`type`, `messageClass`, `handlerClass`, `serviceId`, `bus`). A handler
   registered on a sync and an async bus appears once per bus.
-* `byType('command'|'query'|'event')` limits the list to one message type.
+* `byType(MessageType::Command)` (`SomeWork\CqrsBundle\Registry\MessageType`: `Command`,
+  `Query`, `Event`) limits the list to one message type; `HandlerDescriptor::$type` is a
+  `MessageType` too.
 * `getDisplayName(HandlerDescriptor $descriptor)` returns the name produced by
   the configured naming strategy.

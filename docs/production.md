@@ -120,7 +120,7 @@ drive those retries per message class, combine three settings:
 # config/services.yaml
 services:
     app.retry.payment:
-        class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+        class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         arguments:
             $maxRetries: 5
             $initialDelay: 1000      # milliseconds
@@ -247,6 +247,11 @@ If Doctrine migrations manage your schema, set `outbox.auto_setup: false`. With
 doctrine/orm installed, `doctrine:migrations:diff` includes the outbox table of
 the configured connection.
 
+The rows are not signed: whoever can write to the table can have the relay
+decode and send any message. Give the application a role that can only read and
+write rows, create the table with a role that may change the schema, and see
+[Security](outbox.md#security) for the serializer and the Symfony version to use.
+
 ### Relay
 
 `somework:cqrs:outbox:relay` sends up to `--limit` (default 100) unpublished rows,
@@ -261,15 +266,24 @@ oldest first, and marks each one published after dispatching it.
   warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
   (for example a `MessageMetadataStamp`) to the envelope you store.
-* A row that fails is logged, skipped for the rest of the run, and makes the
-  command exit with `1`. It is retried on the next run. After 5 consecutive
-  send failures (broker or database down) the run stops early.
+* A row that fails is printed (`Failed to relay message "<id>": <reason>`),
+  skipped for the rest of the run, and makes the command exit with `1`. It is
+  retried on the next run, without a limit on the number of attempts. After 5
+  consecutive send failures (broker or database down) the run stops early.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
 * When symfony/lock is installed, only one relay runs at a time; a second one
   prints "Another outbox relay is already running." and exits with `0`. The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
-  lock, which only protects relays on the same host.
+  lock, which only protects relays on the same host. The lock name includes the
+  project directory: when every release is deployed to a new directory, stop the
+  relays of the old release before the new ones start.
+
+Exit codes: `0` when every selected row was relayed, there was nothing to relay, or another
+relay holds the lock; `1` when a row failed, the run stopped after 5 send
+failures in a row, or the lock was lost; `2` for an invalid `--limit`. The relay
+prints to its output only, not to the application log: keep the output of the
+scheduled runs.
 
 Run the relay from cron:
 
@@ -289,11 +303,27 @@ autorestart=true
 user=www-data
 ```
 
+Each run of the loop is a new process, so a message handled inline by the relay
+does not leak state into the next run.
+
 ### Purge
 
 `somework:cqrs:outbox:purge --older-than="7 days"` deletes rows published before
 the given age (a relative date such as `"12 hours"`; default `7 days`).
 Unpublished rows are never deleted.
+
+### Rows that keep failing
+
+The bundle has no health check for the outbox. Alert on relay runs that keep
+exiting with `1`, and on unpublished rows that wait too long:
+
+```sql
+SELECT COUNT(*), MIN(created_at) FROM somework_cqrs_outbox WHERE published_at IS NULL;
+```
+
+A row that can never be relayed (its message class was removed, its transport
+does not exist) fails on every run: fix the cause, or delete the row by hand.
+See [Monitoring](outbox.md#monitoring).
 
 ## Health checks
 
@@ -366,13 +396,42 @@ final class FailedMessagesChecker implements HealthChecker
 
 ## Observability
 
+### Logs
+
+The bundle logs through the `logger` service, on its own `cqrs` channel when MonologBundle is
+installed. Route or silence it like any channel:
+
+```yaml
+# config/packages/monolog.yaml
+monolog:
+    handlers:
+        cqrs:
+            type: stream
+            path: '%kernel.logs_dir%/cqrs.log'
+            channels: [cqrs]
+```
+
+Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
+message in the calling process), an event with handlers that a worker received on a bus without them (it is
+acknowledged without being handled), a dispatch throttled by a rate limiter, and an `IdempotencyStamp`
+that may not prevent duplicates. Every dispatch logs one debug line with the bus, the dispatch
+mode and the stamps. The outbox relay prints its failures and warnings to its own output, not
+to the log.
+
 ### Correlation and causation ids
 
-Every message dispatched through the facades gets a `MessageMetadataStamp` with a
-correlation id (by default a random one from `RandomCorrelationMetadataProvider`).
-When a handler dispatches further messages, `CausationIdMiddleware` and
-`CausationIdStampDecider` set their causation id to the parent's correlation id,
-so you can rebuild the chain of messages from your logs.
+Every message dispatched through the facades gets a `MessageMetadataStamp` with
+three ids:
+
+- the **message id**, unique per message (a retry keeps it);
+- the **correlation id** of the flow: the first message uses its own message id,
+  and every message a handler dispatches inherits the correlation id of the
+  message being handled, so one request shares one correlation id;
+- the **causation id**: the message id of the message whose handler dispatched
+  this one (null for the first message).
+
+Group your logs by correlation id to see a whole flow, and follow the causation
+ids to rebuild its tree of messages.
 
 Read the stamp in a handler through `EnvelopeAware`:
 
@@ -405,6 +464,7 @@ final class ProcessPaymentHandler implements EnvelopeAware
         $metadata = $this->getEnvelope()->last(MessageMetadataStamp::class);
 
         $this->logger->info('Processing payment', [
+            'message_id' => $metadata?->getMessageId(),
             'correlation_id' => $metadata?->getCorrelationId(),
             'causation_id' => $metadata?->getCausationId(),
             'payment_id' => $command->paymentId,
@@ -417,8 +477,10 @@ final class ProcessPaymentHandler implements EnvelopeAware
 }
 ```
 
-To continue a correlation id that came with a request, pass your own stamp; a
-`MessageMetadataStamp` from the caller is kept:
+To continue a correlation id that came with a request, pass your own stamp (one
+per dispatch: the stamp also carries the message id); a `MessageMetadataStamp`
+from the caller is kept, and the messages its handlers dispatch inherit its
+correlation id:
 
 ```php
 <?php
@@ -462,6 +524,26 @@ What you get:
 See [Middleware: OpenTelemetryMiddleware](middleware.md#opentelemetrymiddleware)
 for the details.
 
+## Personal data
+
+Messages often carry personal data, and the bundle keeps or passes on parts of them:
+
+- **Outbox rows.** The body (the whole serialized message) stays in the table until the row
+  is purged. Published rows are only deleted by `somework:cqrs:outbox:purge`: schedule it with
+  an `--older-than` that fits your retention policy. Unpublished rows are never purged; delete
+  a row that must not be sent (for example to answer an erasure request) by hand, after
+  finding it by id or with SQL.
+- **Error texts.** Exception messages can contain personal data. They end up in the relay's
+  output and, with OpenTelemetry, in the span status and exception events sent to your
+  tracing backend.
+- **Idempotency keys.** An `IdempotencyStamp` key is stored in the lock store (e.g. Redis) for
+  its TTL, written to the debug log of the bundle, included in the message of
+  `DuplicateMessageException` (and so in error trackers) and serialized with the message. Do
+  not put personal data such as e-mail addresses in keys; hash client-supplied values
+  (`hash('sha256', $tenantId.':'.$requestId)`).
+- **Metadata.** Values returned by your `MessageMetadataProvider` travel with every message
+  and appear in logs and spans; keep them to ids.
+
 ## Message versioning
 
 Messages waiting in a transport were serialized with the old version of their
@@ -478,6 +560,13 @@ bin/console messenger:consume async_commands --time-limit=300
 
 **Removing or renaming a property** loses the data of queued messages or makes
 them fail to decode.
+
+**Stamps are serialized too.** A worker running an older version of a library
+cannot decode a message carrying a stamp class that version does not have: with
+OpenTelemetry enabled, this bundle adds `TraceContextStamp` since 0.5, so 0.4
+workers must be stopped before 0.5 code dispatches. Deploy workers before (or
+with) the code that dispatches, and roll back only once the queues hold no
+message of the newer version.
 
 **Adding a property** depends on the serializer:
 

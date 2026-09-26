@@ -7,79 +7,134 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
-Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for every behaviour change.
+Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) explains each of them.
 
 ### Added
+
+**Buses and handlers**
 - Symfony 8 support (`^7.2 || ^8.0`).
 - `MessageSentToTransportException` and `DuplicateMessageException` for `CommandBus::dispatchSync()` and `QueryBus::ask()`.
-- `TraceContextStamp`: W3C trace context propagated from the dispatching process to the worker.
-- `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock.
-- Outbox: `OutboxMessage::fromEnvelope()` (time-ordered UUIDv7 ids), `OutboxStorage::purgePublished()`, an `$offset` for `fetchUnpublished()`,
-  the `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:purge` commands, and the `outbox.connection`, `outbox.serializer` and `outbox.auto_setup` options.
-- The outbox relay runs as a single instance when symfony/lock is installed (lock scoped to the project, connection and table, extended after every row) and stops after 5 consecutive send failures.
-- Configuration validation: service ids must be non-empty strings, and per-message map keys must be existing classes or interfaces (a leading `\` is allowed).
-- `HealthChecker`, `CheckResult` and `CheckSeverity`, as well as `OutboxMessage` and `OutboxStorage`, are part of the public API (`@api`).
-- The container compilation log explains why idempotency cannot deduplicate (missing symfony/lock, or Messenger's deduplicate middleware not registered).
+- `CqrsException`, implemented by every exception of the bundle; the bus interfaces document what they throw.
+- `@implements Query<ResultType>` types the result of `QueryBusInterface::ask()` for static analysis; the handler and query interfaces have template defaults.
+- `#[AsEventHandler(priority: …, fromTransport: …)]`; a `fromTransport` that names no Messenger transport fails the build.
+- `TraceContextStamp`: the W3C trace context travels from the dispatching process to the worker.
+- `MessageMetadataStamp::getMessageId()`: every message has its own id.
+- `DeferredDispatchFailedException`: `dispatchSync()` and `ask()` report a message deferred by the handler (`DispatchAfterCurrentBusStamp`, e.g. an asynchronous event) that failed after the handler succeeded, with the handler's result, instead of Messenger's `DelayedMessageHandlingException`.
+- `DeduplicationLockReleaseMiddleware`: a failed synchronous dispatch releases its idempotency lock, also after a PHP fatal error (in a shutdown function).
+
+**Configuration**
+- A global `default` for `retry_policies` and `rate_limiting`, and a per-type `default` for `rate_limiting`.
+- Service ids must be non-empty strings; per-message map keys must be existing classes or interfaces (a leading `\` is allowed).
+- A service id or rate limiter that does not exist, or a service that does not implement the interface its option needs, fails the build with the configuration path that names it.
+
+**Transactional outbox**
+- `OutboxMessage::fromEnvelope()` builds rows with time-ordered UUIDv7 ids; `OutboxStorage::purgePublished()` and an `$offset` for `fetchUnpublished()`.
+- The commands `somework:cqrs:outbox:setup` and `somework:cqrs:outbox:purge`; the options `outbox.connection`, `serializer` and `auto_setup`.
+- A single relay at a time when symfony/lock is installed. The lock is scoped to the project directory, the connection and the table, and extended after every row. The relay stops after 5 consecutive send failures.
+- The relay warns when a message was not sent to any transport and was handled synchronously in its process.
+
+**Diagnostics and tooling**
+- The bundle logs on its own `cqrs` channel when MonologBundle is installed: one debug line per dispatch, plus one per stamp decider that changed the stamps.
+- A warning log when an asynchronous dispatch has no transport (Messenger would handle it in the calling process), also for a dispatch deferred inside a handler, and when a worker receives an event that has handlers, but none on its bus.
+- The compilation log explains why idempotency cannot deduplicate, and the first `IdempotencyStamp` of a process logs it as a warning.
+- `somework:cqrs:list` prints a compact table per message type, filters with `--message`, and marks retry policies that no transport uses.
+- `somework:cqrs:generate` writes the imports of a handler in alphabetical order, and marks messages `@psalm-immutable` (queries also get `@implements Query<mixed>`).
+
+**Testing and API**
+- `Testing\RecordedDispatch`, `FakeCommandBus::willReturnFor()`, and `willThrow()` on the command and query fakes. A failed `assertDispatched()` names the fake bus.
+- `FakeQueryBus::willReturnFor()` and `FakeCommandBus::willReturnFor()` refuse an interface or abstract class (results are matched by the concrete class).
+- `Registry\MessageType` for `HandlerRegistry::byType()`.
+- The backward compatibility promise (UPGRADE.md) covers the configuration tree, documented service ids and tags, decider priorities, console commands and span names, and has a deprecation policy.
+- Part of the public API (`@api`): the health checker types, `OutboxStorage` and `OutboxMessage`, `HandlerRegistry` and `HandlerDescriptor`, the default policies and `SomeWorkCqrsBundle`.
 
 ### Changed
-- Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus when one is configured.
-- `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces without `__invoke()`, so handlers can type-hint the concrete message.
-- `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Resolution order: exact `dispatch_modes` map entry, then the attribute, then parent class/interface map entries, then the default.
-- Stamps passed by the caller take precedence over the stamp pipeline: `MessageMetadataStamp`, `SerializerStamp`, `AggregateSequenceStamp`, `DeduplicateStamp` and `DispatchAfterCurrentBusStamp` are no longer replaced or duplicated. The causation id is added to the last metadata stamp and an explicit causation id is kept.
+
+**Breaking**
+- The abstract handlers are removed: implement the marker interface with a typed `__invoke()`, plus `EnvelopeAware` and `EnvelopeAwareTrait` for the envelope.
+- `StampDecider` and `MessageTypeAwareStampDecider` moved to `SomeWork\CqrsBundle\Contract`, and the default policies to `SomeWork\CqrsBundle\Policy`.
+- `HandlerRegistry::byType()` takes a `MessageType`, and `HandlerDescriptor::$type` is one. Exceptions expose `$messageClass`. The fake buses record `RecordedDispatch` objects.
+- One configuration shape for every per-message section. `async.dispatch_after_current_bus` moved to `dispatch_after_current_bus`, and `naming.<type>` to `naming.<type>.default`. `transports.*.stamp` is removed. Old options fail with a message naming the new place.
+- A message dispatched by a handler inherits the correlation id of the handled message, and its causation id is the message id of the handled message (it was its correlation id). A forwarded copy of the handled message's stamp gets its own message id; the messages of a handler whose message has no metadata, or runs on a bus outside `causation_id.buses`, start a new flow.
+- The container no longer autowires the internal services (`DispatchModeDecider`, `DispatchAfterCurrentBusDecider`, `TransportMappingProvider`, `CausationIdContext`) by class name.
+- `OutboxStorage` has `purgePublished()`, and `fetchUnpublished()` an `$offset` argument: custom storages must add them.
+- `SequenceAware` has `getAggregateType()`, which `AggregateSequenceStamp::$aggregateType` holds (it held the class of each event, so one aggregate's events formed one sequence per event class); an empty aggregate type is rejected.
+- `dispatchSync()` and `ask()` throw `DeferredDispatchFailedException` instead of Messenger's `DelayedMessageHandlingException`.
+- `dispatchSync()` and `ask()` rethrow the exception of the single failing handler instead of `HandlerFailedException`, and raise `NoHandlerException` instead of `NoHandlerForMessageException`.
+- `dispatchSync()` throws `MultipleHandlersException` when more than one handler ran.
+- The `enabled` flags (`outbox`, `idempotency`, `causation_id`, `sequence`, `rate_limiting`) and every option the compilation needs reject environment variables with a clear message. Environment variables remain allowed in `retry_strategy.jitter`/`max_delay`, `idempotency.ttl`, `outbox.auto_setup` and the `dispatch_after_current_bus` flags.
+- New compile errors:
+  - a handler attribute whose message the handler method does not accept, or whose type contradicts the message;
+  - a query handler declared `: void`;
+  - `#[Asynchronous]` without an async bus or transport, or on a query;
+  - a per-message map key of another message type (e.g. a query under `dispatch_modes.command.map`);
+  - a non-bus id under `buses.*`, `causation_id.buses`, or `default_bus` when a facade falls back to it;
+  - an unknown transport under `retry_strategy.transports`.
+- `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies. Older `doctrine/dbal`, `open-telemetry/api`, `symfony/lock` and `symfony/rate-limiter` versions are declared as conflicts, and so is DBAL 5 until it is supported.
+- The bundle registers only its own services. The testing fakes are no longer services.
+
+**Dispatch**
+- Handlers without an explicit `bus` are registered on the sync bus of their type and on its async bus.
+- `CommandHandler`, `QueryHandler` and `EventHandler` are pure marker interfaces, so handlers can type-hint the concrete message.
+- `#[Asynchronous]` sends messages dispatched with `DispatchMode::DEFAULT` to the async bus. Its transports follow the configuration precedence, and a bare attribute no longer overrides Messenger's routing (`framework.messenger.routing` or `#[AsMessage(transport: ...)]`).
+- Stamps passed by the caller take precedence over the stamp pipeline, retry policy stamps included.
 - `IdempotencyStamp` stays on the envelope next to the `DeduplicateStamp` it produces.
-- `dispatchSync()` and `ask()` rethrow the exception of the single failing handler instead of `HandlerFailedException`, raise `NoHandlerException` instead of Messenger's `NoHandlerForMessageException`, and ignore `DispatchAfterCurrentBusStamp`.
-- `#[Asynchronous]` transports follow the configuration precedence (exact-class entry, attribute, parent/interface entries, default); a bare attribute no longer overrides Messenger's routing (including `*` and namespace wildcards such as `App\Message\*`).
-- Per-message maps resolve interfaces most specific first, independent of the declaration order.
-- Retry policy stamps no longer override stamps passed by the caller.
-- The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware, so deferred messages pass through it too.
-- OpenTelemetry: one span per pass, `cqrs.dispatch <Message>` (PRODUCER) when dispatching and `cqrs.consume <Message>` (CONSUMER) in the worker; deferred messages keep the trace they were dispatched in.
-- `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever; delays are capped before and after jitter.
-- `retry_strategy.transports` keys are kept as written and must name existing transports.
-- `causation_id.buses` entries must name existing buses, and every `buses.*` id must be a Messenger bus (a typo in an async bus id used to surface only at runtime as "bus is not configured"); the transport of `#[Asynchronous(transport: ...)]` on a handled message must exist.
-- The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` no longer accept environment variables.
-- Rate limiting stays inactive until a limiter is mapped; mapping one without symfony/rate-limiter is a configuration error.
-- `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services; a handler registered without a bus (e.g. a plain `#[AsMessageHandler]`) counts on every bus.
-- A handler attribute whose type contradicts the message (`#[AsCommandHandler]` for an event) is a compile error. A handler implementing several handler interfaces (e.g. a process manager with `__invoke(CreateTask|TaskCreated $message)`) registers each union member under its own type; a union member whose type matches none of the handler's interfaces is a compile error.
-- The bundle middleware is only added to the default bus when a facade falls back to it.
-- The outbox never creates its table inside an open transaction and stores dates in UTC; the relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, skips undecodable rows and exits with 1 when a row failed.
-- `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>`; `outbox.table_name` must be a plain or schema-qualified identifier.
+- `dispatchSync()` and `ask()` ignore `DispatchAfterCurrentBusStamp`.
+- Per-message maps resolve interfaces most specific first.
+- Resolvers resolve each message class once, so policies must be stateless.
+- `DispatchAfterCurrentBusStampDecider` runs at priority -10.
+- The bundle middleware runs right after Messenger's `dispatch_after_current_bus` middleware. It is only added to the default bus when a facade falls back to it.
+- OpenTelemetry records one span per pass: `cqrs.dispatch <Message>` (PRODUCER) and `cqrs.consume <Message>` (CONSUMER).
+- `CqrsRetryStrategy` falls back to Messenger's `MultiplierRetryStrategy` defaults instead of retrying forever, and caps delays before and after jitter.
+- `retry_strategy.transports` keys are kept as written, and each message received from such a transport uses the retry policies of its own type (commands and events can share a transport); the option also accepts a list of transport names.
+- Rate limiting stays inactive until a limiter is configured. `RateLimitResolver` accepts any `RateLimiterFactoryInterface`.
+- `ValidateHandlerCountPass` checks commands and queries per bus and counts distinct services.
+- A handler of several handler interfaces registers each union member under its own type.
+
+**Outbox and commands**
+- The relay dispatches each message on the bus of its type (the async bus when configured), honours the stored transport name, skips undecodable rows, and exits with 1 when a row failed and with 2 for an invalid `--limit`.
+- Outbox dates are stored in UTC. The table is never created inside an open transaction.
+- `--older-than` accepts only `<number> <unit>`. `outbox.table_name` must be a plain or schema-qualified identifier.
 - `somework:cqrs:health` instantiates every CQRS handler and every Messenger transport.
-- `somework:cqrs:generate` follows the PSR-4 mapping of the project's `composer.json`, resolves `--dir` against the project directory, validates class names, generates attribute-based handlers with a typed `__invoke()` and exits with 2 on invalid input.
+- `somework:cqrs:generate` follows the PSR-4 mapping of the project and validates its input.
 - `somework:cqrs:list` exits with 2 for an unknown `--type`.
-- `RateLimitResolver` accepts any `RateLimiterFactoryInterface`, including compound limiters.
-- `psr/container`, `symfony/filesystem` and `symfony/service-contracts` are direct dependencies.
+
+### Removed
+- `AbstractCommandHandler`, `AbstractQueryHandler`, `AbstractEventHandler` and `MessageTransportStampFactory`.
+- The internal `HandlerLocatorRegistrar`, `MessageTypeLocatorResetter`, `AsynchronousStampDecider`, the `somework_cqrs.discovered_messages` and `somework_cqrs.transport_stamp_types` parameters, and the `message_types` attribute of the stamp decider tag.
 
 ### Fixed
 - The default installation (no bundle configuration, no symfony/rate-limiter) failed to compile.
-- Bus aliases such as the default `messenger.default_bus` broke handler registration and envelope injection.
-- Handlers for async messages were missing on the async bus, so workers failed with "No handler for message".
-- Per-message retry policies, `dispatch_after_current_bus` overrides and rate-limiter maps failed or were ignored because their service locators were wrapped twice.
-- The second envelope-aware handler (every `Abstract*Handler`) of the same message on a bus was skipped, and `HandledStamp` handler names were wrong.
-- Stamp deciders were registered twice; `idempotency.enabled: false` had no effect.
-- Handlers implementing a handler interface with a typed `__invoke()` caused a PHP fatal error.
-- Union types dropped non-CQRS members; unroutable intersection types and interface handlers without a resolvable message now fail with a clear message.
-- Option-less handler tags (e.g. from `BatchHandlerInterface` autoconfiguration) were turned into unrestricted registrations; a method-level `#[AsMessageHandler]` hid the marker-interface registration of `__invoke()`; abstract services implementing a handler interface broke the build.
-- Envelope-aware handlers failed on buses that are not configured as CQRS buses; `idempotency.ttl` from an environment variable became 0 at runtime and failed to compile on Symfony 7.2; on Symfony 8.1 the bundle middleware ran before Messenger decoded failed messages.
-- The internal handler type marker leaked into Messenger's handler options (`debug:messenger`).
-- `dispatchSync()` and `ask()` reported a misleading `NoHandlerException` when the message was sent to a transport or deduplicated.
-- The container could not be compiled when an OpenTelemetry tracer provider was registered; exceptions were recorded twice on spans.
-- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch; a failing lock release no longer hides the handler's exception. The compilation log warns when the lock store (flock, semaphore, in-memory, PostgreSQL advisory, ZooKeeper; also from `LOCK_DSN`) cannot deduplicate, and an async dispatch whose lock key cannot be serialized fails with an explanation instead of `UnserializableKeyException`.
+- Bus aliases such as `messenger.default_bus` broke handler registration and envelope injection.
+- Workers failed with "No handler for message" because handlers were missing on the async bus.
+- Per-message retry policies, `dispatch_after_current_bus` overrides and rate-limiter maps failed, or were ignored, because their service locators were wrapped twice.
+- The second envelope-aware handler of a message on a bus was skipped, and `HandledStamp` handler names were wrong.
 - A nested dispatch handled by the same envelope-aware handler service left the outer invocation with the inner envelope.
+- Stamp deciders were registered twice, and `idempotency.enabled: false` had no effect.
+- Handlers with a typed `__invoke()` caused a PHP fatal error.
+- Union types dropped non-CQRS members, and option-less handler tags became unrestricted registrations.
+- Envelope-aware handlers failed on buses that are not CQRS buses.
+- An `idempotency.ttl` from an environment variable became 0.
+- `dispatchSync()` and `ask()` reported a misleading `NoHandlerException` for sent or deduplicated messages.
+- The container could not be compiled with an OpenTelemetry tracer provider, and exceptions were recorded twice on spans.
+- The idempotency lock stayed held for the whole TTL after a failed synchronous dispatch. The compilation log warns about lock stores that cannot deduplicate.
 - A failed async dispatch without an async bus consumed a rate-limiter token.
 - `CausationIdContext::pop()` threw on an empty stack.
-- The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion or time zone, generated index names longer than 63 characters and, on Symfony 8, marked undecodable rows as published.
-- Relayed events and commands were dispatched on the default bus, so workers of multi-bus setups found no handler for them.
-- The ORM schema listener added the outbox table to the schema of every connection.
+- The outbox:
+  - committed or aborted the caller's transaction when it created its table;
+  - published messages twice under concurrent relays, and stalled on a failing row;
+  - ordered messages randomly within a second, and stored dates without a time zone;
+  - generated index names longer than 63 characters;
+  - marked rows as published when their message class could not be loaded;
+  - dispatched relayed messages on the default bus;
+  - added its table to the schema of every connection.
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.
-- `somework:cqrs:generate` wrote files outside the PSR-4 layout, accepted `..` and invalid class names, could escape the project directory through a sibling path prefix or a symlinked file, generated code that did not compile when a class name clashed with an import, and left half of a skeleton behind on failure.
-- `FakeQueryBus` ignored a configured `null` result; fake buses returned envelopes without the dispatched stamps.
-- `MessageTypeLocator` walked the class hierarchy again for every message without a match and was reset after every worker message.
-- `ContainerHelper` registered abstract classes as services; an exception message contained a line break.
-- CI: the lowest-dependency job (DBAL 4.0, Messenger 7.2) and the coverage job failed.
+- `somework:cqrs:generate` could write outside the PSR-4 layout and the project directory, generated code that did not compile, and left half a skeleton behind on failure.
+- `FakeQueryBus` ignored a configured `null` result, and the fake buses returned envelopes without the dispatched stamps.
+- `MessageTypeLocator` walked the class hierarchy again for every unmatched message.
+- `ContainerHelper` registered abstract classes as services.
 
-### Removed
-- `HandlerLocatorRegistrar`, `MessageTypeLocatorResetter`, `AsynchronousStampDecider` (merged into `MessageTransportStampDecider`) and the unused `message_types` attribute of the stamp decider tag (all internal).
-- The `somework_cqrs.discovered_messages` container parameter (internal).
+### Security
+- Generated class names with a trailing newline are rejected.
 
 ## [0.4.0] - 2026-03-23
 
