@@ -5,11 +5,18 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Bus;
 
 use ReflectionClass;
+use SomeWork\CqrsBundle\Attribute\Asynchronous;
+use SomeWork\CqrsBundle\Attribute\Outbox;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 
 /**
- * Resolves the effective dispatch mode for a message based on configuration.
+ * Resolves the effective dispatch mode for a message requested with DispatchMode::DEFAULT.
+ *
+ * Resolution order for commands and events: exact class entry in the configured map,
+ * the #[Outbox] or #[Asynchronous] attribute on the message class, parent classes, interfaces
+ * (most specific first), the per-type default. Queries are always synchronous.
  *
  * @internal
  */
@@ -31,9 +38,6 @@ final class DispatchModeDecider
     {
         return new self(DispatchMode::SYNC, DispatchMode::SYNC);
     }
-
-    /** @var array<string, int> */
-    private array $interfaceDepthCache = [];
 
     /** @var array<class-string<Command>, DispatchMode> */
     private array $commandModeCache = [];
@@ -75,84 +79,33 @@ final class DispatchModeDecider
      */
     private function resolveFor(object $message, array $map, DispatchMode $default): DispatchMode
     {
-        foreach ($this->getClassHierarchy($message) as $class) {
-            if (isset($map[$class])) {
-                return $map[$class];
-            }
+        // An explicit configuration entry for the exact class wins over the class attribute...
+        if (isset($map[$message::class])) {
+            return $map[$message::class];
         }
 
-        foreach ($this->getInterfaceHierarchy($message) as $interface) {
-            if (isset($map[$interface])) {
-                return $map[$interface];
+        // ...and the #[Outbox] or #[Asynchronous] attribute wins over mappings of parents and interfaces.
+        $reflection = new ReflectionClass($message);
+        if ([] !== $reflection->getAttributes(Outbox::class)) {
+            return DispatchMode::OUTBOX;
+        }
+        if ([] !== $reflection->getAttributes(Asynchronous::class)) {
+            return DispatchMode::ASYNC;
+        }
+
+        // Parent classes, then interfaces, most specific first.
+        foreach (MessageTypeLocator::typesOf($message::class) as $type) {
+            if (isset($map[$type])) {
+                return $map[$type];
             }
         }
 
         return $default;
     }
 
-    /**
-     * @return list<class-string>
-     */
-    private function getClassHierarchy(object $message): array
-    {
-        $classes = [$message::class];
-        $parents = class_parents($message);
-        $classes = [...$classes, ...array_values($parents)];
-
-        return $classes;
-    }
-
-    /**
-     * @return list<class-string>
-     */
-    private function getInterfaceHierarchy(object $message): array
-    {
-        $interfaces = class_implements($message);
-
-        if ([] === $interfaces) {
-            return [];
-        }
-
-        $interfaces = array_values($interfaces);
-        usort(
-            $interfaces,
-            fn (string $a, string $b): int => $this->getInterfaceDepth($b) <=> $this->getInterfaceDepth($a)
-        );
-
-        return $interfaces;
-    }
-
-    private function getInterfaceDepth(string $interface): int
-    {
-        if (isset($this->interfaceDepthCache[$interface])) {
-            return $this->interfaceDepthCache[$interface];
-        }
-
-        if (!interface_exists($interface)) {
-            return $this->interfaceDepthCache[$interface] = 0;
-        }
-
-        $reflection = new ReflectionClass($interface);
-        $parents = $reflection->getInterfaceNames();
-
-        if ([] === $parents) {
-            return $this->interfaceDepthCache[$interface] = 0;
-        }
-
-        $depth = 1;
-        foreach ($parents as $parent) {
-            $depth = max($depth, 1 + $this->getInterfaceDepth($parent));
-        }
-
-        $this->interfaceDepthCache[$interface] = $depth;
-
-        return $depth;
-    }
-
     public function reset(): void
     {
         $this->commandModeCache = [];
         $this->eventModeCache = [];
-        $this->interfaceDepthCache = [];
     }
 }

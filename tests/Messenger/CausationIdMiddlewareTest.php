@@ -33,7 +33,7 @@ final class CausationIdMiddlewareTest extends TestCase
         self::assertInstanceOf(MiddlewareInterface::class, $this->middleware);
     }
 
-    public function test_pushes_correlation_id_before_handler_and_pops_after(): void
+    public function test_pushes_the_metadata_before_the_handler_and_pops_it_after(): void
     {
         $message = new class implements Command {};
         $metadataStamp = new MessageMetadataStamp('corr-123');
@@ -53,25 +53,33 @@ final class CausationIdMiddlewareTest extends TestCase
 
         $this->middleware->handle($envelope, $stack);
 
-        self::assertSame('corr-123', $capturedCurrent);
+        self::assertSame($metadataStamp, $capturedCurrent);
         self::assertNull($this->context->current());
     }
 
-    public function test_skips_push_pop_when_no_metadata_stamp(): void
+    public function test_a_message_without_metadata_hides_the_outer_message(): void
     {
-        $message = new class implements Command {};
-        $envelope = new Envelope($message);
+        // Its handlers' messages must not name the outer message as their cause.
+        $outer = new MessageMetadataStamp('outer');
+        $this->context->push($outer);
+        $envelope = new Envelope(new class implements Command {});
 
+        $captured = false;
         $nextMiddleware = $this->createMock(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
-            ->willReturnCallback(static fn (Envelope $envelope, StackInterface $stack): Envelope => $envelope);
+            ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
+                $captured = $this->context->current();
+
+                return $envelope;
+            });
 
         $stack = $this->createMock(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $result = $this->middleware->handle($envelope, $stack);
 
-        self::assertNull($this->context->current());
+        self::assertNull($captured);
+        self::assertSame($outer, $this->context->current(), 'Popped afterwards.');
         self::assertSame($envelope->getMessage(), $result->getMessage());
     }
 
@@ -149,9 +157,9 @@ final class CausationIdMiddlewareTest extends TestCase
 
         $this->middleware->handle($outerEnvelope, $outerStack);
 
-        self::assertSame('outer-corr', $capturedOuterContext);
-        self::assertSame('inner-corr', $capturedInnerContext);
-        self::assertSame('outer-corr', $capturedAfterInnerPop);
+        self::assertSame($outerStamp, $capturedOuterContext);
+        self::assertSame($innerStamp, $capturedInnerContext);
+        self::assertSame($outerStamp, $capturedAfterInnerPop);
         self::assertNull($this->context->current());
     }
 
@@ -173,5 +181,26 @@ final class CausationIdMiddlewareTest extends TestCase
         $result = $this->middleware->handle($envelope, $stack);
 
         self::assertSame($returnedEnvelope, $result);
+    }
+
+    public function test_on_a_bus_outside_causation_id_buses_it_only_hides_the_outer_message(): void
+    {
+        $this->context->push(new MessageMetadataStamp('outer'));
+        $middleware = new CausationIdMiddleware($this->context, track: false);
+
+        $captured = false;
+        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware->method('handle')
+            ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
+                $captured = $this->context->current();
+
+                return $envelope;
+            });
+        $stack = $this->createMock(StackInterface::class);
+        $stack->method('next')->willReturn($nextMiddleware);
+
+        $middleware->handle(new Envelope(new class implements Command {}, [new MessageMetadataStamp('inner')]), $stack);
+
+        self::assertNull($captured);
     }
 }

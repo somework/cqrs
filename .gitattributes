@@ -17,3 +17,9 @@ phpstan.neon.dist    export-ignore
 phpunit.xml.dist     export-ignore
 Dockerfile           export-ignore
 docker-compose.yml   export-ignore
+.dockerignore        export-ignore
+AGENT.md             export-ignore
+CONTRIBUTING.md      export-ignore
+Makefile             export-ignore
+mkdocs.yml           export-ignore
+SECURITY.md          export-ignore

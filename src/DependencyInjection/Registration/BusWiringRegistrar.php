@@ -31,7 +31,7 @@ final class BusWiringRegistrar
 
             $commandAsync = $buses['command_async'] ?? null;
             if (null !== $commandAsync) {
-                $commandBusDefinition->setArgument('$asyncBus', new Reference($commandAsync, ContainerInterface::NULL_ON_INVALID_REFERENCE));
+                $commandBusDefinition->setArgument('$asyncBus', new Reference($commandAsync));
             } else {
                 $commandBusDefinition->setArgument('$asyncBus', null);
             }
@@ -39,6 +39,7 @@ final class BusWiringRegistrar
             $commandBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $commandBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
             $commandBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+            $commandBusDefinition->setArgument('$outbox', new Reference('somework_cqrs.outbox.writer', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
 
         if ($container->hasDefinition(QueryBus::class)) {
@@ -54,7 +55,7 @@ final class BusWiringRegistrar
 
             $eventAsync = $buses['event_async'] ?? null;
             if (null !== $eventAsync) {
-                $eventBusDefinition->setArgument('$asyncBus', new Reference($eventAsync, ContainerInterface::NULL_ON_INVALID_REFERENCE));
+                $eventBusDefinition->setArgument('$asyncBus', new Reference($eventAsync));
             } else {
                 $eventBusDefinition->setArgument('$asyncBus', null);
             }
@@ -62,6 +63,7 @@ final class BusWiringRegistrar
             $eventBusDefinition->setArgument('$dispatchModeDecider', new Reference('somework_cqrs.dispatch_mode_decider'));
             $eventBusDefinition->setArgument('$stampsDecider', new Reference('somework_cqrs.stamps_decider'));
             $eventBusDefinition->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE));
+            $eventBusDefinition->setArgument('$outbox', new Reference('somework_cqrs.outbox.writer', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         }
     }
 }

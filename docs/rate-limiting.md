@@ -1,23 +1,31 @@
 # Rate limiting
 
-The bundle provides per-message-type dispatch throttling by bridging to Symfony's
-native rate limiter infrastructure. No custom algorithm code is needed -- configure a
-Symfony rate limiter and map it to message types.
+The bundle can throttle the dispatch of selected messages with Symfony's RateLimiter
+component. You define limiters under `framework.rate_limiter` and map message classes to
+them. When a mapped message is dispatched, the bundle consumes one token from its limiter.
+If no token is available, the bus throws `RateLimitExceededException`, and the message is
+neither handled nor sent.
 
-## How it works
+## Activation and requirements
 
-`RateLimitStampDecider` runs in the stamp pipeline. For each dispatched message, it
-resolves the configured `RateLimiterFactory` via `RateLimitResolver`, creates a
-limiter keyed by message FQCN, and consumes one token. If the token is accepted,
-dispatch proceeds normally (no stamps are added -- this is a gate, not a stamp). If
-rejected, `RateLimitExceededException` is thrown immediately.
+Rate limiting stays inactive until a limiter is configured:
+
+- `rate_limiting.enabled` defaults to `true`. With no limiter, nothing is registered and
+  `symfony/rate-limiter` is not needed.
+- Once a limiter is configured (a `default` or a map entry), `symfony/rate-limiter` is required.
+  Without it, container compilation fails with
+  `Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed.`
+- `enabled: false` switches the feature off even when limiters are configured. The flag decides
+  which services exist, so it must be a plain boolean, not an `%env()%` value.
+
+```bash
+composer require symfony/rate-limiter
+```
 
 ## Configuration
 
-Define a Symfony rate limiter, then map message FQCNs to it:
-
 ```yaml
-# config/packages/rate_limiter.yaml (Symfony)
+# config/packages/rate_limiter.yaml
 framework:
     rate_limiter:
         send_notification:
@@ -25,74 +33,137 @@ framework:
             limit: 10
             interval: '1 minute'
 
-# config/packages/cqrs.yaml
+# config/packages/somework_cqrs.yaml
 somework_cqrs:
     rate_limiting:
         enabled: true
         command:
             map:
                 App\Application\Command\SendNotification: send_notification
+        query:
+            map: {}
+        event:
+            map: {}
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Enables rate limiting. No-op when `symfony/rate-limiter` is not installed. |
-| `command.map` | `{}` | Maps command FQCNs to Symfony rate limiter names. |
-| `query.map` | `{}` | Maps query FQCNs to Symfony rate limiter names. |
-| `event.map` | `{}` | Maps event FQCNs to Symfony rate limiter names. |
+| `enabled` | `true` | Master switch. It only has an effect once a limiter is configured. |
+| `default` | `null` | Limiter for every message without a more specific entry. |
+| `command.default`, `query.default`, `event.default` | `null` | Limiter for every message of the type without a map entry. |
+| `command.map` | `{}` | Command class or interface names mapped to `framework.rate_limiter` names. |
+| `query.map` | `{}` | The same for queries. |
+| `event.map` | `{}` | The same for events. |
 
-Rate limiting is opt-in per message. There is no default limiter -- only messages
-explicitly mapped are throttled.
+Each value is the name of a limiter under `framework.rate_limiter`. The bundle uses the
+service `limiter.<name>`. An unknown name fails container compilation with
+`The rate limiter "<name>" configured at "somework_cqrs.rate_limiting.command.map.App\..." does not exist. Define it under "framework.rate_limiter".` The keys must be existing
+class or interface names (a leading `\` is allowed). A typo fails compilation.
 
-## Handling rate limit exceeded
+A message's limiter is looked up the same way as in the bundle's other per-message maps:
+exact class first, then parent classes, then interfaces, then the type `default` and the global
+`default`. Map an interface to throttle every message that implements it. Messages without a
+match are not throttled.
 
-When a rate limit is exceeded, `RateLimitExceededException` is thrown before the
-message reaches the transport:
+The limiter key is the message class: a `default` limiter gives every message class its own
+bucket of `limit` tokens, not one bucket shared by all messages.
+
+## One bucket per message class
+
+The bundle creates the limiter with the message's class name as its key:
+`$factory->create($message::class)`. As a result:
+
+- All dispatches of one message class share one bucket, whichever user, request or process
+  sends them. The limit is global, not per user or per IP. The bucket is stored in the
+  limiter's storage (by default `cache.rate_limiter`, a pool based on `cache.app`), so every
+  server that shares that cache also shares the limit.
+- When you map an interface, each implementing class gets its own bucket under the same
+  policy.
+
+For per-user or per-client limits, call Symfony's RateLimiter yourself, for example in a
+controller, with a key you choose.
+
+## Supported limiters
+
+The resolver accepts any `Symfony\Component\RateLimiter\RateLimiterFactory`, which covers
+the `fixed_window`, `sliding_window`, `token_bucket` and `no_limit` policies. On
+symfony/rate-limiter 7.3 or newer, it also accepts any `RateLimiterFactoryInterface`,
+including the `compound` policy that combines several limiters:
+
+```yaml
+framework:
+    rate_limiter:
+        per_minute:
+            policy: fixed_window
+            limit: 10
+            interval: '1 minute'
+        per_hour:
+            policy: sliding_window
+            limit: 100
+            interval: '1 hour'
+        notifications:
+            policy: compound
+            limiters: [per_minute, per_hour]
+```
+
+## Handling RateLimitExceededException
+
+`SomeWork\CqrsBundle\Exception\RateLimitExceededException` extends `\RuntimeException`.
+`dispatch()`, `dispatchSync()`, `dispatchAsync()` and `ask()` throw it directly, not wrapped
+in a Messenger exception:
 
 ```php
-use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
+<?php
 
-try {
-    $commandBus->dispatch(new SendNotification($userId));
-} catch (RateLimitExceededException $e) {
-    $retryAfter = $e->retryAfter;       // DateTimeImmutable
-    $remaining = $e->remainingTokens;     // int
-    $limit = $e->limit;                   // int
-    $messageFqcn = $e->messageFqcn;       // string
+declare(strict_types=1);
+
+namespace App\Controller;
+
+use App\Application\Command\SendNotification;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
+use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\Routing\Attribute\Route;
+
+final class NotificationController
+{
+    #[Route('/notifications/{userId}', methods: ['POST'])]
+    public function send(string $userId, CommandBusInterface $commandBus): JsonResponse
+    {
+        try {
+            $commandBus->dispatch(new SendNotification($userId));
+        } catch (RateLimitExceededException $e) {
+            return new JsonResponse(
+                ['error' => 'Too many notifications', 'limit' => $e->limit],
+                429,
+                ['Retry-After' => (string) max(0, $e->retryAfter->getTimestamp() - time())],
+            );
+        }
+
+        return new JsonResponse(null, 202);
+    }
 }
 ```
 
-The exception exposes four `public readonly` properties:
-
 | Property | Type | Description |
 |----------|------|-------------|
-| `messageFqcn` | `string` | The FQCN of the throttled message class. |
-| `retryAfter` | `DateTimeImmutable` | When the rate limiter will accept new tokens. |
-| `remainingTokens` | `int` | Number of tokens remaining in the current window. |
-| `limit` | `int` | Total token capacity of the rate limiter. |
+| `messageClass` | `string` | Class of the throttled message. |
+| `retryAfter` | `DateTimeImmutable` | When the limiter will accept a token again. |
+| `remainingTokens` | `int` | Tokens left in the current window (normally `0`). |
+| `limit` | `int` | Capacity of the limiter. |
 
-## Requirements
+All four are `public readonly`. The exception message reads
+`Rate limit exceeded for "<class>". Retry after <ISO 8601 date>.`. When a logger is
+available, the bundle also logs a warning with the same data.
 
-`symfony/rate-limiter` must be installed for rate limiting to work:
+## When the limit applies
 
-```bash
-composer require symfony/rate-limiter
-```
-
-When not installed, all rate limiting code is a no-op -- no class-not-found errors,
-no container compilation failures. The bundle uses `class_exists()` guards in both
-the registrar and the extension to skip registration entirely when the package is
-absent.
-
-## Sync vs async behavior
-
-Rate limiting gates at dispatch time, before the message reaches the transport. This
-means:
-
-- **Sync dispatch:** The caller receives the `RateLimitExceededException` immediately.
-
-- **Async dispatch:** The exception is thrown before the message is sent to the
-  transport. The message never reaches the queue if rate limited.
-
-Rate limiting does NOT apply at consumption time. Messages already in the transport
-queue are not throttled on consumption.
+- **At dispatch, in every mode.** `RateLimitStampDecider` has priority 225. It runs first
+  among the built-in stamp deciders, before Messenger sees the message. This applies to sync and async
+  dispatches alike. An async message that is over the limit never reaches the transport. A
+  message that would be deferred with `DispatchAfterCurrentBusStamp` is checked when you
+  call the bus, not when Messenger later dispatches it.
+- **Only through the CQRS buses.** Workers consuming a transport, Messenger retries,
+  messages relayed from the [outbox](outbox.md) and messages dispatched directly on a
+  Messenger bus are not throttled. To limit how fast a worker processes a transport, use
+  Messenger's own `framework.messenger.transports.<name>.rate_limiter` option.

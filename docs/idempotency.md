@@ -1,49 +1,193 @@
-# Idempotency bridge
+# Idempotency
 
-The bundle provides dispatch-side message deduplication by bridging its
-`IdempotencyStamp` to Symfony's `DeduplicateStamp` via `IdempotencyStampDecider`.
-When a message carries an `IdempotencyStamp`, the decider converts it to a
-`DeduplicateStamp` that Symfony's `DeduplicateMiddleware` uses to prevent duplicate
-processing.
+Attach an `IdempotencyStamp` to a dispatch, and a second dispatch of the same message class
+with the same key is dropped while the first one is still locked. The bundle does not
+implement deduplication itself. Its `IdempotencyStampDecider` converts the stamp into
+Symfony Messenger's `DeduplicateStamp`, and Messenger's deduplicate middleware enforces it
+with a lock from the Lock component.
 
-## How it works
+## Requirements
 
-The `IdempotencyStampDecider` runs in the stamp pipeline for all message types. When
-it finds an `IdempotencyStamp` in the stamps array, it:
+- **symfony/messenger 7.3 or newer.** `DeduplicateStamp` and the deduplicate middleware
+  were added in 7.3.
+- **symfony/lock**.
+- **`framework.lock` enabled.** FrameworkBundle adds Messenger's `deduplicate_middleware`
+  to buses that use the default middleware only when the lock component is enabled. It is
+  enabled automatically once `symfony/lock` is installed, unless you turned it off.
+- **A shared lock store that keeps keys until their TTL.** The default stores do not work:
+  `flock` and `semaphore` release a key as soon as the dispatch returns, so a second
+  dispatch with the same key goes through, and `in-memory` only deduplicates within one
+  process. The keys of `flock`, `semaphore`, `postgresql+advisory` and `zookeeper` stores
+  are tied to the process or connection and cannot be sent with async messages: an
+  asynchronous dispatch with an `IdempotencyStamp` then fails with a `LogicException` that
+  names the problem. PostgreSQL advisory locks and ZooKeeper also ignore the TTL: a key stays
+  locked as long as the connection that took it, which in a long-running worker can be forever. Point `framework.lock` at Redis, Memcached or a PDO/DBAL database; the
+  container compilation log warns when the configured store is one of the others (for a DSN
+  from an environment variable, with the value it had when the container was compiled):
 
-1. Removes the `IdempotencyStamp`
-2. Computes a FQCN-namespaced key: `MessageClass::key`
-3. Creates a `DeduplicateStamp` with the namespaced key, the configured TTL, and
-   non-blocking mode
-4. Adds the `DeduplicateStamp` to the stamps array
+```yaml
+# config/packages/lock.yaml
+framework:
+    lock: '%env(LOCK_DSN)%'   # e.g. redis://redis:6379
+```
 
-This conversion requires `symfony/lock` at runtime. The decider checks for the
-presence of `Symfony\Component\Lock\Key` via `class_exists()`. If `symfony/lock` is
-not installed, the decider is a no-op and silently skips conversion.
+```bash
+composer require symfony/lock
+```
+
+A missing piece never breaks the build, because idempotency is enabled by default. Instead,
+the `IdempotencyStamp` is ignored and nothing is deduplicated. The first message that carries
+an `IdempotencyStamp` in a process logs a warning with the reason (`The IdempotencyStamp of
+App\Command\ChargePayment may not prevent duplicates: …`), and the container compilation log
+says the same. In debug mode, Symfony writes it to
+`var/cache/<env>/<ContainerClass>Compiler.log`:
+
+```bash
+grep Idempotency var/cache/dev/*Compiler.log
+```
+
+It reports one of the following:
+
+- `Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.`
+- `Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").`
+- `Idempotency is enabled but the lock store "in-memory" only deduplicates within one process. …`
+- `Idempotency is enabled but the lock store "flock" releases a key as soon as the dispatch returns and only lives on one host: …`
+- `Idempotency is enabled but the lock store "postgresql+advisory://…" ties its keys to one connection: …`
 
 ## Usage
 
-Attach an `IdempotencyStamp` when dispatching a message to prevent duplicate
-processing of the same logical operation:
-
 ```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Application;
+
+use App\Application\Command\ChargePayment;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
 
-$commandBus->dispatch(new ProcessPayment($orderId), stamps: [
-    new IdempotencyStamp($orderId),
-]);
+final class PaymentService
+{
+    public function __construct(
+        private readonly CommandBusInterface $commandBus,
+    ) {
+    }
+
+    public function charge(string $orderId): ?string
+    {
+        try {
+            return $this->commandBus->dispatchSync(new ChargePayment($orderId), new IdempotencyStamp($orderId));
+        } catch (DuplicateMessageException $e) {
+            // Dispatched recently (within the TTL): $e->deduplicationKey === 'App\Application\Command\ChargePayment::<orderId>'.
+            // Usually charged already, or in progress; after a killed process the charge may not have
+            // run (see "Lock lifetime"), so check the order's state before reporting success.
+            return null;
+        }
+    }
+
+    public function chargeLater(string $orderId): void
+    {
+        // A duplicate is not sent to the transport; no exception is thrown.
+        $this->commandBus->dispatchAsync(new ChargePayment($orderId), new IdempotencyStamp($orderId));
+    }
+}
 ```
 
-The idempotency key should uniquely identify the operation. Using a domain
-identifier like an order ID ensures that dispatching the same payment command
-twice (e.g., due to a user double-click) results in only one execution.
+The key should identify the operation, for example an order id or a client-supplied request
+id. Keys are global per message class: two users or tenants that send the same key for the same
+message class collide, and the second message is dropped as a duplicate. Scope keys that come
+from clients, e.g. `new IdempotencyStamp($tenantId.':'.$userId.':'.$requestId)`. Keys are
+stored in the lock store, logged and shown in `DuplicateMessageException`: use ids, never
+personal data such as e-mail addresses (see [Personal data](production.md#personal-data)).
+`new IdempotencyStamp('')` throws an `InvalidArgumentException`. Stamps are variadic
+arguments of every dispatch method: `dispatch($message, DispatchMode::DEFAULT, ...$stamps)`,
+`dispatchSync($message, ...$stamps)`, `dispatchAsync($message, ...$stamps)` and
+`ask($query, ...$stamps)`.
 
-The `IdempotencyStamp` constructor rejects empty strings with an
-`InvalidArgumentException`.
+## How it works
+
+`IdempotencyStampDecider` runs in the stamp pipeline for every message type, at priority 50.
+When the stamps contain an `IdempotencyStamp`, it:
+
+1. builds the key `<message FQCN>::<idempotency key>`, for example
+   `App\Application\Command\ChargePayment::order-123`. The same raw key on two message
+   classes gives two different locks;
+2. adds `new DeduplicateStamp($key, $ttl, false)`, where `$ttl` is `idempotency.ttl` and
+   `false` is Messenger's `onlyDeduplicateInQueue` flag (see below);
+3. keeps the `IdempotencyStamp` on the envelope, so handlers and middleware can still read
+   the key.
+
+**A `DeduplicateStamp` passed by the caller wins.** The decider then adds nothing. Use this
+approach to set a different TTL for one dispatch. The key is then yours as given, not
+namespaced:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Application;
+
+use App\Application\Command\GenerateInvoice;
+use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
+
+final class InvoiceService
+{
+    public function __construct(
+        private readonly CommandBusInterface $commandBus,
+    ) {
+    }
+
+    public function generate(string $invoiceId): void
+    {
+        $this->commandBus->dispatchAsync(
+            new GenerateInvoice($invoiceId),
+            new DeduplicateStamp(GenerateInvoice::class.'::'.$invoiceId, 3600.0),
+        );
+    }
+}
+```
+
+Messenger's `DeduplicateMiddleware` on the target bus then tries to acquire the lock without
+waiting. Acquisition is atomic in the lock store. If the lock is already held, the envelope
+is returned unhandled and unsent.
+
+## Lock lifetime
+
+With `onlyDeduplicateInQueue = false`, the lock lives as follows:
+
+| Situation | Lock |
+|-----------|------|
+| Handled synchronously, handler succeeded | Held until the TTL expires. Further dispatches with the key are dropped during that window. |
+| Handled synchronously, handler threw | **Released immediately** by the bundle's `DeduplicationLockReleaseMiddleware`, so the caller can retry with the same key at once. The same applies when sending to a transport fails. |
+| Handled synchronously, PHP fatal error (memory or time limit) | Released when PHP shuts down, by a shutdown function of the same middleware. |
+| Handled synchronously, process killed (SIGKILL, OOM killer) | Held until the TTL expires: a retry is reported as a duplicate although the handler did not finish. Keep the TTL short for operations the caller retries, and do not treat `DuplicateMessageException` as proof that the operation succeeded. |
+| Sent to a transport | Held while the message waits in the queue and while a worker handles it. Released after the worker handled it successfully. |
+| Worker handler threw | Kept. It is released when a Messenger retry of the message succeeds, and otherwise expires with the TTL. |
+| Queue wait or processing longer than the TTL | The lock expires, and a new dispatch with the same key goes through. |
+
+Pick a TTL longer than the time a message typically waits in the queue plus its processing
+time.
+
+## What the caller sees when a duplicate is dropped
+
+| Call | Result |
+|------|--------|
+| `CommandBus::dispatchSync()`, `QueryBus::ask()` | Throw `SomeWork\CqrsBundle\Exception\DuplicateMessageException`, because no handler result exists. Its public read-only properties are `messageClass`, `busName` and `deduplicationKey`. |
+| `EventBus::dispatchSync()`, or `dispatch()` resolving to sync on either bus | No exception. No handler runs, and the returned envelope has no `HandledStamp`. |
+| `dispatchAsync()`, or `dispatch()` resolving to async | No exception. The message is not sent, and the returned envelope has no `SentStamp`. |
+
+Asynchronous dispatches carry a `DispatchAfterCurrentBusStamp` by default. When such a
+dispatch happens inside a handler, Messenger defers it until the current handler finishes,
+and the duplicate check runs at that later point.
 
 ## Configuration
 
 ```yaml
+# config/packages/somework_cqrs.yaml
 somework_cqrs:
     idempotency:
         enabled: true
@@ -52,57 +196,29 @@ somework_cqrs:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Enables the `IdempotencyStamp` to `DeduplicateStamp` bridge. When `false`, the `IdempotencyStampDecider` is not registered. |
-| `ttl` | `300` | Default lock TTL in seconds for deduplication. After this period, the same key can be dispatched again. |
-
-## Requirements
-
-`symfony/lock` must be installed for deduplication to work. The bundle declares it
-as a `suggest` dependency in `composer.json`:
-
-```bash
-composer require symfony/lock
-```
-
-If `symfony/lock` is not installed, the `IdempotencyStampDecider` is a no-op:
-`IdempotencyStamp` will remain in the stamps array unconverted, and no
-deduplication occurs. A compile-time warning is emitted when idempotency is
-enabled but `DeduplicateStamp` dependencies are unavailable.
-
-## Key namespacing
-
-Deduplication keys are namespaced by the message's fully qualified class name to
-prevent collisions across different message types. The namespaced key format is:
-
-```
-App\Application\Command\ProcessPayment::order-123
-```
-
-This means the same raw key (e.g., `order-123`) used on two different message
-types produces different `DeduplicateStamp` keys. Each message type has its own
-deduplication scope.
+| `enabled` | `true` | Registers `IdempotencyStampDecider`. The decider is also skipped when symfony/messenger 7.3+ or symfony/lock is missing. The value decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
+| `ttl` | `300` | Lock TTL in seconds (integer, at least 1) for every `DeduplicateStamp` the bundle creates. |
 
 ## Limitations
 
-The idempotency bridge provides **dispatch-side, best-effort deduplication**. Be
-aware of these constraints:
+- **Dispatch-side only.** The conversion happens in the stamp pipeline of the CQRS buses,
+  also for a dispatch through the [outbox](outbox.md#through-the-buses), where it happens when
+  the message is stored. Messages dispatched directly on a Messenger bus, and messages stored
+  with `OutboxWriter::store()`, are not converted, and the relay does not convert the rows it
+  sends. Worker redeliveries are not checked again either. A `DeduplicateStamp` stored in the
+  outbox (through the buses or with `OutboxWriter`) gets a key scoped to the row's transport
+  (`<key>@<transport>`), so it does not deduplicate against the same key dispatched directly
+  on a bus. With a lock store whose keys cannot be sent (`flock`, `semaphore`, PostgreSQL
+  advisory locks, ZooKeeper), a message stored in the outbox with a `DeduplicateStamp` (from
+  an `IdempotencyStamp`, its default stamps or the caller) is refused when it is stored, since
+  the relay could never send it.
+- **Time-bounded.** Deduplication lasts as long as the lock (see [Lock lifetime](#lock-lifetime)).
+  It is not a permanent record of processed operations.
+- **Only as reliable as the lock store.** The local stores (flock, semaphore, in-memory) do
+  not deduplicate reliably (see [Requirements](#requirements)), and a store that loses its
+  data (for example, a Redis restart) forgets the locks.
 
-- **Dispatch-side only.** Deduplication happens at the point of dispatch, not at
-  the point of consumption. If the same message reaches the transport through a
-  different code path (e.g., manual Messenger dispatch without `IdempotencyStamp`),
-  it will not be deduplicated.
-
-- **Lock released on retry.** Symfony issue
-  [#61917](https://github.com/symfony/symfony/issues/61917):
-  `DeduplicateMiddleware` releases the lock when a message is retried. This means
-  a retried message will not be deduplicated against new dispatches of the same
-  key during the retry window.
-
-- **Non-blocking lock acquisition.** The `DeduplicateStamp` is created with
-  non-blocking mode (`false` as the third argument). If two concurrent dispatches
-  race, both may proceed if the lock is not yet acquired by the time the second
-  dispatch checks.
-
-- **Best-effort guarantee.** For strong idempotency guarantees, implement
-  consume-side deduplication in your handlers (e.g., check a database unique
-  constraint or an idempotency key table before processing).
+For guarantees that do not expire, check on the consuming side as well. For example, record
+processed keys in a table with a unique constraint. An `EnvelopeAware` handler (see
+[Receiving the envelope](usage.md#receiving-the-envelope)) can read the key with
+`$this->getEnvelope()->last(IdempotencyStamp::class)?->getKey()`.

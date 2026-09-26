@@ -5,13 +5,14 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageSerializerResolver::class)]
 final class MessageSerializerResolverTest extends TestCase
 {
     public function test_resolves_serializer_from_class_hierarchy(): void
@@ -22,8 +23,7 @@ final class MessageSerializerResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
             MessageSerializerResolverTestParentCommand::class => static fn (): MessageSerializer => $serializer,
         ]));
 
@@ -39,8 +39,7 @@ final class MessageSerializerResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
             MessageSerializerResolverTestInterface::class => static fn (): MessageSerializer => $serializer,
         ]));
 
@@ -54,8 +53,7 @@ final class MessageSerializerResolverTest extends TestCase
         $typeDefault = $this->createMock(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => new NullMessageSerializer(),
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
         ]));
 
         $resolved = $resolver->resolveFor(new MessageSerializerResolverTestChildCommand());
@@ -68,7 +66,7 @@ final class MessageSerializerResolverTest extends TestCase
         $globalDefault = $this->createMock(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,
         ]));
 
         $resolved = $resolver->resolveFor(new MessageSerializerResolverTestChildCommand());
@@ -76,12 +74,12 @@ final class MessageSerializerResolverTest extends TestCase
         self::assertSame($globalDefault, $resolved);
     }
 
-    public function test_requires_global_default_serializer(): void
+    public function test_requires_a_default_serializer(): void
     {
         $resolver = new MessageSerializerResolver(new ServiceLocator([]));
 
         $this->expectException(LogicException::class);
-        $this->expectExceptionMessage('Serializer resolver must be initialised with a global default serializer.');
+        $this->expectExceptionMessage('Serializer resolver must be initialised with a default serializer.');
 
         $resolver->resolveFor(new MessageSerializerResolverTestChildCommand());
     }

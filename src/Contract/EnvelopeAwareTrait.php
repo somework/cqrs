@@ -9,6 +9,9 @@ use Symfony\Component\Messenger\Envelope;
 /**
  * Provides storage for the Messenger envelope currently being handled.
  *
+ * getEnvelope() is only meaningful while the handler runs: afterwards the (shared) handler
+ * service keeps the envelope of the last message it handled.
+ *
  * @api
  */
 trait EnvelopeAwareTrait

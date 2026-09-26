@@ -8,8 +8,8 @@ namespace SomeWork\CqrsBundle\Contract;
  * Marker interface for command messages.
  *
  * Commands are immutable data transfer objects (DTOs) describing an intention to
- * change state. They MUST NOT perform business logic and SHOULD expose their
- * data via explicit accessors.
+ * change state: a final class with public readonly properties, and no business
+ * logic.
  *
  * @psalm-immutable
  *

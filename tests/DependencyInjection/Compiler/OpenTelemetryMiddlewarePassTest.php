@@ -9,11 +9,14 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\Messenger\OpenTelemetryMiddleware;
+use SomeWork\CqrsBundle\Messenger\TraceContextCaptureMiddleware;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+use function array_map;
 use function sprintf;
 
 #[CoversClass(OpenTelemetryMiddlewarePass::class)]
@@ -72,18 +75,57 @@ final class OpenTelemetryMiddlewarePassTest extends TestCase
         $middlewareDefinition = $container->getDefinition('somework_cqrs.messenger.middleware.open_telemetry');
         self::assertSame(OpenTelemetryMiddleware::class, $middlewareDefinition->getClass());
 
-        // Verify middleware is prepended to all buses
+        self::assertSame(TraceContextCaptureMiddleware::class, $container->getDefinition('somework_cqrs.messenger.middleware.trace_context_capture')->getClass());
+
+        // Without "dispatch_after_current_bus" both go first: the capture middleware, then the span middleware.
         foreach (['messenger.bus.default', 'messenger.bus.commands', 'messenger.bus.events'] as $busId) {
             /** @var IteratorArgument $argument */
             $argument = $container->findDefinition($busId)->getArgument(0);
             $middlewareRefs = $argument->getValues();
 
             self::assertSame(
-                'somework_cqrs.messenger.middleware.open_telemetry',
-                (string) $middlewareRefs[0],
-                sprintf('OTel middleware should be prepended to %s', $busId),
+                ['somework_cqrs.messenger.middleware.trace_context_capture', 'somework_cqrs.messenger.middleware.open_telemetry'],
+                [(string) $middlewareRefs[0], (string) $middlewareRefs[1]],
+                sprintf('OTel middleware should be added to %s', $busId),
             );
         }
+    }
+
+    public function test_the_capture_middleware_runs_before_dispatch_after_current_bus(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->setDefinition(TracerProviderInterface::class, new Definition(TracerProviderInterface::class));
+        $container->setDefinition('messenger.bus.default', (new Definition())->setArgument(0, new IteratorArgument([
+            new Reference('messenger.bus.default.middleware.add_bus_name_stamp_middleware'),
+            new Reference('messenger.middleware.dispatch_after_current_bus'),
+            new Reference('messenger.bus.default.middleware.handle_message'),
+        ])));
+
+        (new OpenTelemetryMiddlewarePass())->process($container);
+
+        /** @var IteratorArgument $argument */
+        $argument = $container->findDefinition('messenger.bus.default')->getArgument(0);
+        self::assertSame([
+            'somework_cqrs.messenger.middleware.trace_context_capture',
+            'messenger.bus.default.middleware.add_bus_name_stamp_middleware',
+            'messenger.middleware.dispatch_after_current_bus',
+            'somework_cqrs.messenger.middleware.open_telemetry',
+            'messenger.bus.default.middleware.handle_message',
+        ], array_map('strval', $argument->getValues()));
+    }
+
+    public function test_the_outbox_writer_stores_the_trace_context(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->setDefinition(TracerProviderInterface::class, new Definition(TracerProviderInterface::class));
+        $container->setDefinition('messenger.bus.default', (new Definition())->setArgument(0, new IteratorArgument([])));
+        $container->setDefinition('somework_cqrs.outbox.writer', new Definition(OutboxWriter::class));
+
+        (new OpenTelemetryMiddlewarePass())->process($container);
+
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.writer')->getArgument('$captureTraceContext'));
     }
 
     public function test_does_not_duplicate_middleware_on_second_pass(): void
@@ -103,7 +145,7 @@ final class OpenTelemetryMiddlewarePassTest extends TestCase
         /** @var IteratorArgument $argument */
         $argument = $container->findDefinition('messenger.bus.default')->getArgument(0);
 
-        self::assertCount(2, $argument->getValues());
+        self::assertCount(3, $argument->getValues());
     }
 
     public function test_resolves_traceable_bus_inner_definition(): void
@@ -128,10 +170,10 @@ final class OpenTelemetryMiddlewarePassTest extends TestCase
         $argument = $container->findDefinition('debug.traced.messenger.bus.default.inner')->getArgument(0);
 
         $middlewareRefs = $argument->getValues();
-        self::assertCount(2, $middlewareRefs);
+        self::assertCount(3, $middlewareRefs);
         self::assertSame(
             'somework_cqrs.messenger.middleware.open_telemetry',
-            (string) $middlewareRefs[0],
+            (string) $middlewareRefs[1],
         );
     }
 }

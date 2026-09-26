@@ -8,9 +8,14 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
 use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
+
+use function array_combine;
+use function array_keys;
+use function array_map;
 
 #[CoversClass(CqrsRetryStrategyPass::class)]
 final class CqrsRetryStrategyPassTest extends TestCase
@@ -95,14 +100,15 @@ final class CqrsRetryStrategyPassTest extends TestCase
         self::assertSame('messenger.retry.async_strategy', (string) $fallbackRef);
     }
 
-    public function test_handles_transport_with_no_existing_strategy(): void
+    public function test_rejects_a_transport_that_messenger_does_not_know(): void
     {
         $container = $this->createContainerWithTransports(['async' => 'command']);
+        $container->setParameter('somework_cqrs.retry_strategy.transports', ['async-high' => 'command']);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Transport "async-high" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "async".');
 
         (new CqrsRetryStrategyPass())->process($container);
-
-        $definition = $container->getDefinition('somework_cqrs.retry_strategy.async');
-        self::assertNull($definition->getArgument('$fallback'));
     }
 
     public function test_creates_strategies_for_multiple_transports(): void
@@ -188,7 +194,7 @@ final class CqrsRetryStrategyPassTest extends TestCase
         $container = new ContainerBuilder();
 
         $locatorDefinition = new Definition();
-        $locatorDefinition->setArgument(0, []);
+        $locatorDefinition->setArgument(0, ['async' => new Reference('messenger.retry.strategy')]);
         $container->setDefinition('messenger.retry_strategy_locator', $locatorDefinition);
         $container->setParameter('somework_cqrs.retry_strategy.transports', ['async' => 'command']);
         $container->setParameter('somework_cqrs.retry_strategy.jitter', 0.0);
@@ -206,7 +212,7 @@ final class CqrsRetryStrategyPassTest extends TestCase
         $container = new ContainerBuilder();
 
         $locatorDefinition = new Definition();
-        $locatorDefinition->setArgument(0, []);
+        $locatorDefinition->setArgument(0, ['my_transport' => new Reference('messenger.retry.strategy')]);
         $container->setDefinition('messenger.retry_strategy_locator', $locatorDefinition);
         $container->setParameter('somework_cqrs.retry_strategy.transports', ['my_transport' => 'event']);
         $container->setParameter('somework_cqrs.retry_strategy.jitter', 0.0);
@@ -277,8 +283,12 @@ final class CqrsRetryStrategyPassTest extends TestCase
     {
         $container = new ContainerBuilder();
 
+        // Messenger registers a retry strategy for every transport.
         $locatorDefinition = new Definition();
-        $locatorDefinition->setArgument(0, []);
+        $locatorDefinition->setArgument(0, array_map(
+            static fn (string $transport): Reference => new Reference('messenger.retry.multiplier_retry_strategy.'.$transport),
+            array_combine(array_keys($transports), array_keys($transports)),
+        ));
         $container->setDefinition('messenger.retry_strategy_locator', $locatorDefinition);
         $container->setParameter('somework_cqrs.retry_strategy.transports', $transports);
         $container->setParameter('somework_cqrs.retry_strategy.jitter', $jitter);

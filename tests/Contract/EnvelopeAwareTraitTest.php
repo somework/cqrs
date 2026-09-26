@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
+use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
 use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
 use Symfony\Component\Messenger\Envelope;
 
+#[CoversTrait(EnvelopeAwareTrait::class)]
 final class EnvelopeAwareTraitTest extends TestCase
 {
     public function test_set_envelope_stores_envelope_instance(): void

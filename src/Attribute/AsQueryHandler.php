@@ -15,7 +15,7 @@ use Attribute;
 final class AsQueryHandler
 {
     /**
-     * Relaxed from class-string<Query> to support attribute-only handlers (DX-02).
+     * Relaxed from class-string<Query> to support attribute-only handlers.
      *
      * @param class-string          $query
      * @param non-empty-string|null $bus

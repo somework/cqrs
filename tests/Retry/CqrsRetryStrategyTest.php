@@ -7,15 +7,22 @@ namespace SomeWork\CqrsBundle\Tests\Retry;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
-use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Retry\RetryStrategyInterface;
 use Symfony\Component\Messenger\Stamp\RedeliveryStamp;
+
+use function count;
+
+use const PHP_INT_MAX;
 
 #[CoversClass(CqrsRetryStrategy::class)]
 final class CqrsRetryStrategyTest extends TestCase
@@ -51,12 +58,15 @@ final class CqrsRetryStrategyTest extends TestCase
         self::assertFalse($strategy->isRetryable($envelope));
     }
 
-    public function test_is_retryable_returns_true_when_no_fallback_and_policy_not_retry_configuration(): void
+    public function test_without_fallback_messages_are_retried_a_bounded_number_of_times(): void
     {
         $strategy = $this->createStrategy(new NullRetryPolicy());
-        $envelope = Envelope::wrap(new CreateTaskCommand('id-1', 'task'));
+        $message = new CreateTaskCommand('id-1', 'task');
 
-        self::assertTrue($strategy->isRetryable($envelope));
+        // Messenger's MultiplierRetryStrategy defaults: 3 retries.
+        self::assertTrue($strategy->isRetryable(Envelope::wrap($message)));
+        self::assertTrue($strategy->isRetryable(Envelope::wrap($message, [new RedeliveryStamp(2)])));
+        self::assertFalse($strategy->isRetryable(Envelope::wrap($message, [new RedeliveryStamp(3)])));
     }
 
     public function test_get_waiting_time_computes_exponential_backoff(): void
@@ -90,12 +100,11 @@ final class CqrsRetryStrategyTest extends TestCase
         self::assertSame(5000, $strategy->getWaitingTime($envelope));
     }
 
-    public function test_get_waiting_time_returns_zero_when_no_fallback_and_policy_not_retry_configuration(): void
+    public function test_without_fallback_the_waiting_time_is_not_zero(): void
     {
         $strategy = $this->createStrategy(new NullRetryPolicy());
-        $envelope = Envelope::wrap(new CreateTaskCommand('id-1', 'task'));
 
-        self::assertSame(0, $strategy->getWaitingTime($envelope));
+        self::assertGreaterThan(0, $strategy->getWaitingTime(Envelope::wrap(new CreateTaskCommand('id-1', 'task'))));
     }
 
     public function test_get_waiting_time_applies_jitter_within_expected_range(): void
@@ -354,6 +363,57 @@ final class CqrsRetryStrategyTest extends TestCase
 
         // 1000 * 10.0^3 = 1_000_000, maxDelay=0 means no cap
         self::assertSame(1_000_000, $strategy->getWaitingTime($envelope));
+    }
+
+    public function test_huge_backoff_does_not_overflow_to_zero_or_negative(): void
+    {
+        $strategy = $this->createStrategy(new ExponentialBackoffRetryPolicy(100, 1000, 10.0));
+        $envelope = Envelope::wrap(new CreateTaskCommand('id-1', 'task'), [new RedeliveryStamp(60)]);
+
+        self::assertSame(PHP_INT_MAX, $strategy->getWaitingTime($envelope));
+    }
+
+    public function test_huge_backoff_is_capped_by_max_delay(): void
+    {
+        $strategy = $this->createStrategy(new ExponentialBackoffRetryPolicy(100, 1000, 2.0), maxDelay: 60000);
+        $envelope = Envelope::wrap(new CreateTaskCommand('id-1', 'task'), [new RedeliveryStamp(80)]);
+
+        self::assertSame(60000, $strategy->getWaitingTime($envelope));
+    }
+
+    public function test_capped_delays_are_still_jittered_below_the_cap(): void
+    {
+        $strategy = $this->createStrategy(new ExponentialBackoffRetryPolicy(100, 1000, 2.0), jitter: 0.5, maxDelay: 60000);
+        $envelope = Envelope::wrap(new CreateTaskCommand('id-1', 'task'), [new RedeliveryStamp(80)]);
+
+        $delays = [];
+        for ($i = 0; $i < 50; ++$i) {
+            $delay = $strategy->getWaitingTime($envelope);
+            self::assertGreaterThanOrEqual(30000, $delay);
+            self::assertLessThanOrEqual(60000, $delay);
+            $delays[$delay] = true;
+        }
+
+        self::assertGreaterThan(1, count($delays), 'Capped delays must not all be identical.');
+    }
+
+    public function test_each_message_uses_the_policies_of_its_own_type(): void
+    {
+        // A transport mapped to "command" that also carries events.
+        $strategy = new CqrsRetryStrategy(
+            new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(1, 100, 1.0), new ServiceLocator([])),
+            byType: [
+                Command::class => new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(1, 100, 1.0), new ServiceLocator([])),
+                Event::class => new RetryPolicyResolver(new ExponentialBackoffRetryPolicy(5, 700, 1.0), new ServiceLocator([])),
+            ],
+        );
+
+        $event = Envelope::wrap(new TaskCreatedEvent('1'))->with(new RedeliveryStamp(2));
+        self::assertTrue($strategy->isRetryable($event));
+        self::assertSame(700, $strategy->getWaitingTime($event));
+
+        $command = Envelope::wrap(new CreateTaskCommand('1', 'a'))->with(new RedeliveryStamp(2));
+        self::assertFalse($strategy->isRetryable($command));
     }
 
     private function createStrategy(

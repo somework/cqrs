@@ -4,14 +4,31 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Command;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\GenerateMessageCommand;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Tester\CommandTester;
+use Symfony\Component\Filesystem\Filesystem;
 use Symfony\Component\HttpKernel\KernelInterface;
 
 use function dirname;
+use function escapeshellarg;
+use function exec;
+use function file_get_contents;
+use function file_put_contents;
+use function implode;
+use function json_encode;
+use function mkdir;
+use function preg_replace;
+use function sys_get_temp_dir;
+use function uniqid;
 
+use const JSON_THROW_ON_ERROR;
+use const PHP_BINARY;
+
+#[CoversClass(GenerateMessageCommand::class)]
 final class GenerateMessageCommandTest extends TestCase
 {
     private string $projectDir;
@@ -24,324 +41,362 @@ final class GenerateMessageCommandTest extends TestCase
 
     protected function tearDown(): void
     {
-        $this->removeDirectory($this->projectDir);
+        (new Filesystem())->remove($this->projectDir);
     }
 
-    public function test_generates_message_and_handler_files(): void
+    public function test_follows_the_psr4_mapping_of_the_project(): void
     {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        $this->writeComposerJson(['App\\' => 'src/']);
 
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Application\\Command\\ShipOrder',
-        ]);
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Application\\Command\\ShipOrder']);
 
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-        self::assertStringContainsString('Generated src/App/Application/Command/ShipOrder.php', $tester->getDisplay());
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertStringContainsString('Generated src/Application/Command/ShipOrder.php and src/Application/Command/ShipOrderHandler.php.', self::display($tester));
+        self::assertStringNotContainsString('not covered by a PSR-4 prefix', self::display($tester));
 
-        $messagePath = $this->projectDir.'/src/App/Application/Command/ShipOrder.php';
-        $handlerPath = $this->projectDir.'/src/App/Application/Command/ShipOrderHandler.php';
+        $message = $this->read('src/Application/Command/ShipOrder.php');
+        self::assertStringContainsString('namespace App\\Application\\Command;', $message);
+        self::assertStringContainsString("/**\n * @psalm-immutable\n */\nfinal class ShipOrder implements Command", $message);
+        self::assertStringContainsString('public readonly string $id,', $message);
 
-        self::assertFileExists($messagePath);
-        self::assertFileExists($handlerPath);
-
-        $messageContents = file_get_contents($messagePath);
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('final class ShipOrder implements Command', $messageContents);
-        self::assertStringContainsString('public readonly string $id,', $messageContents);
-        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
-
-        $handlerContents = file_get_contents($handlerPath);
-        self::assertIsString($handlerContents);
-        self::assertStringContainsString('#[AsCommandHandler(ShipOrder::class)]', $handlerContents);
-        self::assertStringContainsString('public function __invoke(ShipOrder $message): mixed', $handlerContents);
-        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
+        $handler = $this->read('src/Application/Command/ShipOrderHandler.php');
+        self::assertStringContainsString('#[AsCommandHandler(ShipOrder::class)]', $handler);
+        self::assertStringContainsString('final class ShipOrderHandler', $handler);
+        self::assertStringContainsString('public function __invoke(ShipOrder $command): mixed', $handler);
+        // Same namespace: the message needs no import.
+        self::assertStringNotContainsString('use App\\Application\\Command\\ShipOrder;', $handler);
     }
 
-    public function test_fails_when_files_exist_without_force(): void
+    public function test_uses_the_longest_matching_prefix_including_autoload_dev(): void
     {
-        $kernel = $this->createKernelStub();
-        $messagePath = $this->projectDir.'/src/App/Application/Command/ShipOrder.php';
-        $handlerPath = $this->projectDir.'/src/App/Application/Command/ShipOrderHandler.php';
-        mkdir(dirname($messagePath), 0o777, true);
-        file_put_contents($messagePath, 'existing');
-        file_put_contents($handlerPath, 'existing');
+        $this->writeComposerJson(['App\\' => 'src/', 'App\\Billing\\' => ['modules/billing/src/', 'other/']], ['Tests\\' => 'tests/']);
 
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'event', 'name' => 'App\\Billing\\InvoicePaid'])->getStatusCode());
+        self::assertFileExists($this->projectDir.'/modules/billing/src/InvoicePaid.php');
 
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Application\\Command\\ShipOrder',
-        ]);
-
-        self::assertSame(SymfonyCommand::FAILURE, $exitCode);
-        self::assertStringContainsString('already exists', $tester->getDisplay());
-        self::assertSame('existing', file_get_contents($messagePath));
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'query', 'name' => 'Tests\\Fixture\\FindThing'])->getStatusCode());
+        self::assertFileExists($this->projectDir.'/tests/Fixture/FindThingHandler.php');
     }
 
-    public function test_rejects_path_traversal_in_dir_option(): void
+    public function test_dir_option_replaces_the_mapped_directory(): void
     {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        $this->writeComposerJson(['App\\' => 'src/']);
 
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-            '--dir' => $this->projectDir.'/src/../../../tmp',
-        ]);
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => 'lib']);
 
-        self::assertSame(SymfonyCommand::FAILURE, $exitCode);
-        self::assertStringContainsString('project directory', $tester->getDisplay());
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode(), $tester->getDisplay());
+        self::assertFileExists($this->projectDir.'/lib/Command/DoSomething.php');
+        self::assertFileExists($this->projectDir.'/lib/Command/DoSomethingHandler.php');
+    }
+
+    public function test_a_namespace_without_a_psr4_mapping_is_refused(): void
+    {
+        // A class in "src/" that Composer cannot load would break the service import of the directory.
+        $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething']);
+
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertFileDoesNotExist($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertStringContainsString('is not covered by a PSR-4 prefix in composer.json', self::display($tester));
+    }
+
+    public function test_with_a_directory_a_namespace_without_a_psr4_mapping_is_generated_with_a_warning(): void
+    {
+        $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething', '--dir' => 'lib']);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode());
+        self::assertFileExists($this->projectDir.'/lib/App/Command/DoSomething.php');
+        self::assertStringContainsString('not covered by a PSR-4 prefix', self::display($tester));
+    }
+
+    public function test_generated_code_compiles_and_is_registered_by_attribute(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+
+        foreach (['command' => 'App\\Command\\ShipOrder', 'query' => 'App\\Query\\FindOrder', 'event' => 'App\\Event\\OrderShipped'] as $type => $class) {
+            self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => $type, 'name' => $class])->getStatusCode());
+        }
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'command', 'name' => 'App\\Command\\CancelOrder', '--handler' => 'App\\Handler\\CancelOrder'])->getStatusCode());
+
+        $script = <<<'PHP'
+            require $argv[1];
+            spl_autoload_register(static function (string $class) use ($argv): void {
+                $file = $argv[2].'/src/'.str_replace(['App\\', '\\'], ['', '/'], $class).'.php';
+                if (is_file($file)) {
+                    require $file;
+                }
+            });
+            $checks = [
+                ['App\Command\ShipOrderHandler', 'App\Command\ShipOrder', SomeWork\CqrsBundle\Attribute\AsCommandHandler::class, 'command'],
+                ['App\Query\FindOrderHandler', 'App\Query\FindOrder', SomeWork\CqrsBundle\Attribute\AsQueryHandler::class, 'query'],
+                ['App\Event\OrderShippedHandler', 'App\Event\OrderShipped', SomeWork\CqrsBundle\Attribute\AsEventHandler::class, 'event'],
+                ['App\Handler\CancelOrder', 'App\Command\CancelOrder', SomeWork\CqrsBundle\Attribute\AsCommandHandler::class, 'command'],
+            ];
+            foreach ($checks as [$handlerClass, $messageClass, $attributeClass, $property]) {
+                $attribute = (new ReflectionClass($handlerClass))->getAttributes($attributeClass)[0]->newInstance();
+                if ($attribute->{$property} !== $messageClass) {
+                    throw new LogicException($handlerClass.' is registered for '.$attribute->{$property});
+                }
+                try {
+                    (new $handlerClass())(new $messageClass('42'));
+                } catch (LogicException $exception) {
+                    if ('query' !== $property) {
+                        throw $exception;
+                    }
+                }
+            }
+            echo 'OK';
+            PHP;
+
+        $command = implode(' ', [PHP_BINARY, '-r', escapeshellarg($script), escapeshellarg(dirname(__DIR__, 2).'/vendor/autoload.php'), escapeshellarg($this->projectDir)]);
+        exec($command.' 2>&1', $output, $exitCode);
+
+        self::assertSame(0, $exitCode, implode("\n", $output));
+        self::assertSame(['OK'], $output);
+    }
+
+    public function test_names_that_clash_with_imports_still_compile(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'command', 'name' => 'App\\Messaging\\Command', '--handler' => 'App\\Handler\\AsCommandHandler'])->getStatusCode());
+        self::assertSame(SymfonyCommand::SUCCESS, $this->execute(['type' => 'event', 'name' => 'App\\Messaging\\Event'])->getStatusCode());
+
+        self::assertStringContainsString('use SomeWork\\CqrsBundle\\Contract\\Command as CommandContract;', $this->read('src/Messaging/Command.php'));
+        self::assertStringContainsString('#[AsCommandHandlerAttribute(Command::class)]', $this->read('src/Handler/AsCommandHandler.php'));
+
+        $script = <<<'PHP'
+            require $argv[1];
+            foreach (['src/Messaging/Command.php', 'src/Messaging/Event.php', 'src/Handler/AsCommandHandler.php', 'src/Messaging/EventHandler.php'] as $file) {
+                require $argv[2].'/'.$file;
+            }
+            $attribute = (new ReflectionClass('App\Handler\AsCommandHandler'))->getAttributes()[0]->newInstance();
+            echo $attribute->command;
+            PHP;
+
+        $command = implode(' ', [PHP_BINARY, '-r', escapeshellarg($script), escapeshellarg(dirname(__DIR__, 2).'/vendor/autoload.php'), escapeshellarg($this->projectDir)]);
+        exec($command.' 2>&1', $output, $exitCode);
+
+        self::assertSame(0, $exitCode, implode("\n", $output));
+        self::assertSame(['App\\Messaging\\Command'], $output);
+    }
+
+    public function test_refuses_to_write_through_a_symlinked_file(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+        $outside = sys_get_temp_dir().'/cqrs_bundle_victim_'.uniqid().'.php';
+        file_put_contents($outside, 'original');
+        mkdir($this->projectDir.'/src/Command', 0o777, true);
+        (new Filesystem())->symlink($outside, $this->projectDir.'/src/Command/DoSomething.php');
+
+        try {
+            $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--force' => true]);
+
+            self::assertSame(SymfonyCommand::FAILURE, $tester->getStatusCode());
+            self::assertStringContainsString('is a symbolic link', self::display($tester));
+            self::assertSame('original', file_get_contents($outside));
+        } finally {
+            (new Filesystem())->remove($outside);
+        }
+    }
+
+    public function test_aliases_the_message_when_its_short_name_clashes_with_the_handler(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+
+        $this->execute(['type' => 'command', 'name' => 'App\\Command\\CancelOrder', '--handler' => 'App\\Handler\\CancelOrder']);
+
+        $handler = $this->read('src/Handler/CancelOrder.php');
+        self::assertStringContainsString('use App\\Command\\CancelOrder as CancelOrderMessage;', $handler);
+        self::assertStringContainsString('#[AsCommandHandler(CancelOrderMessage::class)]', $handler);
+        self::assertStringContainsString('public function __invoke(CancelOrderMessage $command): mixed', $handler);
+    }
+
+    public function test_query_and_event_handler_signatures(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+
+        $this->execute(['type' => 'query', 'name' => 'App\\Query\\FindSomething', '--handler' => 'App\\Handler\\FindSomethingHandler']);
+        $this->execute(['type' => 'event', 'name' => 'App\\Event\\SomethingHappened']);
+
+        $queryHandler = $this->read('src/Handler/FindSomethingHandler.php');
+        // Imports in alphabetical order, as coding standards expect.
+        self::assertStringContainsString("use App\\Query\\FindSomething;\nuse SomeWork\\CqrsBundle\\Attribute\\AsQueryHandler;", $queryHandler);
+        self::assertStringContainsString('#[AsQueryHandler(FindSomething::class)]', $queryHandler);
+        self::assertStringContainsString('public function __invoke(FindSomething $query): mixed', $queryHandler);
+        self::assertStringContainsString(" * @psalm-immutable\n * TODO: Replace mixed with the result type of the handler.\n *\n * @implements Query<mixed>\n */\nfinal class FindSomething implements Query", $this->read('src/Query/FindSomething.php'));
+
+        $eventHandler = $this->read('src/Event/SomethingHappenedHandler.php');
+        self::assertStringContainsString('#[AsEventHandler(SomethingHappened::class)]', $eventHandler);
+        self::assertStringContainsString('public function __invoke(SomethingHappened $event): void', $eventHandler);
+        self::assertStringContainsString('final class SomethingHappened implements Event', $this->read('src/Event/SomethingHappened.php'));
+    }
+
+    public function test_writes_nothing_when_one_of_the_files_exists(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+        mkdir($this->projectDir.'/src/Command', 0o777, true);
+        file_put_contents($this->projectDir.'/src/Command/DoSomethingHandler.php', 'existing');
+
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething']);
+
+        self::assertSame(SymfonyCommand::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('File "src/Command/DoSomethingHandler.php" already exists. Use --force to overwrite.', self::display($tester));
+        self::assertFileDoesNotExist($this->projectDir.'/src/Command/DoSomething.php');
+        self::assertSame('existing', $this->read('src/Command/DoSomethingHandler.php'));
+    }
+
+    public function test_force_overwrites_existing_files(): void
+    {
+        $this->writeComposerJson(['App\\' => 'src/']);
+        mkdir($this->projectDir.'/src/Command', 0o777, true);
+        file_put_contents($this->projectDir.'/src/Command/DoSomething.php', 'old content');
+
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--force' => true]);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('final class DoSomething implements Command', $this->read('src/Command/DoSomething.php'));
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function invalidClassNames(): iterable
+    {
+        yield 'no namespace' => ['DoSomething', 'not a valid fully-qualified class name'];
+        yield 'parent segment' => ['App\\..\\..\\Evil', 'not a valid fully-qualified class name'];
+        yield 'slashes' => ['App/Command/DoSomething', 'not a valid fully-qualified class name'];
+        yield 'trailing separator' => ['App\\Command\\', 'not a valid fully-qualified class name'];
+        yield 'trailing newline' => ["App\\Command\\DoSomething\n", 'not a valid fully-qualified class name'];
+        yield 'reserved word' => ['App\\Command\\List', '"List" is a reserved word'];
+    }
+
+    #[DataProvider('invalidClassNames')]
+    public function test_rejects_invalid_class_names(string $class, string $error): void
+    {
+        $tester = $this->execute(['type' => 'command', 'name' => $class]);
+
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString($error, self::display($tester));
+        self::assertSame([], (array) glob($this->projectDir.'/src/*'));
+    }
+
+    public function test_rejects_an_invalid_handler_class_or_the_message_class_as_handler(): void
+    {
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--handler' => 'Handler']);
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--handler' => '\\App\\Command\\DoSomething']);
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('The handler class must differ from the message class.', self::display($tester));
+    }
+
+    public function test_rejects_a_dir_outside_of_the_project(): void
+    {
+        foreach (['../outside', $this->projectDir.'/src/../../outside', '/tmp'] as $dir) {
+            $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => $dir]);
+
+            self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode(), $dir);
+            self::assertStringContainsString('must be within the project directory', self::display($tester));
+        }
+    }
+
+    public function test_rejects_a_sibling_directory_sharing_the_project_prefix(): void
+    {
+        $sibling = $this->projectDir.'-sibling';
+        mkdir($sibling);
+
+        try {
+            $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => $sibling]);
+
+            self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+            self::assertSame([], (array) glob($sibling.'/*'));
+        } finally {
+            (new Filesystem())->remove($sibling);
+        }
+    }
+
+    public function test_rejects_a_symlink_pointing_outside_of_the_project(): void
+    {
+        $outside = sys_get_temp_dir().'/cqrs_bundle_outside_'.uniqid();
+        mkdir($outside);
+        (new Filesystem())->symlink($outside, $this->projectDir.'/link');
+
+        try {
+            $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => 'link']);
+
+            self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+            self::assertSame([], (array) glob($outside.'/*'));
+        } finally {
+            (new Filesystem())->remove($outside);
+        }
     }
 
     public function test_rejects_null_byte_in_path(): void
     {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => "src/\0exploit"]);
 
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-            '--dir' => $this->projectDir."/src/\0exploit",
-        ]);
-
-        self::assertSame(SymfonyCommand::FAILURE, $exitCode);
-        self::assertStringContainsString('invalid characters', $tester->getDisplay());
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('invalid characters', self::display($tester));
     }
 
-    public function test_throws_when_directory_not_writable(): void
+    public function test_reports_a_directory_that_cannot_be_created(): void
     {
-        if (0 === posix_getuid()) {
-            self::markTestSkipped('Cannot test permission denial as root.');
-        }
+        $this->writeComposerJson(['App\\' => 'src/']);
+        file_put_contents($this->projectDir.'/src/Command', 'a file, not a directory');
 
-        $readOnlyDir = $this->projectDir.'/readonly';
-        @mkdir($readOnlyDir, 0o777, true);
-        chmod($readOnlyDir, 0o555);
+        $tester = $this->execute(['type' => 'command', 'name' => 'App\\Command\\DoSomething', '--dir' => 'src']);
 
-        if (is_writable($readOnlyDir)) {
-            chmod($readOnlyDir, 0o775);
-            self::markTestSkipped('Filesystem does not enforce directory permissions.');
-        }
-
-        try {
-            $kernel = $this->createKernelStub();
-            $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-            $exitCode = $tester->execute([
-                'type' => 'command',
-                'name' => 'App\\Command\\DoSomething',
-                '--dir' => $readOnlyDir.'/nested',
-            ]);
-
-            self::assertSame(SymfonyCommand::FAILURE, $exitCode);
-            self::assertStringContainsString('Unable to create directory', $tester->getDisplay());
-        } finally {
-            chmod($readOnlyDir, 0o775);
-        }
-    }
-
-    public function test_generates_with_custom_dir_within_project(): void
-    {
-        $customDir = $this->projectDir.'/custom';
-        mkdir($customDir, 0o777, true);
-
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-            '--dir' => $customDir,
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-        self::assertFileExists($customDir.'/App/Command/DoSomething.php');
-    }
-
-    public function test_command_handler_has_mixed_return_type(): void
-    {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $handlerContents = file_get_contents($this->projectDir.'/src/App/Command/DoSomethingHandler.php');
-        self::assertIsString($handlerContents);
-        self::assertStringContainsString('public function __invoke(DoSomething $message): mixed', $handlerContents);
-        self::assertStringContainsString('return null;', $handlerContents);
-        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
-
-        $messageContents = file_get_contents($this->projectDir.'/src/App/Command/DoSomething.php');
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('public readonly string $id,', $messageContents);
-        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
-    }
-
-    public function test_query_handler_has_mixed_return_type(): void
-    {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'query',
-            'name' => 'App\\Query\\FindSomething',
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $handlerContents = file_get_contents($this->projectDir.'/src/App/Query/FindSomethingHandler.php');
-        self::assertIsString($handlerContents);
-        self::assertStringContainsString('public function __invoke(FindSomething $message): mixed', $handlerContents);
-        self::assertStringContainsString('Not implemented: replace with query result', $handlerContents);
-        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
-
-        $messageContents = file_get_contents($this->projectDir.'/src/App/Query/FindSomething.php');
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('public readonly string $id,', $messageContents);
-        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
-    }
-
-    public function test_event_handler_has_void_return_type(): void
-    {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'event',
-            'name' => 'App\\Event\\SomethingHappened',
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $handlerContents = file_get_contents($this->projectDir.'/src/App/Event/SomethingHappenedHandler.php');
-        self::assertIsString($handlerContents);
-        self::assertStringContainsString('public function __invoke(SomethingHappened $message): void', $handlerContents);
-        self::assertStringNotContainsString('return null', $handlerContents);
-        self::assertStringContainsString('React to the event', $handlerContents);
-        self::assertStringContainsString('// TODO: Inject dependencies.', $handlerContents);
-
-        $messageContents = file_get_contents($this->projectDir.'/src/App/Event/SomethingHappened.php');
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('public readonly string $id,', $messageContents);
-        self::assertStringContainsString('// TODO: Add message properties.', $messageContents);
-    }
-
-    public function test_force_flag_overwrites_existing_files(): void
-    {
-        $kernel = $this->createKernelStub();
-        $messagePath = $this->projectDir.'/src/App/Command/DoSomething.php';
-        $handlerPath = $this->projectDir.'/src/App/Command/DoSomethingHandler.php';
-        mkdir(dirname($messagePath), 0o777, true);
-        file_put_contents($messagePath, 'old content');
-        file_put_contents($handlerPath, 'old content');
-
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-            '--force' => true,
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $messageContents = file_get_contents($messagePath);
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('final class DoSomething implements Command', $messageContents);
-        self::assertStringNotContainsString('old content', $messageContents);
-    }
-
-    public function test_custom_handler_class_name(): void
-    {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'command',
-            'name' => 'App\\Command\\DoSomething',
-            '--handler' => 'App\\Handler\\CustomDoSomethingHandler',
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $handlerPath = $this->projectDir.'/src/App/Handler/CustomDoSomethingHandler.php';
-        self::assertFileExists($handlerPath);
-
-        $handlerContents = file_get_contents($handlerPath);
-        self::assertIsString($handlerContents);
-        self::assertStringContainsString('final class CustomDoSomethingHandler implements CommandHandler', $handlerContents);
-        self::assertStringContainsString('public function __invoke(DoSomething $message): mixed', $handlerContents);
-    }
-
-    public function test_generates_query_message_with_correct_interface(): void
-    {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
-
-        $exitCode = $tester->execute([
-            'type' => 'query',
-            'name' => 'App\\Query\\FindSomething',
-        ]);
-
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-
-        $messagePath = $this->projectDir.'/src/App/Query/FindSomething.php';
-        self::assertFileExists($messagePath);
-
-        $messageContents = file_get_contents($messagePath);
-        self::assertIsString($messageContents);
-        self::assertStringContainsString('final class FindSomething implements Query', $messageContents);
-        self::assertStringContainsString('use SomeWork\CqrsBundle\Contract\Query;', $messageContents);
+        self::assertSame(SymfonyCommand::FAILURE, $tester->getStatusCode());
+        self::assertStringContainsString('Unable to create directory', self::display($tester));
     }
 
     public function test_invalid_type_displays_error(): void
     {
-        $kernel = $this->createKernelStub();
-        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        $tester = $this->execute(['type' => 'unknown', 'name' => 'App\\Message']);
 
-        $exitCode = $tester->execute([
-            'type' => 'unknown',
-            'name' => 'App\\Message',
-        ]);
-
-        self::assertSame(SymfonyCommand::FAILURE, $exitCode);
-        self::assertStringContainsString('Supported types are: command, query, event.', $tester->getDisplay());
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString('Supported types are: command, query, event.', self::display($tester));
     }
 
-    private function createKernelStub(): KernelInterface
+    /**
+     * @param array<string, string|bool> $input
+     */
+    private function execute(array $input): CommandTester
     {
-        $kernel = $this->createMock(KernelInterface::class);
+        $kernel = self::createStub(KernelInterface::class);
         $kernel->method('getProjectDir')->willReturn($this->projectDir);
 
-        return $kernel;
+        $tester = new CommandTester(new GenerateMessageCommand($kernel));
+        $tester->execute($input);
+
+        return $tester;
     }
 
-    private function removeDirectory(string $directory): void
+    /**
+     * @param array<string, string|list<string>> $psr4
+     * @param array<string, string|list<string>> $psr4Dev
+     */
+    private function writeComposerJson(array $psr4, array $psr4Dev = []): void
     {
-        if (!is_dir($directory)) {
-            return;
-        }
+        file_put_contents($this->projectDir.'/composer.json', json_encode([
+            'autoload' => ['psr-4' => $psr4],
+            'autoload-dev' => ['psr-4' => $psr4Dev],
+        ], JSON_THROW_ON_ERROR));
+    }
 
-        $files = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST,
-        );
+    private function read(string $relativePath): string
+    {
+        $contents = file_get_contents($this->projectDir.'/'.$relativePath);
+        self::assertIsString($contents);
 
-        foreach ($files as $file) {
-            if ($file->isDir()) {
-                rmdir($file->getPathname());
-            } else {
-                unlink($file->getPathname());
-            }
-        }
+        return $contents;
+    }
 
-        rmdir($directory);
+    /**
+     * SymfonyStyle wraps long lines; collapse whitespace so assertions do not depend on the terminal width.
+     */
+    private static function display(CommandTester $tester): string
+    {
+        return (string) preg_replace('/\s+/', ' ', $tester->getDisplay());
     }
 }

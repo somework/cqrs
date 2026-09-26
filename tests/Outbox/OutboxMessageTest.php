@@ -4,209 +4,120 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
+use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
-use ReflectionClass;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
-use function sprintf;
+use function hexdec;
+use function json_decode;
+use function microtime;
+use function sort;
+use function str_replace;
+use function substr;
+use function usleep;
 
 #[CoversClass(OutboxMessage::class)]
 final class OutboxMessageTest extends TestCase
 {
-    public function test_construct_with_all_properties(): void
+    public function test_exposes_its_properties(): void
     {
-        $createdAt = new \DateTimeImmutable('2024-01-01');
+        $createdAt = new DateTimeImmutable('2026-01-01 10:00:00');
+        $message = new OutboxMessage('id-1', 'body', '{}', $createdAt, 'async');
 
-        $message = new OutboxMessage(
-            id: 'msg-1',
-            body: '{"data":1}',
-            headers: '{"type":"App\\\\Cmd"}',
-            createdAt: $createdAt,
-            transportName: 'async',
-        );
-
-        self::assertSame('msg-1', $message->id);
-        self::assertSame('{"data":1}', $message->body);
-        self::assertSame('{"type":"App\\\\Cmd"}', $message->headers);
+        self::assertSame('id-1', $message->id);
+        self::assertSame('body', $message->body);
+        self::assertSame('{}', $message->headers);
         self::assertSame($createdAt, $message->createdAt);
         self::assertSame('async', $message->transportName);
+        self::assertNull((new OutboxMessage('id-2', 'body', '{}', $createdAt))->transportName);
     }
 
-    public function test_construct_with_default_transport_name(): void
+    public function test_rejects_an_empty_id_or_body(): void
     {
-        $message = new OutboxMessage(
-            id: 'msg-2',
-            body: '{}',
-            headers: '{}',
-            createdAt: new \DateTimeImmutable(),
-        );
-
-        self::assertNull($message->transportName);
-    }
-
-    public function test_is_immutable(): void
-    {
-        $reflection = new ReflectionClass(OutboxMessage::class);
-
-        foreach ($reflection->getProperties() as $property) {
-            self::assertTrue(
-                $property->isReadOnly(),
-                sprintf('Property "%s" must be readonly.', $property->getName()),
-            );
+        foreach ([['', 'body'], ['id', '']] as [$id, $body]) {
+            try {
+                new OutboxMessage($id, $body, '{}', new DateTimeImmutable());
+                self::fail('Expected an InvalidArgumentException.');
+            } catch (\InvalidArgumentException $exception) {
+                self::assertStringContainsString('cannot be empty', $exception->getMessage());
+            }
         }
     }
 
-    public function test_interface_exists(): void
+    public function test_from_envelope_round_trips_through_the_serializer(): void
     {
-        self::assertTrue(interface_exists(OutboxStorage::class));
+        $serializer = new PhpSerializer();
+        $envelope = new Envelope(new CreateTaskCommand('1', 'Write docs'), [new MessageMetadataStamp('corr-1')]);
+
+        $message = OutboxMessage::fromEnvelope($envelope, $serializer, 'async', new DateTimeImmutable('2026-01-01'));
+        $decoded = $serializer->decode(['body' => $message->body, 'headers' => json_decode($message->headers, true)]);
+
+        $decodedMessage = $decoded->getMessage();
+        self::assertInstanceOf(CreateTaskCommand::class, $decodedMessage);
+        self::assertSame(['1', 'Write docs'], [$decodedMessage->id, $decodedMessage->name]);
+        self::assertSame('corr-1', $decoded->last(MessageMetadataStamp::class)?->getCorrelationId());
+        self::assertSame('async', $message->transportName);
+        self::assertSame('2026-01-01 00:00:00', $message->createdAt->format('Y-m-d H:i:s'));
+        // PhpSerializer writes no headers: the class is recorded for the listing and the logs.
+        self::assertSame(['type' => CreateTaskCommand::class], json_decode($message->headers, true));
     }
 
-    public function test_interface_declares_store(): void
+    public function test_generated_ids_are_time_ordered_uuid_v7(): void
     {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-        $method = $reflection->getMethod('store');
-        $parameters = $method->getParameters();
+        $ids = [];
+        for ($i = 0; $i < 200; ++$i) {
+            $ids[] = OutboxMessage::fromEnvelope(new Envelope(new \stdClass()), new PhpSerializer())->id;
+        }
 
-        self::assertCount(1, $parameters);
-        self::assertSame('message', $parameters[0]->getName());
-        $paramType = $parameters[0]->getType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $paramType);
-        self::assertSame(OutboxMessage::class, $paramType->getName());
+        $sorted = $ids;
+        sort($sorted);
+
+        self::assertSame($sorted, $ids);
+        foreach ($ids as $id) {
+            self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $id);
+        }
     }
 
-    public function test_interface_declares_fetch_unpublished(): void
+    public function test_a_generated_id_is_a_uuid_v7_carrying_the_millisecond_of_its_creation(): void
     {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-        $method = $reflection->getMethod('fetchUnpublished');
-        $parameters = $method->getParameters();
+        $before = (int) (microtime(true) * 1000);
+        $id = self::generateId();
+        $after = (int) (microtime(true) * 1000);
 
-        self::assertCount(1, $parameters);
-        self::assertSame('limit', $parameters[0]->getName());
-        $paramType = $parameters[0]->getType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $paramType);
-        self::assertSame('int', $paramType->getName());
+        $hex = str_replace('-', '', $id);
+        self::assertSame('7', $hex[12], 'Version 7.');
+        self::assertSame(0x8, hexdec($hex[16]) & 0xC, 'RFC 9562 variant (bits 10).');
+        // unix_ts_ms: the first 48 bits. Ids of other processes are ordered by it, so it must be
+        // the current time (the per-process counter may move it at most a millisecond ahead).
+        $milliseconds = hexdec(substr($hex, 0, 12));
+        self::assertGreaterThanOrEqual($before, $milliseconds);
+        self::assertLessThanOrEqual($after + 1, $milliseconds);
     }
 
-    public function test_interface_declares_mark_published(): void
+    public function test_ids_generated_in_later_milliseconds_sort_after_earlier_ones(): void
     {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-        $method = $reflection->getMethod('markPublished');
-        $parameters = $method->getParameters();
+        $ids = [];
+        $milliseconds = [];
+        for ($i = 0; $i < 3; ++$i) {
+            $ids[] = $id = self::generateId();
+            $milliseconds[] = hexdec(substr(str_replace('-', '', $id), 0, 12));
+            usleep(2000);
+        }
 
-        self::assertCount(1, $parameters);
-        self::assertSame('id', $parameters[0]->getName());
-        $paramType = $parameters[0]->getType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $paramType);
-        self::assertSame('string', $paramType->getName());
+        self::assertGreaterThan($milliseconds[0], $milliseconds[1]);
+        self::assertGreaterThan($milliseconds[1], $milliseconds[2]);
+        $sorted = $ids;
+        sort($sorted);
+        self::assertSame($ids, $sorted);
     }
 
-    public function test_construct_with_empty_body_and_headers(): void
+    private static function generateId(): string
     {
-        $message = new OutboxMessage(
-            id: 'msg-empty',
-            body: '',
-            headers: '',
-            createdAt: new \DateTimeImmutable(),
-        );
-
-        self::assertSame('', $message->body);
-        self::assertSame('', $message->headers);
-    }
-
-    public function test_construct_preserves_exact_json_content(): void
-    {
-        $body = '{"nested":{"key":"value","arr":[1,2,3]},"unicode":"ñ"}';
-        $headers = '{"type":"App\\\\Event\\\\UserCreated","Content-Type":"application/json"}';
-
-        $message = new OutboxMessage(
-            id: 'msg-json',
-            body: $body,
-            headers: $headers,
-            createdAt: new \DateTimeImmutable(),
-            transportName: 'async',
-        );
-
-        self::assertSame($body, $message->body);
-        self::assertSame($headers, $message->headers);
-    }
-
-    public function test_two_messages_with_same_data_are_independent(): void
-    {
-        $createdAt = new \DateTimeImmutable();
-
-        $msg1 = new OutboxMessage('id-1', '{}', '{}', $createdAt, 'async');
-        $msg2 = new OutboxMessage('id-2', '{}', '{}', $createdAt, 'async');
-
-        self::assertNotSame($msg1, $msg2);
-        self::assertSame('id-1', $msg1->id);
-        self::assertSame('id-2', $msg2->id);
-    }
-
-    public function test_is_final_class(): void
-    {
-        $reflection = new ReflectionClass(OutboxMessage::class);
-        self::assertTrue($reflection->isFinal());
-    }
-
-    public function test_has_exactly_five_properties(): void
-    {
-        $reflection = new ReflectionClass(OutboxMessage::class);
-        self::assertCount(5, $reflection->getProperties());
-    }
-
-    public function test_interface_return_types(): void
-    {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-
-        $store = $reflection->getMethod('store');
-        $storeReturnType = $store->getReturnType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $storeReturnType);
-        self::assertSame('void', $storeReturnType->getName());
-
-        $fetch = $reflection->getMethod('fetchUnpublished');
-        $fetchReturnType = $fetch->getReturnType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $fetchReturnType);
-        self::assertSame('array', $fetchReturnType->getName());
-
-        $mark = $reflection->getMethod('markPublished');
-        $markReturnType = $mark->getReturnType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $markReturnType);
-        self::assertSame('void', $markReturnType->getName());
-    }
-
-    public function test_interface_declares_exactly_three_methods(): void
-    {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-
-        self::assertCount(3, $reflection->getMethods());
-    }
-
-    public function test_created_at_property_type_is_datetime_immutable(): void
-    {
-        $reflection = new ReflectionClass(OutboxMessage::class);
-        $property = $reflection->getProperty('createdAt');
-
-        $propertyType = $property->getType();
-        self::assertInstanceOf(\ReflectionNamedType::class, $propertyType);
-        self::assertSame(\DateTimeImmutable::class, $propertyType->getName());
-    }
-
-    public function test_transport_name_property_is_nullable(): void
-    {
-        $reflection = new ReflectionClass(OutboxMessage::class);
-        $property = $reflection->getProperty('transportName');
-
-        self::assertTrue($property->getType()?->allowsNull());
-    }
-
-    public function test_fetch_unpublished_limit_parameter_has_no_default(): void
-    {
-        $reflection = new ReflectionClass(OutboxStorage::class);
-        $method = $reflection->getMethod('fetchUnpublished');
-        $param = $method->getParameters()[0];
-
-        self::assertFalse($param->isDefaultValueAvailable());
+        return OutboxMessage::fromEnvelope(new Envelope(new \stdClass()), new PhpSerializer())->id;
     }
 }

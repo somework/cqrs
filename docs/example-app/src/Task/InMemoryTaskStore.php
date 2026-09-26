@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Task;
 
+use function sprintf;
+
 /**
  * Simple in-memory task storage for demonstration purposes.
  *
@@ -27,7 +29,7 @@ final class InMemoryTaskStore
     public function complete(string $id): void
     {
         if (!isset($this->tasks[$id])) {
-            throw new \RuntimeException(\sprintf('Task "%s" not found.', $id));
+            throw new \RuntimeException(sprintf('Task "%s" not found.', $id));
         }
 
         $this->tasks[$id] = [

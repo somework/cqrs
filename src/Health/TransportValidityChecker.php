@@ -4,39 +4,40 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Health;
 
-use Symfony\Component\DependencyInjection\Attribute\Autowire;
-use Symfony\Component\DependencyInjection\ContainerInterface;
+use Symfony\Contracts\Service\ServiceProviderInterface;
 
+use function array_keys;
 use function sprintf;
 
-/** @internal */
+/**
+ * Instantiates every Messenger transport to verify that its DSN and options are valid.
+ *
+ * Creating a transport does not open a connection for the built-in transports, so this
+ * check does not require the broker to be reachable.
+ *
+ * @internal
+ */
 final class TransportValidityChecker implements HealthChecker
 {
     /**
-     * @param list<string> $transportNames
+     * @param ServiceProviderInterface<object> $transports transport services keyed by transport name
      */
     public function __construct(
-        #[Autowire(service: 'service_container')]
-        private readonly ContainerInterface $container,
-        #[Autowire(param: 'somework_cqrs.transport_names')]
-        private readonly array $transportNames,
+        private readonly ServiceProviderInterface $transports,
     ) {
     }
 
     /** @return list<CheckResult> */
     public function check(): array
     {
-        if ([] === $this->transportNames) {
-            return [];
-        }
-
         $results = [];
-        foreach ($this->transportNames as $transportName) {
-            $serviceId = sprintf('messenger.transport.%s', $transportName);
-
-            $results[] = $this->container->has($serviceId)
-                ? new CheckResult(CheckSeverity::OK, 'transport', sprintf('Transport "%s" is valid', $transportName))
-                : new CheckResult(CheckSeverity::CRITICAL, 'transport', sprintf('Transport "%s" is not valid — service "%s" not found in container', $transportName, $serviceId));
+        foreach (array_keys($this->transports->getProvidedServices()) as $transportName) {
+            try {
+                $this->transports->get($transportName);
+                $results[] = new CheckResult(CheckSeverity::OK, 'transport', sprintf('Transport "%s" can be created (the connection is not tested)', $transportName));
+            } catch (\Throwable $exception) {
+                $results[] = new CheckResult(CheckSeverity::CRITICAL, 'transport', sprintf('Transport "%s" cannot be created: %s', $transportName, $exception->getMessage()));
+            }
         }
 
         return $results;

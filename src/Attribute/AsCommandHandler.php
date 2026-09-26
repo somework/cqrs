@@ -15,7 +15,7 @@ use Attribute;
 final class AsCommandHandler
 {
     /**
-     * Relaxed from class-string<Command> to support attribute-only handlers (DX-02).
+     * Relaxed from class-string<Command> to support attribute-only handlers.
      *
      * @param class-string          $command
      * @param non-empty-string|null $bus

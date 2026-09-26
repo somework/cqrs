@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -41,6 +42,18 @@ final class RetryPolicyStampDecider implements MessageTypeAwareStampDecider
 
         $policy = $this->retryPolicies->resolveFor($message);
 
-        return [...$stamps, ...$policy->getStamps($message, $mode)];
+        // Messenger reads the last stamp of a class: a policy stamp must not override one the caller passed.
+        $callerStampClasses = [];
+        foreach ($stamps as $stamp) {
+            $callerStampClasses[$stamp::class] = true;
+        }
+
+        foreach ($policy->getStamps($message, $mode) as $stamp) {
+            if (!isset($callerStampClasses[$stamp::class])) {
+                $stamps[] = $stamp;
+            }
+        }
+
+        return $stamps;
     }
 }

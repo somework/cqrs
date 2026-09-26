@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
- * Adds serializer stamps for supported messages.
+ * Adds serializer stamps for supported messages unless the caller already passed one.
  *
  * @internal
  */
@@ -37,6 +39,13 @@ final class MessageSerializerStampDecider implements MessageTypeAwareStampDecide
     {
         if (!$message instanceof $this->messageType) {
             return $stamps;
+        }
+
+        // A serializer chosen by the caller wins.
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof SerializerStamp) {
+                return $stamps;
+            }
         }
 
         $serializer = $this->serializers->resolveFor($message);

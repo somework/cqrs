@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainQuery;
 
 /**
  * Handler using only the attribute, no QueryHandler interface.
- * Used to test attribute-only handler discovery (DX-02).
+ * Used to test attribute-only handler discovery.
  */
 #[AsQueryHandler(query: PlainQuery::class)]
 final class AttributeOnlyQueryHandler

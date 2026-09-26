@@ -10,6 +10,7 @@ use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Helper\Table;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
 use function implode;
 use function sprintf;
@@ -19,7 +20,7 @@ use const PHP_EOL;
 /** @internal */
 #[AsCommand(
     name: 'somework:cqrs:debug-transports',
-    description: 'Inspect Messenger transport routing for CQRS messages.',
+    description: 'Show the transports configured for CQRS messages under "somework_cqrs.transports".',
 )]
 final class DebugTransportsCommand extends Command
 {
@@ -35,6 +36,7 @@ final class DebugTransportsCommand extends Command
     ];
 
     public function __construct(
+        #[Autowire(service: 'somework_cqrs.transport_mapping_provider')]
         private readonly TransportMappingProvider $mappingProvider,
     ) {
         parent::__construct();

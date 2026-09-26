@@ -14,14 +14,16 @@ paths:
 
 Choose the right interface:
 - **`MessageTypeAwareStampDecider`** — when the decider only applies to specific message types (Command, Query, Event). Implement `messageTypes()` returning the applicable contract classes. This is called once at construction, not per-dispatch. Most deciders use this.
-- **`StampDecider`** — when the decider applies to all messages regardless of type. Only `DispatchAfterCurrentBusStampDecider` uses this currently.
+- **`StampDecider`** — when the decider applies to all messages regardless of type (`CausationIdStampDecider`, `IdempotencyStampDecider`, `DispatchAfterCurrentBusStampDecider`).
 
 The `decide(object $message, DispatchMode $mode, array $stamps): array` method receives the current stamp list and MUST return the updated list. Four patterns exist in the codebase:
 
 1. **Append-only** — Spread new stamps onto the array: `[...$stamps, ...$newStamps]` (see `RetryPolicyStampDecider`)
 2. **Conditional append** — Check if the resolver returns a stamp, append only if non-null (see `MessageSerializerStampDecider`)
-3. **Early-exit-if-present** — Check if a stamp type already exists in the array, return unchanged if so (see `MessageTransportStampDecider`)
-4. **Filter + append** — Remove existing stamps of a type, conditionally add a fresh one (see `DispatchAfterCurrentBusStampDecider`)
+3. **Early-exit-if-present** — Check if a stamp type already exists in the array, return unchanged if so (see `MessageTransportStampDecider`, `MessageMetadataStampDecider`, `DispatchAfterCurrentBusStampDecider`)
+4. **Enrich the last stamp** — Replace the last stamp of a type with an enriched copy (see `CausationIdStampDecider`)
+
+Stamps passed by the caller always win: never remove, replace or duplicate a stamp the caller supplied.
 
 Never mutate the input array in place — always return a new array. `StampsDecider` calls `array_values()` on the final result to ensure sequential keys.
 
@@ -31,19 +33,24 @@ Deciders are sorted by priority via `TaggedIteratorArgument` (higher = earlier).
 
 | Priority | Purpose | Example |
 |----------|---------|---------|
+| 225 | Rate limiting (fails fast) | `RateLimitStampDecider` |
 | 200 | Retry policies | `RetryPolicyStampDecider` |
-| 175 | Transport routing | `MessageTransportStampDecider` |
+| 175 | Transport routing, including the `#[Asynchronous]` transport | `MessageTransportStampDecider` |
 | 150 | Serialization | `MessageSerializerStampDecider` |
 | 125 | Metadata | `MessageMetadataStampDecider` |
-| 0 | Cross-cutting (runs last) | `DispatchAfterCurrentBusStampDecider` |
+| 110 | Event sequence | `SequenceStampDecider` |
+| 100 | Causation id (needs the metadata stamp) | `CausationIdStampDecider` |
+| 50 | Idempotency | `IdempotencyStampDecider` |
+| 0 | Default priority of custom (autoconfigured) deciders | — |
+| -10 | Cross-cutting (runs last) | `DispatchAfterCurrentBusStampDecider` |
 
-Place new deciders in the appropriate band. If a decider depends on stamps from an earlier stage, give it a lower priority. Cross-cutting deciders that should always run last use priority 0.
+Place new deciders in the appropriate band. If a decider depends on stamps from an earlier stage, give it a lower priority. Cross-cutting deciders that must run after custom deciders use a negative priority (`DispatchAfterCurrentBusStampDecider` uses -10).
 
 ## Registration
 
 Register new deciders in `StampsDeciderRegistrar` following the existing pattern:
 1. Create a `Definition` with the decider class and its constructor arguments (typically a resolver reference from an earlier registrar)
-2. Tag it with `somework_cqrs.dispatch_stamp_decider` including `priority` and optionally `message_types` attributes
+2. Tag it with `somework_cqrs.dispatch_stamp_decider` and a `priority` attribute (message types are declared by `MessageTypeAwareStampDecider::messageTypes()`, not by the tag)
 3. The `StampsDecider` aggregator collects all tagged services automatically via `TaggedIteratorArgument`
 
 Service ID convention: `somework_cqrs.stamp_decider.{type}_{concern}` for type-aware deciders, `somework_cqrs.{concern}_stamp_decider` for generic ones.

@@ -5,15 +5,17 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(RetryPolicyResolver::class)]
 final class RetryPolicyResolverTest extends TestCase
 {
     public function test_returns_default_policy_when_message_not_overridden(): void
@@ -52,6 +54,24 @@ final class RetryPolicyResolverTest extends TestCase
         $policy = $resolver->resolveFor(new CreateTaskCommand('1', 'Test'));
 
         self::assertSame($interfacePolicy, $policy);
+    }
+
+    public function test_resolves_the_policy_once_per_message_class(): void
+    {
+        // Resolution runs on every dispatch: the locator is only asked the first time.
+        $calls = 0;
+        $policy = new NullRetryPolicy();
+        $resolver = new RetryPolicyResolver(new NullRetryPolicy(), new ServiceLocator([
+            CreateTaskCommand::class => static function () use (&$calls, $policy): RetryPolicy {
+                ++$calls;
+
+                return $policy;
+            },
+        ]));
+
+        self::assertSame($policy, $resolver->resolveFor(new CreateTaskCommand('1', 'a')));
+        self::assertSame($policy, $resolver->resolveFor(new CreateTaskCommand('2', 'b')));
+        self::assertSame(1, $calls);
     }
 
     public function test_throws_when_override_is_not_retry_policy(): void

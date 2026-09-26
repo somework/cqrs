@@ -6,11 +6,18 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
- * Injects causationId from CausationIdContext into the MessageMetadataStamp.
+ * Sets the causation id of a metadata stamp passed by the caller while another message is
+ * handled: the message id of the handled message. The caller's correlation id is kept. A copy of
+ * the handled message's own stamp (forwarded, e.g. with an extra added) gets a new message id.
+ *
+ * Stamps of the metadata providers already carry the causation (and the inherited
+ * correlation id), set by MessageMetadataStampDecider; a causation id set by the caller is kept.
  *
  * Runs for all message types (does NOT implement MessageTypeAwareStampDecider).
  * Must be registered at priority lower than metadata deciders (125) so the
@@ -33,19 +40,19 @@ final class CausationIdStampDecider implements StampDecider
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        $parentCorrelationId = $this->causationIdContext->current();
+        $parent = $this->causationIdContext->current();
 
-        if (null === $parentCorrelationId) {
-            $this->logger?->debug('CausationIdStampDecider: no parent correlation ID in context, skipping');
+        if (null === $parent) {
+            $this->logger?->debug('CausationIdStampDecider: no message is being handled, skipping');
 
             return $stamps;
         }
 
+        // Messenger reads the last stamp of a type, so that is the one to enrich.
         $foundIndex = null;
         foreach ($stamps as $index => $stamp) {
             if ($stamp instanceof MessageMetadataStamp) {
                 $foundIndex = $index;
-                break;
             }
         }
 
@@ -55,12 +62,25 @@ final class CausationIdStampDecider implements StampDecider
 
         /** @var MessageMetadataStamp $existingStamp */
         $existingStamp = $stamps[$foundIndex];
-        unset($stamps[$foundIndex]);
-        $stamps[] = $existingStamp->withCausationId($parentCorrelationId);
+
+        // The handled message's own stamp, forwarded (e.g. with an extra added): the child is another
+        // message of the same flow, caused by the handled one.
+        if ($existingStamp->getMessageId() === $parent->getMessageId()) {
+            $stamps[$foundIndex] = new MessageMetadataStamp($existingStamp->getCorrelationId(), $existingStamp->getExtras(), $parent->getMessageId());
+
+            return array_values($stamps);
+        }
+
+        // An explicit causation id set by the caller is kept.
+        if (null !== $existingStamp->getCausationId()) {
+            return $stamps;
+        }
+
+        $stamps[$foundIndex] = $existingStamp->withCausationId($parent->getMessageId());
 
         $this->logger?->debug('CausationIdStampDecider: injected causationId', [
             'message' => $message::class,
-            'causation_id' => $parentCorrelationId,
+            'causation_id' => $parent->getMessageId(),
         ]);
 
         return array_values($stamps);

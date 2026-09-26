@@ -4,23 +4,31 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditedOutboxEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use stdClass;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Attribute\AsMessage;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(MessageTransportStampDecider::class)]
 final class MessageTransportStampDeciderTest extends TestCase
 {
     public function test_appends_transport_names_for_sync_command(): void
@@ -212,16 +220,79 @@ final class MessageTransportStampDeciderTest extends TestCase
         self::assertSame([$existing], $stamps);
     }
 
+    public function test_warns_when_an_async_dispatch_has_no_transport(): void
+    {
+        // Messenger would handle it in the calling process; also for a dispatch deferred until a handler finished.
+        $warnings = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
+            $warnings[] = [$message, $context];
+        });
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+
+        self::assertSame([], $decider->decide(new TaskCreatedEvent('1'), DispatchMode::ASYNC, []));
+        self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::SYNC, []), 'A sync dispatch needs no transport.');
+
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('is dispatched asynchronously, but no transport is configured for it', $warnings[0][0]);
+        self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
+    }
+
+    public function test_warns_that_the_relay_handles_an_outbox_dispatch_without_a_transport(): void
+    {
+        $warnings = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
+            $warnings[] = [$message, $context];
+        });
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+        $store = new StoreInOutboxStamp();
+
+        self::assertSame([$store], $decider->decide(new TaskCreatedEvent('1'), DispatchMode::ASYNC, [$store]));
+
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('is stored in the outbox without a transport, so the relay will handle it synchronously in its own process', $warnings[0][0]);
+        self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
+    }
+
+    public function test_does_not_warn_when_the_routing_sends_an_async_dispatch(): void
+    {
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), ['SomeWork\\CqrsBundle\\Tests\\Fixture\\Message\\*'], $logger);
+
+        self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::ASYNC, []));
+    }
+
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_a_message_routed_by_as_message_keeps_its_routing(): void
+    {
+        // A bare #[Asynchronous] defers to Messenger's routing, #[AsMessage(transport: ...)] included.
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+
+        self::assertSame([], $decider->decide(new AttributeRoutedCommand(), DispatchMode::ASYNC, []));
+    }
+
+    public function test_transports_for_never_warns(): void
+    {
+        // Used by OutboxWriter, which stores the message for the relay instead of dispatching it.
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->expects(self::never())->method('warning');
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+
+        self::assertNull($decider->transportsFor(new CreateTaskCommand('1', 'a'), DispatchMode::ASYNC));
+    }
+
     private function createDecider(
         ?MessageTransportResolver $command = null,
         ?MessageTransportResolver $commandAsync = null,
         ?MessageTransportResolver $query = null,
         ?MessageTransportResolver $event = null,
         ?MessageTransportResolver $eventAsync = null,
-        ?MessageTransportStampFactory $factory = null,
     ): MessageTransportStampDecider {
         return new MessageTransportStampDecider(
-            stampFactory: $factory ?? new MessageTransportStampFactory(),
             commandResolvers: new TransportResolverMap(sync: $command, async: $commandAsync),
             queryResolvers: new TransportResolverMap(sync: $query),
             eventResolvers: new TransportResolverMap(sync: $event, async: $eventAsync),
@@ -260,5 +331,14 @@ final class MessageTransportStampDeciderTest extends TestCase
                 throw new \RuntimeException('This resolver should not be used.');
             },
         ]));
+    }
+
+    public function test_the_transport_of_an_outbox_attribute_is_used_on_asynchronous_dispatches(): void
+    {
+        $decider = $this->createDecider();
+
+        self::assertSame(['audit'], $decider->transportsFor(new AuditedOutboxEvent(), DispatchMode::ASYNC));
+        self::assertSame([MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT], $decider->transportsFor(new TaskArchivedEvent('1'), DispatchMode::ASYNC), 'A bare attribute, as for #[Asynchronous].');
+        self::assertNull($decider->transportsFor(new AuditedOutboxEvent(), DispatchMode::SYNC));
     }
 }

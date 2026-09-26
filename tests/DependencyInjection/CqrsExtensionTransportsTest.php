@@ -4,11 +4,11 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
@@ -20,6 +20,7 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(CqrsExtension::class)]
 final class CqrsExtensionTransportsTest extends TestCase
 {
     public function test_message_transport_decider_receives_configured_transports(): void
@@ -80,17 +81,6 @@ final class CqrsExtensionTransportsTest extends TestCase
 
         $decider = $container->get('somework_cqrs.stamp_decider.message_transport');
         self::assertInstanceOf(MessageTransportStampDecider::class, $decider);
-
-        self::assertSame(
-            [
-                'command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-                'command_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-                'query' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-                'event' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-                'event_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-            ],
-            $container->getParameter('somework_cqrs.transport_stamp_types'),
-        );
 
         $overrideCommand = new CreateTaskCommand('id', 'name');
         $this->assertTransportNames(

@@ -7,14 +7,12 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
-use SomeWork\CqrsBundle\Support\AsynchronousStampDecider;
 use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
@@ -25,8 +23,6 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
-use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function sprintf;
 
@@ -52,9 +48,8 @@ final class StampsDeciderRegistrar
      */
     public function register(ContainerBuilder $container, array $buses, array $idempotencyConfig = ['enabled' => false, 'ttl' => 300], array $causationIdConfig = ['enabled' => true], array $sequenceConfig = ['enabled' => true], array $rateLimitConfig = ['enabled' => false]): void
     {
-        $container->setDefinition('somework_cqrs.transport_stamp_factory', (new Definition(MessageTransportStampFactory::class))
-            ->setPublic(false));
-        $container->setAlias(MessageTransportStampFactory::class, 'somework_cqrs.transport_stamp_factory')->setPublic(false);
+        // Child messages inherit the correlation id of the handled message.
+        $causationContext = true === $causationIdConfig['enabled'] ? new Reference('somework_cqrs.causation_id_context') : null;
 
         $deciderConfigurations = [
             [
@@ -65,7 +60,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'command_serializer',
@@ -75,7 +69,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Command::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'query_retry',
@@ -85,7 +78,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_serializer',
@@ -95,7 +87,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Query::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'query_metadata',
@@ -103,9 +94,9 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'query'),
                     '$messageType' => Query::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
-                'message_types' => [Query::class],
             ],
             [
                 'service_id_suffix' => 'command_metadata',
@@ -113,9 +104,9 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'command'),
                     '$messageType' => Command::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
-                'message_types' => [Command::class],
             ],
             [
                 'service_id_suffix' => 'event_retry',
@@ -125,7 +116,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 200,
-                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_serializer',
@@ -135,7 +125,6 @@ final class StampsDeciderRegistrar
                     '$messageType' => Event::class,
                 ],
                 'priority' => 150,
-                'message_types' => [Event::class],
             ],
             [
                 'service_id_suffix' => 'event_metadata',
@@ -143,22 +132,14 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'event'),
                     '$messageType' => Event::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
-                'message_types' => [Event::class],
-            ],
-            [
-                'service_id_suffix' => 'asynchronous',
-                'class' => AsynchronousStampDecider::class,
-                'arguments' => [],
-                'priority' => 180,
             ],
             [
                 'service_id_suffix' => 'message_transport',
                 'class' => MessageTransportStampDecider::class,
                 'arguments' => [
-                    '$stampFactory' => new Reference('somework_cqrs.transport_stamp_factory'),
-                    '$stampTypes' => '%somework_cqrs.transport_stamp_types%',
                     '$commandResolvers' => $this->createTransportResolverMapDefinition(
                         $this->helper->createResolverReference('transports', 'command'),
                         $this->helper->createOptionalTransportResolverReference('command_async', $buses),
@@ -171,13 +152,14 @@ final class StampsDeciderRegistrar
                         $this->helper->createResolverReference('transports', 'event'),
                         $this->helper->createOptionalTransportResolverReference('event_async', $buses),
                     ),
+                    '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],
+                // Also resolves the #[Asynchronous] transport; TransportRoutingPass adds $routedMessageTypes.
                 'priority' => 175,
-                'message_types' => [Command::class, Query::class, Event::class],
             ],
         ];
 
-        if ($causationIdConfig['enabled']) {
+        if (true === $causationIdConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'causation_id',
                 'class' => CausationIdStampDecider::class,
@@ -189,17 +171,16 @@ final class StampsDeciderRegistrar
             ];
         }
 
-        if ($sequenceConfig['enabled']) {
+        if (true === $sequenceConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'event_sequence',
                 'class' => SequenceStampDecider::class,
                 'arguments' => [],
                 'priority' => 110,
-                'message_types' => [Event::class],
             ];
         }
 
-        if ($rateLimitConfig['enabled'] && class_exists(RateLimiterFactory::class)) {
+        if (true === $rateLimitConfig['enabled']) {
             foreach (['command' => Command::class, 'query' => Query::class, 'event' => Event::class] as $type => $contract) {
                 $deciderConfigurations[] = [
                     'service_id_suffix' => sprintf('%s_rate_limit', $type),
@@ -210,17 +191,17 @@ final class StampsDeciderRegistrar
                         '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                     ],
                     'priority' => 225,
-                    'message_types' => [$contract],
                 ];
             }
         }
 
-        if ($idempotencyConfig['enabled'] && class_exists(DeduplicateStamp::class)) {
+        if (true === $idempotencyConfig['enabled']) {
             $deciderConfigurations[] = [
                 'service_id_suffix' => 'idempotency',
                 'class' => IdempotencyStampDecider::class,
                 'arguments' => [
-                    '$defaultTtl' => (float) $idempotencyConfig['ttl'],
+                    // Not cast: an %env()% placeholder is resolved at runtime (an int is a valid float).
+                    '$defaultTtl' => $idempotencyConfig['ttl'],
                     '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],
                 'priority' => 50,
@@ -233,7 +214,8 @@ final class StampsDeciderRegistrar
             'arguments' => [
                 '$decider' => new Reference('somework_cqrs.dispatch_after_current_bus_decider'),
             ],
-            'priority' => 0,
+            // Below the default priority (0) of custom deciders: runs last, deterministically.
+            'priority' => -10,
         ];
 
         foreach ($deciderConfigurations as $configuration) {
@@ -243,13 +225,8 @@ final class StampsDeciderRegistrar
                 $definition->setArgument($name, $value);
             }
 
-            $tagAttributes = ['priority' => $configuration['priority']];
-
-            if (isset($configuration['message_types'])) {
-                $tagAttributes['message_types'] = $configuration['message_types'];
-            }
-
-            $definition->addTag('somework_cqrs.dispatch_stamp_decider', $tagAttributes);
+            // Deciders narrow themselves to message types at runtime (MessageTypeAwareStampDecider).
+            $definition->addTag('somework_cqrs.dispatch_stamp_decider', ['priority' => $configuration['priority']]);
             $definition->setPublic(false);
 
             $serviceId = $configuration['service_id']

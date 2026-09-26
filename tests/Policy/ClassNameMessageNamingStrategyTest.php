@@ -1,0 +1,43 @@
+<?php
+
+declare(strict_types=1);
+
+namespace SomeWork\CqrsBundle\Tests\Policy;
+
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
+
+use function sprintf;
+
+#[CoversClass(ClassNameMessageNamingStrategy::class)]
+final class ClassNameMessageNamingStrategyTest extends TestCase
+{
+    private ClassNameMessageNamingStrategy $strategy;
+
+    protected function setUp(): void
+    {
+        $this->strategy = new ClassNameMessageNamingStrategy();
+    }
+
+    #[DataProvider('provideMessageClassLabels')]
+    public function test_it_returns_documented_label(string $messageClass, string $expectedLabel): void
+    {
+        self::assertSame(
+            $expectedLabel,
+            $this->strategy->getName($messageClass), // @phpstan-ignore argument.type
+            sprintf('The label for "%s" documents the default handler presentation.', $messageClass),
+        );
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function provideMessageClassLabels(): iterable
+    {
+        yield 'namespaced classes use their short name' => ['App\\Domain\\UserRegistered', 'UserRegistered'];
+        yield 'global namespace classes keep their class name' => ['RegisterUser', 'RegisterUser'];
+        yield 'trailing namespace separators fall back to the original string' => ['App\\Domain\\', 'App\\Domain\\'];
+    }
+}

@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function get_debug_type;
@@ -16,8 +17,8 @@ use function sprintf;
 /** @internal */
 final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
 {
-    public const GLOBAL_DEFAULT_KEY = '__somework_cqrs_metadata_global_default';
-    public const TYPE_DEFAULT_KEY = '__somework_cqrs_metadata_type_default';
+    /** Key of the default for the message type (the type default, else the global one). */
+    public const DEFAULT_KEY = '__somework_cqrs_metadata_default';
 
     public function __construct(
         ContainerInterface $providers,
@@ -31,15 +32,14 @@ final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
         $provider = $defaultProvider ?? new RandomCorrelationMetadataProvider();
 
         return new self(new ServiceLocator([
-            self::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $provider,
-            self::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $provider,
+            self::DEFAULT_KEY => static fn (): MessageMetadataProvider => $provider,
         ]));
     }
 
     public function resolveFor(object $message): MessageMetadataProvider
     {
         /** @var MessageMetadataProvider $provider */
-        $provider = $this->resolveService($message, [self::GLOBAL_DEFAULT_KEY, self::TYPE_DEFAULT_KEY]);
+        $provider = $this->resolveService($message, [self::DEFAULT_KEY]);
 
         return $provider;
     }
@@ -66,16 +66,10 @@ final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
 
     protected function resolveFallback(object $message): MessageMetadataProvider
     {
-        $provider = $this->resolveFirstAvailable([self::TYPE_DEFAULT_KEY]);
-
-        if (null !== $provider) {
-            return $provider;
+        if (!$this->hasService(self::DEFAULT_KEY)) {
+            throw new \LogicException('Metadata provider resolver must be initialised with a default metadata provider.');
         }
 
-        if (!$this->hasService(self::GLOBAL_DEFAULT_KEY)) {
-            throw new \LogicException('Metadata provider resolver must be initialised with a global default provider.');
-        }
-
-        return $this->getService(self::GLOBAL_DEFAULT_KEY);
+        return $this->getService(self::DEFAULT_KEY);
     }
 }

@@ -4,47 +4,58 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Attribute\Asynchronous;
+use SomeWork\CqrsBundle\Attribute\Outbox;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
+use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 /**
- * Adds transport name stamps to dispatched messages based on configuration.
+ * Adds a TransportNamesStamp to dispatched messages.
+ *
+ * Transports are chosen in this order (a TransportNamesStamp passed by the caller always wins):
+ *  1. the transports configured for exactly the message class;
+ *  2. the transport named by #[Asynchronous(transport: ...)] or #[Outbox(transport: ...)] on
+ *     asynchronous dispatches (DispatchMode::OUTBOX decides its stamps as an asynchronous dispatch);
+ *  3. the transports configured for a parent class or interface, then the type default;
+ *  4. for a bare #[Asynchronous] or #[Outbox] on an asynchronous dispatch, the "async" transport, unless
+ *     framework.messenger.routing routes the message (then Messenger's routing applies).
  *
  * @internal
  */
 final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 {
-    /**
-     * @var array<string, string>
-     */
-    public const DEFAULT_STAMP_TYPES = [
-        'command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'command_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'query' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-    ];
+    public const DEFAULT_ASYNC_TRANSPORT = 'async';
 
     /**
-     * @var array<string, string>
+     * @var array<string, true>
      */
-    private array $stampTypes;
+    private array $routedMessageTypes;
 
     /**
-     * @param array<string, string> $stampTypes
+     * @var array<class-string, Asynchronous|Outbox|false>
+     */
+    private array $asynchronousAttributes = [];
+
+    /**
+     * @param list<string> $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
      */
     public function __construct(
-        private readonly MessageTransportStampFactory $stampFactory,
         private readonly TransportResolverMap $commandResolvers,
         private readonly TransportResolverMap $queryResolvers,
         private readonly TransportResolverMap $eventResolvers,
-        array $stampTypes = self::DEFAULT_STAMP_TYPES,
+        array $routedMessageTypes = [],
+        private readonly ?LoggerInterface $logger = null,
     ) {
-        $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
+        $this->routedMessageTypes = array_fill_keys($routedMessageTypes, true);
     }
 
     public function messageTypes(): array
@@ -65,24 +76,75 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             }
         }
 
-        $resolver = $this->resolverFor($message, $mode);
+        $transports = $this->transportsFor($message, $mode);
 
-        if (null === $resolver) {
+        if (null === $transports) {
+            // Messenger handles a message that no transport is routed to right away: an async dispatch
+            // that silently runs in the calling process is almost always a missing transport. (Warned
+            // here, before the dispatch: inside a handler it is deferred until the handler finished.)
+            if (DispatchMode::ASYNC === $mode && ($message instanceof Command || $message instanceof Event) && !$this->isRouted($message)) {
+                if (self::storesInOutbox($stamps)) {
+                    $this->logger?->warning('{message} is stored in the outbox without a transport, so the relay will handle it synchronously in its own process. Set "somework_cqrs.transports.{type}_async", #[Outbox(transport: ...)] or framework.messenger.routing.', [
+                        'message' => $message::class,
+                        'type' => $message instanceof Event ? 'event' : 'command',
+                    ]);
+
+                    return $stamps;
+                }
+                $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
+                    'message' => $message::class,
+                    'type' => $message instanceof Event ? 'event' : 'command',
+                ]);
+            }
+
             return $stamps;
         }
 
-        $transports = $resolver->resolveFor($message);
-
-        if (null === $transports || [] === $transports) {
-            return $stamps;
-        }
-
-        $typeKey = $this->typeKeyFor($message, $mode);
-        $stampType = $this->stampTypes[$typeKey] ?? MessageTransportStampFactory::TYPE_TRANSPORT_NAMES;
-
-        $stamps[] = $this->stampFactory->create($stampType, $transports);
+        $stamps[] = new TransportNamesStamp($transports);
 
         return $stamps;
+    }
+
+    /**
+     * @param array<int, StampInterface> $stamps
+     */
+    private static function storesInOutbox(array $stamps): bool
+    {
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof StoreInOutboxStamp) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The transports the bundle's configuration (or #[Asynchronous]) gives the message, or null
+     * when Messenger's routing decides.
+     *
+     * @return non-empty-list<string>|null
+     */
+    public function transportsFor(object $message, DispatchMode $mode): ?array
+    {
+        $resolver = $this->resolverFor($message, $mode);
+        $attribute = DispatchMode::SYNC === $mode ? null : $this->asynchronousAttribute($message);
+
+        $transports = $resolver?->resolveExactFor($message);
+
+        if ((null === $transports || [] === $transports) && null !== $attribute?->transport) {
+            $transports = [$attribute->transport];
+        }
+
+        if (null === $transports || [] === $transports) {
+            $transports = $resolver?->resolveFor($message);
+        }
+
+        if ((null === $transports || [] === $transports) && null !== $attribute && !$this->isRouted($message)) {
+            $transports = [self::DEFAULT_ASYNC_TRANSPORT];
+        }
+
+        return null === $transports || [] === $transports ? null : $transports;
     }
 
     private function resolverFor(object $message, DispatchMode $mode): ?MessageTransportResolver
@@ -97,20 +159,40 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         return $map?->resolverFor($mode);
     }
 
-    private function typeKeyFor(object $message, DispatchMode $mode): ?string
+    private function asynchronousAttribute(object $message): Asynchronous|Outbox|null
     {
-        if ($message instanceof Command) {
-            return DispatchMode::ASYNC === $mode ? 'command_async' : 'command';
+        if (!isset($this->asynchronousAttributes[$message::class])) {
+            $reflection = new \ReflectionClass($message);
+            $attributes = [...$reflection->getAttributes(Outbox::class), ...$reflection->getAttributes(Asynchronous::class)];
+            $this->asynchronousAttributes[$message::class] = [] === $attributes ? false : $attributes[0]->newInstance();
         }
 
-        if ($message instanceof Query) {
-            return 'query';
+        $attribute = $this->asynchronousAttributes[$message::class];
+
+        return false === $attribute ? null : $attribute;
+    }
+
+    /**
+     * Whether framework.messenger.routing, or #[AsMessage(transport: ...)], routes the message.
+     */
+    private function isRouted(object $message): bool
+    {
+        if (AsMessageRouting::hasTransport($message::class)) {
+            return true;
         }
 
-        if ($message instanceof Event) {
-            return DispatchMode::ASYNC === $mode ? 'event_async' : 'event';
+        if ([] === $this->routedMessageTypes) {
+            return false;
         }
 
-        return null;
+        // The types Messenger's SendersLocator looks up: the class, its parents and interfaces,
+        // namespace wildcards ("App\Message\*") and "*".
+        foreach (HandlersLocator::listTypes(new Envelope($message)) as $type) {
+            if (isset($this->routedMessageTypes[$type])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

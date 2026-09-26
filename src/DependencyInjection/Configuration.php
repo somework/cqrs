@@ -5,26 +5,55 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\ClassNameMessageNamingStrategy;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
-use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Outbox\ReservedTableNames;
+use SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
+use Symfony\Component\Config\Definition\Builder\ArrayNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\NodeBuilder;
+use Symfony\Component\Config\Definition\Builder\ScalarNodeDefinition;
 use Symfony\Component\Config\Definition\Builder\TreeBuilder;
 use Symfony\Component\Config\Definition\ConfigurationInterface;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 
+use function array_fill_keys;
+use function array_filter;
+use function array_flip;
+use function array_intersect_key;
+use function array_is_list;
+use function array_key_exists;
+use function array_key_first;
+use function array_keys;
+use function class_exists;
+use function explode;
+use function interface_exists;
+use function is_a;
+use function is_array;
+use function is_string;
+use function ltrim;
+use function preg_match;
 use function sprintf;
 use function str_ends_with;
 use function substr;
+use function trim;
 
 /** @internal */
 final class Configuration implements ConfigurationInterface
 {
+    private const MARKERS = ['command' => Command::class, 'query' => Query::class, 'event' => Event::class];
+
+    private const TYPES = ['command', 'query', 'event'];
+
     public function getConfigTreeBuilder(): TreeBuilder
     {
         $treeBuilder = new TreeBuilder('somework_cqrs');
 
         $rootNode = $treeBuilder->getRootNode();
+        self::rejectMovedOptions($rootNode);
 
         $children = $rootNode->children();
 
@@ -32,6 +61,7 @@ final class Configuration implements ConfigurationInterface
         $defaultBus
             ->defaultNull()
             ->info('Default message bus service id to use when dispatching messages.');
+        self::requireName($defaultBus, true);
         $defaultBus->end();
 
         $buses = $children->arrayNode('buses');
@@ -45,30 +75,35 @@ final class Configuration implements ConfigurationInterface
         $commandBus
             ->defaultNull()
             ->info('Synchronous command bus service id. Defaults to the Messenger default bus.');
+        self::requireName($commandBus, true);
         $commandBus->end();
 
         $commandAsyncBus = $busesChildren->scalarNode('command_async');
         $commandAsyncBus
             ->defaultNull()
             ->info('Asynchronous command bus service id. Leave null to disable async dispatch.');
+        self::requireName($commandAsyncBus, true);
         $commandAsyncBus->end();
 
         $queryBus = $busesChildren->scalarNode('query');
         $queryBus
             ->defaultNull()
             ->info('Query bus service id. Defaults to the Messenger default bus.');
+        self::requireName($queryBus, true);
         $queryBus->end();
 
         $eventBus = $busesChildren->scalarNode('event');
         $eventBus
             ->defaultNull()
             ->info('Synchronous event bus service id. Defaults to the Messenger default bus.');
+        self::requireName($eventBus, true);
         $eventBus->end();
 
         $eventAsyncBus = $busesChildren->scalarNode('event_async');
         $eventAsyncBus
             ->defaultNull()
             ->info('Asynchronous event bus service id. Leave null to disable async dispatch.');
+        self::requireName($eventAsyncBus, true);
         $eventAsyncBus->end();
 
         $busesChildren->end();
@@ -79,23 +114,23 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info('Message naming strategies used by diagnostics and tooling.');
 
+        $naming->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && [] !== array_filter(array_intersect_key($value, array_flip(self::TYPES)), 'is_string'))
+            ->then(static function (array $value): never {
+                $type = array_key_first(array_filter(array_intersect_key($value, array_flip(self::TYPES)), 'is_string'));
+
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.naming.%1$s" moved to "somework_cqrs.naming.%1$s.default".', $type));
+            })
+        ->end();
+
         $namingChildren = $naming->children();
-        $namingChildren
+        self::requireName($namingChildren
             ->scalarNode('default')
             ->defaultValue(ClassNameMessageNamingStrategy::class)
-            ->info('Service id implementing MessageNamingStrategy for all message types.');
-        $namingChildren
-            ->scalarNode('command')
-            ->defaultNull()
-            ->info('Overrides the default naming strategy for commands.');
-        $namingChildren
-            ->scalarNode('query')
-            ->defaultNull()
-            ->info('Overrides the default naming strategy for queries.');
-        $namingChildren
-            ->scalarNode('event')
-            ->defaultNull()
-            ->info('Overrides the default naming strategy for events.');
+            ->info('Service id implementing MessageNamingStrategy for all message types.'));
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($namingChildren, $type, 'MessageNamingStrategy', 'naming', false);
+        }
         $namingChildren->end();
         $naming->end();
 
@@ -105,9 +140,13 @@ final class Configuration implements ConfigurationInterface
             ->info('Retry policy services applied when dispatching messages. Supports per-message overrides.');
 
         $retryChildren = $retry->children();
-        $this->configureRetryPolicySection($retryChildren, 'command');
-        $this->configureRetryPolicySection($retryChildren, 'event');
-        $this->configureRetryPolicySection($retryChildren, 'query');
+        self::requireName($retryChildren
+            ->scalarNode('default')
+            ->defaultValue(NullRetryPolicy::class)
+            ->info('Fallback RetryPolicy service id applied to all messages.'));
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($retryChildren, $type, 'RetryPolicy', 'retry_policies');
+        }
         $retryChildren->end();
         $retry->end();
 
@@ -121,11 +160,17 @@ final class Configuration implements ConfigurationInterface
         $retryStrategyChildren
             ->arrayNode('transports')
             ->useAttributeAsKey('transport_name')
+            ->normalizeKeys(false)
+            ->beforeNormalization()
+                // A list of transport names: each message uses the retry policies of its own type.
+                ->ifTrue(static fn (mixed $value): bool => is_array($value) && [] !== $value && array_is_list($value))
+                ->then(static fn (array $names): array => array_fill_keys($names, 'command'))
+            ->end()
             ->defaultValue([])
             ->enumPrototype()
                 ->values(['command', 'query', 'event'])
             ->end()
-            ->info('Map of Messenger transport names to CQRS message types. Each transport will use CqrsRetryStrategy with the corresponding RetryPolicyResolver.');
+            ->info('Messenger transports that use CqrsRetryStrategy: a list of names, or names mapped to the retry_policies section used for messages that are neither commands, queries nor events (each CQRS message uses the section of its own type).');
 
         $retryStrategyChildren
             ->floatNode('jitter')
@@ -149,14 +194,14 @@ final class Configuration implements ConfigurationInterface
             ->info('MessageSerializer services that provide SerializerStamp instances.');
 
         $serializationChildren = $serialization->children();
-        $serializationChildren
+        self::requireName($serializationChildren
             ->scalarNode('default')
             ->defaultValue(NullMessageSerializer::class)
-            ->info('Fallback MessageSerializer service id applied to all messages.');
+            ->info('Fallback MessageSerializer service id applied to all messages.'));
 
-        $this->configureSerializerSection($serializationChildren, 'command');
-        $this->configureSerializerSection($serializationChildren, 'event');
-        $this->configureSerializerSection($serializationChildren, 'query');
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($serializationChildren, $type, 'MessageSerializer', 'serialization');
+        }
         $serializationChildren->end();
         $serialization->end();
 
@@ -166,14 +211,14 @@ final class Configuration implements ConfigurationInterface
             ->info('MessageMetadataProvider services that supply MessageMetadataStamp instances.');
 
         $metadataChildren = $metadata->children();
-        $metadataChildren
+        self::requireName($metadataChildren
             ->scalarNode('default')
             ->defaultValue(RandomCorrelationMetadataProvider::class)
-            ->info('Fallback MessageMetadataProvider service id applied to all messages.');
+            ->info('Fallback MessageMetadataProvider service id applied to all messages.'));
 
-        $this->configureMetadataSection($metadataChildren, 'command');
-        $this->configureMetadataSection($metadataChildren, 'event');
-        $this->configureMetadataSection($metadataChildren, 'query');
+        foreach (self::TYPES as $type) {
+            $this->configureServiceSection($metadataChildren, $type, 'MessageMetadataProvider', 'metadata');
+        }
         $metadataChildren->end();
         $metadata->end();
 
@@ -202,14 +247,7 @@ final class Configuration implements ConfigurationInterface
         $transportChildren->end();
         $transports->end();
 
-        $async = $children->arrayNode('async');
-        $async
-            ->addDefaultsIfNotSet()
-            ->info('Asynchronous delivery configuration.');
-
-        $asyncChildren = $async->children();
-
-        $dispatchAfterCurrentBus = $asyncChildren->arrayNode('dispatch_after_current_bus');
+        $dispatchAfterCurrentBus = $children->arrayNode('dispatch_after_current_bus');
         $dispatchAfterCurrentBus
             ->addDefaultsIfNotSet()
             ->info('Controls when DispatchAfterCurrentBusStamp is added to async dispatches.');
@@ -220,14 +258,12 @@ final class Configuration implements ConfigurationInterface
         $dispatchAfterChildren->end();
         $dispatchAfterCurrentBus->end();
 
-        $asyncChildren->end();
-        $async->end();
-
         $idempotency = $children->arrayNode('idempotency');
         $idempotency->addDefaultsIfNotSet()->info('Idempotency bridge configuration for DeduplicateStamp integration.');
         $idempotencyChildren = $idempotency->children();
         $idempotencyChildren->booleanNode('enabled')->defaultTrue()->info('Enable IdempotencyStamp to DeduplicateStamp bridge.');
-        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->min(1)->info('Default lock TTL in seconds for deduplication.');
+        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
+        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->info('Default lock TTL in seconds for deduplication (at least 1).');
         $idempotencyChildren->end();
         $idempotency->end();
 
@@ -235,7 +271,9 @@ final class Configuration implements ConfigurationInterface
         $causationId->addDefaultsIfNotSet()->info('CausationIdMiddleware and CausationIdStampDecider configuration.');
         $causationIdChildren = $causationId->children();
         $causationIdChildren->booleanNode('enabled')->defaultTrue()->info('Enable CausationIdMiddleware and paired CausationIdStampDecider.');
-        $causationIdChildren->arrayNode('buses')->defaultValue([])->scalarPrototype()->end()->info('Limit CausationIdMiddleware to specific bus service ids. Empty array means all buses.');
+        $causationBuses = $causationIdChildren->arrayNode('buses');
+        $causationBuses->defaultValue([])->info('Limit CausationIdMiddleware to specific bus service ids. Empty array means all buses.');
+        self::requireName($causationBuses->scalarPrototype());
         $causationIdChildren->end();
         $causationId->end();
 
@@ -255,11 +293,15 @@ final class Configuration implements ConfigurationInterface
         $rateLimitChildren
             ->booleanNode('enabled')
             ->defaultTrue()
-            ->info('Enable rate limiting. No-op when symfony/rate-limiter is not installed.');
+            ->info('Enable rate limiting. Inactive while no limiter is configured; configuring a limiter requires symfony/rate-limiter.');
+        self::requireName($rateLimitChildren
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info('Rate limiter name (framework.rate_limiter) applied to every message; each message class consumes its own bucket.'), true);
 
-        $this->configureRateLimitSection($rateLimitChildren, 'command');
-        $this->configureRateLimitSection($rateLimitChildren, 'query');
-        $this->configureRateLimitSection($rateLimitChildren, 'event');
+        foreach (self::TYPES as $type) {
+            $this->configureRateLimitSection($rateLimitChildren, $type);
+        }
         $rateLimitChildren->end();
         $rateLimiting->end();
 
@@ -267,84 +309,92 @@ final class Configuration implements ConfigurationInterface
         $outbox->addDefaultsIfNotSet()->info('Transactional outbox configuration.');
         $outboxChildren = $outbox->children();
         $outboxChildren->booleanNode('enabled')->defaultFalse()
-            ->info('Enable transactional outbox. Requires doctrine/dbal.');
-        $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')
-            ->info('Database table name for outbox messages.');
+            ->info('Enable transactional outbox. Requires doctrine/dbal unless "storage" names another storage.');
+        self::requireName($outboxChildren->scalarNode('storage')->defaultNull()
+            ->info('Service id (or class) of the OutboxStorage; null for the DBAL storage configured by table_name, connection and auto_setup. The setup, failed and health features need it to implement OutboxSchema, FailedOutboxMessages and OutboxMonitoring.'), true);
+        $tableName = $outboxChildren->scalarNode('table_name')->defaultValue('somework_cqrs_outbox')->cannotBeEmpty()
+            ->info('Database table name for outbox messages (letters, digits and underscores, optionally "schema.table"; not a reserved SQL word).');
+        self::requireName($tableName);
+        $tableName->validate()
+            ->ifTrue(static fn (mixed $value): bool => is_string($value) && 1 !== preg_match('/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/D', $value))
+            ->thenInvalid('Invalid outbox table name %s: use letters, digits and underscores, optionally prefixed with a schema ("schema.table").')
+        ->end();
+        // The outbox queries do not quote the name, so a reserved word breaks them (e.g. "order", or "user" on PostgreSQL).
+        $tableName->validate()
+            ->ifTrue(static function (mixed $value): bool {
+                foreach (is_string($value) ? explode('.', $value) : [] as $part) {
+                    if (ReservedTableNames::isReserved($part)) {
+                        return true;
+                    }
+                }
+
+                return false;
+            })
+            ->thenInvalid('Invalid outbox table name %s: it is a reserved SQL word in MySQL, MariaDB, PostgreSQL or SQLite. Choose another name, e.g. "somework_cqrs_outbox".')
+        ->end();
+        self::requireName($outboxChildren->scalarNode('connection')->defaultValue('default')->cannotBeEmpty()
+            ->info('Doctrine DBAL connection name (service "doctrine.dbal.<name>_connection") holding the outbox table; use the connection of your business data.'));
+        self::requireName($outboxChildren->scalarNode('serializer')->defaultValue('messenger.default_serializer')->cannotBeEmpty()
+            ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.'));
+        $outboxChildren->booleanNode('auto_setup')->defaultTrue()
+            ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+        $outboxChildren->booleanNode('relay_on_terminate')->defaultFalse()
+            ->info('For development: run the relay right after a request, a console command or a worker message that stored messages in the outbox (with a sync:// transport, they are then handled at once). Leave it off in production and run "somework:cqrs:outbox:relay" on a schedule or with --watch.');
+        $outboxChildren->booleanNode('require_transaction')->defaultTrue()
+            ->info('Refuse to store a message outside a transaction on the outbox connection (OutboxWriter and DispatchMode::OUTBOX): it would not be part of the business change.');
+        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
+        $outboxChildren->integerNode('max_attempts')->defaultValue(10)
+            ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
+        $signing = $outboxChildren->arrayNode('signing');
+        $signing->addDefaultsIfNotSet()
+            ->info('HMAC-SHA256 signatures of stored rows: the relay only decodes (unserializes) rows this application signed.');
+        $signingChildren = $signing->children();
+        $signingChildren->booleanNode('enabled')->defaultTrue()
+            ->info('Sign every stored row and verify it before relaying it (no environment variables).');
+        // Not validated here: Symfony checks string environment variables with an empty dummy value.
+        // OutboxRegistrar rejects a literal empty secret, OutboxSigner an empty one at runtime.
+        $signingChildren->scalarNode('secret')->defaultNull()
+            ->info('Secret of the signatures; null uses kernel.secret ("framework.secret"). Environment variables are allowed.');
+        $signingChildren->arrayNode('previous_secrets')
+            ->info('Secrets whose signatures are still accepted, e.g. the old secret after a rotation, until the rows signed with it are relayed.')
+            ->scalarPrototype()->end()
+            ->defaultValue([]);
+        $signingChildren->booleanNode('accept_unsigned')->defaultFalse()
+            ->info('Relay rows without a signature (stored before signing was enabled) while they drain. Rows with a wrong signature are always given up.');
+        $signingChildren->end();
+        $signing->end();
         $outboxChildren->end();
         $outbox->end();
 
         return $treeBuilder;
     }
 
-    private function configureRetryPolicySection(NodeBuilder $parent, string $type): void
+    /**
+     * The shape shared by the per-message service sections: a per-type default that falls back
+     * to the section's global default, and a map of message classes or interfaces to service ids.
+     */
+    private function configureServiceSection(NodeBuilder $parent, string $type, string $contract, string $section, bool $withMap = true): void
     {
         $node = $parent->arrayNode($type);
         $node
             ->addDefaultsIfNotSet()
-            ->info(sprintf('RetryPolicy services applied to %s messages.', $type));
+            ->info(sprintf('%s services applied to %s messages.', $contract, $type));
 
         $children = $node->children();
-        $children
-            ->scalarNode('default')
-            ->defaultValue(NullRetryPolicy::class)
-            ->info(sprintf('Fallback RetryPolicy service id applied to %s messages.', $type));
-
-        $children
-            ->arrayNode('map')
-            ->useAttributeAsKey('message')
-            ->scalarPrototype()
-            ->end()
-            ->info('Message-specific RetryPolicy service ids. Keys must match the message FQCN.');
-
-        $children->end();
-        $node->end();
-    }
-
-    private function configureSerializerSection(NodeBuilder $parent, string $type): void
-    {
-        $node = $parent->arrayNode($type);
-        $node
-            ->addDefaultsIfNotSet()
-            ->info(sprintf('MessageSerializer services applied to %s messages.', $type));
-
-        $children = $node->children();
-        $children
+        self::requireName($children
             ->scalarNode('default')
             ->defaultNull()
-            ->info(sprintf('Fallback MessageSerializer service id applied to %s messages. Falls back to serialization.default when null.', $type));
+            ->info(sprintf('%s service id applied to %s messages. Falls back to %s.default when null.', $contract, $type, $section)), true);
 
-        $children
-            ->arrayNode('map')
-            ->useAttributeAsKey('message')
-            ->defaultValue([])
-            ->scalarPrototype()
-            ->end()
-            ->info('Message-specific MessageSerializer service ids. Keys must match the message FQCN.');
-
-        $children->end();
-        $node->end();
-    }
-
-    private function configureMetadataSection(NodeBuilder $parent, string $type): void
-    {
-        $node = $parent->arrayNode($type);
-        $node
-            ->addDefaultsIfNotSet()
-            ->info(sprintf('MessageMetadataProvider services applied to %s messages.', $type));
-
-        $children = $node->children();
-        $children
-            ->scalarNode('default')
-            ->defaultNull()
-            ->info(sprintf('Fallback MessageMetadataProvider service id applied to %s messages. Falls back to metadata.default when null.', $type));
-
-        $children
-            ->arrayNode('map')
-            ->useAttributeAsKey('message')
-            ->defaultValue([])
-            ->scalarPrototype()
-            ->end()
-            ->info('Message-specific MessageMetadataProvider service ids. Keys must match the message FQCN.');
+        if ($withMap) {
+            $map = $children->arrayNode('map');
+            $map
+                ->useAttributeAsKey('message')
+                ->defaultValue([])
+                ->info(sprintf('Message-specific %s service ids, keyed by message class or interface.', $contract));
+            self::requireName($map->scalarPrototype());
+            self::messageKeyedMap($map, $type);
+        }
 
         $children->end();
         $node->end();
@@ -361,21 +411,22 @@ final class Configuration implements ConfigurationInterface
 
         $children
             ->enumNode('default')
-            ->values([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
+            ->values([DispatchMode::SYNC->value, DispatchMode::ASYNC->value, DispatchMode::OUTBOX->value])
             ->defaultValue(DispatchMode::SYNC->value)
-            ->info(sprintf('Fallback dispatch mode used for %s messages.', $type));
+            ->info(sprintf('Fallback dispatch mode used for %s messages: "sync", "async", or "outbox" (stored in the transactional outbox, in the current transaction).', $type));
 
-        $children
-            ->arrayNode('map')
+        $map = $children->arrayNode('map');
+        $map
             ->useAttributeAsKey('message')
             ->defaultValue([])
             ->scalarPrototype()
                 ->validate()
-                    ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value])
-                    ->thenInvalid('Invalid dispatch mode "%s". Expected "sync" or "async".')
+                    ->ifNotInArray([DispatchMode::SYNC->value, DispatchMode::ASYNC->value, DispatchMode::OUTBOX->value])
+                    ->thenInvalid('Invalid dispatch mode %s. Expected "sync", "async" or "outbox".')
                 ->end()
             ->end()
             ->info(sprintf('Message-specific dispatch mode overrides for %s messages.', $type));
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -395,13 +446,14 @@ final class Configuration implements ConfigurationInterface
             ->defaultTrue()
             ->info(sprintf('Whether DispatchAfterCurrentBusStamp should be added to async %s messages when no override exists.', $type));
 
-        $children
-            ->arrayNode('map')
+        $map = $children->arrayNode('map');
+        $map
             ->useAttributeAsKey('message')
             ->defaultValue([])
             ->booleanPrototype()
             ->end()
             ->info(sprintf('Message-specific overrides for DispatchAfterCurrentBusStamp on async %s messages.', $type));
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -415,13 +467,17 @@ final class Configuration implements ConfigurationInterface
             ->info(sprintf('Rate limiter mappings for %s messages.', $type));
 
         $children = $node->children();
-        $children
-            ->arrayNode('map')
+        self::requireName($children
+            ->scalarNode('default')
+            ->defaultNull()
+            ->info(sprintf('Rate limiter name applied to %s messages. Falls back to rate_limiting.default when null.', $type)), true);
+        $map = $children->arrayNode('map');
+        $map
             ->useAttributeAsKey('message')
             ->defaultValue([])
-            ->scalarPrototype()
-            ->end()
-            ->info('Map of message FQCNs to Symfony rate limiter names (as configured under framework.rate_limiter).');
+            ->info('Map of message classes or interfaces to Symfony rate limiter names (as configured under framework.rate_limiter).');
+        self::requireName($map->scalarPrototype());
+        self::messageKeyedMap($map, $type);
 
         $children->end();
         $node->end();
@@ -438,13 +494,14 @@ final class Configuration implements ConfigurationInterface
             ->addDefaultsIfNotSet()
             ->info(sprintf('Messenger transports applied to %s messages.', $label));
 
-        $children = $node->children();
+        $node->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && array_key_exists('stamp', $value))
+            ->then(static function () use ($type): never {
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.transports.%s.stamp" was removed: the transports are always applied with a TransportNamesStamp.', $type));
+            })
+        ->end();
 
-        $children
-            ->enumNode('stamp')
-            ->values(['transport_names'])
-            ->defaultValue('transport_names')
-            ->info(sprintf('Messenger stamp type to apply for %s messages.', $label));
+        $children = $node->children();
 
         $default = $children->arrayNode('default');
         $default
@@ -453,27 +510,92 @@ final class Configuration implements ConfigurationInterface
                 ->then(static fn (string $value): array => [$value])
             ->end()
             ->defaultValue([])
-            ->scalarPrototype()
-            ->end()
             ->info(sprintf('Default Messenger transport names for %s messages.', $label));
+        self::requireName($default->scalarPrototype());
         $default->end();
 
         $map = $children->arrayNode('map');
         $map
             ->useAttributeAsKey('message')
             ->defaultValue([])
-            ->arrayPrototype()
-                ->beforeNormalization()
-                    ->ifString()
-                    ->then(static fn (string $value): array => [$value])
-                ->end()
-                ->scalarPrototype()
-                ->end()
-            ->end()
             ->info(sprintf('Message-specific Messenger transport names for %s messages.', $label));
+        $transportList = $map->arrayPrototype();
+        $transportList
+            ->beforeNormalization()
+                ->ifString()
+                ->then(static fn (string $value): array => [$value])
+            ->end();
+        self::requireName($transportList->scalarPrototype());
+        self::messageKeyedMap($map, $baseType);
         $map->end();
 
         $children->end();
         $node->end();
+    }
+
+    /**
+     * Options of earlier versions fail with where they moved, instead of "Unrecognized option".
+     */
+    private static function rejectMovedOptions(ArrayNodeDefinition $root): void
+    {
+        $root->beforeNormalization()
+            ->ifTrue(static fn (mixed $value): bool => is_array($value) && array_key_exists('async', $value))
+            ->then(static function (): never {
+                throw new InvalidConfigurationException('"somework_cqrs.async.dispatch_after_current_bus" moved to "somework_cqrs.dispatch_after_current_bus".');
+            })
+        ->end();
+    }
+
+    /**
+     * Requires a non-empty string (service id or name); null is accepted when $nullable.
+     */
+    private static function requireName(ScalarNodeDefinition $node, bool $nullable = false): void
+    {
+        $node->validate()
+            ->ifTrue(static fn (mixed $value): bool => !($nullable && null === $value) && (!is_string($value) || '' === trim($value)))
+            ->thenInvalid($nullable ? 'Expected a non-empty string or null, got %s.' : 'Expected a non-empty string, got %s.')
+        ->end();
+    }
+
+    /**
+     * Keys of per-message maps are message classes or interfaces. A leading backslash is dropped,
+     * and unknown names (typos, removed classes) are rejected instead of silently never matching.
+     */
+    /**
+     * @param string $type "command", "query" or "event": a key of another message type never matches
+     */
+    private static function messageKeyedMap(ArrayNodeDefinition $map, string $type): void
+    {
+        $map->beforeNormalization()
+            ->ifArray()
+            ->then(static function (array $entries): array {
+                $normalised = [];
+                foreach ($entries as $key => $value) {
+                    $normalised[is_string($key) ? ltrim($key, '\\') : $key] = $value;
+                }
+
+                return $normalised;
+            })
+        ->end();
+
+        $map->validate()
+            ->always(static function (array $entries) use ($type): array {
+                foreach (array_keys($entries) as $class) {
+                    if (!class_exists((string) $class) && !interface_exists((string) $class)) {
+                        throw new \InvalidArgumentException(sprintf('"%s" is not an existing class or interface; keys must be message class or interface names.', $class));
+                    }
+
+                    // Classes and interfaces of another message type are never dispatched on these buses.
+                    $marker = self::MARKERS[$type] ?? null;
+                    foreach (self::MARKERS as $otherType => $other) {
+                        if (null !== $marker && $otherType !== $type && is_a((string) $class, $other, true) && !is_a((string) $class, $marker, true)) {
+                            throw new \InvalidArgumentException(sprintf('"%s" is a %s, not a %s: it never matches here.', $class, $otherType, $type));
+                        }
+                    }
+                }
+
+                return $entries;
+            })
+        ->end();
     }
 }

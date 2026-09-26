@@ -1,0 +1,150 @@
+# somework/cqrs-bundle
+# See https://github.com/somework/cqrs for documentation.
+
+somework_cqrs:
+
+    # Default message bus service id (null = Messenger default bus)
+    # default_bus: ~
+
+    # Per-message-type bus service ids
+    # buses:
+    #     command: ~                  # Synchronous command bus
+    #     command_async: ~            # Asynchronous command bus
+    #     query: ~                    # Query bus
+    #     event: ~                    # Synchronous event bus
+    #     event_async: ~              # Asynchronous event bus
+
+    # Message naming strategies
+    # naming:
+    #     default: SomeWork\CqrsBundle\Policy\ClassNameMessageNamingStrategy
+    #     command:
+    #         default: ~              # Override for commands
+    #     query:
+    #         default: ~              # Override for queries
+    #     event:
+    #         default: ~              # Override for events
+
+    # Retry policies (global default, per-type default, per-message map)
+    # retry_policies:
+    #     default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
+    #     command:
+    #         default: ~
+    #         map:
+    #             App\Message\MyCommand: app.my_retry_policy   # keys must be existing classes or interfaces
+    #     query:
+    #         default: ~
+    #         map: {}
+    #     event:
+    #         default: ~
+    #         map: {}
+
+    # Transport-level retry strategy using per-message RetryPolicy
+    # retry_strategy:
+    #     transports: {}              # Map of transport names to message types (command|query|event)
+    #     jitter: 0.0                 # Jitter factor (0.0-1.0)
+    #     max_delay: 0                # Maximum delay in ms (0 = no cap)
+
+    # Serializer services that provide SerializerStamp instances
+    # serialization:
+    #     default: SomeWork\CqrsBundle\Policy\NullMessageSerializer
+    #     command:
+    #         default: ~
+    #         map: {}
+    #     query:
+    #         default: ~
+    #         map: {}
+    #     event:
+    #         default: ~
+    #         map: {}
+
+    # Metadata providers that supply MessageMetadataStamp instances
+    # metadata:
+    #     default: SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider
+    #     command:
+    #         default: ~
+    #         map: {}
+    #     query:
+    #         default: ~
+    #         map: {}
+    #     event:
+    #         default: ~
+    #         map: {}
+
+    # Default dispatch modes (sync or async)
+    # dispatch_modes:
+    #     command:
+    #         default: sync
+    #         map: {}
+    #     event:
+    #         default: sync
+    #         map: {}
+
+    # Messenger transport names
+    # transports:
+    #     command:
+    #         default: []
+    #         map: {}
+    #     command_async:
+    #         default: []
+    #         map: {}
+    #     query:
+    #         default: []
+    #         map: {}
+    #     event:
+    #         default: []
+    #         map: {}
+    #     event_async:
+    #         default: []
+    #         map: {}
+
+    # DispatchAfterCurrentBusStamp on asynchronous dispatches
+    # dispatch_after_current_bus:
+    #     command:
+    #         default: true
+    #         map: {}
+    #     event:
+    #         default: true
+    #         map: {}
+
+    # Idempotency bridge (DeduplicateStamp integration)
+    # idempotency:
+    #     enabled: true
+    #     ttl: 300                    # Lock TTL in seconds
+
+    # CausationIdMiddleware configuration
+    # causation_id:
+    #     enabled: true
+    #     buses: []                   # Empty = all buses
+
+    # Event sequence metadata
+    # sequence:
+    #     enabled: true
+
+    # Rate limiting (inactive until a limiter is configured; configuring one requires symfony/rate-limiter)
+    # rate_limiting:
+    #     enabled: true
+    #     default: ~                  # framework.rate_limiter name; one bucket per message class
+    #     command:
+    #         default: ~
+    #         map: {}
+    #     query:
+    #         default: ~
+    #         map: {}
+    #     event:
+    #         default: ~
+    #         map: {}
+
+    # Transactional outbox (the DBAL storage requires doctrine/dbal and doctrine/doctrine-bundle)
+    # outbox:
+    #     enabled: false
+    #     storage: ~                  # OutboxStorage service id or class; null = DBAL storage below
+    #     table_name: somework_cqrs_outbox
+    #     connection: default         # Doctrine DBAL connection name
+    #     serializer: messenger.default_serializer
+    #     auto_setup: true            # Create or upgrade the table on first use (never inside a transaction)
+    #     max_attempts: 10            # Attempts before the relay gives up on a row (see somework:cqrs:outbox:failed)
+    #     signing:                    # HMAC signatures: the relay only decodes rows this application stored
+    #         enabled: true
+    #         secret: ~               # null = framework.secret
+    #         previous_secrets: []    # accepted during a rotation
+    #         accept_unsigned: false  # true while rows of an earlier version drain

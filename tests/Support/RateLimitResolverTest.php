@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\AbstractMessageTypeResolver;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
@@ -13,6 +14,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
+use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
 use Symfony\Component\RateLimiter\Storage\InMemoryStorage;
 
 #[CoversClass(RateLimitResolver::class)]
@@ -25,6 +27,20 @@ final class RateLimitResolverTest extends TestCase
         $result = $resolver->resolveFor(new CreateTaskCommand('1', 'Test'));
 
         self::assertNull($result);
+    }
+
+    public function test_falls_back_to_the_default_limiter_of_the_type(): void
+    {
+        $default = $this->createRealFactory();
+        $mapped = $this->createRealFactory();
+
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            RateLimitResolver::DEFAULT_KEY => static fn (): RateLimiterFactory => $default,
+            TaskCreatedEvent::class => static fn (): RateLimiterFactory => $mapped,
+        ]));
+
+        self::assertSame($mapped, $resolver->resolveFor(new TaskCreatedEvent('1')));
+        self::assertSame($default, $resolver->resolveFor(new CreateTaskCommand('1', 'Test')));
     }
 
     public function test_returns_limiter_factory_for_known_message(): void
@@ -113,5 +129,16 @@ final class RateLimitResolverTest extends TestCase
             ['id' => 'test', 'policy' => 'no_limit'],
             new InMemoryStorage(),
         );
+    }
+
+    #[RequiresMethod(RateLimiterFactoryInterface::class, 'create')]
+    public function test_accepts_any_rate_limiter_factory_implementation(): void
+    {
+        $factory = $this->createMock(RateLimiterFactoryInterface::class);
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn (): RateLimiterFactoryInterface => $factory,
+        ]));
+
+        self::assertSame($factory, $resolver->resolveFor(new CreateTaskCommand('1', 'x')));
     }
 }

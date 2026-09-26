@@ -4,15 +4,22 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\SequenceAware;
 
+#[CoversNothing]
 final class SequenceAwareTest extends TestCase
 {
     public function test_stub_event_returns_correct_aggregate_id_and_sequence_number(): void
     {
         $event = new class('order-42', 7) implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function __construct(
                 private readonly string $aggregateId,
                 private readonly int $sequenceNumber,
@@ -64,6 +71,11 @@ final class SequenceAwareTest extends TestCase
     public function test_zero_sequence_number_is_valid(): void
     {
         $event = new class('agg-1', 0) implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function __construct(
                 private readonly string $aggregateId,
                 private readonly int $sequenceNumber,

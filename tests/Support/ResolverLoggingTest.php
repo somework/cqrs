@@ -4,11 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
@@ -17,6 +18,8 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function is_string;
 
+#[CoversClass(RetryPolicyResolver::class)]
+#[CoversClass(MessageTransportResolver::class)]
 final class ResolverLoggingTest extends TestCase
 {
     public function test_resolver_logs_exact_match_with_logger(): void

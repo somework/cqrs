@@ -6,7 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Fixture\Message;
 
 /**
  * A plain event message without the Event marker interface.
- * Used to test attribute-only handler discovery (DX-02).
+ * Used to test attribute-only handler discovery.
  */
 final class PlainEvent
 {

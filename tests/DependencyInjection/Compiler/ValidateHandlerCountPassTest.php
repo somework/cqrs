@@ -6,6 +6,8 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateHandlerCountPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
@@ -13,391 +15,225 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskNotificationHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+
+use function sprintf;
 
 #[CoversClass(ValidateHandlerCountPass::class)]
 final class ValidateHandlerCountPassTest extends TestCase
 {
     public function test_does_nothing_when_parameter_is_missing(): void
     {
-        $container = new ContainerBuilder();
+        $this->expectNotToPerformAssertions();
 
-        (new ValidateHandlerCountPass())->process($container);
-
-        // No exception thrown — pass succeeds
-        $this->addToAssertionCount(1);
+        (new ValidateHandlerCountPass())->process(new ContainerBuilder());
     }
 
-    public function test_does_nothing_when_metadata_is_empty_arrays(): void
+    public function test_accepts_one_handler_per_command_and_query(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
+        $this->expectNotToPerformAssertions();
+
+        $this->process([
+            'command' => [self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands')],
+            'query' => [self::entry('query', FindTaskQuery::class, FindTaskHandler::class, 'handler.find_task', 'bus.queries')],
         ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
     }
 
-    public function test_succeeds_when_each_command_has_exactly_one_handler(): void
+    public function test_same_handler_on_sync_and_async_bus_counts_once(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
+        $this->expectNotToPerformAssertions();
+
+        $this->process([
             'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands_async'),
             ],
-            'query' => [],
-            'event' => [],
         ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
     }
 
-    public function test_succeeds_when_each_query_has_exactly_one_handler(): void
+    public function test_different_handlers_on_different_buses_are_allowed(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [
-                ['type' => 'query', 'message' => FindTaskQuery::class, 'handler_class' => FindTaskHandler::class, 'service_id' => 'handler.find_task', 'bus' => null],
-            ],
-            'event' => [],
-        ]);
+        $this->expectNotToPerformAssertions();
 
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_throws_when_command_has_zero_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [CreateTaskCommand::class],
-            'query' => [],
-            'event' => [],
-        ]);
-
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/'.preg_quote(CreateTaskCommand::class, '/').'/');
-        $this->expectExceptionMessageMatches('/has no handler/');
-
-        (new ValidateHandlerCountPass())->process($container);
-    }
-
-    public function test_throws_when_command_has_two_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
+        $this->process([
             'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => TaskNotificationHandler::class, 'service_id' => 'handler.notification', 'bus' => null],
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', CreateTaskCommand::class, ListTasksHandler::class, 'handler.other', 'bus.commands_async'),
             ],
-            'query' => [],
-            'event' => [],
         ]);
-
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/'.preg_quote(CreateTaskCommand::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(CreateTaskHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(TaskNotificationHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/2 handlers/');
-
-        (new ValidateHandlerCountPass())->process($container);
     }
 
-    public function test_throws_when_query_has_zero_handlers(): void
+    public function test_events_may_have_many_handlers(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [],
-            'query' => [FindTaskQuery::class],
-            'event' => [],
-        ]);
+        $this->expectNotToPerformAssertions();
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/'.preg_quote(FindTaskQuery::class, '/').'/');
-        $this->expectExceptionMessageMatches('/has no handler/');
-
-        (new ValidateHandlerCountPass())->process($container);
-    }
-
-    public function test_throws_when_query_has_two_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [
-                ['type' => 'query', 'message' => FindTaskQuery::class, 'handler_class' => FindTaskHandler::class, 'service_id' => 'handler.find_task', 'bus' => null],
-                ['type' => 'query', 'message' => FindTaskQuery::class, 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.list_tasks', 'bus' => null],
-            ],
-            'event' => [],
-        ]);
-
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/'.preg_quote(FindTaskQuery::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(FindTaskHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(ListTasksHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/2 handlers/');
-
-        (new ValidateHandlerCountPass())->process($container);
-    }
-
-    public function test_does_not_throw_when_event_has_zero_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_does_not_throw_when_event_has_three_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
+        $this->process([
             'event' => [
-                ['type' => 'event', 'message' => TaskCreatedEvent::class, 'handler_class' => 'App\\Handler\\EventHandler1', 'service_id' => 'handler.eh1', 'bus' => null],
-                ['type' => 'event', 'message' => TaskCreatedEvent::class, 'handler_class' => 'App\\Handler\\EventHandler2', 'service_id' => 'handler.eh2', 'bus' => null],
-                ['type' => 'event', 'message' => TaskCreatedEvent::class, 'handler_class' => 'App\\Handler\\EventHandler3', 'service_id' => 'handler.eh3', 'bus' => null],
+                self::entry('event', TaskCreatedEvent::class, TaskNotificationHandler::class, 'handler.notify', 'bus.events'),
+                self::entry('event', TaskCreatedEvent::class, ListTasksHandler::class, 'handler.project', 'bus.events'),
             ],
         ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
     }
 
-    public function test_collects_all_violations_in_single_exception(): void
+    public function test_throws_when_command_has_two_handlers_on_the_same_bus(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => TaskNotificationHandler::class, 'service_id' => 'handler.notification', 'bus' => null],
-            ],
-            'query' => [
-                ['type' => 'query', 'message' => FindTaskQuery::class, 'handler_class' => FindTaskHandler::class, 'service_id' => 'handler.find_task', 'bus' => null],
-                ['type' => 'query', 'message' => FindTaskQuery::class, 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.list_tasks', 'bus' => null],
-            ],
-            'event' => [],
-        ]);
-
-        try {
-            (new ValidateHandlerCountPass())->process($container);
-            self::fail('Expected LogicException was not thrown');
-        } catch (\LogicException $e) {
-            $message = $e->getMessage();
-            // Both violations must appear in the single exception
-            self::assertStringContainsString(CreateTaskCommand::class, $message);
-            self::assertStringContainsString(FindTaskQuery::class, $message);
-            self::assertStringContainsString('CQRS handler validation failed', $message);
-        }
-    }
-
-    public function test_collects_zero_handler_and_duplicate_handler_violations_together(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => TaskNotificationHandler::class, 'service_id' => 'handler.notification', 'bus' => null],
-            ],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [],
-            'query' => [FindTaskQuery::class],
-        ]);
-
-        try {
-            (new ValidateHandlerCountPass())->process($container);
-            self::fail('Expected LogicException was not thrown');
-        } catch (\LogicException $e) {
-            $message = $e->getMessage();
-            // Duplicate command handler violation
-            self::assertStringContainsString(CreateTaskCommand::class, $message);
-            self::assertStringContainsString('2 handlers', $message);
-            // Zero query handler violation
-            self::assertStringContainsString(FindTaskQuery::class, $message);
-            self::assertStringContainsString('has no handler', $message);
-        }
-    }
-
-    public function test_skips_gracefully_when_handler_metadata_is_not_array(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', 'invalid');
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_skips_gracefully_when_discovered_messages_is_not_array(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', 'invalid');
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_skips_type_when_entries_are_not_array(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => 'not-an-array',
-            'query' => [],
-            'event' => [],
-        ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_skips_discovered_messages_type_when_not_array(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => 'not-an-array',
-            'query' => [],
-        ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_no_false_positive_when_discovered_message_has_handler(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
-            ],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [CreateTaskCommand::class],
-            'query' => [],
-        ]);
-
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
-    }
-
-    public function test_throws_when_command_has_three_handlers(): void
-    {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => CreateTaskHandler::class, 'service_id' => 'handler.create_task', 'bus' => null],
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => TaskNotificationHandler::class, 'service_id' => 'handler.notification', 'bus' => null],
-                ['type' => 'command', 'message' => CreateTaskCommand::class, 'handler_class' => FindTaskHandler::class, 'service_id' => 'handler.find_task', 'bus' => null],
-            ],
-            'query' => [],
-            'event' => [],
-        ]);
-
         $this->expectException(\LogicException::class);
-        $this->expectExceptionMessageMatches('/3 handlers/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(CreateTaskHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(TaskNotificationHandler::class, '/').'/');
-        $this->expectExceptionMessageMatches('/'.preg_quote(FindTaskHandler::class, '/').'/');
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.create_task, handler.duplicate.', CreateTaskCommand::class));
 
-        (new ValidateHandlerCountPass())->process($container);
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', CreateTaskCommand::class, ListTasksHandler::class, 'handler.duplicate', 'bus.commands'),
+            ],
+        ]);
     }
 
-    public function test_discovered_messages_with_empty_arrays_causes_no_violation(): void
+    public function test_throws_when_query_has_two_handlers_without_explicit_bus(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [],
-            'query' => [],
-        ]);
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Query %s has 2 handlers: handler.a, handler.b.', FindTaskQuery::class));
 
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
+        $this->process([
+            'query' => [
+                self::entry('query', FindTaskQuery::class, FindTaskHandler::class, 'handler.a', null),
+                self::entry('query', FindTaskQuery::class, ListTasksHandler::class, 'handler.b', null),
+            ],
+        ]);
     }
 
-    public function test_handles_missing_type_keys_in_metadata(): void
+    public function test_a_handler_without_bus_competes_with_the_handlers_of_every_bus(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', []);
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.create_task, handler.plain_messenger.', CreateTaskCommand::class));
 
-        (new ValidateHandlerCountPass())->process($container);
-
-        $this->addToAssertionCount(1);
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                // e.g. #[AsMessageHandler] on __invoke(CreateTaskCommand): Messenger puts it on every bus.
+                self::entry('command', CreateTaskCommand::class, ListTasksHandler::class, 'handler.plain_messenger', null),
+            ],
+        ]);
     }
 
-    public function test_multiple_zero_handler_violations_across_types(): void
+    public function test_the_same_service_with_and_without_bus_counts_once(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.handler_metadata', [
-            'command' => [],
-            'query' => [],
-            'event' => [],
-        ]);
-        $container->setParameter('somework_cqrs.discovered_messages', [
-            'command' => [CreateTaskCommand::class],
-            'query' => [FindTaskQuery::class],
-        ]);
+        $this->expectNotToPerformAssertions();
 
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', null),
+            ],
+        ]);
+    }
+
+    public function test_reports_all_violations_at_once(): void
+    {
         try {
-            (new ValidateHandlerCountPass())->process($container);
-            self::fail('Expected LogicException was not thrown');
-        } catch (\LogicException $e) {
-            $message = $e->getMessage();
-            self::assertStringContainsString(CreateTaskCommand::class, $message);
-            self::assertStringContainsString(FindTaskQuery::class, $message);
-            self::assertStringContainsString('has no handler', $message);
-            // Verify both are "no handler" violations (appears twice)
-            self::assertSame(2, substr_count($message, 'has no handler'));
+            $this->process([
+                'command' => [
+                    self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.a', 'bus'),
+                    self::entry('command', CreateTaskCommand::class, ListTasksHandler::class, 'handler.b', 'bus'),
+                ],
+                'query' => [
+                    self::entry('query', FindTaskQuery::class, FindTaskHandler::class, 'handler.c', 'bus'),
+                    self::entry('query', FindTaskQuery::class, ListTasksHandler::class, 'handler.d', 'bus'),
+                ],
+            ]);
+            self::fail('Expected a LogicException.');
+        } catch (\LogicException $exception) {
+            self::assertStringContainsString('Command '.CreateTaskCommand::class, $exception->getMessage());
+            self::assertStringContainsString('Query '.FindTaskQuery::class, $exception->getMessage());
         }
+    }
+
+    public function test_a_handler_for_an_interface_of_the_command_competes_with_its_handler(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.create_task, handler.audit (including handlers of %s).', CreateTaskCommand::class, Command::class));
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                // A catch-all handler: __invoke(Command $command).
+                self::entry('command', Command::class, ListTasksHandler::class, 'handler.audit', 'bus.commands'),
+            ],
+        ]);
+    }
+
+    public function test_handlers_of_an_interface_on_another_bus_do_not_count(): void
+    {
+        $this->expectNotToPerformAssertions();
+
+        $this->process([
+            'command' => [
+                self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands'),
+                self::entry('command', Command::class, ListTasksHandler::class, 'handler.audit', 'bus.audit'),
+            ],
+        ]);
+    }
+
+    public function test_plain_messenger_handlers_of_an_interface_of_the_command_count_too(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage(sprintf('Command %s has 2 handlers on bus "bus.commands": handler.send, handler.audit (including handlers of %s).', SendNotificationCommand::class, RetryAwareMessage::class));
+
+        // e.g. #[AsMessageHandler] on __invoke(RetryAwareMessage $message): not a CQRS handler.
+        $this->process(
+            ['command' => [self::entry('command', SendNotificationCommand::class, CreateTaskHandler::class, 'handler.send', 'bus.commands')]],
+            [['message' => RetryAwareMessage::class, 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.audit', 'bus' => null]],
+        );
+    }
+
+    public function test_a_catch_all_handler_counts_for_every_command_of_its_bus(): void
+    {
+        $this->expectException(\LogicException::class);
+        $this->expectExceptionMessage('(including handlers of *)');
+
+        $this->process(
+            ['command' => [self::entry('command', CreateTaskCommand::class, CreateTaskHandler::class, 'handler.create_task', 'bus.commands')]],
+            [['message' => '*', 'handler_class' => ListTasksHandler::class, 'service_id' => 'handler.log_everything', 'bus' => 'bus.commands']],
+        );
+    }
+
+    public function test_other_handler_routes_do_not_stay_in_the_container(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['command' => [], 'query' => [], 'event' => []]);
+        $container->setParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER, []);
+
+        (new ValidateHandlerCountPass())->process($container);
+
+        self::assertFalse($container->hasParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER));
+    }
+
+    /**
+     * @param array<string, list<array<string, string|null>>> $metadata
+     * @param list<array<string, string|null>>                $otherRoutes
+     */
+    private function process(array $metadata, array $otherRoutes = []): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', $metadata + ['command' => [], 'query' => [], 'event' => []]);
+        $container->setParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER, $otherRoutes);
+
+        (new ValidateHandlerCountPass())->process($container);
+    }
+
+    /**
+     * @return array{type: string, message: string, handler_class: string, service_id: string, bus: string|null}
+     */
+    private static function entry(string $type, string $message, string $handlerClass, string $serviceId, ?string $bus): array
+    {
+        return [
+            'type' => $type,
+            'message' => $message,
+            'handler_class' => $handlerClass,
+            'service_id' => $serviceId,
+            'bus' => $bus,
+        ];
     }
 }

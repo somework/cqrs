@@ -5,94 +5,186 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
+use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
+use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\Lock\Key;
+use Symfony\Component\Lock\PersistingStoreInterface;
+use Symfony\Component\Lock\Store\StoreFactory;
+use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
+
+use function str_replace;
 
 #[CoversClass(ValidateIdempotencyDependenciesPass::class)]
 final class ValidateIdempotencyDependenciesPassTest extends TestCase
 {
-    public function test_implements_compiler_pass_interface(): void
+    /**
+     * @return iterable<string, array{mixed}>
+     */
+    public static function inactiveSettings(): iterable
     {
-        $pass = new ValidateIdempotencyDependenciesPass();
-
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertInstanceOf(
-            \Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface::class,
-            $pass,
-        );
+        yield 'parameter missing' => [null];
+        yield 'disabled' => [false];
+        yield 'not strictly true' => ['yes'];
     }
 
-    public function test_noop_when_parameter_does_not_exist(): void
+    #[DataProvider('inactiveSettings')]
+    public function test_logs_nothing_when_idempotency_is_off(mixed $enabled): void
     {
         $container = new ContainerBuilder();
+        if (null !== $enabled) {
+            $container->setParameter('somework_cqrs.idempotency.enabled', $enabled);
+        }
 
-        $pass = new ValidateIdempotencyDependenciesPass();
-        $pass->process($container);
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => false))->process($container);
 
-        // No exception = pass
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        self::assertSame([], $container->getCompiler()->getLog());
     }
 
-    public function test_noop_when_idempotency_disabled(): void
+    public function test_logs_nothing_when_everything_is_in_place(): void
     {
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.idempotency.enabled', false);
+        $container = $this->enabledContainer();
+        $container->register('messenger.middleware.deduplicate_middleware', DeduplicateMiddleware::class);
 
-        $pass = new ValidateIdempotencyDependenciesPass();
-        $pass->process($container);
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
 
-        // No exception, no log = pass
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        self::assertSame([], $container->getCompiler()->getLog());
     }
 
-    public function test_noop_when_enabled_and_deduplicate_stamp_exists(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function missingClasses(): iterable
     {
-        // DeduplicateStamp IS available in our dev environment,
-        // so this test verifies the happy path
+        yield 'messenger < 7.3' => [DeduplicateStamp::class];
+        yield 'no symfony/lock' => [Key::class];
+    }
+
+    #[DataProvider('missingClasses')]
+    public function test_logs_missing_packages(string $missingClass): void
+    {
+        $container = $this->enabledContainer();
+
+        (new ValidateIdempotencyDependenciesPass(static fn (string $class): bool => $class !== $missingClass))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        self::assertCount(1, $log);
+        self::assertStringContainsString('needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock', $log[0]);
+    }
+
+    public function test_logs_a_missing_deduplicate_middleware(): void
+    {
+        $container = $this->enabledContainer();
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        self::assertCount(1, $log);
+        self::assertStringContainsString('deduplicate middleware is not registered', $log[0]);
+        self::assertStringContainsString('"framework.lock"', $log[0]);
+    }
+
+    /**
+     * @return iterable<string, array{string, string|null}>
+     */
+    public static function lockStores(): iterable
+    {
+        yield 'flock (FrameworkBundle default)' => ['flock', 'releases a key as soon as the dispatch returns'];
+        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'releases a key as soon as the dispatch returns'];
+        yield 'in-memory' => ['in-memory', 'only deduplicates within one process'];
+        yield 'flock with a path' => ['flock:///var/lock', 'releases a key as soon as the dispatch returns'];
+        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'a key stays locked while the connection lives, whatever the TTL'];
+        yield 'ZooKeeper' => ['zookeeper://localhost:2181', 'ties its keys to one connection'];
+        yield 'redis' => ['redis://localhost', null];
+        yield 'dbal' => ['mysql://db/app', null];
+    }
+
+    #[DataProvider('lockStores')]
+    public function test_warns_about_lock_stores_that_cannot_back_idempotency(string $dsn, ?string $warning): void
+    {
+        $container = $this->containerWithLockStore($dsn);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        if (null !== $warning) {
+            self::assertCount(1, $log);
+            self::assertStringContainsString($warning, $log[0]);
+        } else {
+            self::assertSame([], $log);
+        }
+    }
+
+    public function test_a_store_from_an_environment_variable_is_checked_with_its_value_at_compile_time(): void
+    {
+        $container = $this->enabledContainer();
+        $container->setParameter('env(CQRS_TEST_LOCK_DSN)', 'flock');
+        $placeholder = $container->getParameterBag()->resolveValue('%env(CQRS_TEST_LOCK_DSN)%');
+        self::assertIsString($placeholder);
+        $container = $this->containerWithLockStore($placeholder, $container);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $log = $container->getCompiler()->getLog();
+        self::assertCount(1, $log);
+        self::assertStringContainsString('"flock" (the environment value when the container was compiled)', $log[0]);
+    }
+
+    public function test_hands_the_problem_to_the_stamp_decider(): void
+    {
+        // The decider logs it as a warning the first time a message carries an IdempotencyStamp.
+        $container = $this->containerWithLockStore('flock');
+        $container->register('somework_cqrs.stamp_decider.idempotency', IdempotencyStampDecider::class);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $problem = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$problem');
+        self::assertIsString($problem);
+        self::assertStringContainsString('releases a key as soon as the dispatch returns', $problem);
+        // Escaped: the advice names "%env(LOCK_DSN)%", which must not become an environment variable.
+        self::assertStringContainsString('"%%env(LOCK_DSN)%%"', $problem);
+        self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
+    }
+
+    public function test_the_outbox_writer_gets_the_lock_store_to_check_at_runtime(): void
+    {
+        // Also with idempotency disabled (a DeduplicateStamp may come from the caller or the
+        // message), and lazily: an environment-based DSN is only known at runtime.
+        $container = $this->containerWithLockStore('%env(LOCK_DSN)%', new ContainerBuilder());
+        $container->register('somework_cqrs.outbox.writer');
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $store = $container->getDefinition('somework_cqrs.outbox.writer')->getArgument('$lockStore');
+        self::assertInstanceOf(ServiceClosureArgument::class, $store);
+        self::assertSame('.lock.default.store.abc', (string) $store->getValues()[0]);
+    }
+
+    private function containerWithLockStore(string $dsn, ?ContainerBuilder $container = null): ContainerBuilder
+    {
+        $container ??= $this->enabledContainer();
+        $container->register('messenger.middleware.deduplicate_middleware', DeduplicateMiddleware::class);
+        // What FrameworkBundle registers for "framework.lock: <dsn>".
+        $container->register('.lock.default.store.abc', PersistingStoreInterface::class)
+            ->setFactory([StoreFactory::class, 'createStore'])
+            ->setArguments([$dsn]);
+        $container->setDefinition('lock.default.factory', (new ChildDefinition('lock.factory.abstract'))->replaceArgument(0, new Reference('.lock.default.store.abc')));
+        $container->setAlias('lock.factory', 'lock.default.factory');
+
+        return $container;
+    }
+
+    private function enabledContainer(): ContainerBuilder
+    {
         $container = new ContainerBuilder();
         $container->setParameter('somework_cqrs.idempotency.enabled', true);
 
-        $pass = new ValidateIdempotencyDependenciesPass();
-        $pass->process($container);
-
-        // No exception, no warning = pass (DeduplicateStamp exists in dev)
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
-    }
-
-    public function test_warning_message_includes_install_instructions(): void
-    {
-        // We cannot easily mock class_exists() in the pass.
-        // Instead, verify the pass structure: when enabled=true and class exists,
-        // it returns early (no log). The "class missing" branch is validated
-        // through static analysis and integration coverage.
-        $pass = new ValidateIdempotencyDependenciesPass();
-
-        // Verify the class can be instantiated and processed without error
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.idempotency.enabled', true);
-
-        $pass->process($container);
-
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true, 'Pass processes without error when DeduplicateStamp is available');
-    }
-
-    public function test_noop_when_enabled_parameter_is_not_boolean_true(): void
-    {
-        // The pass uses strict `true !== $container->getParameter(...)` check,
-        // so non-boolean-true values (e.g. string "1", int 1) should cause early return.
-        $container = new ContainerBuilder();
-        $container->setParameter('somework_cqrs.idempotency.enabled', 'yes');
-
-        $pass = new ValidateIdempotencyDependenciesPass();
-        $pass->process($container);
-
-        // No exception, no log = pass (non-boolean-true triggers early return)
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        return $container;
     }
 }

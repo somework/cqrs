@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
+use Doctrine\DBAL\Connection;
+use Doctrine\DBAL\Platforms\AbstractPlatform;
+use Doctrine\DBAL\Platforms\MySQLPlatform;
+use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
+use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Event\GenerateSchemaEventArgs;
@@ -74,7 +79,7 @@ final class OutboxSchemaSubscriberTest extends TestCase
         $subscriber->postGenerateSchema($this->createEventArgs($schema));
 
         $table = $schema->getTable('somework_cqrs_outbox');
-        self::assertTrue($table->hasIndex('idx_somework_cqrs_outbox_published_created'));
+        self::assertTrue($table->hasIndex('idx_somework_cqrs_outbox_pending'));
     }
 
     public function test_table_has_primary_key_after_subscriber(): void
@@ -84,10 +89,8 @@ final class OutboxSchemaSubscriberTest extends TestCase
 
         $subscriber->postGenerateSchema($this->createEventArgs($schema));
 
-        $table = $schema->getTable('somework_cqrs_outbox');
-        $pk = $table->getPrimaryKeyConstraint();
-        self::assertNotNull($pk);
-        self::assertSame('id', $pk->getColumnNames()[0]->toString());
+        $sql = implode(";\n", (new SQLitePlatform())->getCreateTableSQL($schema->getTable('somework_cqrs_outbox')));
+        self::assertMatchesRegularExpression('/PRIMARY KEY\s*\(\s*id\s*\)/i', $sql);
     }
 
     public function test_multiple_calls_are_idempotent(): void
@@ -112,11 +115,55 @@ final class OutboxSchemaSubscriberTest extends TestCase
         self::assertTrue($schema->hasTable('somework_cqrs_outbox'));
     }
 
-    private function createEventArgs(Schema $schema): GenerateSchemaEventArgs
+    public function test_a_mysql_table_in_the_database_of_the_connection_is_added_without_the_database(): void
     {
-        return new GenerateSchemaEventArgs(
-            $this->createMock(EntityManagerInterface::class),
-            $schema,
-        );
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('app.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app'));
+
+        // Like the table that the storage creates, which the schema lists without the database.
+        self::assertTrue($schema->hasTable('outbox'));
+        self::assertTrue($schema->getTable('outbox')->hasIndex('idx_app_outbox_pending'));
+    }
+
+    public function test_a_mysql_table_in_another_database_is_left_out(): void
+    {
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('other.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app'));
+
+        self::assertSame([], $schema->getTables(), 'The schema only holds the database of the connection.');
+    }
+
+    public function test_the_database_of_a_mysql_table_is_compared_case_insensitively(): void
+    {
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('APP.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app'));
+
+        self::assertTrue($schema->hasTable('outbox'));
+    }
+
+    public function test_a_postgresql_table_keeps_its_schema(): void
+    {
+        $schema = new Schema();
+
+        (new OutboxSchemaSubscriber('app.outbox'))->postGenerateSchema($this->createEventArgs($schema, 'app', new PostgreSQLPlatform()));
+
+        self::assertTrue($schema->hasTable('app.outbox'));
+        self::assertCount(1, $schema->getTables(), 'Only the qualified table.');
+    }
+
+    private function createEventArgs(Schema $schema, ?string $database = null, ?AbstractPlatform $platform = null): GenerateSchemaEventArgs
+    {
+        $entityManager = $this->createMock(EntityManagerInterface::class);
+        if (null !== $database) {
+            $connection = $this->createMock(Connection::class);
+            $connection->method('getDatabasePlatform')->willReturn($platform ?? new MySQLPlatform());
+            $connection->method('getDatabase')->willReturn($database);
+            $entityManager->method('getConnection')->willReturn($connection);
+        }
+
+        return new GenerateSchemaEventArgs($entityManager, $schema);
     }
 }

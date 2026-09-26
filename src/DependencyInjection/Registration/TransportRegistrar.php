@@ -7,7 +7,6 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 use ArrayObject;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -22,18 +21,16 @@ use function sprintf;
 /** @internal */
 final class TransportRegistrar
 {
-    /** @param array<string, array{stamp: string, default: list<string>, map: array<string, list<string>>}> $config */
+    /** @param array<string, array{default: list<string>, map: array<string, list<string>>}> $config */
     public function register(ContainerBuilder $container, array $config): void
     {
         $configuredTransportNames = [];
-        $stampTypes = [];
         $mapping = [];
 
         foreach (['command', 'command_async', 'query', 'event', 'event_async'] as $type) {
             $serviceMap = [];
             $typeConfig = $config[$type];
 
-            $stampTypes[$type] = $typeConfig['stamp'];
             $mapping[$type] = [
                 'default' => $typeConfig['default'],
                 'map' => $typeConfig['map'],
@@ -48,7 +45,7 @@ final class TransportRegistrar
 
                 $container->setDefinition($defaultServiceId, $defaultDefinition);
 
-                $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
+                $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new Reference($defaultServiceId);
 
                 foreach ($typeConfig['default'] as $transportName) {
                     $configuredTransportNames[] = $transportName;
@@ -64,7 +61,7 @@ final class TransportRegistrar
 
                 $container->setDefinition($serviceId, $definition);
 
-                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+                $serviceMap[$messageClass] = new Reference($serviceId);
 
                 foreach ($transports as $transportName) {
                     $configuredTransportNames[] = $transportName;
@@ -86,13 +83,11 @@ final class TransportRegistrar
 
         $container->setParameter('somework_cqrs.transport_names', $configuredTransportNames);
         $container->setParameter('somework_cqrs.transport_mapping', $mapping);
-        $container->setParameter('somework_cqrs.transport_stamp_types', $stampTypes);
 
         $providerDefinition = new Definition(TransportMappingProvider::class);
         $providerDefinition->setArgument('$mapping', $mapping);
         $providerDefinition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.transport_mapping_provider', $providerDefinition);
-        $container->setAlias(TransportMappingProvider::class, 'somework_cqrs.transport_mapping_provider')->setPublic(false);
     }
 }

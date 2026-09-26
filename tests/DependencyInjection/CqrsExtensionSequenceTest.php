@@ -6,7 +6,6 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\StampsDeciderRegistrar;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
@@ -42,7 +41,7 @@ final class CqrsExtensionSequenceTest extends TestCase
         );
     }
 
-    public function test_sequence_decider_has_priority_110_and_event_message_types(): void
+    public function test_sequence_decider_has_priority_110(): void
     {
         $container = $this->createContainer();
 
@@ -51,7 +50,6 @@ final class CqrsExtensionSequenceTest extends TestCase
 
         self::assertCount(1, $tags);
         self::assertSame(110, $tags[0]['priority']);
-        self::assertSame([Event::class], $tags[0]['message_types']);
     }
 
     public function test_sequence_enabled_parameter_set_to_true_by_default(): void

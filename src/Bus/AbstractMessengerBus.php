@@ -6,6 +6,10 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
+use SomeWork\CqrsBundle\Exception\OutboxNotConfiguredException;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\MessageBusInterface;
@@ -13,7 +17,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_map;
 use function array_values;
-use function count;
+use function implode;
+use function sprintf;
 
 /** @internal */
 abstract class AbstractMessengerBus
@@ -25,6 +30,7 @@ abstract class AbstractMessengerBus
     private readonly DispatchModeDecider $dispatchModeDecider;
     private readonly StampsDecider $stampsDecider;
     private readonly ?LoggerInterface $logger;
+    private readonly ?OutboxWriter $outbox;
 
     public function __construct(
         MessageBusInterface $syncBus,
@@ -32,41 +38,87 @@ abstract class AbstractMessengerBus
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?StampsDecider $stampsDecider = null,
         ?LoggerInterface $logger = null,
+        ?OutboxWriter $outbox = null,
     ) {
         $this->syncBus = $syncBus;
         $this->asyncBus = $asyncBus;
         $this->dispatchModeDecider = $dispatchModeDecider ?? DispatchModeDecider::syncDefaults();
         $this->stampsDecider = $stampsDecider ?? StampsDecider::withDefaultAsyncDeferral();
         $this->logger = $logger;
+        $this->outbox = $outbox;
     }
 
     final protected function dispatchMessage(object $message, DispatchMode $mode, StampInterface ...$stamps): Envelope
     {
         $resolvedMode = $this->dispatchModeDecider->resolve($message, $mode);
 
-        $this->logger?->debug('Dispatch mode resolved', [
-            'message' => $message::class,
-            'requested_mode' => $mode->value,
-            'resolved_mode' => $resolvedMode->value,
-            'bus' => static::BUS_NAME,
-        ]);
+        if (DispatchMode::OUTBOX === $resolvedMode) {
+            return $this->storeInOutbox($message, $mode, $stamps);
+        }
+
+        // Select the bus first: the pipeline has side effects (a rate limiter consumes a token).
+        $bus = $this->selectBus($resolvedMode, $message);
 
         $stamps = $this->stampsDecider->decide($message, $resolvedMode, array_values($stamps));
 
-        $this->logger?->debug('Stamps decided', [
+        $this->logger?->debug('Dispatching {message} on the {mode} {bus} bus', [
             'message' => $message::class,
-            'stamp_count' => count($stamps),
-            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
-            'bus' => static::BUS_NAME,
-        ]);
-
-        $this->logger?->debug('Dispatching via {mode} bus', [
-            'message' => $message::class,
+            'requested_mode' => $mode->value,
             'mode' => $resolvedMode->value,
             'bus' => static::BUS_NAME,
+            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
         ]);
 
-        return $this->selectBus($resolvedMode, $message)->dispatch($message, $stamps);
+        // MessageTransportStampDecider warns when an async dispatch has no transport.
+        return $bus->dispatch($message, $stamps);
+    }
+
+    /**
+     * The stamps are decided as for an asynchronous dispatch (the relay sends the message later),
+     * and the envelope goes through the bus the relay sends it on, so the application's middleware
+     * (validation, context stamps) runs in the caller. OutboxStoreMiddleware then stores it now, in
+     * the current transaction, instead of sending it: it is never deferred until the current
+     * handler has finished (OutboxPrepareMiddleware).
+     *
+     * @param array<array-key, StampInterface> $stamps
+     */
+    private function storeInOutbox(object $message, DispatchMode $requested, array $stamps): Envelope
+    {
+        if (null === $this->outbox) {
+            throw new OutboxNotConfiguredException($message::class, static::BUS_NAME, $requested);
+        }
+
+        // Before the pipeline, which has side effects (a rate limiter consumes a token), and before
+        // the bus middleware, which may open a transaction of its own ("doctrine_transaction").
+        $this->outbox->assertCanStore($message);
+
+        // OutboxPrepareMiddleware keeps the DeduplicateStamps from Messenger's deduplication until the
+        // relay sends the message, and drops the DispatchAfterCurrentBusStamps: it is stored now.
+        $stamps = $this->stampsDecider->decide($message, DispatchMode::ASYNC, [...array_values($stamps), new StoreInOutboxStamp()]);
+
+        $bus = $this->asyncBus ?? $this->syncBus;
+        $this->logger?->debug('Storing {message} in the outbox through the {bus} bus', [
+            'message' => $message::class,
+            'requested_mode' => $requested->value,
+            'mode' => DispatchMode::OUTBOX->value,
+            'bus' => static::BUS_NAME,
+            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
+        ]);
+
+        $envelope = $bus->dispatch($message, $stamps);
+
+        $stored = $envelope->last(OutboxStoredStamp::class);
+        if (!$stored instanceof OutboxStoredStamp) {
+            throw new \LogicException(sprintf('The %s bus did not store "%s" in the outbox: a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.', static::BUS_NAME, $message::class));
+        }
+
+        $this->logger?->debug('Stored {message} in the outbox for the {transports} transport(s)', [
+            'message' => $message::class,
+            'bus' => static::BUS_NAME,
+            'transports' => implode(', ', array_map(static fn (?string $transport): string => $transport ?? '(routing)', $stored->transportNames)),
+        ]);
+
+        return $envelope;
     }
 
     final protected function dispatchMessageSync(object $message, StampInterface ...$stamps): Envelope

@@ -4,18 +4,23 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use ReflectionProperty;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditLogEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\BulkImportCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\HighPriorityEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ImportLegacyDataCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\OrderPlacedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 
+#[CoversClass(DispatchModeDecider::class)]
 final class DispatchModeDeciderTest extends TestCase
 {
     public function test_command_uses_configured_default(): void
@@ -134,21 +139,16 @@ final class DispatchModeDeciderTest extends TestCase
         self::assertSame(DispatchMode::ASYNC, $firstResult);
 
         $commandCache = new ReflectionProperty($decider, 'commandModeCache');
-        $commandCache->setAccessible(true);
         $cachedModes = $commandCache->getValue($decider);
 
         self::assertIsArray($cachedModes);
         self::assertArrayHasKey($message::class, $cachedModes);
         self::assertSame(DispatchMode::ASYNC, $cachedModes[$message::class]);
 
-        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
-        $interfaceCache->setAccessible(true);
-        $interfaceCache->setValue($decider, []);
+        // The cached mode is returned without another lookup.
+        $commandCache->setValue($decider, [$message::class => DispatchMode::SYNC]);
 
-        $secondResult = $decider->resolve($message, DispatchMode::DEFAULT);
-
-        self::assertSame($firstResult, $secondResult);
-        self::assertSame([], $interfaceCache->getValue($decider));
+        self::assertSame(DispatchMode::SYNC, $decider->resolve($message, DispatchMode::DEFAULT));
     }
 
     public function test_reset_clears_all_caches(): void
@@ -168,17 +168,14 @@ final class DispatchModeDeciderTest extends TestCase
 
         $commandCache = new ReflectionProperty($decider, 'commandModeCache');
         $eventCache = new ReflectionProperty($decider, 'eventModeCache');
-        $interfaceCache = new ReflectionProperty($decider, 'interfaceDepthCache');
 
         self::assertNotEmpty($commandCache->getValue($decider));
         self::assertNotEmpty($eventCache->getValue($decider));
-        self::assertNotEmpty($interfaceCache->getValue($decider));
 
         $decider->reset();
 
         self::assertSame([], $commandCache->getValue($decider));
         self::assertSame([], $eventCache->getValue($decider));
-        self::assertSame([], $interfaceCache->getValue($decider));
     }
 
     public function test_reset_allows_re_resolution_with_fresh_state(): void
@@ -193,5 +190,40 @@ final class DispatchModeDeciderTest extends TestCase
 
         $second = $decider->resolve($command, DispatchMode::DEFAULT);
         self::assertSame(DispatchMode::ASYNC, $second);
+    }
+
+    public function test_asynchronous_attribute_makes_default_dispatch_async(): void
+    {
+        $decider = DispatchModeDecider::syncDefaults();
+
+        self::assertSame(DispatchMode::ASYNC, $decider->resolve(new AsyncTaskCommand('1'), DispatchMode::DEFAULT));
+    }
+
+    public function test_explicit_mode_beats_asynchronous_attribute(): void
+    {
+        $decider = DispatchModeDecider::syncDefaults();
+
+        self::assertSame(DispatchMode::SYNC, $decider->resolve(new AsyncTaskCommand('1'), DispatchMode::SYNC));
+    }
+
+    public function test_exact_class_mapping_beats_asynchronous_attribute(): void
+    {
+        $decider = new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [AsyncTaskCommand::class => DispatchMode::SYNC]);
+
+        self::assertSame(DispatchMode::SYNC, $decider->resolve(new AsyncTaskCommand('1'), DispatchMode::DEFAULT));
+    }
+
+    public function test_asynchronous_attribute_beats_interface_mapping(): void
+    {
+        $decider = new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [Command::class => DispatchMode::SYNC]);
+
+        self::assertSame(DispatchMode::ASYNC, $decider->resolve(new AsyncTaskCommand('1'), DispatchMode::DEFAULT));
+    }
+
+    public function test_the_outbox_attribute_resolves_to_the_outbox_unless_the_class_is_mapped(): void
+    {
+        self::assertSame(DispatchMode::OUTBOX, DispatchModeDecider::syncDefaults()->resolve(new TaskArchivedEvent('1'), DispatchMode::DEFAULT));
+        self::assertSame(DispatchMode::ASYNC, (new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [], [TaskArchivedEvent::class => DispatchMode::ASYNC]))->resolve(new TaskArchivedEvent('1'), DispatchMode::DEFAULT));
+        self::assertSame(DispatchMode::SYNC, DispatchModeDecider::syncDefaults()->resolve(new TaskArchivedEvent('1'), DispatchMode::SYNC));
     }
 }

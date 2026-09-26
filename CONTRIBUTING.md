@@ -6,7 +6,7 @@ Thank you for considering contributing to the CQRS Bundle! This guide will help 
 
 - **PHP 8.2+**
 - **Composer 2.x**
-- **Symfony 7.2+** (installed as a dependency via Composer)
+- **Symfony 7.2+ or 8.x** (installed as a dependency via Composer)
 
 ## Setup
 
@@ -39,6 +39,16 @@ composer phpunit
 
 All three checks must pass before submitting a pull request.
 
+The outbox tests (`--group database`) use in-memory SQLite. To run them on PostgreSQL or MySQL, as CI does,
+point `CQRS_TEST_DATABASE_URL` at an empty database (the tests drop and create their tables):
+
+```bash
+CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
+```
+
+On MySQL, the test of a `database.table` name also needs a database `cqrs_test_other` that the same user can
+change; it is skipped otherwise.
+
 ## Coding Standards
 
 - **Code style:** PSR-12 via [PHP-CS-Fixer](https://github.com/PHP-CS-Fixer/PHP-CS-Fixer). Run `composer fix` to auto-format.
@@ -52,7 +62,8 @@ All three checks must pass before submitting a pull request.
 2. **Write tests first** (TDD) -- the test should fail before you write the implementation.
 3. **Implement** the minimum code to make the tests pass.
 4. **Run all checks** with `composer test` and ensure they pass.
-5. **Submit a PR** against `main` with a clear description of the change.
+5. **Update the changelog**: add user-visible changes to `CHANGELOG.md` under `[Unreleased]` and explain behaviour changes in `UPGRADE.md`.
+6. **Submit a PR** against `main` with a clear description of the change.
 
 ## Commit Messages
 

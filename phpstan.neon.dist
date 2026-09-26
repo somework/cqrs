@@ -3,6 +3,11 @@ parameters:
     paths:
         - src
         - tests
-    excludePaths:
-        - src/Outbox/OutboxSchemaSubscriber.php
     tmpDir: var/cache/phpstan
+    ignoreErrors:
+        # Symfony 8.1 deprecates HttpKernel's BundleInterface, which Kernel::registerBundles() still
+        # declares; its replacement does not exist on Symfony 7, so the test kernels cannot avoid it.
+        -
+            identifier: return.deprecatedInterface
+            path: tests/Fixture/Kernel/*
+            reportUnmatched: false

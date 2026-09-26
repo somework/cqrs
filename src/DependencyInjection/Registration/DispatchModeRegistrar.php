@@ -32,6 +32,5 @@ final class DispatchModeRegistrar
         $definition->addTag('kernel.reset', ['method' => 'reset']);
 
         $container->setDefinition('somework_cqrs.dispatch_mode_decider', $definition);
-        $container->setAlias(DispatchModeDecider::class, 'somework_cqrs.dispatch_mode_decider')->setPublic(false);
     }
 }

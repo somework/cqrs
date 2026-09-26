@@ -4,14 +4,17 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Registry;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function sprintf;
 
+#[CoversClass(HandlerRegistry::class)]
 final class HandlerRegistryTest extends TestCase
 {
     public function test_all_returns_descriptors_for_each_entry(): void
@@ -64,7 +67,7 @@ final class HandlerRegistryTest extends TestCase
             'default' => $this->strategy('%s'),
         ]);
 
-        $descriptors = $registry->byType('command');
+        $descriptors = $registry->byType(MessageType::Command);
 
         self::assertCount(1, $descriptors);
         // @phpstan-ignore staticMethod.impossibleType (test uses fake class strings)
@@ -123,8 +126,8 @@ final class HandlerRegistryTest extends TestCase
 
         $registry = new HandlerRegistry($metadata, $locator);
 
-        $commandDescriptor = $registry->byType('command')[0];
-        $queryDescriptor = $registry->byType('query')[0];
+        $commandDescriptor = $registry->byType(MessageType::Command)[0];
+        $queryDescriptor = $registry->byType(MessageType::Query)[0];
 
         self::assertSame('Command App\\Command\\ShipOrder', $registry->getDisplayName($commandDescriptor));
         self::assertSame('Command App\\Command\\ShipOrder', $registry->getDisplayName($commandDescriptor));

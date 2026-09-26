@@ -7,8 +7,10 @@ namespace SomeWork\CqrsBundle\Command;
 use ReflectionClass;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
@@ -24,12 +26,17 @@ use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 
+use function array_filter;
 use function class_exists;
 use function count;
 use function implode;
 use function in_array;
 use function is_string;
 use function sprintf;
+use function str_starts_with;
+use function stripos;
+use function strrpos;
+use function substr;
 
 /** @internal */
 #[AsCommand(
@@ -77,9 +84,14 @@ final class ListHandlersCommand extends Command
      */
     private readonly array $transportMappings;
 
+    /**
+     * @param array<string, string> $retryStrategyTransports Transports whose retries follow the retry policies, with their message type
+     */
     public function __construct(
         private readonly HandlerRegistry $registry,
+        #[Autowire(service: 'somework_cqrs.dispatch_mode_decider')]
         private readonly DispatchModeDecider $dispatchModeDecider,
+        #[Autowire(service: 'somework_cqrs.dispatch_after_current_bus_decider')]
         private readonly DispatchAfterCurrentBusDecider $dispatchAfterCurrentBusDecider,
         #[Autowire(service: 'somework_cqrs.retry.command_resolver')]
         RetryPolicyResolver $commandRetryResolver,
@@ -105,11 +117,14 @@ final class ListHandlersCommand extends Command
         MessageTransportResolver $queryTransportResolver,
         #[Autowire(service: 'somework_cqrs.transports.event_resolver')]
         MessageTransportResolver $eventTransportResolver,
+        #[Autowire(service: 'somework_cqrs.transport_mapping_provider')]
         TransportMappingProvider $transportMappingProvider,
         #[Autowire(service: 'somework_cqrs.transports.command_async_resolver')]
         ?MessageTransportResolver $commandAsyncTransportResolver = null,
         #[Autowire(service: 'somework_cqrs.transports.event_async_resolver')]
         ?MessageTransportResolver $eventAsyncTransportResolver = null,
+        #[Autowire(param: 'somework_cqrs.retry_strategy.transports')]
+        private readonly array $retryStrategyTransports = [],
     ) {
         parent::__construct();
 
@@ -149,7 +164,8 @@ final class ListHandlersCommand extends Command
     {
         $this
             ->addOption('details', mode: InputOption::VALUE_NONE, description: 'Display resolved configuration details for each handler.')
-            ->addOption('type', mode: InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, description: 'Filter by message type (command, query, event).');
+            ->addOption('type', mode: InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, description: 'Filter by message type (command, query, event).')
+            ->addOption('message', mode: InputOption::VALUE_REQUIRED, description: 'Only messages whose class or name contains this text (case-insensitive).');
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
@@ -158,21 +174,35 @@ final class ListHandlersCommand extends Command
 
         /** @var array<int, string>|string|null $requestedTypes */
         $requestedTypes = $input->getOption('type');
-        $types = $this->normaliseTypes($requestedTypes);
+
+        try {
+            $types = $this->normaliseTypes($requestedTypes);
+        } catch (\InvalidArgumentException $exception) {
+            $io->error($exception->getMessage());
+
+            return self::INVALID;
+        }
+
         $showDetails = (bool) $input->getOption('details');
+        $filter = $input->getOption('message');
+        $filter = is_string($filter) && '' !== $filter ? $filter : null;
 
         $rowsByType = [];
         foreach ($types as $type) {
-            $descriptors = $this->registry->byType($type);
+            $descriptors = $this->registry->byType(MessageType::from($type));
             $rows = [];
             foreach ($descriptors as $descriptor) {
+                if (null !== $filter && false === stripos($descriptor->messageClass, $filter) && false === stripos($this->registry->getDisplayName($descriptor), $filter)) {
+                    continue;
+                }
+
                 $rows[] = $this->formatDescriptor($descriptor, $showDetails);
             }
 
             if ([] !== $rows) {
                 usort(
                     $rows,
-                    static fn (array $a, array $b): int => [$a['Message'], $a['Handler']] <=> [$b['Message'], $b['Handler']]
+                    static fn (array $a, array $b): int => [$a['Class'], $a['Handler'], $a['Bus']] <=> [$b['Class'], $b['Handler'], $b['Bus']]
                 );
 
                 $rowsByType[$type] = $rows;
@@ -185,14 +215,14 @@ final class ListHandlersCommand extends Command
             return self::SUCCESS;
         }
 
-        $typesToDisplay = array_keys($rowsByType);
+        $remaining = count($rowsByType);
 
-        foreach ($typesToDisplay as $index => $type) {
+        foreach ($rowsByType as $type => $rows) {
             $io->section(self::SECTION_TITLES[$type]);
 
-            $this->renderTable($output, $rowsByType[$type], $showDetails);
+            $this->renderTable($output, $rows, $showDetails);
 
-            if ($index < count($typesToDisplay) - 1) {
+            if (--$remaining > 0) {
                 $io->newLine();
             }
         }
@@ -220,9 +250,11 @@ final class ListHandlersCommand extends Command
         $types = [];
         foreach ($requested as $type) {
             $type = strtolower($type);
-            if (in_array($type, $available, true)) {
-                $types[] = $type;
+            if (!in_array($type, $available, true)) {
+                throw new \InvalidArgumentException(sprintf('Unknown message type "%s". Expected one of: %s.', $type, implode(', ', $available)));
             }
+
+            $types[] = $type;
         }
 
         return array_values(array_unique($types));
@@ -234,8 +266,9 @@ final class ListHandlersCommand extends Command
     private function formatDescriptor(HandlerDescriptor $descriptor, bool $showDetails): array
     {
         $row = [
-            'Type' => ucfirst($descriptor->type),
+            'Type' => ucfirst($descriptor->type->value),
             'Message' => $this->registry->getDisplayName($descriptor),
+            'Class' => $descriptor->messageClass,
             'Handler' => $descriptor->handlerClass,
             'Service Id' => $descriptor->serviceId,
             'Bus' => $descriptor->bus ?? 'default',
@@ -261,30 +294,35 @@ final class ListHandlersCommand extends Command
             : 'n/a';
 
         $dispatchMode = $this->describeDispatchMode($message);
-        $asyncDefers = $this->describeAsyncDeferral($descriptor->type, $message);
-        $syncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, false);
-        $asyncTransports = $this->describeTransports($descriptor->type, $descriptor->messageClass, $message, true);
+        $asyncDefers = $this->describeAsyncDeferral($descriptor->type->value, $message);
+        $syncTransports = $this->describeTransports($descriptor->type->value, $descriptor->messageClass, $message, false);
+        $asyncTransports = $this->describeTransports($descriptor->type->value, $descriptor->messageClass, $message, true);
 
-        $retryResolver = $this->retryResolvers[$descriptor->type] ?? null;
+        $retryResolver = $this->retryResolvers[$descriptor->type->value];
         $retry = $this->describeResolvedService(
             $retryResolver,
             $message,
             static fn (RetryPolicyResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        $serializerResolver = $this->serializerResolvers[$descriptor->type] ?? null;
+        $serializerResolver = $this->serializerResolvers[$descriptor->type->value];
         $serializer = $this->describeResolvedService(
             $serializerResolver,
             $message,
             static fn (MessageSerializerResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
 
-        $metadataResolver = $this->metadataResolvers[$descriptor->type] ?? null;
+        $metadataResolver = $this->metadataResolvers[$descriptor->type->value];
         $metadata = $this->describeResolvedService(
             $metadataResolver,
             $message,
             static fn (MessageMetadataProviderResolver $resolver, object $msg): object => $resolver->resolveFor($msg)
         );
+
+        // The policies only take effect on the transports that use the bundle's retry strategy.
+        if ([] === $this->retryStrategyTransports && 'n/a' !== $retry && NullRetryPolicy::class !== $retry && !str_starts_with($retry, 'error: ')) {
+            $retry .= ' (not used: no transport is listed under somework_cqrs.retry_strategy.transports)';
+        }
 
         $details = [
             'Dispatch Mode' => $dispatchMode,
@@ -389,6 +427,11 @@ final class ListHandlersCommand extends Command
             return 'n/a';
         }
 
+        // An outbox dispatch is stored right away, in the current transaction.
+        if (DispatchMode::OUTBOX === $this->dispatchModeDecider->resolve($message, DispatchMode::DEFAULT)) {
+            return 'no (stored in the outbox)';
+        }
+
         return $this->dispatchAfterCurrentBusDecider->shouldDefer($message) ? 'yes' : 'no';
     }
 
@@ -440,19 +483,32 @@ final class ListHandlersCommand extends Command
     }
 
     /**
+     * One row per handler and bus; with --details, one table per handler with its configuration.
+     *
      * @param list<array<string, string>> $rows
      */
     private function renderTable(OutputInterface $output, array $rows, bool $showDetails): void
     {
+        if (!$showDetails) {
+            // The name of the naming strategy only when it says more than the class name.
+            $named = [] !== array_filter($rows, static fn (array $row): bool => $row['Message'] !== self::shortName($row['Class']));
+
+            $table = new Table($output);
+            $table->setHeaders($named ? ['Message', 'Name', 'Handler', 'Bus'] : ['Message', 'Handler', 'Bus']);
+            $table->setRows(array_map(
+                static fn (array $row): array => $named ? [$row['Class'], $row['Message'], $row['Handler'], $row['Bus']] : [$row['Class'], $row['Handler'], $row['Bus']],
+                $rows,
+            ));
+            $table->render();
+
+            return;
+        }
+
         $total = count($rows);
 
         foreach ($rows as $index => $row) {
             $tableRows = [];
             foreach ($row as $label => $value) {
-                if (!$showDetails && !in_array($label, ['Type', 'Message', 'Handler', 'Service Id', 'Bus'], true)) {
-                    continue;
-                }
-
                 $tableRows[] = [$label, $value];
             }
 
@@ -466,5 +522,12 @@ final class ListHandlersCommand extends Command
                 $output->writeln('');
             }
         }
+    }
+
+    private static function shortName(string $class): string
+    {
+        $position = strrpos($class, '\\');
+
+        return false === $position ? $class : substr($class, $position + 1);
     }
 }

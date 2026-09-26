@@ -5,16 +5,20 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Testing;
 
 use PHPUnit\Framework\AssertionFailedError;
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 
-#[CoversClass(CqrsAssertionsTrait::class)]
+#[CoversTrait(CqrsAssertionsTrait::class)]
 final class CqrsAssertionsTraitTest extends TestCase
 {
     use CqrsAssertionsTrait;
@@ -38,6 +42,21 @@ final class CqrsAssertionsTraitTest extends TestCase
         self::assertDispatched($bus, Command::class);
     }
 
+    public function test_a_failure_names_the_bus_instead_of_exporting_it(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->dispatch(new class implements Command {});
+
+        try {
+            self::assertDispatched($bus, CreateTaskCommand::class);
+            self::fail('The assertion did not fail.');
+        } catch (AssertionFailedError $failure) {
+            self::assertStringStartsWith('Failed asserting that '.FakeCommandBus::class.' has dispatched a message of class "'.CreateTaskCommand::class.'".', $failure->getMessage());
+            self::assertStringContainsString('Actually dispatched: ', $failure->getMessage());
+            self::assertStringNotContainsString('records', $failure->getMessage());
+        }
+    }
+
     public function test_assert_not_dispatched_passes_when_message_not_dispatched(): void
     {
         $bus = new FakeCommandBus();
@@ -57,14 +76,18 @@ final class CqrsAssertionsTraitTest extends TestCase
         self::assertNotDispatched($bus, $command::class);
     }
 
-    public function test_reset_cqrs_state_clears_message_type_locator(): void
+    public function test_reset_cqrs_state_clears_the_message_type_cache(): void
     {
-        // Calling reset should not throw -- structural test
+        $locator = new SpyServiceLocator([\stdClass::class => static fn (): object => new \stdClass()]);
+
+        MessageTypeLocator::match($locator, new \stdClass());
+        MessageTypeLocator::match($locator, new \stdClass());
+        self::assertSame(1, $locator->lookupCount(), 'The second lookup is served from the cache.');
+
         $this->resetCqrsState();
 
-        // Verify MessageTypeLocator::reset() was called by confirming no exception
-        /* @phpstan-ignore staticMethod.alreadyNarrowedType */
-        self::assertTrue(true);
+        MessageTypeLocator::match($locator, new \stdClass());
+        self::assertSame(2, $locator->lookupCount());
     }
 
     public function test_assert_dispatched_with_custom_message(): void
@@ -194,5 +217,36 @@ final class CqrsAssertionsTraitTest extends TestCase
 
         /* @phpstan-ignore property.notFound */
         self::assertNotDispatched($bus, $command::class, static fn (object $m): bool => 'match' === $m->id);
+    }
+
+    public function test_assert_stored_in_outbox_matches_only_outbox_dispatches(): void
+    {
+        $bus = new FakeCommandBus();
+        $bus->dispatch(new CreateTaskCommand('1', 'a'), DispatchMode::OUTBOX);
+        $bus->dispatch(new CreateTaskCommand('2', 'b'));
+
+        self::assertStoredInOutbox($bus, CreateTaskCommand::class, static fn (CreateTaskCommand $command): bool => '1' === $command->id);
+        self::assertNotStoredInOutbox($bus, CreateTaskCommand::class, static fn (CreateTaskCommand $command): bool => '2' === $command->id);
+
+        $this->expectException(AssertionFailedError::class);
+        $this->expectExceptionMessage('with DispatchMode::OUTBOX');
+
+        self::assertStoredInOutbox($bus, CreateTaskCommand::class, static fn (CreateTaskCommand $command): bool => '2' === $command->id);
+    }
+
+    public function test_a_default_dispatch_of_a_class_with_the_outbox_attribute_counts_as_stored(): void
+    {
+        // The bus stores it: #[Outbox] needs no configuration, unlike dispatch_modes.
+        $bus = new FakeEventBus();
+        $bus->dispatch(new TaskArchivedEvent('1'));
+        $bus->dispatchSync(new TaskArchivedEvent('2'));
+
+        self::assertStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '1' === $event->taskId);
+        self::assertNotStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '2' === $event->taskId);
+
+        $this->expectException(AssertionFailedError::class);
+        $this->expectExceptionMessage('Actually dispatched: '.TaskArchivedEvent::class.' (DispatchMode::DEFAULT), '.TaskArchivedEvent::class.' (DispatchMode::SYNC)');
+
+        self::assertStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '3' === $event->taskId);
     }
 }

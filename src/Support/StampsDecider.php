@@ -8,7 +8,9 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function count;
@@ -107,15 +109,17 @@ final class StampsDecider implements StampDecider
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
         foreach ($this->pipelineFor($message) as $decider) {
-            $stampCountBefore = count($stamps);
+            $before = $stamps;
             $stamps = $decider->decide($message, $mode, $stamps);
 
-            $this->logger?->debug('Stamp decider processed', [
-                'message' => $message::class,
-                'decider' => $decider::class,
-                'stamps_before' => $stampCountBefore,
-                'stamps_after' => count($stamps),
-            ]);
+            if ($stamps !== $before) {
+                $this->logger?->debug('{decider} changed the stamps of {message}', [
+                    'message' => $message::class,
+                    'decider' => $decider::class,
+                    'stamps_before' => count($before),
+                    'stamps_after' => count($stamps),
+                ]);
+            }
         }
 
         return array_values($stamps);
@@ -152,8 +156,7 @@ final class StampsDecider implements StampDecider
     }
 
     /**
-     * @param class-string          $messageType
-     * @param array<string, string> $transportStampTypes
+     * @param class-string $messageType
      */
     public static function withDefaultsFor(
         string $messageType,
@@ -163,16 +166,10 @@ final class StampsDecider implements StampDecider
         ?DispatchAfterCurrentBusDecider $dispatchAfter = null,
         ?MessageTransportResolver $transports = null,
         ?MessageTransportResolver $asyncTransports = null,
-        ?MessageTransportStampFactory $transportStampFactory = null,
-        array $transportStampTypes = [],
     ): self {
-        $transportStampFactory ??= new MessageTransportStampFactory();
-        $stampTypes = array_replace(MessageTransportStampDecider::DEFAULT_STAMP_TYPES, $transportStampTypes);
-
         $deciders = [
             new RetryPolicyStampDecider($retryPolicies, $messageType),
             new MessageTransportStampDecider(
-                stampFactory: $transportStampFactory,
                 commandResolvers: new TransportResolverMap(
                     sync: Command::class === $messageType ? $transports : null,
                     async: Command::class === $messageType ? $asyncTransports : null,
@@ -184,7 +181,6 @@ final class StampsDecider implements StampDecider
                     sync: Event::class === $messageType ? $transports : null,
                     async: Event::class === $messageType ? $asyncTransports : null,
                 ),
-                stampTypes: $stampTypes,
             ),
             new MessageSerializerStampDecider($serializers, $messageType),
             new MessageMetadataStampDecider($metadata, $messageType),

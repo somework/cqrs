@@ -16,6 +16,12 @@ namespace SomeWork\CqrsBundle\Contract;
  */
 interface SequenceAware
 {
+    /**
+     * The kind of aggregate the event belongs to (e.g. "order" or the aggregate's class), the same
+     * for every event of that aggregate: consumers order events per aggregate type and id.
+     */
+    public function getAggregateType(): string;
+
     public function getAggregateId(): string;
 
     public function getSequenceNumber(): int;

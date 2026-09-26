@@ -8,12 +8,16 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Testing\FakeOutbox;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditedOutboxEvent;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
 #[CoversClass(FakeEventBus::class)]
+#[CoversClass(FakeOutbox::class)]
 final class FakeEventBusTest extends TestCase
 {
     public function test_implements_records_bus_dispatches(): void
@@ -38,10 +42,9 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame($event, $dispatched[0]['message']);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame($event, $dispatched[0]->message);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_uses_default_mode(): void
@@ -52,8 +55,7 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
     }
 
     public function test_dispatch_sync_records_with_sync_mode(): void
@@ -68,8 +70,7 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame(DispatchMode::SYNC, $dispatched[0]['mode']);
+        self::assertSame(DispatchMode::SYNC, $dispatched[0]->mode);
     }
 
     public function test_dispatch_async_records_with_async_mode(): void
@@ -85,9 +86,8 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_records_multiple_dispatches(): void
@@ -132,10 +132,9 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(3, $dispatched);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
-        self::assertSame(DispatchMode::SYNC, $dispatched[1]['mode']);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[2]['mode']);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
+        self::assertSame(DispatchMode::SYNC, $dispatched[1]->mode);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[2]->mode);
     }
 
     public function test_dispatch_sync_with_multiple_stamps(): void
@@ -148,12 +147,9 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatchSync($event, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertCount(2, $dispatched[0]['stamps']);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
+        self::assertCount(2, $dispatched[0]->stamps);
+        self::assertSame($stamp1, $dispatched[0]->stamps[0]);
+        self::assertSame($stamp2, $dispatched[0]->stamps[1]);
     }
 
     public function test_dispatch_without_stamps_records_empty_stamps_array(): void
@@ -164,8 +160,7 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        /* @phpstan-ignore offsetAccess.notFound */
-        self::assertSame([], $dispatched[0]['stamps']);
+        self::assertSame([], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_sync_returns_envelope_wrapping_event(): void
@@ -203,5 +198,18 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         self::assertCount(1, $bus->getDispatched());
+    }
+
+    public function test_an_outbox_dispatch_returns_the_envelope_of_a_stored_message(): void
+    {
+        $bus = new FakeEventBus();
+
+        $stored = $bus->dispatch(new AuditedOutboxEvent('1'))->last(OutboxStoredStamp::class);
+        self::assertInstanceOf(OutboxStoredStamp::class, $stored);
+        self::assertSame(['audit'], $stored->transportNames, 'The transport of #[Outbox].');
+        self::assertCount(1, $stored->ids);
+
+        self::assertInstanceOf(OutboxStoredStamp::class, $bus->dispatch(new class implements Event {}, DispatchMode::OUTBOX)->last(OutboxStoredStamp::class));
+        self::assertNull($bus->dispatchAsync(new AuditedOutboxEvent('2'))->last(OutboxStoredStamp::class), 'An explicit mode wins over the attribute.');
     }
 }

@@ -5,10 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Contract\Event;
-use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\StampsDeciderRegistrar;
 use SomeWork\CqrsBundle\Support\CausationIdStampDecider;
@@ -19,9 +17,11 @@ use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 #[CoversClass(CqrsExtension::class)]
 #[CoversClass(StampsDeciderRegistrar::class)]
@@ -71,32 +71,13 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
             'somework_cqrs.stamp_decider.event_metadata' => 125,
             'somework_cqrs.stamp_decider.message_transport' => 175,
             'somework_cqrs.stamp_decider.event_sequence' => 110,
-            'somework_cqrs.dispatch_after_current_bus_stamp_decider' => 0,
+            'somework_cqrs.dispatch_after_current_bus_stamp_decider' => -10,
         ];
 
         foreach ($expectedPriorities as $serviceId => $priority) {
             $tags = $container->getDefinition($serviceId)->getTag('somework_cqrs.dispatch_stamp_decider');
             self::assertCount(1, $tags, $serviceId.' should have exactly one dispatch stamp decider tag');
             self::assertSame($priority, $tags[0]['priority']);
-        }
-
-        $expectedMessageTypes = [
-            'somework_cqrs.stamp_decider.command_retry' => [Command::class],
-            'somework_cqrs.stamp_decider.command_serializer' => [Command::class],
-            'somework_cqrs.stamp_decider.command_metadata' => [Command::class],
-            'somework_cqrs.stamp_decider.query_retry' => [Query::class],
-            'somework_cqrs.stamp_decider.query_serializer' => [Query::class],
-            'somework_cqrs.stamp_decider.query_metadata' => [Query::class],
-            'somework_cqrs.stamp_decider.event_retry' => [Event::class],
-            'somework_cqrs.stamp_decider.event_serializer' => [Event::class],
-            'somework_cqrs.stamp_decider.event_metadata' => [Event::class],
-            'somework_cqrs.stamp_decider.message_transport' => [Command::class, Query::class, Event::class],
-            'somework_cqrs.stamp_decider.event_sequence' => [Event::class],
-        ];
-
-        foreach ($expectedMessageTypes as $serviceId => $types) {
-            $tags = $container->getDefinition($serviceId)->getTag('somework_cqrs.dispatch_stamp_decider');
-            self::assertSame($types, $tags[0]['message_types'] ?? null, $serviceId.' should declare message types');
         }
     }
 
@@ -116,6 +97,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(300, $container->getParameter('somework_cqrs.idempotency.ttl'));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_registered_when_enabled(): void
     {
         $container = $this->createContainer();
@@ -141,6 +123,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         );
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_has_priority_50(): void
     {
         $container = $this->createContainer();
@@ -152,16 +135,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(50, $tags[0]['priority']);
     }
 
-    public function test_idempotency_decider_has_no_message_types(): void
-    {
-        $container = $this->createContainer();
-
-        $tags = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')
-            ->getTag('somework_cqrs.dispatch_stamp_decider');
-
-        self::assertArrayNotHasKey('message_types', $tags[0]);
-    }
-
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_ttl_from_config(): void
     {
         $container = $this->createContainer([
@@ -169,9 +143,18 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         ]);
 
         $definition = $container->getDefinition('somework_cqrs.stamp_decider.idempotency');
-        self::assertSame(600.0, $definition->getArgument('$defaultTtl'));
+        self::assertSame(600, $definition->getArgument('$defaultTtl'));
     }
 
+    public function test_idempotency_ttl_below_one_second_is_rejected(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('"somework_cqrs.idempotency.ttl" must be at least 1 second, 0 given.');
+
+        $this->createContainer(['idempotency' => ['ttl' => 0]]);
+    }
+
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_logger(): void
     {
         $container = $this->createContainer();
@@ -237,16 +220,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(100, $tags[0]['priority']);
     }
 
-    public function test_causation_id_stamp_decider_has_no_message_types(): void
-    {
-        $container = $this->createContainer();
-
-        $tags = $container->getDefinition('somework_cqrs.stamp_decider.causation_id')
-            ->getTag('somework_cqrs.dispatch_stamp_decider');
-
-        self::assertArrayNotHasKey('message_types', $tags[0]);
-    }
-
     public function test_causation_id_stamp_decider_receives_logger(): void
     {
         $container = $this->createContainer();
@@ -273,12 +246,13 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame([], $container->getParameter('somework_cqrs.causation_id.buses'));
     }
 
+    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_uses_default_ttl_when_not_configured(): void
     {
         $container = $this->createContainer();
 
         $definition = $container->getDefinition('somework_cqrs.stamp_decider.idempotency');
-        self::assertSame(300.0, $definition->getArgument('$defaultTtl'));
+        self::assertSame(300, $definition->getArgument('$defaultTtl'));
     }
 
     public function test_both_idempotency_and_causation_id_disabled(): void

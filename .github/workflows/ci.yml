@@ -1,10 +1,8 @@
 name: CI
 
+# Least privilege: only the quality report writes (check run and PR comment).
 permissions:
   contents: read
-  checks: write
-  issues: write
-  pull-requests: write
 
 on:
   push:
@@ -15,6 +13,11 @@ on:
       - '**'
   workflow_dispatch:
 
+# A new push to a pull request cancels the run of the previous one; runs on main always finish.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validate:
     name: Validate
@@ -24,7 +27,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.4'
           coverage: none
@@ -32,6 +35,9 @@ jobs:
 
       - name: Validate composer.json
         run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
 
       - name: Check for security advisories
         run: composer audit
@@ -44,7 +50,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.4'
           coverage: none
@@ -64,7 +70,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: '8.4'
           coverage: none
@@ -77,6 +83,8 @@ jobs:
         run: mkdir -p build/logs
 
       - name: PHPStan
+        # An explicit "bash" shell runs with pipefail, so errors are not masked by tee.
+        shell: bash
         run: |
           vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --memory-limit=512M --error-format=table \
             | tee build/logs/phpstan.log
@@ -87,22 +95,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.2', '8.3', '8.4']
-        coverage: [false]
+        php: ['8.2', '8.3', '8.4', '8.5']
         dependency-versions: ['highest']
         include:
+          # Adds coverage to the existing 8.4/highest combination (no extra job).
           - php: '8.4'
             coverage: true
-            dependency-versions: 'highest'
           - php: '8.2'
-            coverage: false
             dependency-versions: 'lowest'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup PHP
-        uses: shivammathur/setup-php@v2
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ matrix.php }}
           coverage: ${{ matrix.coverage && 'xdebug' || 'none' }}
@@ -123,12 +129,12 @@ jobs:
       - name: PHPUnit
         run: >
           vendor/bin/phpunit
-          --log-junit build/logs/phpunit-${{ matrix.php }}.xml
+          --log-junit build/logs/phpunit-${{ matrix.php }}-${{ matrix.dependency-versions }}.xml
           ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
 
       - name: Upload coverage to Codecov
         if: matrix.coverage
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@0fb7174895f61a3b6b78fc075e0cd60383518dac # v5.5.5
         with:
           files: build/logs/clover.xml
           fail_ci_if_error: false
@@ -146,6 +152,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate, cs-fixer, phpstan, phpunit]
     if: always()
+    permissions:
+      contents: read
+      issues: read
+      checks: write
+      pull-requests: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -173,8 +184,141 @@ jobs:
 
       - name: Publish unit test results
         if: steps.reporting.outputs.should_run == 'true'
-        uses: EnricoMi/publish-unit-test-result-action@v2
+        uses: EnricoMi/publish-unit-test-result-action@d0a4676d0e0b938bc201470d88276b7c74c712b3 # v2.24.0
         with:
-          files: artifacts/**/*.xml
+          # JUnit reports only (the coverage job also uploads clover.xml).
+          files: artifacts/**/phpunit-*.xml
           check_run: ${{ steps.reporting.outputs.check_run }}
           comment_mode: ${{ steps.reporting.outputs.comment_mode }}
+
+  minimal-install:
+    name: Minimal install (no optional packages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies without optional packages
+        run: |
+          composer remove --dev --no-update doctrine/dbal doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
+          composer update --prefer-dist --no-progress
+
+      - name: PHPUnit (kernels that must work without optional packages)
+        run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
+
+  databases:
+    name: Outbox on PostgreSQL and MySQL (${{ matrix.dependency-versions }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php: '8.4'
+            dependency-versions: 'highest'
+          - php: '8.2'
+            dependency-versions: 'lowest'
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cqrs
+          POSTGRES_PASSWORD: cqrs
+          POSTGRES_DB: cqrs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cqrs -d cqrs_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      mysql:
+        image: mysql:8.4
+        env:
+          # Not UTC: the check of old transactions reads their start times in the server's time zone.
+          TZ: Asia/Kolkata
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: cqrs_test
+          MYSQL_USER: cqrs
+          MYSQL_PASSWORD: cqrs
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: none
+          extensions: mbstring, pdo_pgsql, pdo_mysql
+          tools: composer
+
+      - name: Install dependencies
+        run: |
+          if [ "${{ matrix.dependency-versions }}" = "lowest" ]; then
+            composer update --prefer-lowest --prefer-stable --no-progress
+          else
+            composer install --prefer-dist --no-progress
+          fi
+
+      # The outbox storage, relay and command tests, which use in-memory SQLite elsewhere.
+      - name: PHPUnit on PostgreSQL 16
+        run: vendor/bin/phpunit --group database
+        env:
+          CQRS_TEST_DATABASE_URL: 'pdo-pgsql://cqrs:cqrs@127.0.0.1:5432/cqrs_test?serverVersion=16'
+
+      # For the test of a "database.table" name, and the check of the server's transactions (PROCESS).
+      - name: Second MySQL database
+        run: mysql -h 127.0.0.1 -uroot -proot -e "CREATE DATABASE cqrs_test_other; GRANT ALL ON cqrs_test_other.* TO 'cqrs'@'%'; GRANT PROCESS ON *.* TO 'cqrs'@'%'"
+
+      - name: PHPUnit on MySQL 8.4
+        run: vendor/bin/phpunit --group database
+        env:
+          CQRS_TEST_DATABASE_URL: 'pdo-mysql://cqrs:cqrs@127.0.0.1:3306/cqrs_test?serverVersion=8.4.0&charset=utf8mb4'
+
+  example-app:
+    name: Example application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer
+
+      - name: Smoke test
+        working-directory: docs/example-app
+        run: bin/smoke-test.sh --no-progress
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+
+      - run: pip install 'mkdocs>=1.6,<2' 'mkdocs-material>=9.5,<10'
+
+      - name: Build (strict)
+        run: mkdocs build --strict

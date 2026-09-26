@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -13,14 +14,13 @@ use SomeWork\CqrsBundle\Contract\Event as EventContract;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\StampsDecider;
@@ -35,6 +35,7 @@ use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(EventBus::class)]
 final class EventBusTest extends TestCase
 {
     public function test_dispatch_uses_sync_bus_by_default(): void
@@ -619,7 +620,7 @@ final class EventBusTest extends TestCase
         $bus->dispatch($event);
     }
 
-    public function test_dispatch_logs_exactly_three_debug_messages(): void
+    public function test_dispatch_logs_one_debug_message(): void
     {
         $event = new TaskCreatedEvent('123');
         $envelope = new Envelope($event);
@@ -630,7 +631,7 @@ final class EventBusTest extends TestCase
             ->willReturn($envelope);
 
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug');
 
         $bus = new EventBus(
@@ -654,7 +655,7 @@ final class EventBusTest extends TestCase
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);
-        $logger->expects(self::exactly(3))
+        $logger->expects(self::once())
             ->method('debug')
             ->willReturnCallback(static function (string $message, array $context) use (&$logContexts): void {
                 $logContexts[] = $context;
@@ -702,7 +703,7 @@ final class EventBusTest extends TestCase
             self::fail('Expected AsyncBusNotConfiguredException');
         } catch (AsyncBusNotConfiguredException $e) {
             self::assertSame('event', $e->busName);
-            self::assertSame(TaskCreatedEvent::class, $e->messageFqcn);
+            self::assertSame(TaskCreatedEvent::class, $e->messageClass);
         }
     }
 
@@ -720,7 +721,6 @@ final class EventBusTest extends TestCase
         return new StampsDecider([
             new RetryPolicyStampDecider($retryPolicies, EventContract::class),
             new MessageTransportStampDecider(
-                stampFactory: new MessageTransportStampFactory(),
                 commandResolvers: new TransportResolverMap(),
                 queryResolvers: new TransportResolverMap(),
                 eventResolvers: new TransportResolverMap(sync: $transports, async: $asyncTransports),
@@ -741,8 +741,7 @@ final class EventBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $global,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $type,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $type,
         ];
 
         foreach ($map as $class => $serializer) {

@@ -4,55 +4,50 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
-use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\CoversNothing;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use ReflectionClass;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 
-#[CoversClass(CommandHandler::class)]
-#[CoversClass(QueryHandler::class)]
-#[CoversClass(EventHandler::class)]
+#[CoversNothing]
 final class HandlerContractTest extends TestCase
 {
-    #[Test]
-    public function command_handler_invoke_has_no_php_type_on_parameter(): void
+    /**
+     * @return iterable<string, array{class-string}>
+     */
+    public static function markerInterfaces(): iterable
     {
-        $reflection = new ReflectionClass(CommandHandler::class);
-        $method = $reflection->getMethod('__invoke');
-        $params = $method->getParameters();
-
-        self::assertCount(1, $params);
-        self::assertSame('command', $params[0]->getName());
-        self::assertNull($params[0]->getType(), 'CommandHandler::__invoke parameter must have no PHP type hint');
-        self::assertSame('mixed', (string) $method->getReturnType());
+        yield 'command' => [CommandHandler::class];
+        yield 'query' => [QueryHandler::class];
+        yield 'event' => [EventHandler::class];
     }
 
-    #[Test]
-    public function query_handler_invoke_has_no_php_type_on_parameter(): void
+    /**
+     * Declaring __invoke() on the interface would forbid implementations from type-hinting
+     * the concrete message (PHP does not allow narrowing parameter types).
+     *
+     * @param class-string $interface
+     */
+    #[DataProvider('markerInterfaces')]
+    public function test_handler_interfaces_are_markers_without_methods(string $interface): void
     {
-        $reflection = new ReflectionClass(QueryHandler::class);
-        $method = $reflection->getMethod('__invoke');
-        $params = $method->getParameters();
+        $reflection = new ReflectionClass($interface);
 
-        self::assertCount(1, $params);
-        self::assertSame('query', $params[0]->getName());
-        self::assertNull($params[0]->getType(), 'QueryHandler::__invoke parameter must have no PHP type hint');
-        self::assertSame('mixed', (string) $method->getReturnType());
+        self::assertTrue($reflection->isInterface());
+        self::assertSame([], $reflection->getMethods());
     }
 
-    #[Test]
-    public function event_handler_invoke_has_no_php_type_on_parameter(): void
+    public function test_implementations_can_type_hint_the_concrete_message(): void
     {
-        $reflection = new ReflectionClass(EventHandler::class);
-        $method = $reflection->getMethod('__invoke');
-        $params = $method->getParameters();
+        $parameter = (new ReflectionClass(InterfaceOnlyCommandHandler::class))->getMethod('__invoke')->getParameters()[0];
+        $type = $parameter->getType();
 
-        self::assertCount(1, $params);
-        self::assertSame('event', $params[0]->getName());
-        self::assertNull($params[0]->getType(), 'EventHandler::__invoke parameter must have no PHP type hint');
-        self::assertSame('void', (string) $method->getReturnType());
+        self::assertInstanceOf(\ReflectionNamedType::class, $type);
+        self::assertSame(GenerateReportCommand::class, $type->getName());
     }
 }

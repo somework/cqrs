@@ -1,312 +1,33 @@
 # Production deployment guide
 
-This guide covers retry configuration, dead letter queues, message versioning,
-monitoring integration, and worker lifecycle for running the CQRS bundle in
-production.
-
-## Retry configuration
-
-The bundle provides retry policies via the `somework_cqrs.retry_policies`
-config. A retry policy appends Messenger stamps at dispatch time. The built-in
-`ExponentialBackoffRetryPolicy` adds a `DelayStamp` with the configured initial
-delay; full exponential backoff across retries is handled by Symfony Messenger's
-transport-level `MultiplierRetryStrategy`.
-
-### Bundle-level retry config
-
-Configure per-type defaults and per-message overrides:
-
-```yaml
-somework_cqrs:
-    retry_policies:
-        command:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
-            map:
-                App\Application\Command\ProcessPayment: app.retry.exponential
-        event:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
-            map:
-                App\Domain\Event\OrderShipped: app.retry.exponential
-```
-
-### Registering ExponentialBackoffRetryPolicy as a service
-
-```yaml
-# config/services.yaml
-services:
-    app.retry.exponential:
-        class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
-        arguments:
-            $maxRetries: 5
-            $initialDelay: 1000      # milliseconds
-            $multiplier: 2.0
-```
-
-The policy accepts three constructor parameters:
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `$maxRetries` | 3 | Maximum number of retry attempts |
-| `$initialDelay` | 1000 | Initial delay in milliseconds before the first retry |
-| `$multiplier` | 2.0 | Multiplier applied to the delay on each subsequent retry |
-
-### Messenger transport retry strategy
-
-The bundle's `ExponentialBackoffRetryPolicy` sets the initial `DelayStamp` at
-dispatch time. For full backoff across retries, configure the transport-level
-strategy to match:
-
-```yaml
-framework:
-    messenger:
-        transports:
-            async_commands:
-                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
-                retry_strategy:
-                    max_retries: 5
-                    delay: 1000
-                    multiplier: 2.0
-                    max_delay: 60000
-```
-
-The transport strategy controls what happens on failure retries. Keep its
-`max_retries`, `delay`, and `multiplier` consistent with the
-`ExponentialBackoffRetryPolicy` arguments for predictable behavior.
-
----
-
-## Dead letter queue (DLQ) setup
-
-Dead letter handling is a Symfony Messenger transport concern. The bundle does
-not manage DLQ directly, but messages dispatched through CQRS buses flow
-through Messenger's standard failure pipeline.
-
-### Configure a failure transport
-
-```yaml
-framework:
-    messenger:
-        failure_transport: failed
-
-        transports:
-            failed:
-                dsn: 'doctrine://default?queue_name=failed'
-            async_commands:
-                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
-                retry_strategy:
-                    max_retries: 3
-```
-
-After exhausting retries, Messenger moves the message to the `failed` transport.
-
-### Managing failed messages
-
-```bash
-# List failed messages
-bin/console messenger:failed:show
-
-# Show details of a specific failed message
-bin/console messenger:failed:show 42
-
-# Retry a specific failed message
-bin/console messenger:failed:retry 42
-
-# Retry all failed messages
-bin/console messenger:failed:retry
-
-# Remove a failed message without retrying
-bin/console messenger:failed:remove 42
-```
-
-### Health check recommendation
-
-Monitor the count of messages in the failed transport as a health check metric.
-A growing count indicates handlers are failing beyond their retry limit:
-
-```bash
-# Count failed messages (useful for monitoring scripts)
-bin/console messenger:failed:show --format=json | jq 'length'
-```
-
----
-
-## Message Versioning strategy
-
-Messages are serialized DTOs. When messages sit in a transport queue, changes to
-the message class affect deserialization. Follow these rules to evolve messages
-safely.
-
-### Safe changes
-
-**Adding a new property with a default value** is always safe. Queued messages
-without the new property will deserialize using the default:
-
-```php
-final class CreateTask implements Command
-{
-    public function __construct(
-        public readonly string $id,
-        public readonly string $name,
-        // Added in v2 -- safe because it has a default
-        public readonly int $priority = 0,
-    ) {}
-}
-```
-
-### Breaking changes
-
-The following changes break deserialization of messages already in the queue:
-
-- **Removing a property** -- queued messages contain the old property, and the
-  serializer will fail or silently drop data.
-- **Renaming a property** -- the serializer maps by property name, so the old
-  name will not match.
-- **Renaming the message class (FQCN)** -- Messenger stores the FQCN as the
-  message type identifier. Renaming breaks lookup of queued messages.
-
-### Migrating message class names
-
-If you must rename a message class, configure a Messenger serializer that maps
-old class names to new ones. Alternatively, drain the queue before deploying the
-rename:
-
-```bash
-# Drain specific message type before deploying rename
-bin/console messenger:consume async_commands --time-limit=300
-# Deploy with new class name after queue is empty
-```
-
-For long-lived queues, implement a `MessageNamingStrategy` that provides stable
-logical names decoupled from PHP class names. Configure it via:
-
-```yaml
-somework_cqrs:
-    naming:
-        default: App\Messenger\StableNamingStrategy
-```
-
-### Serializer configuration
-
-Use Symfony's built-in Messenger serializer for type-safe deserialization:
-
-```yaml
-framework:
-    messenger:
-        serializer:
-            default_serializer: messenger.transport.symfony_serializer
-```
-
----
-
-## Monitoring integration
-
-The bundle provides two mechanisms for distributed tracing: correlation IDs via
-`MessageMetadataStamp` and causation ID propagation via `CausationIdContext`.
-
-### Correlation ID
-
-Every dispatched message receives a `MessageMetadataStamp` containing a
-`correlationId`. This ID is generated by the configured `MessageMetadataProvider`
-(defaults to `RandomCorrelationMetadataProvider`).
-
-Log the correlation ID in handlers for end-to-end tracing:
-
-```php
-use Psr\Log\LoggerInterface;
-use SomeWork\CqrsBundle\Contract\CommandHandler;
-use SomeWork\CqrsBundle\Contract\EnvelopeAware;
-use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
-use Symfony\Component\Messenger\Envelope;
-
-#[AsCommandHandler(command: ProcessPayment::class)]
-final class ProcessPaymentHandler implements CommandHandler, EnvelopeAware
-{
-    private ?Envelope $envelope = null;
-
-    public function __construct(
-        private readonly PaymentGateway $gateway,
-        private readonly LoggerInterface $logger,
-    ) {}
-
-    public function __invoke(ProcessPayment $command): mixed
-    {
-        $metadata = $this->envelope?->last(MessageMetadataStamp::class);
-        $correlationId = $metadata?->getCorrelationId() ?? 'unknown';
-        $causationId = $metadata?->getCausationId() ?? 'none';
-
-        $this->logger->info('Processing payment', [
-            'correlationId' => $correlationId,
-            'causationId' => $causationId,
-            'paymentId' => $command->paymentId,
-        ]);
-
-        $this->gateway->charge($command->paymentId);
-
-        return null;
-    }
-
-    public function setEnvelope(Envelope $envelope): void
-    {
-        $this->envelope = $envelope;
-    }
-}
-```
-
-### Causation ID propagation
-
-When a handler dispatches a child message, the `CausationIdMiddleware`
-automatically pushes the parent's correlation ID onto the `CausationIdContext`
-stack. The `CausationIdStampDecider` reads this context and injects the
-`causationId` into the child message's `MessageMetadataStamp`.
-
-This creates a causal chain: parent correlation ID becomes the child's causation
-ID. Use this to reconstruct the full message graph in logs or tracing systems.
-
-### HTTP response headers
-
-Expose the correlation ID in HTTP responses for end-to-end tracing from client
-to worker:
-
-```php
-// In a Symfony event listener or middleware
-$response->headers->set('X-Correlation-Id', $correlationId);
-```
-
-### Health check via HandlerRegistry
-
-The `HandlerRegistry` service holds compiled handler metadata. Use it to verify
-all expected handlers are registered at boot time:
-
-```php
-use SomeWork\CqrsBundle\Registry\HandlerRegistry;
-
-final class CqrsHealthCheck
-{
-    public function __construct(private readonly HandlerRegistry $registry) {}
-
-    public function check(): bool
-    {
-        // Verify critical handlers are registered
-        return $this->registry->has(ProcessPayment::class)
-            && $this->registry->has(ShipOrder::class);
-    }
-}
-```
-
----
-
-## Worker lifecycle
-
-Symfony Messenger workers consume messages from transports. Proper worker
-configuration prevents memory leaks and ensures reliable message processing.
-
-### Basic worker command
+This guide covers what to set up when the bundle runs in production: workers,
+retries and failed messages, idempotency, the transactional outbox, health
+checks, observability and message versioning. Most of it is Symfony Messenger
+configuration; the bundle-specific parts are pointed out.
+
+## Workers
+
+Asynchronous commands and events are consumed by regular Messenger workers.
+The bundle registers every handler without an explicit `bus` on the sync bus of
+its type and on the configured async bus (`buses.command_async`,
+`buses.event_async`). A worker therefore finds the handler on the bus the
+message was sent from; you do not need `--bus`.
+
+Consume the transports your async messages are sent to: the names under
+`transports.command_async` / `transports.event_async`, the transport of
+`#[Asynchronous]` (default `async`), and your `framework.messenger.routing`.
 
 ```bash
 bin/console messenger:consume async_commands async_events
 ```
 
-### Recommended flags for production
+A handler declared with an explicit bus
+(`#[AsCommandHandler(ShipOrder::class, bus: 'messenger.bus.commands')]`) is only
+registered on that bus. If the message is also dispatched asynchronously,
+repeat the attribute for the async bus, otherwise the worker fails with
+`No handler for message`.
+
+### Recommended flags
 
 ```bash
 bin/console messenger:consume async_commands \
@@ -317,26 +38,15 @@ bin/console messenger:consume async_commands \
 
 | Flag | Purpose |
 |------|---------|
-| `--time-limit=3600` | Restart the worker after 1 hour to prevent memory leaks |
-| `--memory-limit=256M` | Restart when memory usage exceeds the limit |
-| `--sleep=1` | Seconds to sleep when no messages are available |
-| `--bus=messenger.bus.commands_async` | Consume only from a specific bus |
+| `--time-limit=3600` | Stop the worker after one hour; the process manager starts a fresh one |
+| `--memory-limit=256M` | Stop when memory usage exceeds the limit |
+| `--limit=1000` | Stop after handling this many messages |
+| `--sleep=1` | Seconds to wait when no message is available |
 
-### Bus-specific workers
+Run separate workers per transport when you want to scale commands and events
+independently.
 
-Run separate workers per bus for isolation and independent scaling:
-
-```bash
-# Command worker
-bin/console messenger:consume async_commands --bus=messenger.bus.commands_async
-
-# Event worker
-bin/console messenger:consume async_events --bus=messenger.bus.events_async
-```
-
-### Supervisord configuration
-
-Use a process manager to keep workers running. Example supervisord config:
+### Supervisor
 
 ```ini
 ; /etc/supervisor/conf.d/cqrs-workers.conf
@@ -362,7 +72,7 @@ stderr_logfile=/var/log/supervisor/cqrs-event-worker-error.log
 user=www-data
 ```
 
-### Systemd alternative
+### systemd
 
 ```ini
 ; /etc/systemd/system/cqrs-command-worker@.service
@@ -383,25 +93,557 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-# Start 2 worker instances
+# Start two worker instances
 systemctl enable --now cqrs-command-worker@1
 systemctl enable --now cqrs-command-worker@2
 ```
 
-### Signal handling and graceful shutdown
+### Deployments and shutdown
 
-Workers respond to POSIX signals:
+* With the `pcntl` extension, `SIGTERM`, `SIGINT` and `SIGQUIT` make a worker
+  finish the current message and exit. `--time-limit`, `--memory-limit` and
+  `--limit` stop it the same way.
+* After deploying new code, run `bin/console messenger:stop-workers` so running
+  workers exit after their current message and restart with the new code.
+* Symfony resets services tagged `kernel.reset` between messages (unless you
+  pass `--no-reset`). The bundle's `CausationIdContext` is one of them, so a
+  causation id never leaks from one message to the next.
 
-- `SIGTERM` / `SIGINT` -- finish the current message, then stop
-- `SIGUSR1` -- reserved by Symfony for internal use
+## Retries and failed messages
 
-The `--time-limit` and `--memory-limit` flags trigger graceful shutdown after
-the current message completes. The process manager then restarts the worker
-automatically.
+### Transport-level retries
 
-### CausationIdContext reset
+Messenger retries a failed message on the transport it was received from. To
+drive those retries per message class, combine three settings:
 
-The `CausationIdContext` is tagged with `kernel.reset` in the DI container.
-Between messages, the Symfony kernel resets the context stack, preventing
-causation ID leakage across unrelated messages in the same worker process. No
-manual cleanup is needed.
+```yaml
+# config/services.yaml
+services:
+    app.retry.payment:
+        class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
+        arguments:
+            $maxRetries: 5
+            $initialDelay: 1000      # milliseconds
+            $multiplier: 2.0
+
+# config/packages/messenger.yaml
+framework:
+    messenger:
+        failure_transport: failed
+        transports:
+            async_commands:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                retry_strategy:        # used for messages without a RetryConfiguration
+                    max_retries: 3
+                    delay: 1000
+                    multiplier: 2
+            failed: 'doctrine://default?queue_name=failed'
+
+# config/packages/somework_cqrs.yaml
+somework_cqrs:
+    retry_policies:
+        command:
+            map:
+                App\Application\Command\ProcessPayment: app.retry.payment
+    retry_strategy:
+        transports:
+            async_commands: command
+        jitter: 0.1
+        max_delay: 60000
+```
+
+* `retry_strategy.transports` replaces the retry strategy of `async_commands`
+  with `CqrsRetryStrategy`. For each failed message it resolves the
+  `retry_policies.command` entry.
+* When the policy implements `RetryConfiguration` (as
+  `ExponentialBackoffRetryPolicy` does), its values apply: here 5 retries with
+  delays of about 1, 2, 4, 8 and 16 seconds, varied by up to 10% and capped at
+  60 seconds.
+* Other messages use the transport's own `retry_strategy`. Without one,
+  Messenger's defaults apply: 3 retries, 1000 ms delay, multiplier 2.
+* `ExponentialBackoffRetryPolicy` adds no stamps when the message is dispatched.
+  Without `retry_strategy.transports` its values are not used at all.
+
+See [Retry strategy bridge](retry.md) for the details and for custom policies.
+
+### Failure transport
+
+After the last retry, Messenger moves the message to the `failure_transport`
+(`failed` above). The bundle does not change this pipeline.
+
+```bash
+# List failed messages, or count them by class
+bin/console messenger:failed:show
+bin/console messenger:failed:show --stats
+
+# Show one message, retry it or remove it
+bin/console messenger:failed:show 42
+bin/console messenger:failed:retry 42
+bin/console messenger:failed:remove 42
+
+# Retry all failed messages interactively
+bin/console messenger:failed:retry
+```
+
+`bin/console messenger:stats` shows how many messages wait in each transport
+(for transports that can count them). A growing failure transport means handlers
+keep failing after their retries; the custom health check in
+[Health checks](#health-checks) turns that into a warning.
+
+## Idempotency
+
+`IdempotencyStamp` deduplication relies on Messenger's deduplicate middleware.
+It only works when:
+
+* symfony/messenger is 7.3 or newer;
+* symfony/lock is installed;
+* the lock component is enabled (`framework.lock`), with a store that all
+  application and worker processes share and that keeps locks until their TTL
+  expires, such as Redis or a database.
+
+```yaml
+framework:
+    lock: '%env(LOCK_DSN)%'       # e.g. redis://redis:6379 or the DSN of your database
+
+somework_cqrs:
+    idempotency:
+        ttl: 3600                 # seconds a key stays locked
+```
+
+Do not rely on the local `flock` or `semaphore` stores for deduplication: they
+release a lock as soon as Messenger's lock object is gone, so a second dispatch
+with the same key goes through.
+
+Missing pieces do not break the build. In debug mode the reason is written to
+the container compilation log (`var/cache/<env>/*Compiler.log`), for example:
+
+```
+Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").
+```
+
+For a synchronous dispatch the key stays locked for `ttl` seconds after the
+message was handled; a duplicate makes `dispatchSync()` / `ask()` throw
+`DuplicateMessageException`. If the handler fails, the lock is released so the
+caller can retry. For an asynchronous dispatch, the lock is released once a
+worker handled the message. See [Idempotency](idempotency.md).
+
+## Outbox operations
+
+With `outbox.enabled: true`, you store messages in the outbox table inside your
+database transaction and a relay sends them to Messenger afterwards. See
+[Transactional outbox](outbox.md) for storing messages.
+
+### Table
+
+The table is created on first use (`auto_setup: true`), but never inside an open
+transaction: storing the first message inside a transaction throws a
+`LogicException` if the table does not exist yet or lacks the columns of this
+version (a table of 0.4). Outside a transaction, storing and the relay add the
+missing columns, but leave the indexes to the setup command (the relay and the
+health check report it until it has run; missing columns are critical). Create
+the table, or upgrade one of an earlier version, before deploying the code:
+
+```bash
+bin/console somework:cqrs:outbox:setup
+```
+
+If Doctrine migrations manage your schema, set `outbox.auto_setup: false`. With
+doctrine/orm installed, `doctrine:migrations:diff` includes the outbox table of
+the configured connection.
+
+Run `somework:cqrs:outbox:setup` over a direct database connection: it holds a
+session lock, which a pooler in transaction mode (PgBouncer) would move to
+another client. The automatic setup is safe behind such a pooler: on PostgreSQL
+it runs in one transaction.
+
+The relay only decodes rows with a valid signature (`outbox.signing`), but
+whoever writes to the table can still delay, redirect or drop messages: give the
+application a role that can only read and write rows, run the setup with a role that may change the schema, and see
+[Security](outbox.md#security) for the serializer and the Symfony version to use.
+
+### Relay
+
+`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new
+rows in the order they were stored, then retries in the order of their retry
+time) and marks each one published after dispatching it.
+
+* Rows are dispatched on the Messenger bus of their type (the async command or
+  event bus when configured, otherwise the sync one; the default bus for other
+  messages) with their stored transport name as `TransportNamesStamp`; rows
+  without a transport name follow `framework.messenger.routing`. Workers then
+  hand each message to the bus where its handlers are registered. A row that is
+  not sent to any transport is handled synchronously, and the command prints and
+  logs a warning.
+* The stamp pipeline does not run for relayed messages: add the stamps you need
+  to the envelope you store. Only a message stored while a handler runs gets a
+  `MessageMetadataStamp` without one being passed (it continues the handled
+  message's correlation); outside a handler, pass one yourself if you need it.
+* A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
+  makes the command exit with `1`; the rows behind it are not blocked. After
+  `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
+* The transports take turns, the one whose next row has waited longest first,
+  so one transport's backlog does not hold up the others.
+* A transport that fails 3 times in a row with a `TransportException` (broker
+  down, or rejecting messages) is paused until the next run (with `--watch`, for
+  30 seconds, doubling up to 5 minutes until it accepts a message), while the rows of
+  the other transports are relayed (10 times, or 3 times taking more than 10
+  seconds, when it accepted a message earlier in the run: it is up and only
+  rejects some messages). Its rows get three times `max_attempts`
+  (about a day) before they are given up. If the database fails, the run stops
+  right away.
+* Delivery is at least once: if the process stops between dispatching a row and
+  marking it published, the row is sent again. Make handlers idempotent.
+* SIGTERM and SIGINT (with the `pcntl` extension) let the relay finish the
+  current row, then it exits with `1`. A deploy or a container stop therefore
+  does not leave a row half done. A send blocked on the network ends only with the
+  transport's timeout, and a wait for another process upgrading the table (at
+  most 30 seconds) ends first; a second signal stops the relay at once.
+* When symfony/lock is installed, only one relay runs at a time; a second one
+  prints "Another outbox relay is already running." and exits with `0`
+  (`--wait-for-lock=<seconds>` waits for the lock first, then exits with `3`;
+  `--watch` waits as long as it runs). The lock
+  uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
+  lock, which only protects relays on the same host. The lock name includes
+  `framework.cache.prefix_seed`; set it to a stable value when every release is
+  deployed to a new directory, so old and new relays share the lock.
+
+Run the relay from cron:
+
+```bash
+# crontab: relay every minute, purge published rows every night
+* * * * * cd /var/www/app && php bin/console somework:cqrs:outbox:relay --limit=500
+0 3 * * * cd /var/www/app && php bin/console somework:cqrs:outbox:purge --older-than="7 days"
+```
+
+or keep it running with `--watch` when a minute of latency is too much:
+
+```ini
+[program:cqrs-outbox-relay]
+command=php /var/www/app/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
+autostart=true
+autorestart=true
+; exit code 1 (database or lock store down): restart with a growing delay
+startsecs=0
+startretries=10
+stopsignal=TERM
+stopwaitsecs=30
+user=www-data
+```
+
+What the watching relay does:
+
+* It looks for due rows every `--sleep` seconds (default 1) and relays them in
+  runs of `--limit`. `--time-limit` restarts it now and then, like
+  `messenger:consume`, and lets a deploy's new code take over.
+* It holds the relay lock while it runs. A second watcher (another server, or
+  the new process of a deploy while the old one finishes its row) prints
+  "Waiting for the relay lock held by another relay." and waits: it takes over
+  when the first one stops. Only the relay that holds the lock works, so more
+  watchers add failover, not throughput.
+* After each row that its own process handled (no transport, `sync://`), it
+  resets the services, as a worker does between messages (`--no-reset` turns
+  that off).
+* A transport that keeps failing is left alone for 30 seconds, doubling up to
+  5 minutes, instead of being tried again every second.
+* When the database or the lock store fails, it exits with `1`: the process
+  manager restarts it, and the rows wait in the table meanwhile.
+* With Doctrine's `auto_commit: false`, the relay commits after each fetch, so an
+  idle watcher holds no snapshot and no locks. DBAL starts the next transaction
+  right after each commit, though: PostgreSQL shows the connection as `idle in
+  transaction`, and `idle_in_transaction_session_timeout` ends it (the relay
+  exits with `1` and is restarted). Give the relay a connection with auto-commit,
+  or exempt its database user from that timeout.
+
+### Purge
+
+`somework:cqrs:outbox:purge --older-than="7 days"` deletes rows published before
+the given age (a relative date such as `"12 hours"`; default `7 days`).
+Unpublished rows are never deleted.
+
+### Given-up rows
+
+Monitor the health check and the given-up rows:
+
+```bash
+bin/console somework:cqrs:outbox:failed                 # what the relay gave up on, and why
+bin/console somework:cqrs:outbox:failed --requeue       # after fixing the cause
+bin/console somework:cqrs:outbox:failed --delete <id>   # a row that must not be sent
+```
+
+Rows that failed and wait for another attempt are not listed: the relay logs each failed
+attempt with the row's transport and message type (`transport`, `type`), and the health check
+warns while such rows keep failing.
+
+A broker outage uses up attempts slowly: rows whose transport fails get three
+times `max_attempts` (30 attempts by default, about a day of retries), and each
+run tries 3 rows of a failing transport (3 of the rows stored for it by name, and
+3 of the rows without a transport name routed to it), new ones first. Once the
+outage is over, requeue the rows it gave up on. The health check warns while
+rows keep failing, long before they are given up.
+
+## Health checks
+
+`somework:cqrs:health` checks that the CQRS infrastructure can start:
+
+* **handler**: every CQRS handler service is instantiated. A handler that cannot
+  be built (missing environment variable, failing constructor) is `CRITICAL`; no
+  handlers at all is a `WARNING`.
+* **transport**: every Messenger transport is instantiated, which validates its
+  DSN and options. For the built-in transports this does not connect to the
+  broker.
+* **outbox** (when `outbox.enabled`): a `WARNING` when the relay gave up on
+  rows, when failed rows wait for another attempt and the oldest was stored more
+  than 10 minutes ago, when due rows have waited more than 10 minutes, or when
+  the table needs `somework:cqrs:outbox:setup` (e.g. its index is missing);
+  `CRITICAL` when the table cannot be read, or when it lacks the columns of
+  this version (storing a message inside a transaction fails until the setup
+  command has run).
+
+The command prints a table of results and exits with the highest severity:
+`0` OK, `1` warnings, `2` critical. A checker that throws is reported as
+`CRITICAL`.
+
+Use it in a deployment pipeline or as a probe. Container orchestrators treat any
+non-zero exit code as a failure; to fail only on critical issues:
+
+```bash
+php bin/console somework:cqrs:health; test $? -lt 2
+```
+
+### Custom checks
+
+Implement `SomeWork\CqrsBundle\Health\HealthChecker` (`@api`). With
+autoconfiguration the service is tagged `somework_cqrs.health_checker` and its
+results appear in the command:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Health;
+
+use SomeWork\CqrsBundle\Health\CheckResult;
+use SomeWork\CqrsBundle\Health\CheckSeverity;
+use SomeWork\CqrsBundle\Health\HealthChecker;
+use Symfony\Component\DependencyInjection\Attribute\Autowire;
+use Symfony\Component\Messenger\Transport\Receiver\MessageCountAwareInterface;
+
+final class FailedMessagesChecker implements HealthChecker
+{
+    public function __construct(
+        #[Autowire(service: 'messenger.transport.failed')]
+        private readonly object $failureTransport,
+    ) {
+    }
+
+    public function check(): array
+    {
+        if (!$this->failureTransport instanceof MessageCountAwareInterface) {
+            return [];
+        }
+
+        $count = $this->failureTransport->getMessageCount();
+
+        return [new CheckResult(
+            $count > 0 ? CheckSeverity::WARNING : CheckSeverity::OK,
+            'failed_messages',
+            sprintf('%d message(s) in the failure transport', $count),
+        )];
+    }
+}
+```
+
+## Observability
+
+### Logs
+
+The bundle logs through the `logger` service, on its own `cqrs` channel when MonologBundle is
+installed. Route or silence it like any channel:
+
+```yaml
+# config/packages/monolog.yaml
+monolog:
+    handlers:
+        cqrs:
+            type: stream
+            path: '%kernel.logs_dir%/cqrs.log'
+            channels: [cqrs]
+```
+
+Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
+message in the calling process), an event with handlers that a worker received on a bus without them (it is
+acknowledged without being handled), and the outbox relay's failures, paused transports and
+given-up messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
+
+### Correlation and causation ids
+
+Every message dispatched through the facades gets a `MessageMetadataStamp` with
+three ids:
+
+- the **message id**, unique per message (a retry keeps it);
+- the **correlation id** of the flow: the first message uses its own message id,
+  and every message a handler dispatches inherits the correlation id of the
+  message being handled, so one request shares one correlation id;
+- the **causation id**: the message id of the message whose handler dispatched
+  this one (null for the first message).
+
+Group your logs by correlation id to see a whole flow, and follow the causation
+ids to rebuild its tree of messages.
+
+Read the stamp in a handler through `EnvelopeAware`:
+
+```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Application\Command;
+
+use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
+use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+
+#[AsCommandHandler(ProcessPayment::class)]
+final class ProcessPaymentHandler implements EnvelopeAware
+{
+    use EnvelopeAwareTrait;
+
+    public function __construct(
+        private readonly PaymentGateway $gateway,
+        private readonly LoggerInterface $logger,
+    ) {
+    }
+
+    public function __invoke(ProcessPayment $command): mixed
+    {
+        $metadata = $this->getEnvelope()->last(MessageMetadataStamp::class);
+
+        $this->logger->info('Processing payment', [
+            'message_id' => $metadata?->getMessageId(),
+            'correlation_id' => $metadata?->getCorrelationId(),
+            'causation_id' => $metadata?->getCausationId(),
+            'payment_id' => $command->paymentId,
+        ]);
+
+        $this->gateway->charge($command->paymentId);
+
+        return null;
+    }
+}
+```
+
+To continue a correlation id that came with a request, pass your own stamp (one
+per dispatch: the stamp also carries the message id); a `MessageMetadataStamp`
+from the caller is kept, and the messages its handlers dispatch inherit its
+correlation id:
+
+```php
+<?php
+
+use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+
+$correlationId = $request->headers->get('X-Correlation-Id');
+$stamps = null !== $correlationId && '' !== $correlationId
+    ? [new MessageMetadataStamp($correlationId)]
+    : [];
+
+$commandBus->dispatch(new ProcessPayment($paymentId), DispatchMode::DEFAULT, ...$stamps);
+```
+
+### OpenTelemetry
+
+The bundle traces messages when `open-telemetry/api` (1.8 or newer) is installed
+and the container has an `OpenTelemetry\API\Trace\TracerProviderInterface`
+service. The service must exist when the container is compiled; otherwise the
+middleware is not registered. For example, to use the global tracer provider set
+up by the OpenTelemetry SDK:
+
+```yaml
+# config/services.yaml
+services:
+    OpenTelemetry\API\Trace\TracerProviderInterface:
+        factory: ['OpenTelemetry\API\Globals', 'tracerProvider']
+```
+
+What you get:
+
+* `cqrs.dispatch <ShortClassName>` spans (kind `PRODUCER`) where messages are
+  dispatched; for synchronous dispatches the span also covers the handlers;
+* `cqrs.consume <ShortClassName>` spans (kind `CONSUMER`) in the worker;
+* attributes `cqrs.message.class` and `cqrs.message.type`, and status `ERROR`
+  with the recorded exception when handling fails;
+* trace propagation: the dispatch adds a `TraceContextStamp` with the W3C trace
+  headers, and the worker's span continues that trace.
+
+See [Middleware: OpenTelemetryMiddleware](middleware.md#opentelemetrymiddleware)
+for the details.
+
+## Personal data
+
+Messages often carry personal data, and the bundle keeps or passes on parts of them:
+
+- **Outbox rows.** The body (the whole serialized message) and `last_error` stay in the table
+  until the row is purged. Published rows are only deleted by
+  `somework:cqrs:outbox:purge`: schedule it with an `--older-than` that fits your retention
+  policy. Rows the relay gave up on are never purged; delete them with
+  `somework:cqrs:outbox:failed --delete <id>…` once handled (for example to answer an erasure
+  request), after finding them by id or with SQL.
+- **Error texts.** Exception messages can contain personal data. They end up in `last_error`,
+  in the relay's output and logs, in the output of `outbox:failed`, and, with OpenTelemetry, in
+  the span status and exception events sent to your tracing backend.
+- **Idempotency keys.** An `IdempotencyStamp` key is stored in the lock store (e.g. Redis) for
+  its TTL, written to the debug log of the bundle, included in the message of
+  `DuplicateMessageException` (and so in error trackers) and serialized with the message. Do
+  not put personal data such as e-mail addresses in keys; hash client-supplied values
+  (`hash('sha256', $tenantId.':'.$requestId)`).
+- **Metadata.** Values returned by your `MessageMetadataProvider` travel with every message
+  and appear in logs and spans; keep them to ids.
+
+## Message versioning
+
+Messages waiting in a transport were serialized with the old version of their
+class. Plan changes to message classes with that in mind.
+
+**Renaming or moving a class** breaks the messages already queued: the serialized
+data refers to the old class name. Drain the queue before deploying the rename,
+or keep the old class until no message of it is left:
+
+```bash
+# Consume what is left, then deploy the rename
+bin/console messenger:consume async_commands --time-limit=300
+```
+
+**Removing or renaming a property** loses the data of queued messages or makes
+them fail to decode.
+
+**Stamps are serialized too.** A worker running an older version of a library
+cannot decode a message carrying a stamp class that version does not have: with
+OpenTelemetry enabled, this bundle adds `TraceContextStamp` since 0.5, so 0.4
+workers must be stopped before 0.5 code dispatches. Deploy workers before (or
+with) the code that dispatches, and roll back only once the queues hold no
+message of the newer version.
+
+**Adding a property** depends on the serializer:
+
+* Messenger's default PHP serializer restores objects without calling the
+  constructor. A new promoted property stays uninitialized in queued messages,
+  and reading it throws an `Error`, even when the constructor parameter has a
+  default value.
+* The Symfony Serializer (`messenger.transport.symfony_serializer`) creates the
+  object through its constructor, so a new constructor parameter with a default
+  value is safe.
+
+```yaml
+framework:
+    messenger:
+        serializer:
+            default_serializer: messenger.transport.symfony_serializer
+```
+
+The outbox relay decodes stored rows with `outbox.serializer`
+(`messenger.default_serializer` by default), so the same rules apply to rows
+waiting in the outbox table.

@@ -1,22 +1,20 @@
 # Getting Started
 
-This tutorial walks you through installing the bundle and progressively using its features -- from dispatching your first command to async routing, testing, and advanced patterns.
+This tutorial walks you through installing the bundle and progressively using its features -- from dispatching your first command to asynchronous handling, testing, and advanced patterns.
 
 ## Installation
 
-### With Symfony Flex (recommended)
+The bundle requires PHP 8.2 or newer and Symfony 7.2 or newer, including 8.x.
 
 ```bash
 composer require somework/cqrs-bundle
 ```
 
-Flex automatically registers the bundle in `config/bundles.php` and creates a commented `config/packages/somework_cqrs.yaml` with all available options.
+### With Symfony Flex
+
+Flex adds the bundle to `config/bundles.php` automatically. The Flex recipe that would also create `config/packages/somework_cqrs.yaml` is not published yet, so create that file yourself when you want to change the defaults (see [Configuration](#configuration) below).
 
 ### Without Symfony Flex
-
-```bash
-composer require somework/cqrs-bundle
-```
 
 Register the bundle manually in `config/bundles.php`:
 
@@ -27,7 +25,15 @@ return [
 ];
 ```
 
-Create `config/packages/somework_cqrs.yaml` (see `docs/flex-recipe/` for a template).
+### Configuration
+
+No configuration is required. By default the command, query, and event buses all use Messenger's default bus and every message is handled synchronously. To customise the bundle, create `config/packages/somework_cqrs.yaml`. The repository contains a commented template with every option in `docs/flex-recipe/`, and the container can print the full reference:
+
+```bash
+bin/console config:dump-reference somework_cqrs
+```
+
+See the [Configuration Reference](reference.md) for a description of every option.
 
 ### Verify the installation
 
@@ -35,9 +41,11 @@ Create `config/packages/somework_cqrs.yaml` (see `docs/flex-recipe/` for a templ
 bin/console somework:cqrs:list
 ```
 
-If the bundle is registered, this command prints an empty handler table. You are ready to create your first command.
+If the bundle is registered, the command warns that no CQRS handlers were found yet. You are ready to create your first command.
 
 ## First command
+
+The examples assume the default `config/services.yaml` of a Symfony application, which registers every class in `src/` as a service with `autowire` and `autoconfigure` enabled. Autoconfiguration is what lets the bundle discover your handlers.
 
 ### Define a command message
 
@@ -64,7 +72,7 @@ final class CreateTask implements Command
 
 ### Create a handler
 
-Handlers process a single message type. Annotate them with `#[AsCommandHandler]` for automatic registration:
+A handler processes a single message type. Annotate it with `#[AsCommandHandler]` and type the first parameter of `__invoke()` with the command class. `TaskRepository` and `Task` stand for your own persistence code:
 
 ```php
 <?php
@@ -94,11 +102,11 @@ final class CreateTaskHandler implements CommandHandler
 ```
 
 !!! tip "Handler interfaces are optional"
-    You can omit `implements CommandHandler` and rely on the attribute alone. The bundle discovers handlers either way.
+    You can omit `implements CommandHandler` and rely on the attribute alone, or implement the interface without the attribute: the bundle then reads the handled command from the type of the `__invoke()` parameter. The handler is registered on the command bus and, when `buses.command_async` is configured, on the asynchronous command bus as well.
 
 ### Dispatch from a controller
 
-Inject `CommandBusInterface` (or the concrete `CommandBus`) and dispatch:
+Inject `CommandBusInterface` (autowired to the bundle's `CommandBus`) and dispatch:
 
 ```php
 <?php
@@ -109,26 +117,34 @@ namespace App\Controller;
 
 use App\Application\Command\CreateTask;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\Routing\Attribute\Route;
 
-final class TaskController
+final class TaskController extends AbstractController
 {
-    #[Route('/tasks', methods: ['POST'])]
-    public function create(Request $request, CommandBusInterface $commandBus): JsonResponse
-    {
-        $data = $request->toArray();
+    public function __construct(
+        private readonly CommandBusInterface $commandBus,
+    ) {
+    }
 
-        $commandBus->dispatch(new CreateTask(
-            id: uuid_create(),
-            name: $data['name'],
+    #[Route('/tasks', methods: ['POST'])]
+    public function create(Request $request): JsonResponse
+    {
+        $id = bin2hex(random_bytes(8));
+
+        $this->commandBus->dispatch(new CreateTask(
+            id: $id,
+            name: $request->getPayload()->getString('name'),
         ));
 
-        return new JsonResponse(['status' => 'ok'], 201);
+        return $this->json(['id' => $id], 201);
     }
 }
 ```
+
+`dispatch()` returns the Messenger `Envelope`. When you need the value returned by the handler, call `dispatchSync()` instead: it always handles the command synchronously and returns the handler result.
 
 Run `bin/console somework:cqrs:list` again to see your new handler in the catalogue.
 
@@ -136,7 +152,7 @@ Run `bin/console somework:cqrs:list` again to see your new handler in the catalo
 
 ### QueryBus
 
-Queries request data and always return a result. They implement the `Query` marker interface:
+Queries request data. They implement the `Query` marker interface:
 
 ```php
 <?php
@@ -183,13 +199,13 @@ final class FindTaskHandler implements QueryHandler
 }
 ```
 
-Dispatch with `QueryBusInterface::ask()`:
+Ask the query through `QueryBusInterface::ask()`:
 
 ```php
 $task = $queryBus->ask(new FindTask(id: $id));
 ```
 
-`ask()` validates that exactly one handler processed the query and returns its result. Zero handlers or multiple handlers both throw an exception.
+Queries are always handled synchronously. `ask()` returns the result of the single handler; if the query was not handled by exactly one handler it throws an exception instead (see [Exceptions from dispatchSync() and ask()](usage.md#exceptions-from-dispatchsync-and-ask)). A second handler for the same query on the same bus is already rejected when the container is compiled.
 
 ### EventBus
 
@@ -214,7 +230,7 @@ final class TaskCreated implements Event
 }
 ```
 
-Multiple handlers can listen to the same event:
+Each listener is a handler class of its own:
 
 ```php
 <?php
@@ -243,35 +259,69 @@ Dispatch with `EventBusInterface::dispatch()`:
 $eventBus->dispatch(new TaskCreated(taskId: $id, taskName: $name));
 ```
 
-Events are fire-and-forget. Missing handlers are silently tolerated.
+Events are fire-and-forget: the bus returns the envelope, and an event without any handler is silently accepted.
 
 ## Async dispatch
 
-By default, all messages are dispatched synchronously. The bundle provides several ways to route messages asynchronously.
+By default, all messages are handled synchronously. To handle commands or events in a worker you need an asynchronous Messenger bus, a transport, and the matching bundle configuration.
 
-### Using DispatchMode
+### Configure the buses and the transport
 
-Pass `DispatchMode::ASYNC` when dispatching:
+```yaml
+# config/packages/messenger.yaml
+framework:
+    messenger:
+        default_bus: command.bus
+        buses:
+            command.bus: ~
+            command.async_bus: ~
+            event.bus: ~
+            event.async_bus: ~
+        transports:
+            async: '%env(MESSENGER_TRANSPORT_DSN)%'
+```
+
+```yaml
+# config/packages/somework_cqrs.yaml
+somework_cqrs:
+    buses:
+        command: command.bus
+        command_async: command.async_bus
+        event: event.bus
+        event_async: event.async_bus
+    transports:
+        command_async:
+            default: [async]
+        event_async:
+            default: [async]
+```
+
+`transports.command_async` and `transports.event_async` make the bundle add a `TransportNamesStamp` to asynchronous dispatches, so no `framework.messenger.routing` entry is needed. Prefer them over `framework.messenger.routing` for CQRS messages: Messenger's routing applies on every bus, so a routed message is sent to the transport even when it is dispatched synchronously (and `dispatchSync()` then throws `MessageSentToTransportException`).
+
+Handlers without an explicit `bus` are registered on both the synchronous and the asynchronous bus of their type, so no extra handler configuration is required.
+
+### Choose asynchronous handling
+
+There are three ways to send a message to the asynchronous bus.
+
+**Per call** -- pass `DispatchMode::ASYNC` or use the shortcut:
 
 ```php
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 
 $commandBus->dispatch($command, DispatchMode::ASYNC);
+$commandBus->dispatchAsync($command);
 ```
 
-This requires an async bus to be configured for that message type in `somework_cqrs.yaml`:
-
-```yaml
-somework_cqrs:
-    buses:
-        command_async: messenger.bus.commands_async
-```
-
-### Using the #[Asynchronous] attribute
-
-Annotate a message class to always route it through the async bus:
+**Per message class** -- mark the class with `#[Asynchronous]`; a plain `dispatch()` then goes to the asynchronous bus:
 
 ```php
+<?php
+
+declare(strict_types=1);
+
+namespace App\Application\Command;
+
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Contract\Command;
 
@@ -285,9 +335,9 @@ final class GenerateReport implements Command
 }
 ```
 
-### Using dispatch_modes configuration
+The attribute also adds a `TransportNamesStamp` for the transport named `async`; pass `#[Asynchronous(transport: 'reports')]` to use another transport.
 
-Configure per-message defaults in YAML:
+**Per configuration** -- map classes (or their parent classes and interfaces) to a dispatch mode:
 
 ```yaml
 somework_cqrs:
@@ -298,27 +348,23 @@ somework_cqrs:
                 App\Application\Command\GenerateReport: async
 ```
 
-### Transport configuration
+The [Usage Guide](usage.md#choosing-synchronous-or-asynchronous-dispatch) explains how these settings are combined. Asynchronous dispatch without a configured async bus fails: at compile time when the configuration asks for it, and with an `AsyncBusNotConfiguredException` at runtime otherwise.
 
-Configure Messenger transports and routing as usual:
+### Run the worker
 
-```yaml
-framework:
-    messenger:
-        transports:
-            async:
-                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
-        routing:
-            'App\Application\Command\GenerateReport': async
+```bash
+bin/console messenger:consume async
 ```
 
-Run the worker: `bin/console messenger:consume async`.
+The worker handles each message on the asynchronous bus it was dispatched on.
 
 ## Testing
 
-The bundle ships fake bus implementations for unit testing without Messenger.
+The bundle ships fake bus implementations and PHPUnit assertions for unit tests without Messenger. They live in `SomeWork\CqrsBundle\Testing`; the assertions require `phpunit/phpunit` in your application.
 
-### FakeBus setup
+### Fake buses and assertions
+
+Pass a fake bus to the code under test and assert on the recorded messages. `CqrsTestCase` extends PHPUnit's `TestCase` and provides `assertDispatched()` and `assertNotDispatched()`; if your test already extends another base class (such as `KernelTestCase`), use `CqrsAssertionsTrait` instead. `TaskService` stands for your own service that depends on `CommandBusInterface`:
 
 ```php
 <?php
@@ -328,10 +374,11 @@ declare(strict_types=1);
 namespace App\Tests\Unit;
 
 use App\Application\Command\CreateTask;
+use App\Application\TaskService;
+use SomeWork\CqrsBundle\Testing\CqrsTestCase;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
-use PHPUnit\Framework\TestCase;
 
-final class TaskServiceTest extends TestCase
+final class TaskServiceTest extends CqrsTestCase
 {
     public function testCreateTaskDispatchesCommand(): void
     {
@@ -340,56 +387,57 @@ final class TaskServiceTest extends TestCase
 
         $service->createTask('task-1', 'My Task');
 
-        FakeCommandBus::assertDispatched($bus, CreateTask::class);
+        self::assertDispatched($bus, CreateTask::class);
     }
 }
 ```
 
 ### Callback assertions
 
-Assert specific properties on dispatched messages:
+Pass a callback to check properties of the dispatched message:
 
 ```php
-FakeCommandBus::assertDispatched(
+self::assertDispatched(
     $bus,
     CreateTask::class,
-    fn(CreateTask $cmd) => $cmd->name === 'My Task',
+    fn (CreateTask $command): bool => 'My Task' === $command->name,
 );
 ```
 
 ### Assert not dispatched
 
 ```php
-FakeCommandBus::assertNotDispatched($bus, CreateTask::class);
+self::assertNotDispatched($bus, CreateTask::class);
 ```
 
-### Query bus testing
+### Configuring results
 
-Configure return values for queries:
+`FakeCommandBus::willReturn()` sets the value returned by `dispatchSync()`. `FakeQueryBus` returns a result per query class, or a default result for all other queries:
 
 ```php
 $queryBus = new FakeQueryBus();
-$queryBus->willReturn(FindTask::class, $expectedTask);
+$queryBus->willReturnFor(FindTask::class, $expectedTask);
+$queryBus->willReturn(null); // result for every other query
 
 $result = $queryBus->ask(new FindTask(id: 'task-1'));
 // $result === $expectedTask
 ```
 
-For more details, see the [Testing Guide](testing.md).
+All fakes expose `getDispatched()` and `reset()`. For more details, see the [Testing Guide](testing.md).
 
 ## Advanced patterns
 
-The bundle supports several production-grade patterns. Each has a dedicated documentation page:
+Each of the following features has a dedicated page:
 
-- **[Retry Policies](retry.md)** -- Configure per-message retry strategies with exponential backoff and transport-level integration.
-- **[Transactional Outbox](outbox.md)** -- Store messages in a database table and relay them to Messenger transports for guaranteed delivery.
-- **[Event Ordering](event-ordering.md)** -- Maintain sequence numbers per aggregate using `SequenceAware` and `AggregateSequenceStamp`.
-- **[Idempotency](idempotency.md)** -- Bridge `IdempotencyStamp` to Symfony's `DeduplicateStamp` to prevent duplicate processing.
-- **[Rate Limiting](rate-limiting.md)** -- Throttle message dispatch per type using Symfony Rate Limiter.
+- **[Retry Policies](retry.md)** -- Configure per-message retry behaviour with exponential backoff and a transport-level retry strategy.
+- **[Transactional Outbox](outbox.md)** -- Store messages in a database table within your transaction and relay them to Messenger transports.
+- **[Event Ordering](event-ordering.md)** -- Attach per-aggregate sequence numbers to events with `SequenceAware` and `AggregateSequenceStamp`.
+- **[Idempotency](idempotency.md)** -- Bridge `IdempotencyStamp` to Messenger's `DeduplicateStamp` to drop duplicate messages.
+- **[Rate Limiting](rate-limiting.md)** -- Throttle dispatches per message class or interface using Symfony Rate Limiter.
 
 ### Custom StampDeciders
 
-The `StampDecider` interface is marked `@api` -- you can implement your own and register it via the DI tag:
+The `StampDecider` interface is marked `@api`: implement it to add your own stamps to every dispatch. The decider receives the message, the resolved dispatch mode (`SYNC` or `ASYNC`), and the stamps collected so far:
 
 ```php
 <?php
@@ -399,40 +447,56 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
+use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
-final class AuditTrailStampDecider implements StampDecider
+/**
+ * Delays asynchronous messages by five seconds unless the caller set a delay.
+ */
+final class DelayAsyncMessagesStampDecider implements StampDecider
 {
-    /** @param array<int, StampInterface> $stamps */
-    /** @return array<int, StampInterface> */
+    /**
+     * @param array<int, StampInterface> $stamps
+     *
+     * @return array<int, StampInterface>
+     */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        $stamps[] = new AuditTrailStamp(
-            userId: $this->security->getUser()?->getId(),
-            timestamp: new \DateTimeImmutable(),
-        );
+        if (DispatchMode::ASYNC !== $mode) {
+            return $stamps;
+        }
+
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof DelayStamp) {
+                return $stamps;
+            }
+        }
+
+        $stamps[] = new DelayStamp(5000);
 
         return $stamps;
     }
 }
 ```
 
-Register it in your services configuration:
+With autoconfiguration the class is added to the pipeline automatically, with priority 0, after the built-in deciders (225 to 50) and before `DispatchAfterCurrentBusStampDecider` (-10). To choose where it runs (higher priorities run first), tag it explicitly:
 
 ```yaml
 services:
-    App\Infrastructure\Cqrs\AuditTrailStampDecider:
+    App\Infrastructure\Cqrs\DelayAsyncMessagesStampDecider:
         tags:
             - { name: 'somework_cqrs.dispatch_stamp_decider', priority: 100 }
 ```
 
+Implement `MessageTypeAwareStampDecider` instead to run the decider only for some message types. See [Middleware & Stamp Pipeline](middleware.md) for the built-in deciders and their priorities.
+
 ### OpenTelemetry
 
-Install `open-telemetry/api` to enable automatic trace spans for message dispatch and handler execution:
+Install `open-telemetry/api` to get trace spans for message dispatch and for messages consumed by workers:
 
 ```bash
 composer require open-telemetry/api
 ```
 
-The bundle automatically registers `OpenTelemetryMiddleware` when the OpenTelemetry API is available. See the [Production Guide](production.md) for configuration details.
+The bundle registers its `OpenTelemetryMiddleware` on the CQRS buses when the OpenTelemetry API is installed and the container has an `OpenTelemetry\API\Trace\TracerProviderInterface` service (provided by your OpenTelemetry SDK integration or defined yourself). See the [Production Guide](production.md) for monitoring advice.

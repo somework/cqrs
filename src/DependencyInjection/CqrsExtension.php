@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection;
 
+use Closure;
 use Doctrine\DBAL\Connection;
+use Doctrine\ORM\Tools\ToolEvents;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
@@ -12,13 +14,15 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\CommandHandler;
 use SomeWork\CqrsBundle\Contract\EventHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
+use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\AllowNoHandlerMiddlewareRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusInterfaceRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\BusWiringRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchAfterCurrentBusRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchModeRegistrar;
-use SomeWork\CqrsBundle\DependencyInjection\Registration\HandlerLocatorRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\MetadataRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\NamingRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
@@ -30,29 +34,50 @@ use SomeWork\CqrsBundle\DependencyInjection\Registration\TransportRegistrar;
 use SomeWork\CqrsBundle\Health\HealthChecker;
 use SomeWork\CqrsBundle\Messenger\CausationIdMiddleware;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
-use SomeWork\CqrsBundle\Support\MessageTypeLocatorResetter;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\FileLocator;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Extension\Extension;
+use Symfony\Component\DependencyInjection\Extension\PrependExtensionInterface;
 use Symfony\Component\DependencyInjection\Loader\PhpFileLoader;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
+use function array_keys;
+use function class_exists;
+use function implode;
+use function is_array;
+use function is_bool;
+use function is_int;
+use function is_string;
 use function sprintf;
+use function str_starts_with;
 
 /** @internal */
-final class CqrsExtension extends Extension
+final class CqrsExtension extends Extension implements PrependExtensionInterface
 {
+    /** @var Closure(string): bool */
+    private readonly Closure $classExists;
+
+    /**
+     * @param (Closure(string): bool)|null $classExists Detects optional dependencies; injectable for tests
+     */
+    public function __construct(?Closure $classExists = null)
+    {
+        $this->classExists = $classExists ?? static fn (string $class): bool => class_exists($class);
+    }
+
     public function load(array $configs, ContainerBuilder $container): void
     {
         $configuration = new Configuration();
         /** @var array<string, mixed> $config */
         $config = $this->processConfiguration($configuration, $configs);
+
+        self::assertCompileTimeFlags($config);
+        self::assertNoEnvironmentVariables($container, $config);
 
         /** @var string $defaultBusId */
         $defaultBusId = $config['default_bus'] ?? 'messenger.default_bus';
@@ -69,20 +94,24 @@ final class CqrsExtension extends Extension
 
         /* @phpstan-ignore argument.type */
         $this->guardAsyncBusConfiguration($config);
+        // Messages stored through the buses need the outbox.
+        if (true !== $config['outbox']['enabled']) {
+            foreach (['command', 'event'] as $type) {
+                $modes = $config['dispatch_modes'][$type];
+                $outboxMessages = array_keys(array_filter($modes['map'], static fn (string $mode): bool => DispatchMode::OUTBOX->value === $mode));
+                if (DispatchMode::OUTBOX->value === $modes['default'] || [] !== $outboxMessages) {
+                    throw new InvalidConfigurationException(sprintf('"somework_cqrs.dispatch_modes.%s" stores messages in the outbox (%s), but the outbox is disabled. Enable "somework_cqrs.outbox".', $type, DispatchMode::OUTBOX->value === $modes['default'] ? '"default: outbox"' : implode(', ', $outboxMessages)));
+                }
+            }
+        }
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
-
-        $resetter = new Definition(MessageTypeLocatorResetter::class);
-        $resetter->addTag('kernel.reset', ['method' => 'reset']);
-        $resetter->setPublic(false);
-        $container->setDefinition('somework_cqrs.message_type_locator_resetter', $resetter);
 
         $causationCtx = new Definition(CausationIdContext::class);
         $causationCtx->addTag('kernel.reset', ['method' => 'reset']);
         $causationCtx->setPublic(false);
         $container->setDefinition('somework_cqrs.causation_id_context', $causationCtx);
-        $container->setAlias(CausationIdContext::class, 'somework_cqrs.causation_id_context')->setPublic(false);
 
         $causationMiddleware = new Definition(CausationIdMiddleware::class);
         $causationMiddleware->setArgument('$causationIdContext', new Reference('somework_cqrs.causation_id_context'));
@@ -91,7 +120,7 @@ final class CqrsExtension extends Extension
 
         $container->setAlias(
             'somework_cqrs.exponential_backoff_retry_policy',
-            \SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy::class,
+            \SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy::class,
         )->setPublic(false);
 
         $container->registerForAutoconfiguration(StampDecider::class)
@@ -100,7 +129,7 @@ final class CqrsExtension extends Extension
         $container->registerForAutoconfiguration(HealthChecker::class)
             ->addTag('somework_cqrs.health_checker');
 
-        $this->registerHandlerAutoconfiguration($container, $config['buses'], $defaultBusId);
+        $this->registerHandlerAutoconfiguration($container);
 
         $helper = new ContainerHelper();
 
@@ -110,23 +139,35 @@ final class CqrsExtension extends Extension
         (new MetadataRegistrar($helper))->register($container, $config['metadata']);
         (new TransportRegistrar())->register($container, $config['transports']);
         (new DispatchModeRegistrar())->register($container, $config['dispatch_modes']);
-        (new DispatchAfterCurrentBusRegistrar($helper))->register($container, $config['async']['dispatch_after_current_bus']);
-        if (true === $config['rate_limiting']['enabled']) {
-            if (!class_exists(RateLimiterFactory::class)) {
-                throw new InvalidConfigurationException('Rate limiting is enabled (somework_cqrs.rate_limiting.enabled: true) but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or set somework_cqrs.rate_limiting.enabled to false.');
-            }
-            (new RateLimitRegistrar())->register($container, $config['rate_limiting']);
+        (new DispatchAfterCurrentBusRegistrar($helper))->register($container, $config['dispatch_after_current_bus']);
+        $rateLimitingActive = $this->isRateLimitingActive($config['rate_limiting']);
+        if ($rateLimitingActive) {
+            (new RateLimitRegistrar())->register($container, $config['rate_limiting'], $helper);
         }
 
         if (true === $config['outbox']['enabled']) {
-            if (!class_exists(Connection::class)) {
-                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
+            if (null === $config['outbox']['storage'] && !($this->classExists)(Connection::class)) {
+                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal", configure another storage under somework_cqrs.outbox.storage, or set somework_cqrs.outbox.enabled to false.');
             }
-            (new OutboxRegistrar())->register($container, $config['outbox']);
+            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
-        (new StampsDeciderRegistrar($helper))->register($container, $config['buses'], $config['idempotency'], $config['causation_id'], $config['sequence'], $config['rate_limiting']);
-        (new HandlerLocatorRegistrar())->register($container, $config['buses'], $defaultBusId);
+        if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
+        }
+
+        if (is_int($config['outbox']['max_attempts']) && $config['outbox']['max_attempts'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
+        }
+
+        // Registered without symfony/lock too, so the first IdempotencyStamp logs that it is ignored.
+        $idempotencyConfig = $config['idempotency'];
+        $idempotencyConfig['enabled'] = true === $idempotencyConfig['enabled'];
+
+        $rateLimitConfig = $config['rate_limiting'];
+        $rateLimitConfig['enabled'] = $rateLimitingActive;
+
+        (new StampsDeciderRegistrar($helper))->register($container, $config['buses'], $idempotencyConfig, $config['causation_id'], $config['sequence'], $rateLimitConfig);
         (new AllowNoHandlerMiddlewareRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusWiringRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusInterfaceRegistrar())->register($container);
@@ -149,72 +190,174 @@ final class CqrsExtension extends Extension
         $container->setParameter('somework_cqrs.outbox.table_name', $config['outbox']['table_name']);
     }
 
+    /**
+     * Declares the "cqrs" log channel, so the bundle's log records can be routed on their own.
+     */
+    public function prepend(ContainerBuilder $container): void
+    {
+        if ($container->hasExtension('monolog')) {
+            $container->prependExtensionConfig('monolog', ['channels' => [LoggerChannelPass::CHANNEL]]);
+        }
+    }
+
     public function getAlias(): string
     {
         return 'somework_cqrs';
     }
 
     /**
-     * @param array<string, string|null> $buses
+     * Options read only at runtime; every other option names services, buses, transports, dispatch
+     * modes or message classes that must be known when the container is compiled.
      */
-    private function registerHandlerAutoconfiguration(ContainerBuilder $container, array $buses, string $defaultBusId): void
-    {
-        $commandBusId = $buses['command'] ?? $defaultBusId;
-        $queryBusId = $buses['query'] ?? $defaultBusId;
-        $eventBusId = $buses['event'] ?? $defaultBusId;
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'outbox.signing.secret', 'outbox.signing.previous_secrets', 'outbox.signing.accept_unsigned', 'dispatch_after_current_bus'];
 
+    /**
+     * Without this check an environment variable in such an option fails later with Symfony's
+     * "Incompatible use of dynamic environment variables" or an invalid enum value.
+     *
+     * @param array<array-key, mixed> $config
+     */
+    private static function assertNoEnvironmentVariables(ContainerBuilder $container, array $config, string $path = ''): void
+    {
+        foreach ($config as $key => $value) {
+            $keyPath = '' === $path ? (string) $key : $path.'.'.$key;
+
+            foreach (self::RUNTIME_OPTIONS as $runtimeOption) {
+                if ($keyPath === $runtimeOption || str_starts_with($keyPath, $runtimeOption.'.')) {
+                    continue 2;
+                }
+            }
+
+            if (self::usesEnvironmentVariable($container, (string) $key) || (is_string($value) && self::usesEnvironmentVariable($container, $value))) {
+                // A map key or a list entry is reported with the option that holds it.
+                $option = is_int($key) || self::usesEnvironmentVariable($container, $key) ? $path : $keyPath;
+
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.', $option));
+            }
+
+            if (is_array($value)) {
+                self::assertNoEnvironmentVariables($container, $value, $keyPath);
+            }
+        }
+    }
+
+    private static function usesEnvironmentVariable(ContainerBuilder $container, string $value): bool
+    {
+        $container->resolveEnvPlaceholders($value, null, $usedEnvs);
+
+        return [] !== ($usedEnvs ?? []);
+    }
+
+    /**
+     * These flags decide which services are registered, so they must be known when the container
+     * is compiled; an environment variable would only be resolved at runtime and be ignored.
+     *
+     * @param array<string, mixed> $config
+     */
+    private static function assertCompileTimeFlags(array $config): void
+    {
+        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting'] as $section) {
+            $sectionConfig = $config[$section] ?? null;
+            $value = is_array($sectionConfig) ? ($sectionConfig['enabled'] ?? null) : null;
+
+            if (!is_bool($value)) {
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.', $section));
+            }
+        }
+
+        $signing = $config['outbox']['signing'] ?? null;
+        if (is_array($signing) && !is_bool($signing['enabled'] ?? null)) {
+            throw new InvalidConfigurationException('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.');
+        }
+    }
+
+    /**
+     * Rate limiting only needs symfony/rate-limiter once limiters are mapped to messages;
+     * with no mapping the feature is simply inactive, so the default config never fails.
+     *
+     * @param array{enabled: bool, default?: string|null, command: array{default?: string|null, map: array<string, string>}, query: array{default?: string|null, map: array<string, string>}, event: array{default?: string|null, map: array<string, string>}} $config
+     */
+    private function isRateLimitingActive(array $config): bool
+    {
+        if (true !== $config['enabled']) {
+            return false;
+        }
+
+        $hasMappings = null !== ($config['default'] ?? null);
+        foreach (['command', 'query', 'event'] as $type) {
+            $hasMappings = $hasMappings || null !== ($config[$type]['default'] ?? null) || [] !== $config[$type]['map'];
+        }
+
+        if (!$hasMappings) {
+            return false;
+        }
+
+        if (!($this->classExists)(RateLimiterFactory::class)) {
+            throw new InvalidConfigurationException('Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.');
+        }
+
+        return true;
+    }
+
+    /**
+     * Handler tags only carry a bus when one is declared explicitly; CqrsHandlerPass assigns the
+     * configured buses once the whole container (including framework aliases) is available.
+     */
+    private function registerHandlerAutoconfiguration(ContainerBuilder $container): void
+    {
         $container->registerAttributeForAutoconfiguration(
             AsCommandHandler::class,
-            static function (ChildDefinition $definition, AsCommandHandler $attribute) use ($commandBusId): void {
-                $bus = $attribute->bus ?? $commandBusId;
-                $definition->addTag('messenger.message_handler', [
-                    'handles' => $attribute->command,
-                    'bus' => $bus,
-                    'somework_cqrs_type' => 'command',
-                ]);
+            static function (ChildDefinition $definition, AsCommandHandler $attribute): void {
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->command, $attribute->bus, 'command'));
             }
         );
 
         $container->registerAttributeForAutoconfiguration(
             AsQueryHandler::class,
-            static function (ChildDefinition $definition, AsQueryHandler $attribute) use ($queryBusId): void {
-                $bus = $attribute->bus ?? $queryBusId;
-                $definition->addTag('messenger.message_handler', [
-                    'handles' => $attribute->query,
-                    'bus' => $bus,
-                    'somework_cqrs_type' => 'query',
-                ]);
+            static function (ChildDefinition $definition, AsQueryHandler $attribute): void {
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->query, $attribute->bus, 'query'));
             }
         );
 
         $container->registerAttributeForAutoconfiguration(
             AsEventHandler::class,
-            static function (ChildDefinition $definition, AsEventHandler $attribute) use ($eventBusId): void {
-                $bus = $attribute->bus ?? $eventBusId;
-                $definition->addTag('messenger.message_handler', [
-                    'handles' => $attribute->event,
-                    'bus' => $bus,
-                    'somework_cqrs_type' => 'event',
-                ]);
+            static function (ChildDefinition $definition, AsEventHandler $attribute): void {
+                $definition->addTag('messenger.message_handler', self::handlerTag($attribute->event, $attribute->bus, 'event', $attribute->priority, $attribute->fromTransport));
             }
         );
 
-        $this->registerHandlerInterfaceAutoconfiguration($container, CommandHandler::class, $commandBusId, 'command');
-        $this->registerHandlerInterfaceAutoconfiguration($container, QueryHandler::class, $queryBusId, 'query');
-        $this->registerHandlerInterfaceAutoconfiguration($container, EventHandler::class, $eventBusId, 'event');
+        foreach ([CommandHandler::class => 'command', QueryHandler::class => 'query', EventHandler::class => 'event'] as $interface => $type) {
+            $container->registerForAutoconfiguration($interface)
+                ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => $type]);
+        }
     }
 
-    private function registerHandlerInterfaceAutoconfiguration(ContainerBuilder $container, string $interface, ?string $busId, string $type): void
+    /**
+     * Messenger's handler tag: "priority" orders the handlers of a message, "from_transport"
+     * restricts a handler to the messages received from that transport.
+     *
+     * @return array<string, string|int>
+     */
+    private static function handlerTag(string $message, ?string $bus, string $type, int $priority = 0, ?string $fromTransport = null): array
     {
-        $container->registerForAutoconfiguration($interface)
-            ->addTag(
-                'somework_cqrs.handler_interface',
-                array_filter([
-                    'bus' => $busId,
-                    'method' => '__invoke',
-                    'type' => $type,
-                ], static fn ($value): bool => null !== $value)
-            );
+        $tag = [
+            'handles' => $message,
+            CqrsHandlerPass::TYPE_ATTRIBUTE => $type,
+        ];
+
+        if (null !== $bus && '' !== $bus) {
+            $tag['bus'] = $bus;
+        }
+
+        if (0 !== $priority) {
+            $tag['priority'] = $priority;
+        }
+
+        if (null !== $fromTransport && '' !== $fromTransport) {
+            $tag['from_transport'] = $fromTransport;
+        }
+
+        return $tag;
     }
 
     /**
@@ -237,16 +380,20 @@ final class CqrsExtension extends Extension
      *         event: array{default: list<string>, map: array<string, list<string>>},
      *         event_async: array{default: list<string>, map: array<string, list<string>>},
      *     },
+     *     outbox: array{enabled: bool, ...},
      * } $config
      */
     private function guardAsyncBusConfiguration(array $config): void
     {
         $commandAsyncBus = $config['buses']['command_async'] ?? null;
         $eventAsyncBus = $config['buses']['event_async'] ?? null;
+        // The outbox stores its rows for the async transports: they need no async bus then.
+        $outbox = true === $config['outbox']['enabled'];
 
         $commandAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['command'],
-            $config['transports']['command_async']
+            $config['transports']['command_async'],
+            $outbox,
         );
         if (null === $commandAsyncBus && $this->hasAsyncConfiguration($commandAsyncSources)) {
             $this->throwMissingAsyncBusException('command', $commandAsyncSources, 'command_async');
@@ -254,7 +401,8 @@ final class CqrsExtension extends Extension
 
         $eventAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['event'],
-            $config['transports']['event_async']
+            $config['transports']['event_async'],
+            $outbox,
         );
         if (null === $eventAsyncBus && $this->hasAsyncConfiguration($eventAsyncSources)) {
             $this->throwMissingAsyncBusException('event', $eventAsyncSources, 'event_async');
@@ -272,7 +420,7 @@ final class CqrsExtension extends Extension
      *     transport_messages: array<string, list<string>>,
      * }
      */
-    private function collectAsyncSources(array $dispatchConfig, array $transportConfig): array
+    private function collectAsyncSources(array $dispatchConfig, array $transportConfig, bool $outbox): array
     {
         $dispatchMessages = [];
 
@@ -285,8 +433,8 @@ final class CqrsExtension extends Extension
         return [
             'dispatch_default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
             'dispatch_messages' => $dispatchMessages,
-            'transport_default' => $transportConfig['default'],
-            'transport_messages' => array_filter(
+            'transport_default' => $outbox ? [] : $transportConfig['default'],
+            'transport_messages' => $outbox ? [] : array_filter(
                 $transportConfig['map'],
                 static fn (array $transports): bool => [] !== $transports
             ),

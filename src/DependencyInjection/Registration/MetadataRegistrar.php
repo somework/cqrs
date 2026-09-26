@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
+use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -31,25 +31,20 @@ final class MetadataRegistrar
      */
     public function register(ContainerBuilder $container, array $config): void
     {
-        $defaultId = $this->helper->ensureServiceExists($container, $config['default']);
+        $defaultId = $this->helper->configuredService($container, 'metadata.default', $config['default'], MessageMetadataProvider::class);
         $container->setAlias('somework_cqrs.metadata.default', $defaultId)->setPublic(false);
 
         foreach (['command', 'query', 'event'] as $type) {
             $typeDefaultId = $config[$type]['default'];
-            if (null === $typeDefaultId) {
-                $resolvedTypeDefaultId = $defaultId;
-            } else {
-                $resolvedTypeDefaultId = $this->helper->ensureServiceExists($container, $typeDefaultId);
-            }
+            $resolvedTypeDefaultId = null === $typeDefaultId
+                ? $defaultId
+                : $this->helper->configuredService($container, sprintf('metadata.%s.default', $type), $typeDefaultId, MessageMetadataProvider::class);
 
-            $serviceMap = [
-                MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => new ServiceClosureArgument(new Reference($defaultId)),
-                MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => new ServiceClosureArgument(new Reference($resolvedTypeDefaultId)),
-            ];
+            $serviceMap = [MessageMetadataProviderResolver::DEFAULT_KEY => new Reference($resolvedTypeDefaultId)];
 
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
-                $resolvedId = $this->helper->ensureServiceExists($container, $serviceId);
-                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+                $resolvedId = $this->helper->configuredService($container, sprintf('metadata.%s.map.%s', $type, $messageClass), $serviceId, MessageMetadataProvider::class);
+                $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 
             $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

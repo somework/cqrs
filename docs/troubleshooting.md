@@ -1,293 +1,633 @@
 # Troubleshooting
 
-This guide covers common issues when integrating the CQRS bundle and how to
-resolve them.
+This guide lists common problems, the exact errors they produce, and how to fix
+them. Most configuration mistakes are reported when the container is compiled
+(`cache:clear`, the first request in `dev`, or `lint:container`); runtime
+problems appear when a message is dispatched or handled.
 
-## 1. Handler not found
+## Handler registration
 
-### Symptom
+### No handler for a message
 
-One of the following errors at runtime or compile time:
-
-**Runtime (dispatch):**
-
-```
-NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the messenger.bus.commands bus.
-```
-
-**Compile time (container build):**
+**Symptom.** `CommandBus::dispatchSync()` and `QueryBus::ask()` throw
 
 ```
-LogicException: CQRS handler validation failed:
-Command App\Application\Command\CreateTask has no handler registered.
+SomeWork\CqrsBundle\Exception\NoHandlerException: No handler found for "App\Application\Command\CreateTask" dispatched on the command bus. Register one with #[AsCommandHandler(CreateTask::class)] or by implementing CommandHandler; "bin/console somework:cqrs:list" shows the registered handlers.
 ```
 
-### Cause
+(the previous exception is Messenger's `NoHandlerForMessageException`). Other
+dispatches, and a worker handling a received message, fail with Messenger's error:
 
-The handler is not registered for the message. Common reasons:
+```
+Symfony\Component\Messenger\Exception\NoHandlerForMessageException: No handler for message "App\Application\Command\CreateTask".
+```
 
-1. **Missing attribute or interface.** The handler class does not have the
-   `#[AsCommandHandler]` attribute or does not implement `CommandHandler`.
-2. **Type-hint mismatch.** The handler's `__invoke()` parameter type does not
-   match the message class specified in the attribute.
-3. **Excluded from autoconfiguration.** The handler class lives outside the
-   directory scanned by `config/services.yaml` (e.g., a separate package not
-   included in the `resource` glob).
-4. **Wrong bus name.** The attribute specifies a bus that does not match the
-   bundle configuration: `#[AsCommandHandler(bus: 'wrong.bus')]`.
+Missing handlers are not detected at compile time; only duplicate handlers are.
+Events without handlers are not an error.
 
-### Solution
+**Cause.**
 
-1. Verify the handler has both the attribute and the marker interface:
+1. The handler class is not a service, for example because it is outside the
+   `resource` directory of `config/services.yaml` or excluded from it.
+2. The service is not registered as a handler: it has neither
+   `#[AsCommandHandler]` / `#[AsQueryHandler]` / `#[AsEventHandler]` nor a
+   marker interface (`CommandHandler`, `QueryHandler`, `EventHandler`), or
+   autoconfiguration is disabled for it.
+3. The handler is registered on another bus. A handler with an explicit `bus`
+   is only registered on that bus, so a worker consuming the async bus does not
+   find it, and neither does a facade using a different bus.
+
+**Fix.**
+
+1. Make sure the handler is an autoconfigured service and carries the attribute
+   (or implements the marker interface with a typed `__invoke()`):
 
    ```php
-   use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-   use SomeWork\CqrsBundle\Contract\CommandHandler;
+   <?php
 
-   #[AsCommandHandler(command: CreateTask::class)]
-   final class CreateTaskHandler implements CommandHandler
+   use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
+
+   #[AsCommandHandler(CreateTask::class)]
+   final class CreateTaskHandler
    {
-       public function __invoke(CreateTask $command): mixed { /* ... */ }
+       public function __invoke(CreateTask $command): mixed
+       {
+           // ...
+           return null;
+       }
    }
    ```
 
-2. Confirm the `__invoke()` parameter type-hint matches the message class
-   referenced in the attribute.
-
-3. Check that the handler's namespace is covered by your service configuration:
-
-   ```yaml
-   # config/services.yaml
-   services:
-       App\:
-           resource: '../src/'
-           autoconfigure: true
-           autowire: true
-   ```
-
-4. Run the diagnostic command to confirm registration:
+2. Check where it is registered. `somework:cqrs:list` shows one entry per
+   handler and bus, and `debug:messenger` shows Messenger's view:
 
    ```bash
-   bin/console somework:cqrs:list
-   ```
-
-   If the handler does not appear, the issue is in service discovery or
-   attribute configuration.
-
----
-
-## 2. Wrong bus routing
-
-### Symptom
-
-A command or query is dispatched but the handler never executes, or the handler
-runs on an unexpected bus (visible in profiler or logs).
-
-### Cause
-
-1. **Mismatched bus ID.** `somework_cqrs.buses.command` points to a Messenger
-   bus ID that differs from the one the handler is tagged for.
-2. **Handler on wrong bus.** The handler attribute specifies bus A, but dispatch
-   goes through bus B.
-3. **Multiple bus configuration.** When using multiple Messenger buses, the bus
-   names in handler attributes must match the bus IDs in
-   `somework_cqrs.buses.*`.
-
-### Solution
-
-1. Run `somework:cqrs:list` with details to see which bus each handler is on:
-
-   ```bash
-   bin/console somework:cqrs:list --details
-   ```
-
-2. Cross-reference the output with your bundle configuration:
-
-   ```yaml
-   somework_cqrs:
-       buses:
-           command: messenger.bus.commands      # must match handler bus
-           query: messenger.bus.queries
-           event: messenger.bus.events
-   ```
-
-3. Verify Messenger bus definitions match:
-
-   ```bash
+   bin/console somework:cqrs:list --type=command
    bin/console debug:messenger
    ```
 
-4. If a handler specifies an explicit bus in its attribute, confirm it matches
-   one of the configured bus IDs:
+3. Leave out `bus` unless you need it: handlers without it are registered on the
+   sync bus of their type and on the async bus when one is configured. If you
+   set `bus`, repeat the attribute for every bus the message is dispatched on.
 
-   ```php
-   #[AsCommandHandler(command: CreateTask::class, bus: 'messenger.bus.commands')]
-   ```
+### "Cannot determine the message handled by ..."
 
----
-
-## 3. Async message dispatching synchronously
-
-### Symptom
-
-A message configured for asynchronous dispatch runs in the same HTTP request
-(blocking). No message appears in the transport queue.
-
-### Cause
-
-1. **Dispatch mode not configured.** The `somework_cqrs.dispatch_modes` config
-   does not list the message class in its `map`, so the default (sync) applies.
-2. **Missing async bus.** `somework_cqrs.buses.command_async` is not set, so the
-   bundle has no async bus to dispatch to.
-3. **Explicit sync override.** The caller passes `DispatchMode::SYNC` as the
-   second argument to `dispatch()`, overriding the config default.
-4. **Missing Messenger routing.** Even with async dispatch mode, Messenger needs
-   a `framework.messenger.routing` entry to route the message to a transport.
-
-### Solution
-
-1. Configure async dispatch for the message:
-
-   ```yaml
-   somework_cqrs:
-       dispatch_modes:
-           command:
-               default: sync
-               map:
-                   App\Application\Command\GenerateReport: async
-   ```
-
-2. Ensure the async bus is configured:
-
-   ```yaml
-   somework_cqrs:
-       buses:
-           command_async: messenger.bus.commands_async
-   ```
-
-3. Add Messenger transport routing:
-
-   ```yaml
-   framework:
-       messenger:
-           routing:
-               'App\Application\Command\GenerateReport': async
-   ```
-
-4. Verify transport mapping with the debug command:
-
-   ```bash
-   bin/console somework:cqrs:debug-transports
-   ```
-
-5. Check that caller code does not pass an explicit `DispatchMode::SYNC`:
-
-   ```php
-   // Wrong -- forces sync even if config says async
-   $commandBus->dispatch($command, DispatchMode::SYNC);
-
-   // Correct -- respects config
-   $commandBus->dispatch($command);
-   ```
-
----
-
-## 4. Transport misconfiguration
-
-### Symptom
-
-One of the following errors:
-
-**Runtime:**
+**Symptom.** The container compilation fails:
 
 ```
-AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode.
+Cannot determine the message handled by "App\Application\Command\CreateTaskHandler" (service "App\Application\Command\CreateTaskHandler"). Type-hint the first parameter of App\Application\Command\CreateTaskHandler::__invoke() with the message class or declare it explicitly, e.g. #[AsCommandHandler(command: YourMessage::class)].
 ```
 
-**Compile time:**
+**Cause.** The handler is registered through a marker interface, and the first
+parameter of `__invoke()` has no class type (it is untyped, `object`, a scalar
+type, or missing). The bundle infers the handled message from that type.
+
+**Fix.** Type-hint the message class (`public function __invoke(CreateTask $command): mixed`)
+or add the attribute: `#[AsCommandHandler(CreateTask::class)]`.
+
+### Intersection type on a handler
+
+**Symptom.**
 
 ```
-InvalidConfigurationException: Transport name "nonexistent_transport" is not defined in framework.messenger.transports.
+Handler "App\Application\Command\AuditHandler" type-hints the intersection "App\Domain\Auditable&App\Domain\Tenanted", which cannot be routed by Symfony Messenger. Declare the handled message explicitly (for example with the "handles"/attribute message argument).
 ```
 
-Or messages are silently sent to the wrong transport.
+**Cause.** Messenger routes messages by class or interface name, not by a
+combination of them. An intersection is only accepted when one of its members
+already implies all the others.
 
-### Cause
+**Fix.** Declare the handled message with the attribute
+(`#[AsCommandHandler(ArchiveTenantDocument::class)]`) or type-hint a single
+class or interface.
 
-1. **Async bus not set.** `somework_cqrs.buses.command_async` is null but
-   `dispatch_modes.command.default` is `async`, so the bundle cannot find an
-   async bus to dispatch to.
-2. **Transport name mismatch.** A transport name in
-   `somework_cqrs.transports.*.map` does not match any entry in
-   `framework.messenger.transports`.
-3. **Stamp class unavailable.** Using `SendMessageToTransportsStamp` on Symfony
-   versions before 6.3 where the stamp class does not exist.
+### Several handlers for one command or query
 
-### Solution
+**Symptom.** The container compilation fails:
 
-1. Set the async bus IDs for every type that uses async dispatch:
+```
+CQRS handler validation failed (commands and queries must have exactly one handler):
+Command App\Application\Command\ShipOrder has 2 handlers on bus "messenger.bus.commands": App\Application\Command\ShipOrderHandler, App\Legacy\ShipOrderHandler.
+```
 
-   ```yaml
-   somework_cqrs:
-       buses:
-           command_async: messenger.bus.commands_async
-           event_async: messenger.bus.events_async
-   ```
+At runtime, `ask()` and `dispatchSync()` can also throw
+`MultipleHandlersException: Message "App\Application\Query\FindOrder" was handled by 2 handlers on the query bus. Exactly one handler is required.`
 
-2. Run the transport debug command to audit all transport mappings:
+**Cause.** Commands and queries must have exactly one handler per bus (events
+may have any number). The check counts distinct services per bus; one service on
+the sync and the async bus is fine. Messenger also runs the handlers registered
+for parent classes, interfaces and `*` of a message, so a catch-all handler such
+as `__invoke(Command $command)` counts for every command on its bus (the message
+then says `including handlers of ...`). The runtime error comes from what the
+check cannot see, such as handlers wired outside the bundle's discovery (a
+decorated handlers locator). When it is thrown, the handlers have already run.
 
-   ```bash
-   bin/console somework:cqrs:debug-transports
-   ```
+**Fix.** Keep one handler per command or query and bus: remove the extra
+handler, or register the handlers on different buses with the `bus` argument.
+`somework:cqrs:list` and `debug:messenger` show all handlers of a message.
 
-3. Cross-reference transport names in bundle config with Messenger transports:
+## Dispatching
 
-   ```yaml
-   # Bundle config
-   somework_cqrs:
-       transports:
-           command_async:
-               default: ['async_commands']
+### An async message runs synchronously
 
-   # Must match a Messenger transport
-   framework:
-       messenger:
-           transports:
-               async_commands:
-                   dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
-   ```
+**Symptom.** A command or event that should go to a queue is handled during the
+request, and nothing appears in the transport.
 
-4. Check your Symfony version if using `SendMessageToTransportsStamp`. The stamp
-   requires Symfony 6.3 or later. For older versions, use the default
-   `transport_names` stamp type.
+**Cause.**
 
----
+1. The dispatch mode resolves to `sync`: there is no `dispatch_modes` entry or
+   `#[Asynchronous]` attribute for the message, an exact-class entry says
+   `sync` (it wins over the attribute), or the caller uses
+   `DispatchMode::SYNC` / `dispatchSync()`.
+2. The dispatch mode is `async`, but no transport is selected: no
+   `transports.command_async` / `transports.event_async` entry, no
+   `#[Asynchronous]` attribute and no `framework.messenger.routing` entry. The
+   async bus then finds no sender and handles the message itself, because the
+   handlers are registered on the async bus too.
+3. The selected transport is `sync://`.
+
+**Fix.**
+
+```yaml
+somework_cqrs:
+    buses:
+        command_async: messenger.bus.commands_async
+    dispatch_modes:
+        command:
+            map:
+                App\Application\Command\GenerateReport: async
+    transports:
+        command_async:
+            default: async_commands
+```
+
+Check the result with `bin/console somework:cqrs:list --details` (the
+*Dispatch Mode* and *Async Transports* columns) and
+`bin/console somework:cqrs:debug-transports`.
+
+### Async bus not configured
+
+**Symptom.** At runtime:
+
+```
+SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException: Asynchronous command bus is not configured. Cannot dispatch "App\Application\Command\CreateTask" in async mode. Set "somework_cqrs.buses.command_async" to a Messenger bus.
+```
+
+or, when the configuration asks for async delivery, during compilation:
+
+```
+Asynchronous dispatch is configured for commands (the default dispatch mode is "async"), but "somework_cqrs.buses.command_async" is null. Define the Messenger bus id used for async commands before the container is compiled.
+```
+
+**Cause.** An asynchronous dispatch (`dispatchAsync()`, `DispatchMode::ASYNC`,
+an `async` dispatch mode or `#[Asynchronous]`) without `buses.command_async` /
+`buses.event_async`.
+
+**Fix.** Declare the async bus in Messenger and point the bundle to it:
+
+```yaml
+framework:
+    messenger:
+        default_bus: messenger.bus.commands
+        buses:
+            messenger.bus.commands: ~
+            messenger.bus.commands_async: ~
+
+somework_cqrs:
+    buses:
+        command: messenger.bus.commands
+        command_async: messenger.bus.commands_async
+```
+
+### `#[Asynchronous]` message without a transport
+
+**Symptom.** The container compilation fails:
+
+```
+"App\Application\Command\SendWelcomeEmail" carries #[Asynchronous] without a transport, but there is no "async" transport, no "somework_cqrs.transports.command_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.
+```
+
+(`#[Asynchronous(transport: 'x')]` with an unknown transport, or a missing
+`buses.command_async` / `buses.event_async`, fail the same way, and so does
+`#[Outbox]` without a transport or without the outbox.) Messages without a
+handler in the application are not checked; dispatching them fails with
+`Invalid senders configuration: sender "async" is not in the senders locator.`,
+or, for `#[Outbox]`, with `UnknownOutboxTransportException` (see below).
+
+**Cause.** `#[Asynchronous]` without an argument sends the message to a
+transport named `async` when nothing else chooses a transport, and there is no
+such transport.
+
+**Fix.** Define an `async` transport, or name an existing one:
+`#[Asynchronous(transport: 'async_commands')]`.
+
+### `MessageSentToTransportException` from `dispatchSync()` or `ask()`
+
+**Symptom.**
+
+```
+SomeWork\CqrsBundle\Exception\MessageSentToTransportException: Message "App\Application\Query\FindOrder" dispatched on the query bus was sent to transport(s) "async" instead of being handled synchronously, so no result is available. Remove it from the async routing (framework.messenger.routing / somework_cqrs.transports) or dispatch it asynchronously.
+```
+
+**Cause.** `dispatchSync()` and `ask()` need the handler result, but Messenger
+sent the message to a transport. Usually a `framework.messenger.routing` entry
+matches the class, one of its interfaces or `'*'`, or `transports.command` /
+`transports.query` lists a transport.
+
+**Fix.** Remove the message from that routing (route only the messages that are
+meant to be asynchronous), or dispatch it asynchronously and stop expecting a
+result.
+
+### `DuplicateMessageException`
+
+**Symptom.**
+
+```
+SomeWork\CqrsBundle\Exception\DuplicateMessageException: Message "App\Application\Command\ChargeCard" dispatched on the command bus was dropped as a duplicate (deduplication key "App\Application\Command\ChargeCard::order-42").
+```
+
+**Cause.** The dispatch carried an `IdempotencyStamp` whose key is still locked:
+a synchronous dispatch with the same key succeeded less than `idempotency.ttl`
+seconds ago, or an asynchronous one has not been handled by a worker yet.
+
+**Fix.** This is the deduplication working: treat the operation as already done
+(catch the exception), use a key that identifies one logical operation, or lower
+`idempotency.ttl`. See [Idempotency](idempotency.md).
+
+An **asynchronous** dispatch (`dispatch()`, `dispatchAsync()`) dropped as a duplicate throws
+nothing and the bundle logs nothing about it: the only trace is the Lock component's
+`Failed to acquire the "…" lock` at info level on the `lock` log channel. When a message with an
+`IdempotencyStamp` never reaches its worker, check that channel and the lock store: the key
+stays locked until a worker handled the earlier message, or until the TTL expires when that
+message went to the failure transport.
+
+### `DeferredDispatchFailedException`
+
+**Symptom.** `dispatchSync()` or `ask()` throws `DeferredDispatchFailedException`: "The handler
+of message … succeeded, but a message it dispatched with DispatchAfterCurrentBusStamp failed
+afterwards".
+
+**Cause.** The handler returned (and committed its transaction), then a message it dispatched
+(by default an asynchronous event, which is held back until the handler returned) could not be
+sent, or one of its synchronous handlers threw.
+
+**Fix.** Do not retry the whole command: its work is done, and `$exception->result` holds its
+result. The exception does not carry the lost message; Messenger's log names it ("Sending message
+… with … sender"), and its handler's effects are missing. Store messages that must not be lost
+with the [transactional outbox](outbox.md) instead (see
+[When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
+
+### `RateLimitExceededException`
+
+**Symptom.**
+`Rate limit exceeded for "App\Application\Command\SendNotification". Retry after 2026-09-24T10:15:00+00:00.`
+
+**Cause.** The limiter mapped under `rate_limiting` has no token left. Nothing
+was dispatched.
+
+**Fix.** Catch the exception and use its `retryAfter`, `remainingTokens` and
+`limit` properties (for example to answer with HTTP 429), or raise the limit in
+`framework.rate_limiter`. See [Rate limiting](rate-limiting.md).
+
+### Messages end up on the wrong bus
+
+**Symptom.** A handler never runs, or runs on an unexpected bus.
+
+**Cause.** `somework_cqrs.buses.*` points to different buses than the ones the
+handlers are registered on (explicit `bus` arguments), or code dispatches on a
+Messenger bus directly instead of through the facades.
+
+**Fix.** Compare the *Bus* column of `bin/console somework:cqrs:list` with your
+`somework_cqrs.buses` configuration. Bus ids are shown after alias resolution
+(for example the real id behind `messenger.default_bus`).
+
+## Configuration errors
+
+These fail the container compilation.
+
+### Unknown class in a `map`
+
+```
+Invalid configuration for path "somework_cqrs.retry_policies.command.map": "App\Application\Command\ShipOrdr" is not an existing class or interface; keys must be message class or interface names.
+```
+
+Keys of every `map` must be existing classes or interfaces. Fix the typo, or
+remove entries for deleted messages. A leading backslash is allowed.
+
+### Empty service id
+
+```
+Invalid configuration for path "somework_cqrs.buses.command": Expected a non-empty string or null, got "".
+```
+
+Service ids and names (buses, policies, serializers, providers, transport and
+limiter names, outbox settings) cannot be empty or blank. Use `null` (`~`) where
+the option allows it.
+
+### Unknown service id
+
+```
+The service "app.retry.payment" configured at "somework_cqrs.retry_policies.command.map.App\Application\Command\ProcessPayment" does not exist.
+The rate limiter "send_notifications" configured at "somework_cqrs.rate_limiting.command.default" does not exist. Define it under "framework.rate_limiter".
+```
+
+A service id under `naming`, `retry_policies`, `serialization`, `metadata` or
+`outbox`, or a limiter name under `rate_limiting`, does not exist. The message
+names the option. Define the service, or use the fully-qualified name of a
+concrete class: the bundle registers such classes as services automatically.
+
+### Environment variable in the configuration
+
+```
+"somework_cqrs.outbox.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.
+"somework_cqrs.transports.command_async.default" is used when the container is compiled (it names services, buses, transports, dispatch modes or message classes), so it cannot use an environment variable.
+```
+
+The `enabled` flags choose which services exist, and most other options name
+services, buses, transports or dispatch modes the container compilation needs.
+Use literal values, per environment if needed (`when@prod:` in the
+configuration file). The options that accept `%env(...)%` are listed in the
+[configuration reference](reference.md#rules-that-apply-to-every-section).
+
+### Unknown transport name
+
+```
+Messenger transport "async_comands" configured for SomeWork CQRS is not defined.
+```
+
+A name under `somework_cqrs.transports` does not match any
+`framework.messenger.transports` entry. `somework:cqrs:debug-transports` lists
+the configured names.
+
+### Unknown transport under `retry_strategy`
+
+```
+Transport "async_comands" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "async_commands", "failed".
+```
+
+Keys of `retry_strategy.transports` must be transport names, spelled exactly as
+in `framework.messenger.transports`.
+
+### Unknown bus under `causation_id.buses`
+
+```
+"somework_cqrs.causation_id.buses" contains "messenger.bus.comands", which is not a Messenger bus service id.
+```
+
+List bus service ids as declared under `framework.messenger.buses`.
+
+### Missing optional packages
+
+```
+Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rate-limiter is not installed. Run "composer require symfony/rate-limiter" or remove them.
+```
+
+```
+Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.
+```
+
+The outbox also needs the `doctrine.dbal.<connection>_connection` service from
+DoctrineBundle; without it Symfony reports that `somework_cqrs.outbox.storage`
+depends on a non-existent service.
+
+## Idempotency and outbox
+
+### `IdempotencyStamp` does not deduplicate
+
+**Cause.** One of the prerequisites is missing. In debug mode the container
+compilation log (`var/cache/<env>/*Compiler.log`) contains one of:
+
+```
+Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.
+```
+
+```
+Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").
+```
+
+If neither appears, check the lock store: the local `flock` and `semaphore`
+stores release the lock immediately, so duplicates go through. Use a shared
+store that keeps locks until their TTL expires, such as Redis or a database.
+See [Production: idempotency](production.md#idempotency). A message stored in
+the outbox with a `DeduplicateStamp` is refused with such a store (see below).
+
+### A `DeduplicateStamp` is refused by the outbox
+
+**Symptom.**
+
+```
+LogicException: Message "App\Domain\StockReserved" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (Symfony\Component\Lock\Store\FlockStore) ties its keys to the current process or connection, so the relay could never send it.
+```
+
+**Cause.** Messenger's deduplication locks the key when the relay sends the
+message, and a lock of a process-bound store cannot be sent to a transport:
+every relay attempt would fail after the business change committed. Nothing
+was stored.
+
+**Fix.** Configure a lock store whose keys can be serialized, such as Redis,
+Memcached or a PDO/DBAL database (`framework.lock`), or dispatch the message
+without the stamp. The message names the store `lock.factory` uses at runtime.
+
+### The relay fails on a message that application middleware rejects
+
+**Symptom.** `somework:cqrs:outbox:relay` reports `Could not relay message …` with an
+exception from your own middleware (an access denied, a missing tenant), on every
+attempt, for messages that were accepted when they were stored.
+
+**Cause.** The relay dispatches the stored message on its bus again, in its own
+process: there is no request, user or tenant, and no `ReceivedStamp`. Middleware
+that checks the dispatching context rejects it.
+
+**Fix.** Skip envelopes carrying `SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp`
+in that middleware, as you skip `ReceivedStamp` (see
+[Through the buses](outbox.md#through-the-buses)); then requeue the given-up rows with
+`somework:cqrs:outbox:failed --requeue`.
+
+### "did not store … in the outbox: a middleware of its Messenger bus returned before …"
+
+**Symptom.** `LogicException: The event bus did not store "App\Domain\OrderPlaced"
+in the outbox: a middleware of its Messenger bus returned before the bundle's
+OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.`
+
+**Cause.** A middleware on the bus returned the envelope without calling the next
+middleware (a filter, a feature flag, or a middleware that catches and swallows
+exceptions), so the message never reached the middleware that stores it. Nothing
+was stored.
+
+**Fix.** Make that middleware pass the envelope on when it carries the bundle's
+`StoreInOutboxStamp` (a message being stored in the outbox), or leave the message
+out of the outbox. `bin/console debug:container <bus id> --show-arguments` lists
+the middleware of the bus.
+
+### Outbox table does not exist
+
+**Symptom.**
+
+```
+LogicException: The outbox table "somework_cqrs_outbox" does not exist. Create it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration; it is never created inside an open transaction.
+```
+
+**Cause.** The first outbox message was stored inside your transaction before the
+table existed. The bundle never creates the table inside a transaction: on
+several databases a `CREATE TABLE` commits or aborts the open transaction.
+
+**Fix.** Run `bin/console somework:cqrs:outbox:setup` during deployment, or add
+the table with a Doctrine migration (and set `outbox.auto_setup: false`).
+
+### `OutboxRequiresTransactionException`
+
+**Symptom.**
+
+```
+Message "App\Domain\OrderPlaced" was not stored in the outbox: no transaction is open on the outbox connection ("somework_cqrs.outbox.connection"), so it would not be part of the business change.
+```
+
+**Cause.** The message goes to the outbox (`DispatchMode::OUTBOX`, `#[Outbox]` or
+`dispatch_modes`), and no transaction is open on the outbox connection: the code
+dispatches it outside a transaction, or in a transaction on another connection.
+Nothing was stored.
+
+**Fix.** Dispatch it inside the transaction of the business change:
+`$connection->transactional()` or `EntityManagerInterface::wrapInTransaction()` on
+the outbox connection, or Messenger's `doctrine_transaction` middleware on the bus
+of the handler. Set `outbox.require_transaction: false` only when storing it on
+its own is intended.
+
+### `OutboxNotConfiguredException`
+
+**Symptom.** `Message "App\Domain\OrderPlaced" was dispatched on the event bus with
+DispatchMode::OUTBOX (resolved from #[Outbox] or "somework_cqrs.dispatch_modes"), but
+the transactional outbox is disabled.`
+
+**Cause.** The message goes to the outbox, but `outbox.enabled` is off. The build
+catches this for `dispatch_modes` entries and for `#[Outbox]` messages with a
+handler in the application, not for a message without one.
+
+**Fix.** Enable `somework_cqrs.outbox` (see [Transactional outbox](outbox.md)), or
+remove the attribute.
+
+### `UnknownOutboxTransportException`
+
+**Symptom.** `Message "App\Integration\OrderExported" was not stored in the outbox:
+"ordrs" is not a Messenger transport (defined: async, orders).`
+
+**Cause.** The message would be stored for a transport that is not defined, typically
+a typo in `#[Outbox(transport: ...)]` on a message without a handler in the
+application (the build only checks messages it knows through their handlers). The
+relay could never send the row, so nothing was stored and the transaction does not
+commit a lost message.
+
+**Fix.** Correct the transport name, or define the transport under
+`framework.messenger.transports`.
+
+### The outbox relay reports problems
+
+* `Another outbox relay is already running.` Another relay holds the lock; the
+  command exits with `0`. Nothing to do unless no other relay is running, in
+  which case check the configured lock store.
+* `Message "..." (...) was not sent to any transport and was handled synchronously. Set a transport name or route the message to a transport.`
+  The row has no transport name and no `framework.messenger.routing` entry
+  matches it.
+* `Message "..." (...) was neither sent to a transport nor handled …` Nothing
+  received the message: Messenger's deduplication dropped it as a duplicate, or
+  it is an event without handlers or routing. The row is marked as published.
+* `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
+  The row is postponed (1 minute, doubling up to 1 hour) and the rows behind it
+  are relayed; the command exits with `1`. The maximum is three times
+  `outbox.max_attempts` (`attempt 1 of 30`) when the transport failed.
+* `Transport "<name>" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).`
+  The broker is down or rejects the messages. When it accepted a message earlier
+  in the run, it is paused after 10 failures in a row, or after 3 once its
+  failures have lasted 10 seconds (e.g. every send waits for a timeout). The rows of the other transports
+  are still relayed; the paused ones are tried again by the next run.
+  `Messages without a transport name failed to be sent 3 times in a row; the
+  other ones wait for the next run.` is the same for the rows that follow
+  `framework.messenger.routing`, which share one count.
+* `The outbox table setup was stopped by signal <number>; run it again.` The
+  setup command received SIGTERM or SIGINT and exited with `128 + signal`; what
+  it did so far stays.
+* `Another process is building the index "…" of the outbox table …` (PostgreSQL)
+  Another setup, a migration, or the database session of a setup that was
+  stopped is building the index. Run the setup again once it has finished; the
+  health check says `is being built` meanwhile.
+* `The outbox table "…" is not set up through a pooler in transaction mode …`,
+  `… is set up; it ran through a pooler …` or `… was not set up (…); it ran
+  through a pooler …` Run the setup command over a direct database connection,
+  not through PgBouncer. In the last two cases the setup lock, and possibly a
+  `statement_timeout` of 0, stays with a server connection of the pooler until it
+  closes (e.g. `RECONNECT` in PgBouncer's admin console).
+* `… lacks the columns of this version, which this database cannot add without
+  rebuilding the table` (MySQL, MariaDB) The relay only adds columns that take no
+  time; run `somework:cqrs:outbox:setup`.
+* `Gave up on message "<id>" after 10 attempt(s): <reason>` The row failed
+  `outbox.max_attempts` times (three times as many for transport failures). Fix
+  the cause, then list and requeue it with `somework:cqrs:outbox:failed
+  [--requeue]`. A reason of `The last attempt did not finish …` means that
+  the process died during the last attempt: a PHP fatal error or running out of
+  memory caused by the row, a killed process, or a lost database connection
+  (such rows get three times `outbox.max_attempts`; `Previous error:` shows the
+  failure before). The message may have been sent; check the consumer before
+  requeuing it.
+* `Skipped <n> message(s) that another relay claimed first.` Two relays ran at
+  the same time (no `symfony/lock`, or a lock store that only guards one host).
+  The other relay claimed each skipped row and made the attempt; only a send
+  that outlasts the retry delay can be sent twice. Configure a shared lock store.
+* `Stopped by signal <number> after <count> message(s) …` The process received
+  SIGTERM or SIGINT and stopped after the current row; the next run continues.
+* `Failed to relay message "<id>", but another relay claimed it in the meantime: <reason>`
+  Two relays overlapped while a send failed; the other relay's attempt counts.
+* `Stopping: the outbox storage failed (…)` The database cannot be reached, or the
+  table does not exist or lacks the columns of this version (run
+  `somework:cqrs:outbox:setup`). With `could not be changed: another session (…)
+  kept it locked for more than 1 second(s)`, the relay tried to add the columns while a
+  transaction (or an autovacuum that does not give way, or one the relay's role
+  cannot recognise without `pg_read_all_stats`) held the table; with `is not changed while a transaction of the
+  database server has been open for more than 1 second(s)` (MySQL), any long
+  transaction of the server, also of other databases, kept it from trying; with `Another process has been setting up the outbox
+  table … for more than 30 seconds`, another process was upgrading it. Run
+  `somework:cqrs:outbox:setup`, which waits longer.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …` The table
+  lacks the index of this version, or has an invalid one (an interrupted build),
+  or still has the index of 0.4. The relay works, only slower: it fetches in the
+  order the rows were stored, without turns between transports. Run the setup
+  command (over a direct database connection).
+
+## Health check failures
+
+`somework:cqrs:health` exits with `2` when a result is `CRITICAL`:
+
+* `Handler "..." cannot be instantiated: ...` A handler's constructor or one of
+  its dependencies fails (often a missing environment variable).
+* `The outbox storage cannot be read: ...` The outbox database or table is not
+  usable.
+* `The outbox table needs "bin/console somework:cqrs:outbox:setup": …; N outbox
+  message(s) wait, the oldest for M minute(s), and the relay cannot send them
+  until then` The table still lacks the columns of this version and the relay
+  could not add them (see `Stopping: the outbox storage failed` above): run the
+  setup command.
+* `Transport "..." cannot be created: ...` The transport DSN or options are
+  invalid.
+* `Checker "..." threw an exception: ...` A custom `HealthChecker` failed.
+
+It exits with `1` for warnings, for example
+`No handlers registered — this may indicate a configuration issue`, or given-up
+and long-waiting outbox rows. Before 0.5.0
+the command reported every handler and transport as `CRITICAL`; upgrade if you
+see that.
 
 ## Diagnostic commands
 
-The bundle ships three console commands for inspecting your CQRS configuration:
-
-| Command | Purpose | When to use |
-|---------|---------|-------------|
-| `somework:cqrs:list` | Lists all registered commands, queries, and events with handler metadata | Verify handlers are discovered and assigned to the correct bus |
-| `somework:cqrs:debug-transports` | Inspects Messenger transport routing for CQRS messages | Diagnose transport name mismatches and async routing issues |
-| `somework:cqrs:generate` | Scaffolds a message + handler skeleton | Bootstrap new messages with correct attribute and interface boilerplate |
-
-### Usage examples
+| Command | Use it to |
+|---------|-----------|
+| `somework:cqrs:list [--type=TYPE] [--details]` | See every handler per bus and, with `--details`, the resolved dispatch mode, transports, retry policy, serializer and metadata provider |
+| `somework:cqrs:debug-transports` | See the `somework_cqrs.transports` defaults and per-message overrides |
+| `somework:cqrs:health` | Instantiate all handlers and transports (exit code `0`, `1` or `2`) |
+| `debug:messenger` | See Messenger's buses and the handlers registered on each |
+| `debug:config somework_cqrs` | See the configuration after defaults are applied |
 
 ```bash
-# Show all handlers
-bin/console somework:cqrs:list
-
-# Filter by message type
-bin/console somework:cqrs:list --type=command
-
-# Show detailed handler info including bus assignments
-bin/console somework:cqrs:list --details
-
-# Audit transport routing
+bin/console somework:cqrs:list --type=command --details
 bin/console somework:cqrs:debug-transports
-
-# Generate a new command with handler
-bin/console somework:cqrs:generate command 'App\Application\Command\ShipOrder'
+bin/console somework:cqrs:health
+bin/console debug:config somework_cqrs
 ```

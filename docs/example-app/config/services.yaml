@@ -1,0 +1,24 @@
+# Application services. Handlers, the task store and the demo console command are
+# registered automatically; the bundle discovers handlers through #[AsCommandHandler],
+# #[AsQueryHandler] and #[AsEventHandler] (or the CommandHandler/QueryHandler/EventHandler
+# marker interfaces).
+services:
+    _defaults:
+        autowire: true
+        autoconfigure: true
+
+    App\:
+        resource: '../src/'
+        exclude:
+            - '../src/Kernel.php'
+
+    # Messages (CreateTask, ListTasks, TaskCreated, ...) are plain DTOs. They are picked up by the
+    # resource above as well, but nothing depends on them, so the container removes them again.
+
+    # Per-message retry policy used by the commented retry example in somework_cqrs.yaml:
+    # app.retry.exponential:
+    #     class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
+    #     arguments:
+    #         $maxRetries: 5
+    #         $initialDelay: 500      # milliseconds
+    #         $multiplier: 2.0

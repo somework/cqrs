@@ -7,14 +7,18 @@ namespace SomeWork\CqrsBundle\Bus;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
+use SomeWork\CqrsBundle\Exception\DeferredDispatchFailedException;
+use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
+use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Support\StampsDecider;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
 use Symfony\Component\Messenger\MessageBusInterface;
-use Symfony\Component\Messenger\Stamp\HandledStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
-use function array_values;
 use function count;
 
 /**
@@ -26,6 +30,10 @@ final class QueryBus implements QueryBusInterface
 {
     private const BUS_NAME = 'query';
 
+    /**
+     * @internal Get the bus from the container (autowire the interface); the constructor
+     *           arguments are internal services and change without notice
+     */
     public function __construct(
         private readonly MessageBusInterface $bus,
         private readonly StampsDecider $stampsDecider,
@@ -33,9 +41,28 @@ final class QueryBus implements QueryBusInterface
     ) {
     }
 
+    /**
+     * Handles the query synchronously and returns the result of its single handler.
+     *
+     * A DispatchAfterCurrentBusStamp is ignored because the result is needed immediately.
+     * When the handler throws, its exception is rethrown as is (not wrapped in Messenger's
+     * HandlerFailedException).
+     *
+     * @template TResult
+     *
+     * @param Query<TResult> $query
+     *
+     * @throws NoHandlerException              when no handler handled the query
+     * @throws MultipleHandlersException       when more than one handler handled the query
+     * @throws MessageSentToTransportException when the routing sent the query to a transport
+     * @throws DeferredDispatchFailedException when the handler succeeded but a message it deferred (DispatchAfterCurrentBusStamp) failed afterwards
+     * @throws DuplicateMessageException       when deduplication dropped the query
+     *
+     * @return TResult
+     */
     public function ask(Query $query, StampInterface ...$stamps): mixed
     {
-        $stamps = $this->stampsDecider->decide($query, DispatchMode::SYNC, array_values($stamps));
+        $stamps = $this->stampsDecider->decide($query, DispatchMode::SYNC, SynchronousResult::withoutDeferral($stamps));
 
         $this->logger?->debug('Stamps decided', [
             'message' => $query::class,
@@ -43,15 +70,18 @@ final class QueryBus implements QueryBusInterface
             'bus' => self::BUS_NAME,
         ]);
 
-        $envelope = $this->bus->dispatch($query, $stamps);
-
-        /** @var list<HandledStamp> $handledStamps */
-        $handledStamps = $envelope->all(HandledStamp::class);
-        $handledCount = count($handledStamps);
-
-        if (0 === $handledCount) {
-            throw new NoHandlerException($query::class, self::BUS_NAME);
+        try {
+            $envelope = $this->bus->dispatch($query, $stamps);
+        } catch (HandlerFailedException $exception) {
+            throw SynchronousResult::unwrap($exception);
+        } catch (DelayedMessageHandlingException $exception) {
+            throw DeferredDispatchFailedException::fromDelayedHandling($query::class, self::BUS_NAME, $exception);
+        } catch (NoHandlerForMessageException $exception) {
+            throw new NoHandlerException($query::class, self::BUS_NAME, $exception);
         }
+
+        $handledStamps = SynchronousResult::handledStamps($envelope, self::BUS_NAME);
+        $handledCount = count($handledStamps);
 
         if ($handledCount > 1) {
             throw new MultipleHandlersException($query::class, self::BUS_NAME, $handledCount);

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\AllowNoHandlerMiddlewarePass;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
@@ -11,6 +12,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+#[CoversClass(AllowNoHandlerMiddlewarePass::class)]
 final class AllowNoHandlerMiddlewarePassTest extends TestCase
 {
     public function test_it_prepends_middleware_to_configured_bus(): void
@@ -73,6 +75,29 @@ final class AllowNoHandlerMiddlewarePassTest extends TestCase
                 'existing.middleware',
             ],
             array_map(static fn (Reference $reference): string => (string) $reference, $middleware),
+        );
+    }
+
+    public function test_it_gives_the_middleware_the_events_that_have_handlers(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setDefinition('somework_cqrs.messenger.middleware.allow_no_handler', new Definition());
+        $container->setParameter('somework_cqrs.allow_no_handler.bus_ids', []);
+        $container->setParameter('somework_cqrs.handler_metadata', [
+            'command' => [['message' => 'App\\Command\\PlaceOrder']],
+            'query' => [],
+            'event' => [
+                ['message' => 'App\\Event\\OrderPlaced', 'bus' => 'messenger.bus.events'],
+                ['message' => 'App\\Event\\OrderPlaced', 'bus' => 'messenger.bus.events_async'],
+                ['message' => 'App\\Event\\OrderShipped', 'bus' => 'messenger.bus.events'],
+            ],
+        ]);
+
+        (new AllowNoHandlerMiddlewarePass())->process($container);
+
+        self::assertSame(
+            ['App\\Event\\OrderPlaced', 'App\\Event\\OrderShipped'],
+            $container->getDefinition('somework_cqrs.messenger.middleware.allow_no_handler')->getArgument('$handledEvents'),
         );
     }
 }

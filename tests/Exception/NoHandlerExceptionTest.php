@@ -23,7 +23,7 @@ final class NoHandlerExceptionTest extends TestCase
     {
         $exception = new NoHandlerException('App\Command\Foo', 'command');
 
-        self::assertSame('App\Command\Foo', $exception->messageFqcn);
+        self::assertSame('App\Command\Foo', $exception->messageClass);
         self::assertSame('command', $exception->busName);
     }
 
@@ -46,7 +46,7 @@ final class NoHandlerExceptionTest extends TestCase
         $exception = new NoHandlerException('App\Command\Foo', 'command');
 
         self::assertSame(
-            'No handler found for "App\Command\Foo" dispatched on the command bus.',
+            'No handler found for "App\Command\Foo" dispatched on the command bus. Register one with #[AsCommandHandler(Foo::class)] or by implementing CommandHandler; "bin/console somework:cqrs:list" shows the registered handlers.',
             $exception->getMessage()
         );
     }
@@ -56,7 +56,7 @@ final class NoHandlerExceptionTest extends TestCase
         $exception = new NoHandlerException('App\Query\Bar', 'query');
 
         self::assertSame(
-            'No handler found for "App\Query\Bar" dispatched on the query bus.',
+            'No handler found for "App\Query\Bar" dispatched on the query bus. Register one with #[AsQueryHandler(Bar::class)] or by implementing QueryHandler; "bin/console somework:cqrs:list" shows the registered handlers.',
             $exception->getMessage()
         );
     }

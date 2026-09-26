@@ -1,0 +1,123 @@
+<?php
+
+declare(strict_types=1);
+
+namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
+
+use Doctrine\DBAL\Connection;
+use Psr\Log\NullLogger;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ArchiveTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskArchivedHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskAuditTrailHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProjectionHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Outbox\TestDatabase;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\FakeDoctrineTransactionMiddleware;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
+use Symfony\Bundle\FrameworkBundle\FrameworkBundle;
+use Symfony\Bundle\FrameworkBundle\Kernel\MicroKernelTrait;
+use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigurator;
+use Symfony\Component\HttpKernel\Kernel;
+use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
+
+use function dirname;
+
+/**
+ * The async setup of AsyncTransportTestKernel plus the transactional outbox on an in-memory
+ * SQLite connection (registered like DoctrineBundle names it, without DoctrineBundle).
+ */
+final class OutboxTestKernel extends Kernel
+{
+    use MicroKernelTrait;
+
+    public function registerBundles(): iterable
+    {
+        yield new FrameworkBundle();
+        yield new SomeWorkCqrsBundle();
+    }
+
+    protected function configureContainer(ContainerConfigurator $container): void
+    {
+        // Keep the test output free of the default stderr logger.
+        $container->services()->set('logger', NullLogger::class);
+
+        $container->extension('framework', [
+            'secret' => 'test-secret',
+            'http_method_override' => false,
+            'test' => true,
+            'messenger' => [
+                'default_bus' => 'command.bus',
+                'buses' => [
+                    'command.bus' => null,
+                    'command.async_bus' => null,
+                    'event.bus' => null,
+                    // Application middleware runs when a message is stored through the bus, also when
+                    // listed after Doctrine's transaction middleware, which only runs in the relay.
+                    'event.async_bus' => ['middleware' => ['doctrine_transaction', CallerContextMiddleware::class]],
+                ],
+                'transports' => [
+                    'async' => 'in-memory://?serialize=true',
+                ],
+            ],
+        ]);
+
+        $container->extension('somework_cqrs', [
+            'buses' => [
+                'command' => 'command.bus',
+                'command_async' => 'command.async_bus',
+                'event' => 'event.bus',
+                'event_async' => 'event.async_bus',
+            ],
+            'transports' => [
+                'command_async' => ['default' => 'async'],
+                'event_async' => ['default' => 'async'],
+            ],
+            // TaskArchivedEvent carries #[Outbox]; ArchiveTaskCommand goes through the outbox by configuration.
+            'dispatch_modes' => [
+                'command' => ['map' => [ArchiveTaskCommand::class => 'outbox']],
+            ],
+            // The "relay_on_terminate" environment relays after each request, command or worker message.
+            'outbox' => ['enabled' => true, 'auto_setup' => false, 'max_attempts' => 2, 'relay_on_terminate' => 'relay_on_terminate' === $this->environment],
+        ]);
+
+        $services = $container->services()
+            ->defaults()
+            ->autowire()
+            ->autoconfigure();
+
+        // In-memory SQLite, or the database of CQRS_TEST_DATABASE_URL.
+        $services->set('doctrine.dbal.default_connection', Connection::class)
+            ->factory([TestDatabase::class, 'connect'])
+            ->public();
+        $services->set(TaskRecorder::class)->public();
+        $services->set(CallerContextMiddleware::class)->public();
+        $services->set('messenger.middleware.doctrine_transaction', FakeDoctrineTransactionMiddleware::class)->public();
+        // Private and unused otherwise, so the test container would not have it.
+        $services->alias('test.outbox_writer', OutboxWriter::class)->public();
+        $services->set(CreateTaskHandler::class);
+        $services->set(AsyncTaskHandler::class);
+        $services->set(TaskAuditTrailHandler::class);
+        $services->set(TaskProjectionHandler::class);
+        $services->set(ArchiveTaskHandler::class);
+        $services->set(TaskArchivedHandler::class);
+    }
+
+    protected function configureRoutes(RoutingConfigurator $routes): void
+    {
+    }
+
+    public function getCacheDir(): string
+    {
+        return dirname(__DIR__, 3).'/var/cache/outbox/'.$this->environment;
+    }
+
+    public function getLogDir(): string
+    {
+        return dirname(__DIR__, 3).'/var/log/outbox';
+    }
+}

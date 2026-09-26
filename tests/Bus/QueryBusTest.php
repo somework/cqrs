@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -14,11 +15,11 @@ use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
@@ -33,6 +34,7 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 use function is_string;
 
+#[CoversClass(QueryBus::class)]
 final class QueryBusTest extends TestCase
 {
     public function test_ask_returns_handled_result(): void
@@ -108,7 +110,7 @@ final class QueryBusTest extends TestCase
     public function test_ask_merges_supplied_stamps_with_default_pipeline(): void
     {
         $query = new FindTaskQuery('123');
-        $userStamp = new DummyStamp('user');
+        $userStamp = new TransportNamesStamp(['sync']);
         $retryStamp = new DummyStamp('retry');
         $serializerStamp = new SerializerStamp(['format' => 'json']);
         $metadataStamp = new MessageMetadataStamp('correlation-id');
@@ -478,7 +480,7 @@ final class QueryBusTest extends TestCase
             )
             ->willReturn($envelope);
 
-        $decider = new class($customStamp) implements \SomeWork\CqrsBundle\Support\StampDecider {
+        $decider = new class($customStamp) implements \SomeWork\CqrsBundle\Contract\StampDecider {
             public function __construct(private readonly DummyStamp $stamp)
             {
             }
@@ -716,7 +718,7 @@ final class QueryBusTest extends TestCase
             self::fail('Expected NoHandlerException');
         } catch (NoHandlerException $e) {
             self::assertSame('query', $e->busName);
-            self::assertSame(FindTaskQuery::class, $e->messageFqcn);
+            self::assertSame(FindTaskQuery::class, $e->messageClass);
         }
     }
 
@@ -741,7 +743,7 @@ final class QueryBusTest extends TestCase
         } catch (MultipleHandlersException $e) {
             self::assertSame('query', $e->busName);
             self::assertSame(3, $e->handlerCount);
-            self::assertSame(FindTaskQuery::class, $e->messageFqcn);
+            self::assertSame(FindTaskQuery::class, $e->messageClass);
         }
     }
 
@@ -756,8 +758,7 @@ final class QueryBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageSerializerResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageSerializer => $global,
-            MessageSerializerResolver::TYPE_DEFAULT_KEY => static fn (): MessageSerializer => $type,
+            MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $type,
         ];
 
         foreach ($map as $class => $serializer) {
@@ -807,8 +808,7 @@ final class QueryBusTest extends TestCase
         $type ??= $global;
 
         $services = [
-            MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => static fn (): MessageMetadataProvider => $global,
-            MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => static fn (): MessageMetadataProvider => $type,
+            MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $type,
         ];
 
         foreach ($map as $class => $provider) {

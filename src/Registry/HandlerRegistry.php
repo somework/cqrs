@@ -8,13 +8,10 @@ use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
-use function assert;
-use function is_callable;
-
 /**
  * Provides read access to the CQRS handler map that is compiled at container build time.
  *
- * @internal
+ * @api
  */
 final class HandlerRegistry
 {
@@ -24,6 +21,8 @@ final class HandlerRegistry
     private array $namingCache = [];
 
     /**
+     * @internal Get the registry from the container; the constructor is not covered by the BC promise
+     *
      * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
      * @param ServiceLocator<MessageNamingStrategy>                                                                                              $namingStrategies
      */
@@ -41,9 +40,9 @@ final class HandlerRegistry
     public function all(): array
     {
         $descriptors = [];
-        foreach ($this->metadata as $type => $entries) {
-            foreach ($entries as $entry) {
-                $descriptors[] = $this->createDescriptor($type, $entry);
+        foreach (MessageType::cases() as $type) {
+            foreach ($this->byType($type) as $descriptor) {
+                $descriptors[] = $descriptor;
             }
         }
 
@@ -53,9 +52,9 @@ final class HandlerRegistry
     /**
      * @return list<HandlerDescriptor>
      */
-    public function byType(string $type): array
+    public function byType(MessageType $type): array
     {
-        $entries = $this->metadata[$type] ?? [];
+        $entries = $this->metadata[$type->value] ?? [];
         $descriptors = [];
         foreach ($entries as $entry) {
             $descriptors[] = $this->createDescriptor($type, $entry);
@@ -65,7 +64,7 @@ final class HandlerRegistry
     }
 
     /** @param array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null} $entry */
-    private function createDescriptor(string $type, array $entry): HandlerDescriptor
+    private function createDescriptor(MessageType $type, array $entry): HandlerDescriptor
     {
         return new HandlerDescriptor(
             $type,
@@ -78,21 +77,11 @@ final class HandlerRegistry
 
     public function getDisplayName(HandlerDescriptor $descriptor): string
     {
-        $key = $this->namingStrategies->has($descriptor->type)
-            ? $descriptor->type
+        $key = $this->namingStrategies->has($descriptor->type->value)
+            ? $descriptor->type->value
             : 'default';
 
-        if (!isset($this->namingCache[$key])) {
-            $strategy = $this->namingStrategies->get($key);
-
-            if (is_callable($strategy)) {
-                $strategy = $strategy();
-            }
-
-            assert($strategy instanceof MessageNamingStrategy);
-
-            $this->namingCache[$key] = $strategy;
-        }
+        $this->namingCache[$key] ??= $this->namingStrategies->get($key);
 
         return $this->namingCache[$key]->getName($descriptor->messageClass);
     }

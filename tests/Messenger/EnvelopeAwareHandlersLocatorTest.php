@@ -4,143 +4,169 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Messenger;
 
-use Closure;
-use PHPUnit\Framework\Attributes\Test;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
+use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
 use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
+use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlerDescriptor;
-use Symfony\Component\Messenger\Handler\HandlersLocatorInterface;
+use Symfony\Component\Messenger\Handler\HandlersLocator;
+use Symfony\Component\Messenger\MessageBus;
+use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
+use Symfony\Component\Messenger\Stamp\HandledStamp;
 
+use function array_map;
+use function iterator_to_array;
+
+#[CoversClass(EnvelopeAwareHandlersLocator::class)]
 final class EnvelopeAwareHandlersLocatorTest extends TestCase
 {
-    public function test_envelope_aware_handlers_are_cached(): void
+    public function test_yields_the_original_descriptors(): void
     {
-        $handler = new SpyEnvelopeAwareHandler();
-        $callable = Closure::fromCallable($handler);
-        $descriptor = new HandlerDescriptor($callable);
+        $descriptor = new HandlerDescriptor(new SpyEnvelopeAwareHandler(), ['from_transport' => 'async', 'priority' => 10]);
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$descriptor]]));
 
-        $decoratedLocator = new class($descriptor) implements HandlersLocatorInterface {
-            public function __construct(private HandlerDescriptor $descriptor)
-            {
-            }
+        $descriptors = iterator_to_array($locator->getHandlers(new Envelope(new \stdClass())), false);
 
-            public function getHandlers(Envelope $envelope): iterable
-            {
-                yield $this->descriptor;
-            }
-        };
-
-        $locator = new EnvelopeAwareHandlersLocator($decoratedLocator);
-
-        $firstEnvelope = new Envelope(new \stdClass());
-        $secondEnvelope = new Envelope(new \stdClass());
-
-        $firstHandler = iterator_to_array($locator->getHandlers($firstEnvelope), false)[0];
-        $firstHandler->getHandler()(new \stdClass());
-
-        $cacheProperty = (new \ReflectionClass($locator))->getProperty('handlerCache');
-        $cacheProperty->setAccessible(true);
-        /** @var \WeakMap<object, array<string, mixed>> $cache */
-        $cache = $cacheProperty->getValue($locator);
-        $cachedEntries = iterator_to_array($cache, false);
-        self::assertCount(1, $cachedEntries);
-        $firstCacheEntry = $cachedEntries[0];
-        self::assertArrayHasKey('reflection', $firstCacheEntry);
-        $firstReflectionId = spl_object_id($firstCacheEntry['reflection']);
-
-        $secondHandler = iterator_to_array($locator->getHandlers($secondEnvelope), false)[0];
-        $secondHandler->getHandler()(new \stdClass());
-
-        $cachedEntries = iterator_to_array($cache, false);
-        self::assertCount(1, $cachedEntries);
-        $secondCacheEntry = $cachedEntries[0];
-        self::assertSame($firstReflectionId, spl_object_id($secondCacheEntry['reflection']));
-
-        self::assertSame(2, $handler->setEnvelopeCalls);
-        self::assertSame($firstEnvelope, $handler->envelopes[0]);
-        self::assertSame($secondEnvelope, $handler->envelopes[1]);
-        self::assertCount(2, $handler->handledMessages);
+        self::assertSame([$descriptor], $descriptors);
+        self::assertSame(SpyEnvelopeAwareHandler::class.'::__invoke', $descriptors[0]->getName());
     }
 
-    #[Test]
-    public function test_envelope_freshness_on_repeated_get_handlers_calls(): void
+    public function test_sets_the_current_envelope_before_each_handler_is_yielded(): void
     {
         $handler = new SpyEnvelopeAwareHandler();
-        $callable = Closure::fromCallable($handler);
-        $descriptor = new HandlerDescriptor($callable);
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$handler]]));
 
-        $decoratedLocator = new class($descriptor) implements HandlersLocatorInterface {
-            public function __construct(private readonly HandlerDescriptor $descriptor)
-            {
-            }
+        $first = new Envelope(new \stdClass());
+        $second = new Envelope(new \stdClass());
 
-            public function getHandlers(Envelope $envelope): iterable
-            {
-                yield $this->descriptor;
-            }
-        };
+        iterator_to_array($locator->getHandlers($first));
+        iterator_to_array($locator->getHandlers($second));
 
-        $locator = new EnvelopeAwareHandlersLocator($decoratedLocator);
-
-        $envelope1 = new Envelope(new \stdClass());
-        $envelope2 = new Envelope(new \stdClass());
-        $envelope3 = new Envelope(new \stdClass());
-
-        $result1 = iterator_to_array($locator->getHandlers($envelope1), false);
-        $result1[0]->getHandler()(new \stdClass());
-
-        $result2 = iterator_to_array($locator->getHandlers($envelope2), false);
-        $result2[0]->getHandler()(new \stdClass());
-
-        $result3 = iterator_to_array($locator->getHandlers($envelope3), false);
-        $result3[0]->getHandler()(new \stdClass());
-
-        self::assertSame(3, $handler->setEnvelopeCalls);
-        self::assertSame($envelope1, $handler->envelopes[0]);
-        self::assertSame($envelope2, $handler->envelopes[1]);
-        self::assertSame($envelope3, $handler->envelopes[2]);
-        self::assertCount(3, $handler->handledMessages);
+        self::assertSame([$first, $second], $handler->envelopes);
     }
 
-    #[Test]
-    public function test_handler_options_are_preserved_after_wrapping(): void
+    public function test_envelope_is_set_lazily_when_the_handler_is_reached(): void
     {
-        $handler = new SpyEnvelopeAwareHandler();
-        $callable = Closure::fromCallable($handler);
-        $descriptor = new HandlerDescriptor($callable, ['from_transport' => 'async', 'priority' => 10]);
+        $firstHandler = new SpyEnvelopeAwareHandler();
+        $secondHandler = new SpyEnvelopeAwareHandler();
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$firstHandler, $secondHandler]]));
 
-        $decoratedLocator = new class($descriptor) implements HandlersLocatorInterface {
-            public function __construct(private readonly HandlerDescriptor $descriptor)
+        $handlers = $locator->getHandlers(new Envelope(new \stdClass()));
+        self::assertInstanceOf(\Generator::class, $handlers);
+
+        $handlers->current();
+
+        self::assertCount(1, $firstHandler->envelopes);
+        self::assertSame([], $secondHandler->envelopes);
+    }
+
+    public function test_ignores_handlers_that_are_not_envelope_aware(): void
+    {
+        $handler = static fn (\stdClass $message): string => 'plain';
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$handler]]));
+
+        $descriptors = iterator_to_array($locator->getHandlers(new Envelope(new \stdClass())), false);
+
+        self::assertCount(1, $descriptors);
+        self::assertSame('plain', ($descriptors[0]->getHandler())(new \stdClass()));
+    }
+
+    public function test_every_envelope_aware_handler_of_a_message_runs_on_the_bus(): void
+    {
+        $first = new SpyEnvelopeAwareHandler();
+        $second = new OtherSpyEnvelopeAwareHandler();
+        $bus = new MessageBus([
+            new HandleMessageMiddleware(new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$first, $second]]))),
+        ]);
+
+        $envelope = $bus->dispatch(new \stdClass());
+
+        self::assertCount(1, $first->handledMessages);
+        self::assertCount(1, $second->handledMessages);
+        self::assertSame(
+            [SpyEnvelopeAwareHandler::class.'::__invoke', OtherSpyEnvelopeAwareHandler::class.'::__invoke'],
+            array_map(static fn (HandledStamp $stamp): string => $stamp->getHandlerName(), $envelope->all(HandledStamp::class)),
+        );
+    }
+
+    public function test_a_plain_handler_followed_by_an_envelope_aware_handler_both_run(): void
+    {
+        $plain = new PlainSpyHandler();
+        $aware = new SpyEnvelopeAwareHandler();
+        $plainDescriptor = new HandlerDescriptor($plain);
+        $awareDescriptor = new HandlerDescriptor($aware);
+        $locator = new EnvelopeAwareHandlersLocator(new HandlersLocator([\stdClass::class => [$plainDescriptor, $awareDescriptor]]));
+        $bus = new MessageBus([new HandleMessageMiddleware($locator)]);
+        $message = new \stdClass();
+
+        $envelope = $bus->dispatch($message, [new MessageMetadataStamp('correlation')]);
+
+        self::assertSame([$message], $plain->handledMessages);
+        self::assertSame([], $plain->envelopes, 'A handler that is not EnvelopeAware must not receive the envelope.');
+        self::assertSame([$message], $aware->handledMessages);
+        self::assertCount(1, $aware->envelopes);
+        self::assertSame($message, $aware->envelopes[0]->getMessage());
+        self::assertSame('correlation', $aware->envelopes[0]->last(MessageMetadataStamp::class)?->getCorrelationId());
+        self::assertSame(
+            [PlainSpyHandler::class.'::__invoke', SpyEnvelopeAwareHandler::class.'::__invoke'],
+            array_map(static fn (HandledStamp $stamp): string => $stamp->getHandlerName(), $envelope->all(HandledStamp::class)),
+        );
+        self::assertSame(
+            [$plainDescriptor, $awareDescriptor],
+            iterator_to_array($locator->getHandlers(new Envelope($message)), false),
+        );
+    }
+
+    public function test_a_nested_dispatch_to_the_same_handler_restores_the_outer_envelope(): void
+    {
+        $handler = new class implements EnvelopeAware {
+            use EnvelopeAwareTrait;
+
+            /** @var list<string> */
+            public array $seen = [];
+
+            public ?\Closure $whileHandlingCreate = null;
+
+            public function __invoke(object $message): void
             {
+                $this->seen[] = $message::class.'@'.$this->correlationId();
+
+                if ($message instanceof CreateTaskCommand && null !== $this->whileHandlingCreate) {
+                    ($this->whileHandlingCreate)();
+                    $this->seen[] = $message::class.'@'.$this->correlationId();
+                }
             }
 
-            public function getHandlers(Envelope $envelope): iterable
+            private function correlationId(): string
             {
-                yield $this->descriptor;
+                return $this->getEnvelope()->last(MessageMetadataStamp::class)?->getCorrelationId() ?? '';
             }
         };
+        $descriptor = new HandlerDescriptor($handler);
+        $bus = new MessageBus([new HandleMessageMiddleware(new EnvelopeAwareHandlersLocator(new HandlersLocator([
+            CreateTaskCommand::class => [$descriptor],
+            GenerateReportCommand::class => [$descriptor],
+        ])))]);
+        $handler->whileHandlingCreate = static fn () => $bus->dispatch(new GenerateReportCommand('r-1'), [new MessageMetadataStamp('inner')]);
 
-        $locator = new EnvelopeAwareHandlersLocator($decoratedLocator);
+        $bus->dispatch(new CreateTaskCommand('1', 'x'), [new MessageMetadataStamp('outer')]);
 
-        $result = iterator_to_array($locator->getHandlers(new Envelope(new \stdClass())), false);
-        self::assertCount(1, $result);
-
-        $wrappedDescriptor = $result[0];
-        self::assertSame('async', $wrappedDescriptor->getOption('from_transport'));
-        self::assertSame(10, $wrappedDescriptor->getOption('priority'));
-
-        $wrappedDescriptor->getHandler()(new \stdClass());
-        self::assertCount(1, $handler->handledMessages);
+        self::assertSame([
+            CreateTaskCommand::class.'@outer',
+            GenerateReportCommand::class.'@inner',
+            CreateTaskCommand::class.'@outer',
+        ], $handler->seen);
     }
 }
 
-final class SpyEnvelopeAwareHandler implements EnvelopeAware
+class SpyEnvelopeAwareHandler implements EnvelopeAware
 {
-    public int $setEnvelopeCalls = 0;
-
-    /** @var Envelope[] */
+    /** @var list<Envelope> */
     public array $envelopes = [];
 
     /** @var list<object> */
@@ -148,7 +174,32 @@ final class SpyEnvelopeAwareHandler implements EnvelopeAware
 
     public function setEnvelope(Envelope $envelope): void
     {
-        ++$this->setEnvelopeCalls;
+        $this->envelopes[] = $envelope;
+    }
+
+    public function __invoke(object $message): void
+    {
+        $this->handledMessages[] = $message;
+    }
+}
+
+final class OtherSpyEnvelopeAwareHandler extends SpyEnvelopeAwareHandler
+{
+}
+
+/**
+ * Has a setEnvelope() method but does not implement EnvelopeAware.
+ */
+final class PlainSpyHandler
+{
+    /** @var list<Envelope> */
+    public array $envelopes = [];
+
+    /** @var list<object> */
+    public array $handledMessages = [];
+
+    public function setEnvelope(Envelope $envelope): void
+    {
         $this->envelopes[] = $envelope;
     }
 

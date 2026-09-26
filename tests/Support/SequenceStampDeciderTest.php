@@ -8,9 +8,9 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\SequenceAware;
 use SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
@@ -40,6 +40,11 @@ final class SequenceStampDeciderTest extends TestCase
     public function test_decide_appends_stamp_for_sequence_aware_event(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'order-99';
@@ -57,7 +62,7 @@ final class SequenceStampDeciderTest extends TestCase
         self::assertInstanceOf(AggregateSequenceStamp::class, $result[0]);
         self::assertSame('order-99', $result[0]->aggregateId);
         self::assertSame(3, $result[0]->sequenceNumber);
-        self::assertSame($event::class, $result[0]->aggregateType);
+        self::assertSame('task', $result[0]->aggregateType, 'The aggregate type of the event, not its class.');
     }
 
     public function test_decide_returns_stamps_unchanged_for_non_sequence_aware_event(): void
@@ -74,6 +79,11 @@ final class SequenceStampDeciderTest extends TestCase
     public function test_decide_preserves_existing_stamps(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'order-1';
@@ -98,6 +108,11 @@ final class SequenceStampDeciderTest extends TestCase
     public function test_decide_works_identically_for_sync_and_async_modes(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'order-5';
@@ -139,6 +154,11 @@ final class SequenceStampDeciderTest extends TestCase
     public function test_decide_preserves_multiple_existing_stamps(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'agg-1';
@@ -164,6 +184,11 @@ final class SequenceStampDeciderTest extends TestCase
     public function test_decide_uses_message_class_as_aggregate_type(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'agg-1';
@@ -179,12 +204,17 @@ final class SequenceStampDeciderTest extends TestCase
 
         $stamp = $result[0];
         self::assertInstanceOf(AggregateSequenceStamp::class, $stamp);
-        self::assertSame($event::class, $stamp->aggregateType);
+        self::assertSame('task', $stamp->aggregateType);
     }
 
     public function test_decide_does_not_modify_input_stamps_array(): void
     {
         $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
             public function getAggregateId(): string
             {
                 return 'agg-1';
@@ -203,5 +233,28 @@ final class SequenceStampDeciderTest extends TestCase
 
         /* @phpstan-ignore staticMethod.alreadyNarrowedType */
         self::assertCount($originalCount, $original);
+    }
+
+    public function test_keeps_a_sequence_stamp_supplied_by_the_caller(): void
+    {
+        $event = new class implements Event, SequenceAware {
+            public function getAggregateType(): string
+            {
+                return 'task';
+            }
+
+            public function getAggregateId(): string
+            {
+                return 'order-1';
+            }
+
+            public function getSequenceNumber(): int
+            {
+                return 7;
+            }
+        };
+        $callerStamp = new AggregateSequenceStamp('order-1', 3, 'Order');
+
+        self::assertSame([$callerStamp], $this->decider->decide($event, DispatchMode::ASYNC, [$callerStamp]));
     }
 }

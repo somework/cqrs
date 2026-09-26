@@ -4,19 +4,21 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Command;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Command\ListHandlersCommand;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
+use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
 use SomeWork\CqrsBundle\Support\MessageSerializerResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
-use SomeWork\CqrsBundle\Support\NullMessageSerializer;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
-use SomeWork\CqrsBundle\Support\RandomCorrelationMetadataProvider;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
@@ -34,6 +36,7 @@ use function sprintf;
  *     bus: string|null,
  * }
  */
+#[CoversClass(ListHandlersCommand::class)]
 final class ListHandlersCommandTest extends TestCase
 {
     public function test_lists_all_handlers_sorted_by_type_and_name(): void
@@ -113,7 +116,77 @@ final class ListHandlersCommandTest extends TestCase
         self::assertStringNotContainsString('Find order', $output);
     }
 
+    public function test_filters_by_message(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => 'App\\Application\\Command\\ShipOrder',
+                'handler_class' => 'App\\Application\\Command\\ShipOrderHandler',
+                'service_id' => 'app.command.ship_order_handler',
+                'bus' => null,
+            ], [
+                'type' => 'command',
+                'message' => 'App\\Application\\Command\\CancelOrder',
+                'handler_class' => 'App\\Application\\Command\\CancelOrderHandler',
+                'service_id' => 'app.command.cancel_order_handler',
+                'bus' => null,
+            ]],
+            'query' => [],
+            'event' => [],
+        ], ['default' => 'Default']);
+
+        $tester = new CommandTester($this->createCommand($registry));
+
+        self::assertSame(SymfonyCommand::SUCCESS, $tester->execute(['--message' => 'shiporder']));
+        self::assertStringContainsString('App\\Application\\Command\\ShipOrderHandler', $tester->getDisplay());
+        self::assertStringNotContainsString('CancelOrder', $tester->getDisplay());
+    }
+
+    public function test_a_retry_policy_without_the_retry_strategy_is_reported_as_not_used(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => TestAsyncCommand::class,
+                'handler_class' => TestAsyncCommandHandler::class,
+                'service_id' => 'app.command.async_handler',
+                'bus' => null,
+            ]],
+            'query' => [],
+            'event' => [],
+        ], ['default' => 'Default']);
+        $retry = RetryPolicyResolver::withoutOverrides(new ExponentialBackoffRetryPolicy());
+
+        $tester = new CommandTester($this->createCommand($registry, commandRetry: $retry));
+        $tester->execute(['--details' => true]);
+        self::assertStringContainsString('(not used: no transport is listed under somework_cqrs.retry_strategy.transports)', $tester->getDisplay());
+
+        $tester = new CommandTester($this->createCommand($registry, commandRetry: $retry, retryStrategyTransports: ['async' => 'command']));
+        $tester->execute(['--details' => true]);
+        self::assertStringContainsString('ExponentialBackoffRetryPolicy', $tester->getDisplay());
+        self::assertStringNotContainsString('not used', $tester->getDisplay());
+    }
+
     public function test_warns_when_no_handlers_found(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [],
+            'query' => [],
+            'event' => [],
+        ], [
+            'default' => 'Default',
+        ]);
+
+        $tester = new CommandTester($this->createCommand($registry));
+
+        $exitCode = $tester->execute(['--type' => ['event']]);
+
+        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
+        self::assertStringContainsString('No CQRS handlers were found', $tester->getDisplay());
+    }
+
+    public function test_rejects_unknown_type_filter(): void
     {
         $registry = $this->createRegistry([
             'command' => [],
@@ -127,8 +200,8 @@ final class ListHandlersCommandTest extends TestCase
 
         $exitCode = $tester->execute(['--type' => ['unknown']]);
 
-        self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
-        self::assertStringContainsString('No CQRS handlers were found', $tester->getDisplay());
+        self::assertSame(SymfonyCommand::INVALID, $exitCode);
+        self::assertStringContainsString('Unknown message type "unknown"', $tester->getDisplay());
     }
 
     public function test_details_option_displays_configuration_and_handles_uninstantiable_messages(): void
@@ -414,6 +487,30 @@ final class ListHandlersCommandTest extends TestCase
         ]);
     }
 
+    public function test_details_option_shows_that_an_outbox_dispatch_is_not_deferred(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => TestAsyncCommand::class,
+                'handler_class' => TestAsyncCommandHandler::class,
+                'service_id' => 'app.command.async_handler',
+                'bus' => 'messenger.bus.commands',
+            ]],
+            'query' => [],
+            'event' => [],
+        ], ['command' => 'Command label']);
+
+        // Stored right away in the current transaction, although asynchronous dispatches are deferred.
+        $tester = new CommandTester($this->createCommand($registry, new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [TestAsyncCommand::class => DispatchMode::OUTBOX])));
+        $tester->execute(['--details' => true]);
+
+        $this->assertTableContainsRows($tester->getDisplay(), 'app.command.async_handler', [
+            ['Dispatch Mode', 'outbox'],
+            ['Async Defers', 'no (stored in the outbox)'],
+        ]);
+    }
+
     /**
      * @param array<string, list<array<string, mixed>>> $metadata
      * @param array<string, string>                     $labels
@@ -452,6 +549,9 @@ final class ListHandlersCommandTest extends TestCase
         };
     }
 
+    /**
+     * @param array<string, string> $retryStrategyTransports
+     */
     private function createCommand(
         HandlerRegistry $registry,
         ?DispatchModeDecider $dispatchModeDecider = null,
@@ -462,6 +562,8 @@ final class ListHandlersCommandTest extends TestCase
         ?MessageTransportResolver $eventTransports = null,
         ?MessageTransportResolver $eventAsyncTransports = null,
         ?TransportMappingProvider $transportMappingProvider = null,
+        ?RetryPolicyResolver $commandRetry = null,
+        array $retryStrategyTransports = [],
     ): ListHandlersCommand {
         $dispatchModeDecider ??= new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC);
         $dispatchAfter ??= DispatchAfterCurrentBusDecider::defaults();
@@ -479,7 +581,7 @@ final class ListHandlersCommandTest extends TestCase
             $registry,
             $dispatchModeDecider,
             $dispatchAfter,
-            RetryPolicyResolver::withoutOverrides(new NullRetryPolicy()),
+            $commandRetry ?? RetryPolicyResolver::withoutOverrides(new NullRetryPolicy()),
             RetryPolicyResolver::withoutOverrides(new NullRetryPolicy()),
             $retryResolver,
             MessageSerializerResolver::withoutOverrides(new NullMessageSerializer()),
@@ -494,6 +596,7 @@ final class ListHandlersCommandTest extends TestCase
             $transportMappingProvider,
             $commandAsyncTransports,
             $eventAsyncTransports,
+            $retryStrategyTransports,
         );
     }
 
