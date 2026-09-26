@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
@@ -16,6 +17,7 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 use function assert;
 
+#[CoversNothing]
 final class HandlerRegistryKernelTest extends KernelTestCase
 {
     protected function setUp(): void
@@ -46,11 +48,14 @@ final class HandlerRegistryKernelTest extends KernelTestCase
             $commands,
         );
 
-        usort($actual, static fn (array $left, array $right): int => $left[0] <=> $right[0]);
+        usort($actual, static fn (array $left, array $right): int => [$left[0], $left[2]] <=> [$right[0], $right[2]]);
 
+        // A handler declared without an explicit bus is registered on the sync command bus
+        // and on the async command bus, where the worker consumes async commands.
         self::assertSame(
             [
                 [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands'],
+                [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands_async'],
                 [GenerateReportCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\GenerateReportHandler', 'messenger.bus.commands_async'],
             ],
             $actual,

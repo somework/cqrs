@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\AllowNoHandlerMiddlewarePass;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
@@ -11,6 +12,7 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 
+#[CoversClass(AllowNoHandlerMiddlewarePass::class)]
 final class AllowNoHandlerMiddlewarePassTest extends TestCase
 {
     public function test_it_prepends_middleware_to_configured_bus(): void

@@ -51,6 +51,9 @@ abstract class AbstractMessengerBus
             'bus' => static::BUS_NAME,
         ]);
 
+        // Select the bus first: the pipeline has side effects (a rate limiter consumes a token).
+        $bus = $this->selectBus($resolvedMode, $message);
+
         $stamps = $this->stampsDecider->decide($message, $resolvedMode, array_values($stamps));
 
         $this->logger?->debug('Stamps decided', [
@@ -66,7 +69,7 @@ abstract class AbstractMessengerBus
             'bus' => static::BUS_NAME,
         ]);
 
-        return $this->selectBus($resolvedMode, $message)->dispatch($message, $stamps);
+        return $bus->dispatch($message, $stamps);
     }
 
     final protected function dispatchMessageSync(object $message, StampInterface ...$stamps): Envelope

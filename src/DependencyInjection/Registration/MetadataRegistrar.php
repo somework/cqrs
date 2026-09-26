@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
 use SomeWork\CqrsBundle\Support\MessageMetadataProviderResolver;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -43,13 +42,13 @@ final class MetadataRegistrar
             }
 
             $serviceMap = [
-                MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => new ServiceClosureArgument(new Reference($defaultId)),
-                MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => new ServiceClosureArgument(new Reference($resolvedTypeDefaultId)),
+                MessageMetadataProviderResolver::GLOBAL_DEFAULT_KEY => new Reference($defaultId),
+                MessageMetadataProviderResolver::TYPE_DEFAULT_KEY => new Reference($resolvedTypeDefaultId),
             ];
 
             foreach ($config[$type]['map'] as $messageClass => $serviceId) {
                 $resolvedId = $this->helper->ensureServiceExists($container, $serviceId);
-                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($resolvedId));
+                $serviceMap[$messageClass] = new Reference($resolvedId);
             }
 
             $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

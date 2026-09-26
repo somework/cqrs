@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -30,9 +29,7 @@ final class RateLimitRegistrar
             $serviceMap = [];
 
             foreach ($config[$type]['map'] as $messageClass => $limiterName) {
-                $serviceMap[$messageClass] = new ServiceClosureArgument(
-                    new Reference(sprintf('limiter.%s', $limiterName)),
-                );
+                $serviceMap[$messageClass] = new Reference(sprintf('limiter.%s', $limiterName));
             }
 
             $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

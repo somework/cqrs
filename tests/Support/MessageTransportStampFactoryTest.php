@@ -5,10 +5,12 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
+#[CoversClass(MessageTransportStampFactory::class)]
 final class MessageTransportStampFactoryTest extends TestCase
 {
     public function test_creates_transport_names_stamp(): void

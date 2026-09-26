@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Command;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
@@ -34,6 +35,7 @@ use function sprintf;
  *     bus: string|null,
  * }
  */
+#[CoversClass(ListHandlersCommand::class)]
 final class ListHandlersCommandTest extends TestCase
 {
     public function test_lists_all_handlers_sorted_by_type_and_name(): void
@@ -125,10 +127,28 @@ final class ListHandlersCommandTest extends TestCase
 
         $tester = new CommandTester($this->createCommand($registry));
 
-        $exitCode = $tester->execute(['--type' => ['unknown']]);
+        $exitCode = $tester->execute(['--type' => ['event']]);
 
         self::assertSame(SymfonyCommand::SUCCESS, $exitCode);
         self::assertStringContainsString('No CQRS handlers were found', $tester->getDisplay());
+    }
+
+    public function test_rejects_unknown_type_filter(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [],
+            'query' => [],
+            'event' => [],
+        ], [
+            'default' => 'Default',
+        ]);
+
+        $tester = new CommandTester($this->createCommand($registry));
+
+        $exitCode = $tester->execute(['--type' => ['unknown']]);
+
+        self::assertSame(SymfonyCommand::INVALID, $exitCode);
+        self::assertStringContainsString('Unknown message type "unknown"', $tester->getDisplay());
     }
 
     public function test_details_option_displays_configuration_and_handles_uninstantiable_messages(): void

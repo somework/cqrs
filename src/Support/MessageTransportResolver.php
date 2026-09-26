@@ -37,6 +37,20 @@ final class MessageTransportResolver
     }
 
     /**
+     * Transports configured for exactly this message class (no parent class, interface or default).
+     *
+     * @return list<string>|null
+     */
+    public function resolveExactFor(object $message): ?array
+    {
+        if (!$this->transports->has($message::class)) {
+            return null;
+        }
+
+        return $this->normaliseTransports($message::class, $this->transports->get($message::class));
+    }
+
+    /**
      * @return list<string>|null
      */
     public function resolveFor(object $message): ?array
@@ -99,8 +113,7 @@ final class MessageTransportResolver
 
         foreach ($value as $transport) {
             if (!is_string($transport)) {
-                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element
-of type %s.', $key, get_debug_type($transport)));
+                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element of type %s.', $key, get_debug_type($transport)));
             }
 
             if (isset($seen[$transport])) {

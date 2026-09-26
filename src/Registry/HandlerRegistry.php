@@ -8,9 +8,6 @@ use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
-use function assert;
-use function is_callable;
-
 /**
  * Provides read access to the CQRS handler map that is compiled at container build time.
  *
@@ -82,17 +79,7 @@ final class HandlerRegistry
             ? $descriptor->type
             : 'default';
 
-        if (!isset($this->namingCache[$key])) {
-            $strategy = $this->namingStrategies->get($key);
-
-            if (is_callable($strategy)) {
-                $strategy = $strategy();
-            }
-
-            assert($strategy instanceof MessageNamingStrategy);
-
-            $this->namingCache[$key] = $strategy;
-        }
+        $this->namingCache[$key] ??= $this->namingStrategies->get($key);
 
         return $this->namingCache[$key]->getName($descriptor->messageClass);
     }

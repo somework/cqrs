@@ -6,154 +6,96 @@ namespace SomeWork\CqrsBundle\Tests\Health;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Health\CheckResult;
 use SomeWork\CqrsBundle\Health\CheckSeverity;
 use SomeWork\CqrsBundle\Health\HandlerResolvabilityChecker;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
-use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
-use function in_array;
+use function array_map;
 
 #[CoversClass(HandlerResolvabilityChecker::class)]
 final class HandlerResolvabilityCheckerTest extends TestCase
 {
-    public function test_returns_ok_for_each_resolvable_handler(): void
+    public function test_reports_every_instantiable_handler_as_ok(): void
     {
-        $registry = $this->createRegistry([
-            'command' => [
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.a', 'bus' => null],
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.b', 'bus' => null],
-            ],
-        ]);
+        $checker = new HandlerResolvabilityChecker(
+            self::registry(['handler.a', 'handler.b']),
+            new ServiceLocator(['handler.a' => static fn (): object => new \stdClass(), 'handler.b' => static fn (): object => new \stdClass()]),
+        );
 
-        $container = $this->createMock(ContainerInterface::class);
-        $container->method('has')
-            ->willReturnCallback(static fn (string $id): bool => in_array($id, ['handler.a', 'handler.b'], true));
-
-        $checker = new HandlerResolvabilityChecker($registry, $container);
         $results = $checker->check();
 
-        self::assertCount(2, $results);
-        self::assertSame(CheckSeverity::OK, $results[0]->severity);
-        self::assertSame(CheckSeverity::OK, $results[1]->severity);
+        self::assertSame([CheckSeverity::OK, CheckSeverity::OK], self::severities($results));
         self::assertSame('handler', $results[0]->category);
+        self::assertStringContainsString('"handler.a" is resolvable', $results[0]->message);
     }
 
-    public function test_returns_critical_for_unresolvable_handler(): void
+    public function test_a_handler_on_several_buses_is_checked_once(): void
     {
-        $registry = $this->createRegistry([
-            'command' => [
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'missing.handler', 'bus' => null],
-            ],
-        ]);
+        $instantiations = 0;
+        $checker = new HandlerResolvabilityChecker(
+            self::registry(['handler.a', 'handler.a']),
+            new ServiceLocator(['handler.a' => static function () use (&$instantiations): object {
+                ++$instantiations;
 
-        $container = $this->createMock(ContainerInterface::class);
-        $container->method('has')->willReturn(false);
+                return new \stdClass();
+            }]),
+        );
 
-        $checker = new HandlerResolvabilityChecker($registry, $container);
-        $results = $checker->check();
-
-        self::assertCount(1, $results);
-        self::assertSame(CheckSeverity::CRITICAL, $results[0]->severity);
-        self::assertStringContainsString('missing.handler', $results[0]->message);
+        self::assertCount(1, $checker->check());
+        self::assertSame(1, $instantiations);
     }
 
-    public function test_returns_warning_when_no_handlers_registered(): void
+    public function test_a_missing_handler_service_is_critical(): void
     {
-        $registry = $this->createRegistry([]);
+        $results = (new HandlerResolvabilityChecker(self::registry(['missing.handler']), new ServiceLocator([])))->check();
 
-        $container = $this->createMock(ContainerInterface::class);
+        self::assertSame([CheckSeverity::CRITICAL], self::severities($results));
+        self::assertStringContainsString('"missing.handler" is not resolvable', $results[0]->message);
+    }
 
-        $checker = new HandlerResolvabilityChecker($registry, $container);
+    public function test_a_handler_that_cannot_be_instantiated_is_critical(): void
+    {
+        $checker = new HandlerResolvabilityChecker(
+            self::registry(['handler.broken']),
+            new ServiceLocator(['handler.broken' => static fn (): object => throw new \RuntimeException('Environment variable not found: "API_KEY".')]),
+        );
+
         $results = $checker->check();
 
-        self::assertCount(1, $results);
-        self::assertSame(CheckSeverity::WARNING, $results[0]->severity);
+        self::assertSame([CheckSeverity::CRITICAL], self::severities($results));
+        self::assertStringContainsString('"handler.broken" cannot be instantiated: Environment variable not found', $results[0]->message);
+    }
+
+    public function test_warns_when_no_handler_is_registered(): void
+    {
+        $results = (new HandlerResolvabilityChecker(self::registry([]), new ServiceLocator([])))->check();
+
+        self::assertSame([CheckSeverity::WARNING], self::severities($results));
         self::assertStringContainsString('No handlers registered', $results[0]->message);
     }
 
-    public function test_mixed_resolvable_and_unresolvable(): void
+    /**
+     * @param list<string> $serviceIds
+     */
+    private static function registry(array $serviceIds): HandlerRegistry
     {
-        $registry = $this->createRegistry([
-            'command' => [
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.a', 'bus' => null],
-            ],
-            'query' => [
-                ['type' => 'query', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.b', 'bus' => null],
-            ],
-            'event' => [
-                ['type' => 'event', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.c', 'bus' => null],
-            ],
-        ]);
+        $entries = array_map(
+            static fn (string $serviceId): array => ['type' => 'command', 'message' => \stdClass::class, 'handler_class' => \stdClass::class, 'service_id' => $serviceId, 'bus' => null],
+            $serviceIds,
+        );
 
-        $container = $this->createMock(ContainerInterface::class);
-        $container->method('has')
-            ->willReturnCallback(static fn (string $id): bool => in_array($id, ['handler.a', 'handler.b'], true));
-
-        $checker = new HandlerResolvabilityChecker($registry, $container);
-        $results = $checker->check();
-
-        self::assertCount(3, $results);
-
-        $okResults = array_filter($results, static fn ($r) => CheckSeverity::OK === $r->severity);
-        $criticalResults = array_filter($results, static fn ($r) => CheckSeverity::CRITICAL === $r->severity);
-
-        self::assertCount(2, $okResults);
-        self::assertCount(1, $criticalResults);
-    }
-
-    public function test_ok_result_message_contains_service_id(): void
-    {
-        $registry = $this->createRegistry([
-            'command' => [
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'app.handler.create_task', 'bus' => null],
-            ],
-        ]);
-
-        $container = $this->createMock(ContainerInterface::class);
-        $container->method('has')->willReturn(true);
-
-        $checker = new HandlerResolvabilityChecker($registry, $container);
-        $results = $checker->check();
-
-        self::assertCount(1, $results);
-        self::assertStringContainsString('app.handler.create_task', $results[0]->message);
-        self::assertStringContainsString('resolvable', $results[0]->message);
-    }
-
-    public function test_multiple_handlers_across_command_query_event_types(): void
-    {
-        $registry = $this->createRegistry([
-            'command' => [
-                ['type' => 'command', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.cmd', 'bus' => null],
-            ],
-            'query' => [
-                ['type' => 'query', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.qry', 'bus' => null],
-            ],
-            'event' => [
-                ['type' => 'event', 'message' => self::class, 'handler_class' => self::class, 'service_id' => 'handler.evt', 'bus' => null],
-            ],
-        ]);
-
-        $container = $this->createMock(ContainerInterface::class);
-        $container->method('has')->willReturn(true);
-
-        $checker = new HandlerResolvabilityChecker($registry, $container);
-        $results = $checker->check();
-
-        self::assertCount(3, $results);
-
-        foreach ($results as $result) {
-            self::assertSame(CheckSeverity::OK, $result->severity);
-            self::assertSame('handler', $result->category);
-        }
+        return new HandlerRegistry(['command' => $entries], new ServiceLocator([]));
     }
 
     /**
-     * @param array<string, list<array{type: string, message: class-string, handler_class: class-string, service_id: string, bus: string|null}>> $metadata
+     * @param list<CheckResult> $results
+     *
+     * @return list<CheckSeverity>
      */
-    private function createRegistry(array $metadata): HandlerRegistry
+    private static function severities(array $results): array
     {
-        return new HandlerRegistry($metadata, new ServiceLocator([]));
+        return array_map(static fn (CheckResult $result): CheckSeverity => $result->severity, $results);
     }
 }

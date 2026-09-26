@@ -2,8 +2,9 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Tests\Messenger;
+namespace SomeWork\CqrsBundle\Tests\Messenger\Middleware;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Messenger\Middleware\AllowNoHandlerMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
@@ -12,6 +13,7 @@ use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Middleware\HandleMessageMiddleware;
 
+#[CoversClass(AllowNoHandlerMiddleware::class)]
 final class AllowNoHandlerMiddlewareTest extends TestCase
 {
     public function test_it_ignores_missing_handlers_for_events(): void

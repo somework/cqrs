@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -33,6 +34,7 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 
 use function is_string;
 
+#[CoversClass(QueryBus::class)]
 final class QueryBusTest extends TestCase
 {
     public function test_ask_returns_handled_result(): void
@@ -108,7 +110,7 @@ final class QueryBusTest extends TestCase
     public function test_ask_merges_supplied_stamps_with_default_pipeline(): void
     {
         $query = new FindTaskQuery('123');
-        $userStamp = new DummyStamp('user');
+        $userStamp = new TransportNamesStamp(['sync']);
         $retryStamp = new DummyStamp('retry');
         $serializerStamp = new SerializerStamp(['format' => 'json']);
         $metadataStamp = new MessageMetadataStamp('correlation-id');

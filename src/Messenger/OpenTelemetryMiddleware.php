@@ -4,22 +4,30 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Messenger;
 
+use OpenTelemetry\API\Trace\Propagation\TraceContextPropagator;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
 use OpenTelemetry\API\Trace\TracerProviderInterface;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Middleware\MiddlewareInterface;
 use Symfony\Component\Messenger\Middleware\StackInterface;
+use Symfony\Component\Messenger\Stamp\ReceivedStamp;
+
+use function strrpos;
+use function substr;
 
 /**
- * Produces OpenTelemetry trace spans for message dispatch and handler execution.
+ * Produces one OpenTelemetry span per pass of a message through a bus.
  *
- * Creates two spans per message:
- * - "cqrs.dispatch {ShortClassName}" (KIND_PRODUCER) wrapping the full dispatch
- * - "cqrs.handle {ShortClassName}" (KIND_INTERNAL) wrapping handler execution
+ * - "cqrs.dispatch {ShortClassName}" (PRODUCER) when a message is dispatched, child of the context
+ *   captured at dispatch time (TraceContextCaptureMiddleware) or of the current one. Its own context
+ *   replaces the TraceContextStamp, so it travels with the message.
+ * - "cqrs.consume {ShortClassName}" (CONSUMER) when a worker handles a received message,
+ *   continuing the trace carried by the TraceContextStamp.
  *
  * @internal
  */
@@ -32,55 +40,53 @@ final class OpenTelemetryMiddleware implements MiddlewareInterface
 
     public function handle(Envelope $envelope, StackInterface $stack): Envelope
     {
-        $tracer = $this->tracerProvider->getTracer('somework.cqrs');
         $message = $envelope->getMessage();
-        $messageClass = $message::class;
-        $shortClassName = $this->getShortClassName($messageClass);
-        $messageType = $this->resolveMessageType($message);
+        $received = null !== $envelope->last(ReceivedStamp::class);
+        $shortClassName = self::shortClassName($message::class);
 
-        $dispatchSpan = $tracer->spanBuilder('cqrs.dispatch '.$shortClassName)
-            ->setSpanKind(SpanKind::KIND_PRODUCER)
-            ->setAttribute('cqrs.message.class', $messageClass)
-            ->setAttribute('cqrs.message.type', $messageType)
-            ->startSpan();
+        $spanBuilder = $this->tracerProvider->getTracer('somework.cqrs')
+            ->spanBuilder(($received ? 'cqrs.consume ' : 'cqrs.dispatch ').$shortClassName)
+            ->setSpanKind($received ? SpanKind::KIND_CONSUMER : SpanKind::KIND_PRODUCER)
+            ->setAttribute('cqrs.message.class', $message::class)
+            ->setAttribute('cqrs.message.type', self::messageType($message));
 
-        $dispatchScope = $dispatchSpan->activate();
+        // Received: the trace of the producer. Dispatched: the context captured when the message was
+        // dispatched (it may run later, deferred until the current handler finished).
+        $traceContext = $envelope->last(TraceContextStamp::class);
+        if ($traceContext instanceof TraceContextStamp) {
+            $spanBuilder->setParent(TraceContextPropagator::getInstance()->extract($traceContext->headers));
+        }
+
+        $span = $spanBuilder->startSpan();
+        $scope = $span->activate();
 
         try {
-            $handleSpan = $tracer->spanBuilder('cqrs.handle '.$shortClassName)
-                ->setSpanKind(SpanKind::KIND_INTERNAL)
-                ->startSpan();
+            if (!$received) {
+                // The consumer continues from this dispatch span.
+                $headers = [];
+                TraceContextPropagator::getInstance()->inject($headers);
 
-            $handleScope = $handleSpan->activate();
-
-            try {
-                $result = $stack->next()->handle($envelope, $stack);
-                $handleSpan->setStatus(StatusCode::STATUS_OK);
-            } catch (\Throwable $exception) {
-                $handleSpan->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
-                $handleSpan->recordException($exception);
-
-                throw $exception;
-            } finally {
-                $handleScope->detach();
-                $handleSpan->end();
+                if ([] !== $headers) {
+                    $envelope = $envelope->withoutAll(TraceContextStamp::class)->with(new TraceContextStamp($headers));
+                }
             }
 
-            $dispatchSpan->setStatus(StatusCode::STATUS_OK);
+            $result = $stack->next()->handle($envelope, $stack);
+            $span->setStatus(StatusCode::STATUS_OK);
 
             return $result;
         } catch (\Throwable $exception) {
-            $dispatchSpan->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
-            $dispatchSpan->recordException($exception);
+            $span->recordException($exception);
+            $span->setStatus(StatusCode::STATUS_ERROR, $exception->getMessage());
 
             throw $exception;
         } finally {
-            $dispatchScope->detach();
-            $dispatchSpan->end();
+            $scope->detach();
+            $span->end();
         }
     }
 
-    private function resolveMessageType(object $message): string
+    private static function messageType(object $message): string
     {
         return match (true) {
             $message instanceof Command => 'command',
@@ -90,10 +96,10 @@ final class OpenTelemetryMiddleware implements MiddlewareInterface
         };
     }
 
-    private function getShortClassName(string $fqcn): string
+    private static function shortClassName(string $fqcn): string
     {
-        $pos = strrpos($fqcn, '\\');
+        $position = strrpos($fqcn, '\\');
 
-        return false !== $pos ? substr($fqcn, $pos + 1) : $fqcn;
+        return false !== $position ? substr($fqcn, $position + 1) : $fqcn;
     }
 }

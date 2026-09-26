@@ -4,11 +4,14 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
+use Doctrine\DBAL\Connection;
+use Doctrine\ORM\Tools\ToolEvents;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -70,17 +73,24 @@ final class CqrsExtensionOutboxTest extends TestCase
         self::assertSame('somework_cqrs_outbox', $container->getParameter('somework_cqrs.outbox.table_name'));
     }
 
-    public function test_class_exists_guard_present_in_extension(): void
+    public function test_enabling_outbox_without_dbal_fails_with_a_clear_message(): void
     {
-        $reflector = new \ReflectionClass(CqrsExtension::class);
-        $source = file_get_contents((string) $reflector->getFileName());
-        self::assertIsString($source);
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('doctrine/dbal is not installed');
 
-        self::assertStringContainsString(
-            'class_exists(Connection::class)',
-            $source,
-            'CqrsExtension must guard OutboxRegistrar with class_exists(Connection::class)',
-        );
+        $container = new ContainerBuilder();
+        (new CqrsExtension(static fn (string $class): bool => Connection::class !== $class && class_exists($class)))
+            ->load([['outbox' => ['enabled' => true]]], $container);
+    }
+
+    public function test_schema_subscriber_is_skipped_without_doctrine_orm(): void
+    {
+        $container = new ContainerBuilder();
+        (new CqrsExtension(static fn (string $class): bool => ToolEvents::class !== $class && class_exists($class)))
+            ->load([['outbox' => ['enabled' => true]]], $container);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.storage'));
+        self::assertFalse($container->hasDefinition('somework_cqrs.outbox.schema_subscriber'));
     }
 
     public function test_default_table_name_is_somework_cqrs_outbox(): void
@@ -90,27 +100,19 @@ final class CqrsExtensionOutboxTest extends TestCase
         self::assertSame('somework_cqrs_outbox', $container->getParameter('somework_cqrs.outbox.table_name'));
     }
 
-    public function test_outbox_enabled_does_not_register_unrelated_services(): void
+    public function test_outbox_enabled_does_not_register_stamp_deciders(): void
     {
-        $container = $this->createContainer([
-            'outbox' => ['enabled' => true],
-        ]);
+        $withOutbox = $this->createContainer(['outbox' => ['enabled' => true]]);
+        $withoutOutbox = $this->createContainer();
 
-        // Outbox should not pollute stamp decider pipeline
-        $reflector = new \ReflectionClass(CqrsExtension::class);
-        $source = file_get_contents((string) $reflector->getFileName());
-        self::assertIsString($source);
-
-        // OutboxRegistrar is a separate registrar, not part of StampsDeciderRegistrar
-        self::assertStringContainsString('OutboxRegistrar', $source);
+        self::assertSame(
+            array_keys($withoutOutbox->findTaggedServiceIds('somework_cqrs.dispatch_stamp_decider')),
+            array_keys($withOutbox->findTaggedServiceIds('somework_cqrs.dispatch_stamp_decider')),
+        );
     }
 
     public function test_outbox_schema_subscriber_registered_when_orm_available(): void
     {
-        if (!class_exists(\Doctrine\ORM\Tools\ToolEvents::class)) {
-            self::markTestSkipped('doctrine/orm not installed');
-        }
-
         $container = $this->createContainer([
             'outbox' => ['enabled' => true],
         ]);

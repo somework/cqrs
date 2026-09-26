@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
+use Psr\Log\NullLogger;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AsyncProjectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
@@ -18,6 +19,8 @@ use Symfony\Component\DependencyInjection\Loader\Configurator\ContainerConfigura
 use Symfony\Component\HttpKernel\Kernel;
 use Symfony\Component\Routing\Loader\Configurator\RoutingConfigurator;
 
+use function dirname;
+
 final class TestKernel extends Kernel
 {
     use MicroKernelTrait;
@@ -30,6 +33,9 @@ final class TestKernel extends Kernel
 
     protected function configureContainer(ContainerConfigurator $container): void
     {
+        // Keep the test output free of the default stderr logger.
+        $container->services()->set('logger', NullLogger::class);
+
         $container->extension('framework', [
             'secret' => 'test-secret',
             'http_method_override' => false,
@@ -82,11 +88,11 @@ final class TestKernel extends Kernel
 
     public function getCacheDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle/cache/'.$this->environment;
+        return dirname(__DIR__, 3).'/var/cache/test_kernel/'.$this->environment;
     }
 
     public function getLogDir(): string
     {
-        return sys_get_temp_dir().'/cqrs_bundle/log';
+        return dirname(__DIR__, 3).'/var/log/test_kernel';
     }
 }

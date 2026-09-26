@@ -5,9 +5,15 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
+
+use function sprintf;
 
 #[CoversClass(Configuration::class)]
 final class ConfigurationTest extends TestCase
@@ -74,7 +80,7 @@ final class ConfigurationTest extends TestCase
 
     public function test_retry_strategy_transports_rejects_invalid_type(): void
     {
-        $this->expectException(\Symfony\Component\Config\Definition\Exception\InvalidConfigurationException::class);
+        $this->expectException(InvalidConfigurationException::class);
 
         $this->processConfiguration([
             'retry_strategy' => [
@@ -222,6 +228,87 @@ final class ConfigurationTest extends TestCase
         ]);
 
         self::assertSame('my_outbox', $config['outbox']['table_name']);
+    }
+
+    public function test_map_keys_drop_a_leading_backslash(): void
+    {
+        $config = $this->processConfiguration([
+            'retry_policies' => ['command' => ['map' => ['\\'.CreateTaskCommand::class => 'app.retry']]],
+            'transports' => ['event' => ['map' => ['\\'.Event::class => 'async']]],
+        ]);
+
+        self::assertSame([CreateTaskCommand::class => 'app.retry'], $config['retry_policies']['command']['map']);
+        self::assertSame([Event::class => ['async']], $config['transports']['event']['map']);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>, string}>
+     */
+    public static function unknownMapKeys(): iterable
+    {
+        $typo = 'App\\Command\\CreateTaks';
+
+        yield 'retry policy' => [['retry_policies' => ['command' => ['map' => [$typo => 'app.retry']]]], 'somework_cqrs.retry_policies.command.map'];
+        yield 'serializer' => [['serialization' => ['query' => ['map' => [$typo => 'app.serializer']]]], 'somework_cqrs.serialization.query.map'];
+        yield 'metadata' => [['metadata' => ['event' => ['map' => [$typo => 'app.metadata']]]], 'somework_cqrs.metadata.event.map'];
+        yield 'dispatch mode' => [['dispatch_modes' => ['command' => ['map' => [$typo => 'sync']]]], 'somework_cqrs.dispatch_modes.command.map'];
+        yield 'transport' => [['transports' => ['command' => ['map' => [$typo => 'async']]]], 'somework_cqrs.transports.command.map'];
+        yield 'dispatch after current bus' => [['async' => ['dispatch_after_current_bus' => ['event' => ['map' => [$typo => false]]]]], 'somework_cqrs.async.dispatch_after_current_bus.event.map'];
+        yield 'rate limiter' => [['rate_limiting' => ['query' => ['map' => [$typo => 'limiter']]]], 'somework_cqrs.rate_limiting.query.map'];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    #[DataProvider('unknownMapKeys')]
+    public function test_rejects_map_keys_that_are_not_classes_or_interfaces(array $config, string $path): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('Invalid configuration for path "%s": "App\\Command\\CreateTaks" is not an existing class or interface', $path));
+
+        $this->processConfiguration($config);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>}>
+     */
+    public static function invalidServiceIds(): iterable
+    {
+        yield 'empty default bus' => [['default_bus' => '']];
+        yield 'empty command bus' => [['buses' => ['command' => ' ']]];
+        yield 'boolean naming strategy' => [['naming' => ['default' => true]]];
+        yield 'empty retry policy' => [['retry_policies' => ['command' => ['default' => '']]]];
+        yield 'null retry map entry' => [['retry_policies' => ['command' => ['map' => [CreateTaskCommand::class => null]]]]];
+        yield 'empty serializer' => [['serialization' => ['default' => '']]];
+        yield 'integer metadata provider' => [['metadata' => ['command' => ['default' => 1]]]];
+        yield 'empty transport name' => [['transports' => ['command' => ['default' => ['']]]]];
+        yield 'empty rate limiter name' => [['rate_limiting' => ['command' => ['map' => [CreateTaskCommand::class => '']]]]];
+        yield 'empty causation bus' => [['causation_id' => ['buses' => ['']]]];
+        yield 'boolean outbox serializer' => [['outbox' => ['serializer' => true]]];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    #[DataProvider('invalidServiceIds')]
+    public function test_rejects_empty_or_non_string_service_ids(array $config): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+
+        $this->processConfiguration($config);
+    }
+
+    public function test_nullable_service_ids_accept_null(): void
+    {
+        $config = $this->processConfiguration([
+            'default_bus' => null,
+            'buses' => ['command_async' => null],
+            'naming' => ['command' => null],
+            'serialization' => ['command' => ['default' => null]],
+        ]);
+
+        self::assertNull($config['default_bus']);
+        self::assertNull($config['serialization']['command']['default']);
     }
 
     /**
