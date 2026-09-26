@@ -105,11 +105,18 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
                     throw new InvalidConfigurationException(sprintf('"%s" carries both #[Outbox] and #[Asynchronous]: keep one (#[Outbox] stores the message in the outbox, #[Asynchronous] sends it to a transport).', $messageClass));
                 }
                 $attribute = $outbox ?? $asynchronous;
-                $mode = null !== $outbox ? DispatchMode::OUTBOX : DispatchMode::ASYNC;
-                if (null === $attribute || self::isOverridden($container, $type, $messageClass, $mode)) {
+                // Only a synchronous dispatch ignores the attribute: its transport also applies when
+                // an exact "dispatch_modes" entry maps the message to the other of async and outbox.
+                $mapped = self::mappedMode($container, $type, $messageClass);
+                if (null === $attribute || DispatchMode::SYNC === $mapped) {
                     continue;
                 }
+                $mode = $mapped ?? (null !== $outbox ? DispatchMode::OUTBOX : DispatchMode::ASYNC);
                 $name = self::shortName($attribute->getName());
+                $carries = sprintf('carries #[%s]', $name);
+                if ((null !== $outbox ? DispatchMode::OUTBOX : DispatchMode::ASYNC) !== $mode) {
+                    $carries .= sprintf(' and "somework_cqrs.dispatch_modes.%s" maps it to "%s"', $type, $mode->value);
+                }
 
                 $transport = $attribute->newInstance()->transport;
 
@@ -119,35 +126,35 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
 
                 if (DispatchMode::OUTBOX === $mode) {
                     if (!$container->hasDefinition('somework_cqrs.outbox.writer')) {
-                        throw new InvalidConfigurationException(sprintf('"%s" carries #[Outbox], but the outbox is disabled: dispatching it would fail with OutboxNotConfiguredException. Enable "somework_cqrs.outbox".', $messageClass));
+                        throw new InvalidConfigurationException(sprintf('"%s" %s, but the outbox is disabled: dispatching it would fail with OutboxNotConfiguredException. Enable "somework_cqrs.outbox".', $messageClass, $carries));
                     }
                 } else {
                     $asyncBus = $container->hasParameter('somework_cqrs.bus.'.$type.'_async') ? $container->getParameter('somework_cqrs.bus.'.$type.'_async') : null;
                     if (!is_string($asyncBus) || '' === $asyncBus) {
-                        throw new InvalidConfigurationException(sprintf('"%s" carries #[Asynchronous], but "somework_cqrs.buses.%s_async" is not configured: dispatching it would fail with AsyncBusNotConfiguredException.', $messageClass, $type));
+                        throw new InvalidConfigurationException(sprintf('"%s" %s, but "somework_cqrs.buses.%s_async" is not configured: dispatching it would fail with AsyncBusNotConfiguredException.', $messageClass, $carries, $type));
                     }
                 }
 
                 if (null === $transport && !self::transportExists($container, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT) && !self::hasConfiguredTransport($container, $type, $messageClass) && !self::isRouted($container, $messageClass)) {
-                    throw new InvalidConfigurationException(sprintf('"%s" carries #[%s] without a transport, but there is no "%s" transport, no "somework_cqrs.transports.%s_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.', $messageClass, $name, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT, $type));
+                    throw new InvalidConfigurationException(sprintf('"%s" %s without a transport, but there is no "%s" transport, no "somework_cqrs.transports.%s_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.', $messageClass, $carries, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT, $type));
                 }
             }
         }
     }
 
     /**
-     * An exact "dispatch_modes" map entry for another mode wins over the attribute.
+     * The exact "dispatch_modes" map entry of the message, which wins over the attribute's mode.
      */
-    private static function isOverridden(ContainerBuilder $container, string $type, string $messageClass, DispatchMode $attributeMode): bool
+    private static function mappedMode(ContainerBuilder $container, string $type, string $messageClass): ?DispatchMode
     {
         if (!$container->hasDefinition('somework_cqrs.dispatch_mode_decider')) {
-            return false;
+            return null;
         }
 
         $map = $container->getDefinition('somework_cqrs.dispatch_mode_decider')->getArguments()['$'.$type.'Map'] ?? [];
         $mode = is_array($map) ? ($map[$messageClass] ?? null) : null;
 
-        return $mode instanceof DispatchMode && $attributeMode !== $mode;
+        return $mode instanceof DispatchMode ? $mode : null;
     }
 
     private static function shortName(string $class): string
