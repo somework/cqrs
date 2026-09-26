@@ -533,7 +533,23 @@ mode that `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEF
 with `assertDispatched()`, or test the resolution in a kernel test as below. The failure message
 lists each recorded dispatch with its mode.
 
-`OutboxWriter` has no fake: test the code that uses it against a real outbox table. In the
+Code that calls `OutboxWriter::store()` itself type-hints `Contract\Outbox\OutboxWriterInterface`
+(the container autowires it to the writer), and unit tests pass a `Testing\FakeOutboxWriter`.
+It records each stored message with `DispatchMode::OUTBOX` (and the transport given to `store()`
+as a `TransportNamesStamp`), so the outbox assertions work on it too:
+
+```php
+$writer = new FakeOutboxWriter();
+(new ExportOrderHandler($writer))(new ExportOrder('order-1'));
+
+self::assertStoredInOutbox($writer, OrderExported::class, static fn (OrderExported $event): bool => 'order-1' === $event->orderId);
+```
+
+`getStoredRows()` returns the rows `store()` returned (encoded with PHP's serializer), and
+`willThrow()` makes `store()` fail, e.g. with `OutboxRequiresTransactionException`. The fake does
+not resolve the configured transports and checks no transaction.
+
+To test the outbox itself, run the code against a real outbox table. In the
 `test` environment, point the outbox at a connection of its own (an SQLite file or in-memory
 database is enough) and create the table before the code under test opens its transaction (the
 automatic setup never runs inside one). Then read the stored rows through the `OutboxStorage`

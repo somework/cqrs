@@ -48,6 +48,7 @@ use Symfony\Component\Messenger\Transport\Sender\SenderInterface;
 use Symfony\Component\Messenger\Transport\Sender\SendersLocator;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
+use Symfony\Contracts\Service\ResetInterface;
 
 use function addslashes;
 use function array_map;
@@ -1126,6 +1127,76 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertSame(4, $sent);
         self::assertLessThan(4, $store->refreshes);
         self::assertGreaterThan(0, $store->refreshes);
+    }
+
+    public function test_watch_relays_messages_as_they_arrive_until_the_time_limit(): void
+    {
+        $this->store(new CreateTaskCommand('1', 'first'), 'async');
+        $time = 1_000.0;
+        $sleeps = 0;
+        $resetter = new class implements ResetInterface {
+            public int $resets = 0;
+
+            public function reset(): void
+            {
+                ++$this->resets;
+            }
+        };
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, clock: static function () use (&$time): float {
+            return $time;
+        }, resetter: $resetter, sleep: function (float $seconds) use (&$time, &$sleeps): void {
+            // A message arrives while the relay waits.
+            if (0 === $sleeps++) {
+                $this->store(new CreateTaskCommand('2', 'second'), 'async');
+            }
+            $time += $seconds;
+        });
+
+        $tester = new CommandTester($command);
+        $tester->execute(['--watch' => true, '--sleep' => '1', '--time-limit' => '3']);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Stopped: the time limit was reached.', self::display($tester));
+        self::assertSame(['1', '2'], array_map(static fn (Envelope $envelope): string => self::taskId($envelope), $this->async->getSent()));
+        self::assertSame(2, $resetter->resets, 'The services are reset after each run that processed messages.');
+        self::assertTrue($this->locks->createLock('somework:cqrs:outbox:relay')->acquire(), 'The lock is released when watching stops.');
+    }
+
+    public function test_watch_stops_on_a_signal_while_it_waits(): void
+    {
+        $command = null;
+        $command = new OutboxRelayCommand($this->storage, new PhpSerializer(), $this->bus(), $this->locks, sleep: static function () use (&$command): void {
+            self::assertInstanceOf(OutboxRelayCommand::class, $command);
+            $command->handleSignal(SIGTERM);
+        });
+
+        $tester = new CommandTester($command);
+        $tester->execute(['--watch' => true]);
+
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
+        self::assertStringContainsString('Stopped by signal '.SIGTERM.'.', self::display($tester));
+    }
+
+    /**
+     * @param array<string, string> $input
+     */
+    #[DataProvider('invalidWatchOptions')]
+    public function test_rejects_invalid_watch_options(array $input, string $error): void
+    {
+        $tester = $this->execute($input);
+
+        self::assertSame(Command::INVALID, $tester->getStatusCode());
+        self::assertStringContainsString($error, self::display($tester));
+    }
+
+    /**
+     * @return iterable<string, array{array<string, string>, string}>
+     */
+    public static function invalidWatchOptions(): iterable
+    {
+        yield 'time limit without watch' => [['--time-limit' => '5'], '--time-limit only applies with --watch.'];
+        yield 'zero sleep' => [['--watch' => '1', '--sleep' => '0'], '--sleep must be a positive number of seconds'];
+        yield 'negative time limit' => [['--watch' => '1', '--time-limit' => '-1'], '--time-limit a positive integer'];
     }
 
     private function store(object $message, ?string $transportName = null): OutboxMessage

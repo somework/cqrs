@@ -71,8 +71,10 @@ is set`: remove that section, or install the ORM (`composer require symfony/orm-
 3. Inside your transaction, dispatch the messages through the outbox (see
    [Through the buses](#through-the-buses)), or store them with `OutboxWriter::store()` (see
    [Writing to the outbox](#writing-to-the-outbox)).
-4. Run `bin/console somework:cqrs:outbox:relay` every minute (see [Relaying](#relaying)) and
-   purge published rows every night (see [Purging published rows](#purging-published-rows)).
+4. Run `bin/console somework:cqrs:outbox:relay` every minute, or keep it running with `--watch`
+   (see [Relaying](#relaying)), and purge published rows every night (see
+   [Purging published rows](#purging-published-rows)). In development, see
+   [Development](#development).
 5. Watch `bin/console somework:cqrs:health` (see [Monitoring](#monitoring)).
 
 The rest of this page explains each step and the cases operations need to know.
@@ -97,6 +99,7 @@ somework_cqrs:
 | `table_name` | `somework_cqrs_outbox` | Name of the outbox table: letters, digits and underscores, optionally `schema.table` (on MySQL and MariaDB `database.table`: without a database selected on the connection, its `dbname`, the automatic setup is skipped, and the Doctrine schema listener only adds a table of the connection's database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as `order` or `user`) is a configuration error, because the queries do not quote the name. |
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
+| `relay_on_terminate` | `false` | For development: runs the relay right after a request, a console command or a message a worker handled that stored messages in the outbox. See [Development](#development). A plain boolean (it decides which services exist). |
 | `require_transaction` | `true` | Refuses to store a message outside a transaction on the outbox connection (`OutboxRequiresTransactionException`): the message would not be part of the business change. Checked by storages that implement `TransactionalOutbox` (`DbalOutboxStorage` does). |
 | `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
 | `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See [Failures](#failures). |
@@ -234,7 +237,8 @@ the outbox are stored in it without an explicit `transactional()`.
 
 `OutboxWriter` stores a message without the stamp pipeline and the middleware of the buses (no
 validation or authorization when it is stored): use it for messages that are not commands or
-events, or to choose every stamp yourself. Inject it and call `store()` inside your transaction:
+events, or to choose every stamp yourself. Inject it (type-hint `OutboxWriterInterface`, which
+`Testing\FakeOutboxWriter` replaces in unit tests) and call `store()` inside your transaction:
 
 ```php
 <?php
@@ -246,14 +250,14 @@ namespace App\Application\Command;
 use App\Application\Event\OrderPlaced;
 use Doctrine\DBAL\Connection;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
-use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 
 #[AsCommandHandler(command: PlaceOrder::class)]
 final class PlaceOrderHandler
 {
     public function __construct(
         private readonly Connection $connection,
-        private readonly OutboxWriter $outbox,
+        private readonly OutboxWriterInterface $outbox,
     ) {
     }
 
@@ -497,11 +501,15 @@ statements above.
 ```bash
 bin/console somework:cqrs:outbox:relay            # up to 100 messages
 bin/console somework:cqrs:outbox:relay --limit=500
+bin/console somework:cqrs:outbox:relay --watch    # keeps relaying until stopped
 ```
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--limit`, `-l` | `100` | Maximum number of rows to process (relay or fail) in this run (positive integer). |
+| `--limit`, `-l` | `100` | Maximum number of rows to process (relay or fail) in this run, or in each run with `--watch` (positive integer). |
+| `--watch`, `-w` | off | Keeps relaying, like `messenger:consume`: runs again at once after a full run, and waits `--sleep` seconds when no row was due. Stops after the current row on `SIGTERM` or `SIGINT` (exit code 0), or at `--time-limit`. It holds the relay lock the whole time, and resets the application's services (`services_resetter`) after each run that processed rows, as Messenger's workers do between messages. |
+| `--sleep` | `1` | Seconds to wait before looking again when no row was due (with `--watch`). |
+| `--time-limit` | none | Stops watching after this many seconds (with `--watch`), e.g. to let a process manager restart it. |
 
 The relay fetches up to 50 due rows at a time and:
 
@@ -657,6 +665,54 @@ example from cron:
 ```bash
 * * * * * /path/to/project/bin/console somework:cqrs:outbox:relay --limit=500
 ```
+
+or keep it running under a process manager, like a Messenger worker; messages then leave the
+outbox within `--sleep` seconds instead of up to a minute:
+
+```ini
+; supervisor
+[program:outbox-relay]
+command=php /path/to/project/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
+autorestart=true
+stopsignal=TERM
+```
+
+A second relay, from cron or a second process, finds the lock taken and exits at once.
+
+## Development
+
+In production the relay runs on a schedule or with `--watch`, so a stored message waits until
+the next run. In development there usually is no such process: a message dispatched through the
+outbox then only sits in the table, and with a `sync://` transport its handlers do not run
+until someone runs the relay. They run in the relay's process, not in the request.
+
+Two ways to see the messages handled while developing:
+
+- **Relay on terminate** (recommended). The relay runs right after each request, console command
+  or worker message that stored messages in the outbox, once its transaction is committed
+  (`kernel.terminate`, `console.terminate`, and Messenger's worker events). The messages take the
+  real path through the outbox table; with `sync://` they are handled at once, in the same PHP
+  process, after the response was sent. Messages that their handlers store in turn are relayed
+  in the same way.
+
+  ```yaml
+  # config/packages/somework_cqrs.yaml
+  when@dev:
+      somework_cqrs:
+          outbox:
+              relay_on_terminate: true
+  ```
+
+  Errors of the relay are logged; the request is already answered. When a relay with `--watch`
+  runs, it holds the lock and relays the messages itself.
+- **A watching relay.** Keep `bin/console somework:cqrs:outbox:relay --watch` running in a
+  terminal (or in `docker compose`, next to `messenger:consume`).
+
+Keep `require_transaction` on in development too: it catches the dispatches outside a
+transaction that production would refuse. The outbox cannot be switched off per environment for
+messages with `#[Outbox]` (the build fails without it); use `relay_on_terminate` instead. In
+tests, the fake buses and `Testing\FakeOutboxWriter` replace the outbox (see
+[Testing](testing.md#code-that-stores-messages-in-the-outbox)).
 
 ## Failures
 

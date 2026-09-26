@@ -81,7 +81,8 @@ final class OutboxTestKernel extends Kernel
             'dispatch_modes' => [
                 'command' => ['map' => [ArchiveTaskCommand::class => 'outbox']],
             ],
-            'outbox' => ['enabled' => true, 'auto_setup' => false, 'max_attempts' => 2],
+            // The "relay_on_terminate" environment relays after each request, command or worker message.
+            'outbox' => ['enabled' => true, 'auto_setup' => false, 'max_attempts' => 2, 'relay_on_terminate' => 'relay_on_terminate' === $this->environment],
         ]);
 
         $services = $container->services()

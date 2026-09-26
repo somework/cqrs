@@ -9,15 +9,18 @@ use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Outbox\Signing\SigningOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -32,9 +35,9 @@ use function trim;
 final class OutboxRegistrar
 {
     /**
-     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, require_transaction?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
-     * @param bool                                                                                                                                                                                                                                                                                                   $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
-     * @param array<string, string|null>                                                                                                                                                                                                                                                                             $buses               The "somework_cqrs.buses" configuration
+     * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, relay_on_terminate?: bool, require_transaction?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
+     * @param bool                                                                                                                                                                                                                                                                                                                              $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
+     * @param array<string, string|null>                                                                                                                                                                                                                                                                                                        $buses               The "somework_cqrs.buses" configuration
      */
     public function register(ContainerBuilder $container, array $config, bool $schemaToolAvailable = false, array $buses = [], string $defaultBusId = 'messenger.default_bus', ?ContainerHelper $helper = null): void
     {
@@ -108,6 +111,7 @@ final class OutboxRegistrar
         $writerDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.writer', $writerDef);
         $container->setAlias(OutboxWriter::class, 'somework_cqrs.outbox.writer')->setPublic(false);
+        $container->setAlias(OutboxWriterInterface::class, 'somework_cqrs.outbox.writer')->setPublic(false);
 
         $relayDef = new Definition(OutboxRelayCommand::class);
         $relayDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
@@ -129,9 +133,20 @@ final class OutboxRegistrar
         $relayDef->setArgument('$transports', new Reference('messenger.receiver_locator', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $relayDef->setArgument('$signer', $signer);
         $relayDef->setArgument('$acceptUnsigned', $signing['accept_unsigned']);
+        // --watch resets the services between runs, as Messenger's workers do between messages.
+        $relayDef->setArgument('$resetter', new Reference('services_resetter', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $relayDef->addTag('console.command');
         $relayDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.relay_command', $relayDef);
+
+        if (true === ($config['relay_on_terminate'] ?? false)) {
+            $container->setDefinition('somework_cqrs.outbox.relay_on_terminate', (new Definition(RelayOnTerminateSubscriber::class))
+                ->setArgument('$relayCommand', new ServiceClosureArgument(new Reference('somework_cqrs.outbox.relay_command')))
+                ->setArgument('$logger', new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE))
+                ->addTag('kernel.event_subscriber')
+                ->setPublic(false));
+            $writerDef->setArgument('$afterStore', new Reference('somework_cqrs.outbox.relay_on_terminate'));
+        }
 
         $setupDef = new Definition(OutboxSetupCommand::class);
         $setupDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));

@@ -338,6 +338,8 @@ final class Configuration implements ConfigurationInterface
             ->info('Messenger serializer service id used by OutboxMessage::fromEnvelope() callers and by the relay to decode messages.'));
         $outboxChildren->booleanNode('auto_setup')->defaultTrue()
             ->info('Create the outbox table, or add missing columns, on first use (never inside an open transaction). Disable when the table is managed by migrations.');
+        $outboxChildren->booleanNode('relay_on_terminate')->defaultFalse()
+            ->info('For development: run the relay right after a request, a console command or a worker message that stored messages in the outbox (with a sync:// transport, they are then handled at once). Leave it off in production and run "somework:cqrs:outbox:relay" on a schedule or with --watch.');
         $outboxChildren->booleanNode('require_transaction')->defaultTrue()
             ->info('Refuse to store a message outside a transaction on the outbox connection (OutboxWriter and DispatchMode::OUTBOX): it would not be part of the business change.');
         // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.

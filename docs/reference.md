@@ -696,6 +696,7 @@ somework_cqrs:
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
+| `relay_on_terminate` | `false` | boolean, for development: runs the relay after each request, console command or worker message that stored messages in the outbox (a plain boolean, not an `%env()%` value) |
 | `require_transaction` | `true` | boolean: `OutboxWriter` and `DispatchMode::OUTBOX` refuse to store outside a transaction on the outbox connection (`OutboxRequiresTransactionException`); checked with storages that implement `TransactionalOutbox` |
 | `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
 | `signing.enabled` | `true` | boolean (no environment variables): sign stored rows and verify them before the relay decodes them |

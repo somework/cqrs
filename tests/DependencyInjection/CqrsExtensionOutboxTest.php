@@ -8,10 +8,12 @@ use Doctrine\DBAL\Connection;
 use Doctrine\ORM\Tools\ToolEvents;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
+use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use SomeWork\CqrsBundle\Tests\Fixture\Outbox\InMemoryOutboxStorage;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
@@ -202,6 +204,20 @@ final class CqrsExtensionOutboxTest extends TestCase
     {
         self::assertSame(10, $this->createContainer(['outbox' => ['enabled' => true]])->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$maxAttempts'));
         self::assertSame(3, $this->createContainer(['outbox' => ['enabled' => true, 'max_attempts' => 3]])->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$maxAttempts'));
+    }
+
+    public function test_relay_on_terminate_registers_the_subscriber_the_writer_notifies(): void
+    {
+        $off = $this->createContainer(['outbox' => ['enabled' => true]]);
+        self::assertFalse($off->hasDefinition('somework_cqrs.outbox.relay_on_terminate'));
+        self::assertArrayNotHasKey('$afterStore', $off->getDefinition('somework_cqrs.outbox.writer')->getArguments());
+
+        $on = $this->createContainer(['outbox' => ['enabled' => true, 'relay_on_terminate' => true]]);
+        $subscriber = $on->getDefinition('somework_cqrs.outbox.relay_on_terminate');
+        self::assertSame(RelayOnTerminateSubscriber::class, $subscriber->getClass());
+        self::assertTrue($subscriber->hasTag('kernel.event_subscriber'));
+        self::assertSame('somework_cqrs.outbox.relay_on_terminate', (string) $on->getDefinition('somework_cqrs.outbox.writer')->getArgument('$afterStore'));
+        self::assertSame('somework_cqrs.outbox.writer', (string) $on->getAlias(OutboxWriterInterface::class));
     }
 
     public function test_max_attempts_below_one_is_rejected(): void
