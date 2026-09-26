@@ -154,7 +154,7 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
     public function test_the_credentials_of_the_lock_store_are_not_logged(): void
     {
         $container = $this->enabledContainer();
-        $container->setParameter('env(CQRS_TEST_LOCK_DSN)', 'postgresql+advisory://app:s3cret@db:5432/app?sslpassword=s3cret&password=s3cret');
+        $container->setParameter('env(CQRS_TEST_LOCK_DSN)', 'postgresql+advisory://app:s3cret@s3cret@db:5432/app?sslpassword=s3cret&password=s3cret');
         $placeholder = $container->getParameterBag()->resolveValue('%env(CQRS_TEST_LOCK_DSN)%');
         self::assertIsString($placeholder);
         $container = $this->containerWithLockStore($placeholder, $container);

@@ -95,7 +95,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
      */
     private static function withoutCredentials(string $dsn): string
     {
-        $dsn = (string) preg_replace('#(://)[^/@\s]*@#', '$1***@', $dsn);
+        // Up to the last "@" of the authority: a password may contain "@".
+        $dsn = (string) preg_replace('#(://)[^/?\#\s]*@#', '$1***@', $dsn);
 
         return (string) preg_replace('#((?:^|[?&;:])[\w.-]*(?:password|passwd|pass|pwd|secret|token)=)[^&;\s]*#i', '$1***', $dsn);
     }
