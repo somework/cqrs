@@ -192,8 +192,8 @@ final class TaskCreatedEventTest extends TestCase
 - `assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 - `assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 - `assertStoredInOutbox()` and `assertNotStoredInOutbox()`, with the same parameters: they only
-  match dispatches recorded with `DispatchMode::OUTBOX` (see
-  [Code that stores messages in the outbox](#code-that-stores-messages-in-the-outbox)).
+  match dispatches with `DispatchMode::OUTBOX`, or with the default mode of a class carrying
+  `#[Outbox]` (see [Code that stores messages in the outbox](#code-that-stores-messages-in-the-outbox)).
 
 Their parameters work as follows:
 
@@ -510,19 +510,26 @@ the `messenger:consume async --limit=1 --time-limit=5` command through `CommandT
 
 ## Code that stores messages in the outbox
 
-Code that stores messages through the buses (`dispatch($message, DispatchMode::OUTBOX)`) is tested
-with the fake buses, which record the mode:
+Code that stores messages through the buses is tested with the fake buses. For the
+`PlaceOrderHandler` of [Through the buses](outbox.md#through-the-buses), which dispatches the
+`#[Outbox]` event `OrderPlaced` with the default mode:
 
 ```php
+$connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+$connection->executeStatement('CREATE TABLE orders (id VARCHAR(36) NOT NULL)');
 $eventBus = new FakeEventBus();
+
 (new PlaceOrderHandler($connection, $eventBus))(new PlaceOrder('order-1'));
 
 self::assertStoredInOutbox($eventBus, OrderPlaced::class, static fn (OrderPlaced $event): bool => 'order-1' === $event->orderId);
 ```
 
-A fake bus does not resolve the configuration: a `dispatch()` with the default mode that
-`#[Outbox]` or `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEFAULT`, so
-check it with `assertDispatched()`, or test the resolution in a kernel test as below.
+The assertion matches a dispatch with `DispatchMode::OUTBOX`, or with the default mode of a
+class carrying `#[Outbox]`, and the fakes return an envelope with an `OutboxStoredStamp` (with a
+generated id) for it. A fake bus does not know the configuration: a `dispatch()` with the default
+mode that `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEFAULT`, so check it
+with `assertDispatched()`, or test the resolution in a kernel test as below. The failure message
+lists each recorded dispatch with its mode.
 
 `OutboxWriter` has no fake: test the code that uses it against a real outbox table. In the
 `test` environment, point the outbox at a connection of its own (an SQLite file or in-memory

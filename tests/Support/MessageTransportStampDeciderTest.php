@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
@@ -234,6 +235,23 @@ final class MessageTransportStampDeciderTest extends TestCase
 
         self::assertCount(1, $warnings);
         self::assertStringContainsString('is dispatched asynchronously, but no transport is configured for it', $warnings[0][0]);
+        self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
+    }
+
+    public function test_warns_that_the_relay_handles_an_outbox_dispatch_without_a_transport(): void
+    {
+        $warnings = [];
+        $logger = $this->createMock(LoggerInterface::class);
+        $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
+            $warnings[] = [$message, $context];
+        });
+        $decider = new MessageTransportStampDecider(new TransportResolverMap(), new TransportResolverMap(), new TransportResolverMap(), [], $logger);
+        $store = new StoreInOutboxStamp();
+
+        self::assertSame([$store], $decider->decide(new TaskCreatedEvent('1'), DispatchMode::ASYNC, [$store]));
+
+        self::assertCount(1, $warnings);
+        self::assertStringContainsString('is stored in the outbox without a transport, so the relay will handle it synchronously in its own process', $warnings[0][0]);
         self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
     }
 

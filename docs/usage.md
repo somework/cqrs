@@ -644,8 +644,11 @@ Events dispatched without any registered handler do not throw an exception
 
     For events that must not be lost, store them in the
     [transactional outbox](outbox.md#through-the-buses) in the same transaction instead:
-    mark the event class `#[Outbox]` (or map it to `outbox` in `dispatch_modes`), and the
-    `dispatch()` above stores it in the handler's transaction. With a
+    enable the outbox, mark the event class `#[Outbox]` (or map it to `outbox` in
+    `dispatch_modes`), and run the handler's database work in a transaction on the outbox
+    connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+    middleware): the `dispatch()` above then stores the event in that transaction (outside
+    one, it throws `OutboxRequiresTransactionException`). With a
     Doctrine transport on the connection of your business data, disabling
     `dispatch_after_current_bus` for those events also makes the send part of the transaction
     (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).

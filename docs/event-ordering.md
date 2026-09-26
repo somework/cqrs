@@ -127,8 +127,9 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
   enforce processing order. Consumers are responsible for detecting gaps or
   reordering.
 
-- **Not through the outbox.** A message stored with `OutboxWriter` does not run the stamp
-  pipeline: pass an `AggregateSequenceStamp` to `store()` yourself.
+- **Not with `OutboxWriter`.** A message stored with `OutboxWriter::store()` does not run the
+  stamp pipeline: pass an `AggregateSequenceStamp` to `store()` yourself. A dispatch through the
+  [outbox](outbox.md#through-the-buses) with the buses gets the stamp as usual.
 
 - **Events only.** SequenceStampDecider only processes Event-type messages. Commands
   and queries are not affected.

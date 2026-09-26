@@ -201,12 +201,14 @@ somework_cqrs:
 
 ## Limitations
 
-- **Dispatch-side only.** The conversion happens in the stamp pipeline of the CQRS buses.
-  Messages dispatched directly on a Messenger bus, and messages relayed from the
-  [transactional outbox](outbox.md), are not converted. Worker redeliveries are not checked
-  again either. A `DeduplicateStamp` stored with `OutboxWriter` gets a key scoped to the
-  row's transport (`<key>@<transport>`), so it does not deduplicate against the same key
-  dispatched directly on a bus.
+- **Dispatch-side only.** The conversion happens in the stamp pipeline of the CQRS buses,
+  also for a dispatch through the [outbox](outbox.md#through-the-buses), where it happens when
+  the message is stored. Messages dispatched directly on a Messenger bus, and messages stored
+  with `OutboxWriter::store()`, are not converted, and the relay does not convert the rows it
+  sends. Worker redeliveries are not checked again either. A `DeduplicateStamp` stored in the
+  outbox (through the buses or with `OutboxWriter`) gets a key scoped to the row's transport
+  (`<key>@<transport>`), so it does not deduplicate against the same key dispatched directly
+  on a bus.
 - **Time-bounded.** Deduplication lasts as long as the lock (see [Lock lifetime](#lock-lifetime)).
   It is not a permanent record of processed operations.
 - **Only as reliable as the lock store.** The local stores (flock, semaphore, in-memory) do

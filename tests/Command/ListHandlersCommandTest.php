@@ -487,6 +487,30 @@ final class ListHandlersCommandTest extends TestCase
         ]);
     }
 
+    public function test_details_option_shows_that_an_outbox_dispatch_is_not_deferred(): void
+    {
+        $registry = $this->createRegistry([
+            'command' => [[
+                'type' => 'command',
+                'message' => TestAsyncCommand::class,
+                'handler_class' => TestAsyncCommandHandler::class,
+                'service_id' => 'app.command.async_handler',
+                'bus' => 'messenger.bus.commands',
+            ]],
+            'query' => [],
+            'event' => [],
+        ], ['command' => 'Command label']);
+
+        // Stored right away in the current transaction, although asynchronous dispatches are deferred.
+        $tester = new CommandTester($this->createCommand($registry, new DispatchModeDecider(DispatchMode::SYNC, DispatchMode::SYNC, [TestAsyncCommand::class => DispatchMode::OUTBOX])));
+        $tester->execute(['--details' => true]);
+
+        $this->assertTableContainsRows($tester->getDisplay(), 'app.command.async_handler', [
+            ['Dispatch Mode', 'outbox'],
+            ['Async Defers', 'no (stored in the outbox)'],
+        ]);
+    }
+
     /**
      * @param array<string, list<array<string, mixed>>> $metadata
      * @param array<string, string>                     $labels

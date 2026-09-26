@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Stamp\StoreInOutboxStamp;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -82,6 +83,14 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             // that silently runs in the calling process is almost always a missing transport. (Warned
             // here, before the dispatch: inside a handler it is deferred until the handler finished.)
             if (DispatchMode::ASYNC === $mode && ($message instanceof Command || $message instanceof Event) && !$this->isRouted($message)) {
+                if (self::storesInOutbox($stamps)) {
+                    $this->logger?->warning('{message} is stored in the outbox without a transport, so the relay will handle it synchronously in its own process. Set "somework_cqrs.transports.{type}_async", #[Outbox(transport: ...)] or framework.messenger.routing.', [
+                        'message' => $message::class,
+                        'type' => $message instanceof Event ? 'event' : 'command',
+                    ]);
+
+                    return $stamps;
+                }
                 $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
                     'message' => $message::class,
                     'type' => $message instanceof Event ? 'event' : 'command',
@@ -94,6 +103,20 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         $stamps[] = new TransportNamesStamp($transports);
 
         return $stamps;
+    }
+
+    /**
+     * @param array<int, StampInterface> $stamps
+     */
+    private static function storesInOutbox(array $stamps): bool
+    {
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof StoreInOutboxStamp) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

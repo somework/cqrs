@@ -15,10 +15,12 @@ use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\OutboxTestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -102,6 +104,30 @@ final class OutboxDispatchKernelTest extends KernelTestCase
         }
 
         self::assertSame([], $this->storage()->fetchUnpublished(10));
+    }
+
+    public function test_the_middleware_of_the_bus_runs_when_the_message_is_stored(): void
+    {
+        $middleware = self::getContainer()->get(CallerContextMiddleware::class);
+        self::assertInstanceOf(CallerContextMiddleware::class, $middleware);
+
+        // A rejected message (the validation middleware) is not stored: the transaction rolls back.
+        try {
+            $this->connection()->transactional(fn () => $this->eventBus()->dispatch(new TaskArchivedEvent('invalid')));
+            self::fail('The middleware should have rejected the event.');
+        } catch (\InvalidArgumentException) {
+        }
+        self::assertSame([], $this->storage()->fetchUnpublished(10));
+
+        // The context of the dispatching process is stamped when it is stored, not when it is relayed.
+        $middleware->context = 'caller';
+        $this->connection()->transactional(fn () => $this->eventBus()->dispatch(new TaskArchivedEvent('task-7')));
+        $middleware->context = 'relay';
+        self::assertSame(Command::SUCCESS, $this->console('somework:cqrs:outbox:relay')->getStatusCode());
+
+        $sent = $this->transport()->getSent();
+        self::assertCount(1, $sent);
+        self::assertSame('caller', $sent[0]->last(DummyStamp::class)?->name);
     }
 
     public function test_the_synchronous_and_asynchronous_dispatch_methods_bypass_the_outbox(): void

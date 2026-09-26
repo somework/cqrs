@@ -73,7 +73,11 @@ rejects the new options.
    - events implementing `SequenceAware`, which need `getAggregateType()` ([Event ordering](#event-ordering));
    - custom `OutboxStorage` implementations and decorators, and imports of `Contract\OutboxStorage` (now
      `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
-   - tests that read `getDispatched()` of the fake buses as arrays.
+   - tests that read `getDispatched()` of the fake buses as arrays;
+   - a `match` over `DispatchMode` without a `default` arm, which needs the new `OUTBOX` case
+     ([Dispatch through the outbox](#dispatch-through-the-outbox));
+   - `OutboxWriter::store()` calls outside a transaction on the outbox connection, which now throw
+     ([Dispatch through the outbox](#dispatch-through-the-outbox)).
 2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
    deleted classes or of another message type, `#[Asynchronous]` on queries, and `%env()%` values in
    compile-time options
@@ -306,12 +310,21 @@ correlation id and names the handled message as its cause.
 
 ### Dispatch through the outbox
 
-- `DispatchMode` has a new case, `OUTBOX`. A `match` over `DispatchMode` without a `default` arm, and a
-  `StampDecider`, `RetryPolicy`, `MessageSerializer` or `MessageMetadataProvider` of yours that compares the mode,
-  need to handle it. The stamp pipeline itself never sees `OUTBOX`: a message dispatched through the outbox has
-  its stamps decided as an `ASYNC` dispatch.
-- `OutboxWriter::store()` refuses to store outside a transaction on the outbox connection
-  (`OutboxRequiresTransactionException`) unless `outbox.require_transaction: false` is set.
+- **Breaking:** `DispatchMode` has a new case, `OUTBOX`. A `match` over `DispatchMode` without a `default` arm
+  fails with `UnhandledMatchError` when it meets it: in bus decorators or wrappers implementing
+  `CommandBusInterface`/`EventBusInterface`, and in tests reading `RecordedDispatch::$mode` of the fake buses.
+  Stamp deciders, retry policies, serializers and metadata providers never see it: a message dispatched through
+  the outbox has its stamps decided as an `ASYNC` dispatch, so they cannot tell the two apart.
+- **Breaking:** `OutboxWriter::store()` refuses to store outside a transaction on the outbox connection
+  (`OutboxRequiresTransactionException`) unless `outbox.require_transaction: false` is set. A connection with
+  `auto_commit: false` counts as being in a transaction.
+- `OutboxWriter::store()` refuses a transport that is not a Messenger transport (`UnknownOutboxTransportException`)
+  instead of storing a row the relay gives up on.
+- With the outbox enabled, the bundle's outbox middleware sits right before Messenger's `send_message` on the CQRS
+  buses. It only acts on messages dispatched through the outbox; the middleware before it runs when they are
+  stored, and again when the relay sends them.
+- With the outbox enabled, `transports.command_async`/`event_async` no longer require an async bus: the outbox
+  stores its rows for them.
 
 ### Event ordering
 

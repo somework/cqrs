@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Testing\Constraint;
 
 use PHPUnit\Framework\Constraint\Constraint;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Testing\FakeOutbox;
 use SomeWork\CqrsBundle\Testing\RecordedDispatch;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
 
@@ -23,7 +24,8 @@ final class DispatchedMessage extends Constraint
     private readonly ?\Closure $callback;
 
     /**
-     * @param DispatchMode|null $mode Only dispatches requested with this mode (e.g. DispatchMode::OUTBOX)
+     * @param DispatchMode|null $mode Only dispatches requested with this mode (e.g. DispatchMode::OUTBOX; a
+     *                                DispatchMode::DEFAULT dispatch of a class carrying #[Outbox] counts as OUTBOX)
      */
     public function __construct(
         private readonly string $expectedClass,
@@ -53,7 +55,7 @@ final class DispatchedMessage extends Constraint
         }
 
         foreach ($other->getDispatched() as $record) {
-            if (!$record->message instanceof $this->expectedClass || (null !== $this->mode && $this->mode !== $record->mode)) {
+            if (!$record->message instanceof $this->expectedClass || (null !== $this->mode && $this->mode !== self::modeOf($record))) {
                 continue;
             }
 
@@ -94,10 +96,21 @@ final class DispatchedMessage extends Constraint
         }
 
         $classes = array_unique(array_map(
-            static fn (RecordedDispatch $record): string => $record->message::class,
+            static fn (RecordedDispatch $record): string => null === $record->mode ? $record->message::class : $record->message::class.' (DispatchMode::'.$record->mode->name.')',
             $dispatched,
         ));
 
         return 'Actually dispatched: '.implode(', ', $classes);
+    }
+
+    /**
+     * A DEFAULT dispatch of a class carrying #[Outbox] goes to the outbox ("dispatch_modes" is not
+     * known here).
+     *
+     * @param RecordedDispatch<object> $record
+     */
+    private static function modeOf(RecordedDispatch $record): ?DispatchMode
+    {
+        return FakeOutbox::isOutboxDispatch($record->message, $record->mode) ? DispatchMode::OUTBOX : $record->mode;
     }
 }

@@ -563,7 +563,8 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
 
     public function isInTransaction(): bool
     {
-        return $this->connection->isTransactionActive();
+        // With auto-commit off, DBAL opens a transaction when it connects: every statement is in one.
+        return !$this->connection->isAutoCommit() || $this->connection->isTransactionActive();
     }
 
     public function fetchFailed(int $limit, array $ids = []): array

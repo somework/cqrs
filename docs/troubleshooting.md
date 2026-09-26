@@ -208,9 +208,11 @@ somework_cqrs:
 ```
 
 (`#[Asynchronous(transport: 'x')]` with an unknown transport, or a missing
-`buses.command_async` / `buses.event_async`, fail the same way.) Messages
-without a handler in the application are not checked; dispatching them fails
-with `Invalid senders configuration: sender "async" is not in the senders locator.`
+`buses.command_async` / `buses.event_async`, fail the same way, and so does
+`#[Outbox]` without a transport or without the outbox.) Messages without a
+handler in the application are not checked; dispatching them fails with
+`Invalid senders configuration: sender "async" is not in the senders locator.`,
+or, for `#[Outbox]`, with `UnknownOutboxTransportException` (see below).
 
 **Cause.** `#[Asynchronous]` without an argument sends the message to a
 transport named `async` when nothing else chooses a transport, and there is no
@@ -422,6 +424,52 @@ several databases a `CREATE TABLE` commits or aborts the open transaction.
 
 **Fix.** Run `bin/console somework:cqrs:outbox:setup` during deployment, or add
 the table with a Doctrine migration (and set `outbox.auto_setup: false`).
+
+### `OutboxRequiresTransactionException`
+
+**Symptom.**
+
+```
+Message "App\Domain\OrderPlaced" was not stored in the outbox: no transaction is open on the outbox connection ("somework_cqrs.outbox.connection"), so it would not be part of the business change.
+```
+
+**Cause.** The message goes to the outbox (`DispatchMode::OUTBOX`, `#[Outbox]` or
+`dispatch_modes`), and no transaction is open on the outbox connection: the code
+dispatches it outside a transaction, or in a transaction on another connection.
+Nothing was stored.
+
+**Fix.** Dispatch it inside the transaction of the business change:
+`$connection->transactional()` or `EntityManagerInterface::wrapInTransaction()` on
+the outbox connection, or Messenger's `doctrine_transaction` middleware on the bus
+of the handler. Set `outbox.require_transaction: false` only when storing it on
+its own is intended.
+
+### `OutboxNotConfiguredException`
+
+**Symptom.** `Message "App\Domain\OrderPlaced" was dispatched on the event bus with
+DispatchMode::OUTBOX (resolved from #[Outbox] or "somework_cqrs.dispatch_modes"), but
+the transactional outbox is disabled.`
+
+**Cause.** The message goes to the outbox, but `outbox.enabled` is off. The build
+catches this for `dispatch_modes` entries and for `#[Outbox]` messages with a
+handler in the application, not for a message without one.
+
+**Fix.** Enable `somework_cqrs.outbox` (see [Transactional outbox](outbox.md)), or
+remove the attribute.
+
+### `UnknownOutboxTransportException`
+
+**Symptom.** `Message "App\Integration\OrderExported" was not stored in the outbox:
+"ordrs" is not a Messenger transport (defined: async, orders).`
+
+**Cause.** The message would be stored for a transport that is not defined, typically
+a typo in `#[Outbox(transport: ...)]` on a message without a handler in the
+application (the build only checks messages it knows through their handlers). The
+relay could never send the row, so nothing was stored and the transaction does not
+commit a lost message.
+
+**Fix.** Correct the transport name, or define the transport under
+`framework.messenger.transports`.
 
 ### The outbox relay reports problems
 

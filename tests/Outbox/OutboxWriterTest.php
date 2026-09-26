@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
+use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
@@ -31,6 +32,7 @@ use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use function array_map;
 
 #[CoversClass(OutboxWriter::class)]
+#[CoversClass(UnknownOutboxTransportException::class)]
 final class OutboxWriterTest extends TestCase
 {
     private InMemoryOutboxStorage $storage;
@@ -54,6 +56,24 @@ final class OutboxWriterTest extends TestCase
         self::assertInstanceOf(CreateTaskCommand::class, $decoded);
         self::assertSame('1', $decoded->id);
         self::assertSame(5000, $envelope->last(DelayStamp::class)?->getDelay());
+    }
+
+    public function test_a_row_for_an_unknown_transport_is_refused_before_anything_is_stored(): void
+    {
+        $writer = new OutboxWriter($this->storage, new PhpSerializer(), transportNames: ['async', 'orders']);
+
+        $writer->store(new CreateTaskCommand('1', 'a'), 'orders');
+        foreach ([static fn () => $writer->store(new CreateTaskCommand('2', 'b'), 'ordrs'), static fn () => $writer->storeEnvelope(new Envelope(new CreateTaskCommand('3', 'c'), [new TransportNamesStamp(['async', 'ordrs'])]))] as $store) {
+            try {
+                $store();
+                self::fail('Expected the store to be refused.');
+            } catch (UnknownOutboxTransportException $exception) {
+                self::assertSame('ordrs', $exception->transportName);
+                self::assertStringContainsString('"ordrs" is not a Messenger transport (defined: async, orders)', $exception->getMessage());
+            }
+        }
+
+        self::assertCount(1, $this->storage->fetchUnpublished(10), 'No row of a refused message, not even for its known transport.');
     }
 
     public function test_a_stored_message_continues_the_current_trace_when_opentelemetry_is_enabled(): void
@@ -112,7 +132,7 @@ final class OutboxWriterTest extends TestCase
                 $store();
                 self::fail('Expected the store to be refused.');
             } catch (OutboxRequiresTransactionException $exception) {
-                self::assertStringContainsString('outside a transaction on the outbox connection', $exception->getMessage());
+                self::assertStringContainsString('was not stored in the outbox: no transaction is open on the outbox connection', $exception->getMessage());
             }
         }
         self::assertSame([], $this->storage->fetchUnpublished(10));

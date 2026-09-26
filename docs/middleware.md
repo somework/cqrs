@@ -81,13 +81,15 @@ failed_message_processing_middleware
 deduplicate_middleware                 Messenger 7.3+ with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
 ... your own middleware ...
+[OutboxStoreMiddleware]                when the outbox is enabled
 send_message
 handle_message
 ```
 
 On a bus without `dispatch_after_current_bus` (for example with
-`default_middleware: false`), the bundle middleware is placed first.
-`DeduplicationLockReleaseMiddleware` is only added to buses that contain
+`default_middleware: false`), the bundle middleware is placed first, except
+`OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
+last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
 
 The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
@@ -170,6 +172,15 @@ transport that cannot send), this middleware releases the lock, so the caller
 can retry with the same idempotency key. It is registered when the idempotency
 bridge is active and a `lock.factory` service exists. See
 [Idempotency](idempotency.md).
+
+### OutboxStoreMiddleware
+
+Stores a message dispatched through the [outbox](outbox.md#through-the-buses) in
+the current transaction instead of sending or handling it, after your own
+middleware (validation, context stamps) has run. Other messages pass through
+it untouched. The `DeduplicateStamp` of an outbox dispatch is hidden from
+Messenger's `deduplicate_middleware` until the message is stored (the lock is
+taken when the relay sends it). Registered when the outbox is enabled.
 
 ## Built-in stamp deciders
 

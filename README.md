@@ -191,9 +191,11 @@ final class CreateTaskHandler
 
 An asynchronous event dispatched from a handler is sent once the handler has returned, after its
 transaction committed; if the broker is down then, the event is lost and `dispatchSync()` throws
-`DeferredDispatchFailedException`. For events that must not be lost, mark the event class
-`#[Outbox]` (or map it to `outbox` in `dispatch_modes`): the same `dispatch()` then stores it in the
-[transactional outbox](docs/outbox.md#through-the-buses), inside the handler's transaction.
+`DeferredDispatchFailedException`. For events that must not be lost, enable the
+[transactional outbox](docs/outbox.md#through-the-buses), mark the event class `#[Outbox]` (or map
+it to `outbox` in `dispatch_modes`) and run the handler's database work in a transaction on the
+outbox connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+middleware): the same `dispatch()` then stores the event in that transaction.
 
 ### Step 3 -- Define a query and its handler
 

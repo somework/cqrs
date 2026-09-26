@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
+use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use SomeWork\CqrsBundle\Stamp\TraceContextStamp;
 use SomeWork\CqrsBundle\Support\CausationIdContext;
@@ -22,6 +23,7 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
+use function in_array;
 
 /**
  * Stores messages in the outbox: call it inside the database transaction of the business change.
@@ -43,6 +45,7 @@ final class OutboxWriter
      * @param bool                     $captureTraceContext Stores the current OpenTelemetry trace context, so the relayed message continues the trace
      * @param TransactionalOutbox|null $transaction         The storage behind any decorator, when it can tell whether a transaction is open
      * @param bool                     $requireTransaction  Refuses to store outside a transaction (outbox.require_transaction)
+     * @param list<string>|null        $transportNames      The Messenger transports; a row for another transport is refused
      *
      * @internal
      */
@@ -54,6 +57,7 @@ final class OutboxWriter
         private readonly bool $captureTraceContext = false,
         private readonly ?TransactionalOutbox $transaction = null,
         private readonly bool $requireTransaction = false,
+        private readonly ?array $transportNames = null,
     ) {
     }
 
@@ -67,11 +71,14 @@ final class OutboxWriter
      * flow of the handled message: same correlation id, the handled message as cause. With
      * OpenTelemetry, it also continues the current trace when it is relayed.
      *
+     * @throws OutboxRequiresTransactionException outside a transaction on the outbox connection (outbox.require_transaction)
+     * @throws UnknownOutboxTransportException    for a transport that is not a Messenger transport
+     *
      * @return list<OutboxMessage> The stored rows
      */
     public function store(object $message, ?string $transportName = null, StampInterface ...$stamps): array
     {
-        $this->assertInTransaction($message);
+        $this->assertCanStore($message);
 
         $envelope = new Envelope($message, array_values($stamps));
         $parent = $this->causation?->current();
@@ -92,7 +99,7 @@ final class OutboxWriter
      */
     public function storeEnvelope(Envelope $envelope): array
     {
-        $this->assertInTransaction($envelope->getMessage());
+        $this->assertCanStore($envelope->getMessage());
 
         $names = $envelope->last(TransportNamesStamp::class)?->getTransportNames() ?? [];
         // The relay sends each row to its own transport; stored now, never after the current handler.
@@ -108,6 +115,13 @@ final class OutboxWriter
      */
     private function storeRows(Envelope $envelope, array $transports): array
     {
+        foreach ($transports as $transport) {
+            if (null !== $transport && null !== $this->transportNames && !in_array($transport, $this->transportNames, true)) {
+                // Refused before the business change commits: the relay could never send the row.
+                throw new UnknownOutboxTransportException($envelope->getMessage()::class, $transport, $this->transportNames);
+            }
+        }
+
         if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {
             $headers = [];
             TraceContextPropagator::getInstance()->inject($headers);
@@ -135,7 +149,14 @@ final class OutboxWriter
         return $stored;
     }
 
-    private function assertInTransaction(object $message): void
+    /**
+     * Throws when the message would be stored outside a transaction (outbox.require_transaction).
+     *
+     * @throws OutboxRequiresTransactionException
+     *
+     * @internal
+     */
+    public function assertCanStore(object $message): void
     {
         if ($this->requireTransaction && null !== $this->transaction && !$this->transaction->isInTransaction()) {
             throw new OutboxRequiresTransactionException($message::class);

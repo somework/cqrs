@@ -105,9 +105,13 @@ somework_cqrs:
 
 The command and event buses store a message in the outbox instead of sending it when its dispatch
 mode is `outbox`. The stamp pipeline runs as for an asynchronous dispatch (transports, retry,
-serializer, metadata and causation, idempotency, rate limiting), and the message is stored right
-away, in the current transaction: it is never deferred until the current handler has finished.
-Three ways select the mode:
+serializer, metadata and causation, idempotency, rate limiting), and so does the middleware of
+the bus the relay sends it on (`buses.<type>_async`, or the synchronous bus without one):
+validation, the stamps of your own middleware (tenant, user, `router_context`) and tracing run in
+the dispatching process, and a message they reject is not stored. Right before Messenger's
+`send_message`, the bundle's middleware stores the message instead of sending it, right away, in
+the current transaction: it is never deferred until the current handler has finished. Three ways
+select the mode:
 
 ```php
 // 1. Explicitly, for one dispatch.
@@ -137,7 +141,12 @@ The attribute and the configuration take part in the usual
 [resolution order](reference.md#resolution-order-for-per-message-maps): an exact `map` entry
 wins over the attribute, which wins over entries for parents and interfaces and over the
 default. A class with both `#[Outbox]` and `#[Asynchronous]`, `#[Outbox]` on a query, and an
-`outbox` mode while `outbox.enabled` is off fail the compilation.
+`outbox` mode in `dispatch_modes` while `outbox.enabled` is off fail the compilation, and so does
+`#[Outbox]` with an undefined transport or without the outbox, for a message with a handler in
+the application (the bundle knows messages through their handlers). For a message without one,
+such as an integration event other services consume, a transport that is not a Messenger
+transport is refused when it is stored (`UnknownOutboxTransportException`), so the business
+transaction rolls back instead of committing a row the relay could never send.
 
 The handler code stays the same: dispatch inside the transaction of the business change.
 
@@ -167,23 +176,32 @@ With Messenger's `doctrine_transaction` middleware on the command bus, every han
 runs in a transaction of the entity manager's connection, and the events it dispatches through
 the outbox are stored in it without an explicit `transactional()`.
 
-- **The transaction is checked.** With `require_transaction: true` (the default), a message stored
-  outside a transaction on `outbox.connection` (none is open, or it is open on another
-  connection) throws `OutboxRequiresTransactionException` instead of being stored on its own.
+- **The transaction is checked** before the stamp pipeline and the middleware run. With
+  `require_transaction: true` (the default), a message dispatched outside a transaction on
+  `outbox.connection` (none is open, or it is open on another connection) throws
+  `OutboxRequiresTransactionException` instead of being stored on its own. A connection with
+  `auto_commit: false` is always in a transaction.
+- **Middleware runs twice.** Once when the message is stored and once when the relay dispatches
+  it on the same bus (then Messenger's deduplication, and the sending). Middleware that stamps
+  the caller's context should keep a stamp the envelope already carries.
 - **The result.** `dispatch()` returns the envelope with an `OutboxStoredStamp`: the ids of the
   stored rows and their transports. Nothing is sent until the relay runs.
 - **The transports** are those of an asynchronous dispatch: `transports.command_async` /
   `transports.event_async`, the transport of `#[Outbox(transport: ...)]`, or
-  `framework.messenger.routing` when the relay sends the row. No async bus is needed: the relay
-  dispatches on `buses.<type>_async`, or on the synchronous bus without one.
+  `framework.messenger.routing` when the relay sends the row. No async bus is needed, also with
+  `transports.<type>_async` set: the relay dispatches on `buses.<type>_async`, or on the
+  synchronous bus without one. A message with none of them is stored with a warning, and the
+  relay handles it synchronously in its own process when it relays it.
 - **What bypasses the outbox.** `dispatchSync()` and `ask()` (they need the result) and
   `dispatchAsync()` (an explicit asynchronous dispatch) ignore the `outbox` mode.
-- **Idempotency.** An `IdempotencyStamp` deduplicates when the relay sends the row, not when it is
-  stored: two dispatches with the same key in one transaction store two rows, and the second
-  is dropped when relayed.
-- **Tests.** The fake buses record `DispatchMode::OUTBOX` when you pass it explicitly;
-  `assertStoredInOutbox()` checks it (see [Testing](testing.md)). A fake bus does not resolve the
-  attribute or the configuration.
+- **Idempotency.** An `IdempotencyStamp` becomes a `DeduplicateStamp` scoped to each row's
+  transport (`<key>@<transport>`) when the message is stored, and deduplicates when the relay
+  sends the row, not when it is stored: two dispatches with the same key in one transaction store
+  two rows, and the second is dropped when relayed.
+- **Tests.** `assertStoredInOutbox()` checks the fake buses for a dispatch with
+  `DispatchMode::OUTBOX`, or with the default mode of a class carrying `#[Outbox]`, and the fakes
+  return an envelope with an `OutboxStoredStamp` for it (see [Testing](testing.md)). A fake bus
+  does not know `dispatch_modes`.
 
 ## Writing to the outbox
 

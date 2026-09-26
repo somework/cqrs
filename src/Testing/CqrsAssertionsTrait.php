@@ -61,9 +61,9 @@ trait CqrsAssertionsTrait
 
     /**
      * Assert that the given bus was asked to store a message of the expected class in the outbox
-     * (dispatched with DispatchMode::OUTBOX). A fake bus does not resolve the configuration: a
-     * DispatchMode::DEFAULT dispatch that "dispatch_modes" or #[Outbox] sends to the outbox is
-     * recorded as DEFAULT.
+     * (dispatched with DispatchMode::OUTBOX, or with DispatchMode::DEFAULT when the class carries
+     * #[Outbox]). A fake bus does not know the configuration: a DispatchMode::DEFAULT dispatch that
+     * "dispatch_modes" sends to the outbox does not count.
      *
      * @param class-string  $messageClass
      * @param callable|null $callback     Optional callback for property-level message verification

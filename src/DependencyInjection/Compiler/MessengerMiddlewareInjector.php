@@ -13,6 +13,7 @@ use function array_key_exists;
 use function array_splice;
 use function array_unshift;
 use function array_values;
+use function count;
 use function str_ends_with;
 
 /**
@@ -76,6 +77,45 @@ final class MessengerMiddlewareInjector
 
         array_splice($middlewares, $position ?? 0, 0, [new Reference($middlewareId)]);
 
+        $definition->replaceArgument(0, new IteratorArgument($middlewares));
+
+        return true;
+    }
+
+    /**
+     * Inserts middleware right before the first of the anchors (Messenger's "send_message", then
+     * "handle_message"), or last when the bus uses neither.
+     *
+     * @param list<string> $anchors
+     *
+     * @return bool whether the middleware is (now) part of the bus
+     */
+    public static function injectBefore(ContainerBuilder $container, string $busId, string $middlewareId, array $anchors = ['send_message', 'handle_message']): bool
+    {
+        $definition = self::findBusDefinition($container, $busId);
+        $argument = $definition?->getArgument(0);
+
+        if (!$argument instanceof IteratorArgument) {
+            return false;
+        }
+
+        $middlewares = array_values($argument->getValues());
+        $position = null;
+        foreach ($middlewares as $index => $middleware) {
+            $id = (string) $middleware;
+
+            if ($id === $middlewareId) {
+                return true;
+            }
+
+            foreach ($anchors as $anchor) {
+                if (null === $position && str_ends_with($id, $anchor)) {
+                    $position = $index;
+                }
+            }
+        }
+
+        array_splice($middlewares, $position ?? count($middlewares), 0, [new Reference($middlewareId)]);
         $definition->replaceArgument(0, new IteratorArgument($middlewares));
 
         return true;

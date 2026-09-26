@@ -427,6 +427,11 @@ final class ListHandlersCommand extends Command
             return 'n/a';
         }
 
+        // An outbox dispatch is stored right away, in the current transaction.
+        if (DispatchMode::OUTBOX === $this->dispatchModeDecider->resolve($message, DispatchMode::DEFAULT)) {
+            return 'no (stored in the outbox)';
+        }
+
         return $this->dispatchAfterCurrentBusDecider->shouldDefer($message) ? 'yes' : 'no';
     }
 

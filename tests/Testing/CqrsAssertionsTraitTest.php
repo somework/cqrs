@@ -15,6 +15,7 @@ use SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait;
 use SomeWork\CqrsBundle\Testing\FakeCommandBus;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 
 #[CoversTrait(CqrsAssertionsTrait::class)]
@@ -231,5 +232,21 @@ final class CqrsAssertionsTraitTest extends TestCase
         $this->expectExceptionMessage('with DispatchMode::OUTBOX');
 
         self::assertStoredInOutbox($bus, CreateTaskCommand::class, static fn (CreateTaskCommand $command): bool => '2' === $command->id);
+    }
+
+    public function test_a_default_dispatch_of_a_class_with_the_outbox_attribute_counts_as_stored(): void
+    {
+        // The bus stores it: #[Outbox] needs no configuration, unlike dispatch_modes.
+        $bus = new FakeEventBus();
+        $bus->dispatch(new TaskArchivedEvent('1'));
+        $bus->dispatchSync(new TaskArchivedEvent('2'));
+
+        self::assertStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '1' === $event->taskId);
+        self::assertNotStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '2' === $event->taskId);
+
+        $this->expectException(AssertionFailedError::class);
+        $this->expectExceptionMessage('Actually dispatched: '.TaskArchivedEvent::class.' (DispatchMode::DEFAULT), '.TaskArchivedEvent::class.' (DispatchMode::SYNC)');
+
+        self::assertStoredInOutbox($bus, TaskArchivedEvent::class, static fn (TaskArchivedEvent $event): bool => '3' === $event->taskId);
     }
 }

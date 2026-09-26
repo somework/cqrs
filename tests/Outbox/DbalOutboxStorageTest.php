@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
 use DateTimeImmutable;
+use Doctrine\DBAL\Configuration;
 use Doctrine\DBAL\Connection;
 use Doctrine\DBAL\Connections\PrimaryReadReplicaConnection;
 use Doctrine\DBAL\Driver\AbstractException;
@@ -1395,6 +1396,16 @@ final class DbalOutboxStorageTest extends TestCase
         self::assertFalse($storage->isInTransaction());
 
         $this->connection->transactional(static fn () => self::assertTrue($storage->isInTransaction()));
+    }
+
+    public function test_a_connection_without_auto_commit_is_always_in_a_transaction(): void
+    {
+        // DBAL opens the transaction when it connects: before that, isTransactionActive() is false.
+        $configuration = new Configuration();
+        $configuration->setAutoCommit(false);
+        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true], $configuration);
+
+        self::assertTrue((new DbalOutboxStorage($connection, autoSetup: false))->isInTransaction());
     }
 
     public function test_reads_go_to_the_primary_of_a_primary_read_replica_connection(): void

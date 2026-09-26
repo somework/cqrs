@@ -92,4 +92,22 @@ final class CqrsExtensionAsyncValidationTest extends TestCase
         self::assertSame(DispatchMode::OUTBOX, $decider->getArgument('$eventDefault'));
         self::assertSame([ArchiveTaskCommand::class => DispatchMode::OUTBOX], $decider->getArgument('$commandMap'));
     }
+
+    public function test_async_transports_need_no_async_bus_with_the_outbox(): void
+    {
+        $transports = ['event_async' => ['default' => ['async']]];
+
+        try {
+            (new CqrsExtension())->load([['transports' => $transports]], new ContainerBuilder());
+            self::fail('Expected the configuration to be refused.');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertStringContainsString('async transport defaults: async', $exception->getMessage());
+        }
+
+        // The outbox stores its rows for them (an outbox-only application).
+        $container = new ContainerBuilder();
+        (new CqrsExtension())->load([['transports' => $transports, 'dispatch_modes' => ['event' => ['default' => 'outbox']], 'outbox' => ['enabled' => true]]], $container);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.outbox.writer'));
+    }
 }
