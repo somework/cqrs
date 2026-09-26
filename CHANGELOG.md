@@ -67,7 +67,7 @@ Planned as 0.5.0. See [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) for eve
 - A nested dispatch handled by the same envelope-aware handler service left the outer invocation with the inner envelope.
 - A failed async dispatch without an async bus consumed a rate-limiter token.
 - `CausationIdContext::pop()` threw on an empty stack.
-- The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion or time zone, generated index names longer than 63 characters and, on Symfony 8, marked undecodable rows as published.
+- The outbox committed or aborted the caller's transaction when it created its table, published messages twice under concurrent relays, stalled on a failing row, ordered messages randomly within the same second, stored dates without DBAL type conversion or time zone, generated index names longer than 63 characters and marked rows as published when their message class could not be loaded.
 - Relayed events and commands were dispatched on the default bus, so workers of multi-bus setups found no handler for them.
 - The ORM schema listener added the outbox table to the schema of every connection.
 - `somework:cqrs:health` reported every handler and transport as CRITICAL.
