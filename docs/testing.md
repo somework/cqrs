@@ -549,10 +549,12 @@ self::assertStoredInOutbox($writer, OrderExported::class, static fn (OrderExport
 `willThrow()` makes `store()` fail, e.g. with `OutboxRequiresTransactionException`. The fake does
 not resolve the configured transports and checks no transaction.
 
-To test the outbox itself, run the code against a real outbox table. In the
-`test` environment, point the outbox at a connection of its own (an SQLite file or in-memory
-database is enough) and create the table before the code under test opens its transaction (the
-automatic setup never runs inside one). Then read the stored rows through the `OutboxStorage`
+To test the outbox itself, run the code against a real outbox table. The outbox stores its rows
+in the transaction of the code under test, so it uses the same connection: in the `test`
+environment, point that connection at a test database (an SQLite file or in-memory database is
+enough), and create the table before the code under test opens its transaction (the automatic
+setup never runs inside one). An outbox on a connection of its own only works when the code
+under test opens its transaction on that connection. Then read the stored rows through the `OutboxStorage`
 service, or relay them to an in-memory transport:
 
 ```php

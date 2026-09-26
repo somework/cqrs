@@ -279,7 +279,8 @@ time) and marks each one published after dispatching it.
   `MessageMetadataStamp` without one being passed (it continues the handled
   message's correlation); outside a handler, pass one yourself if you need it.
 * A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
-  makes the command exit with `1`; the rows behind it are not blocked. After
+  makes a single run exit with `1` (`--watch` goes on, and its exit code does
+  not change); the rows behind it are not blocked. After
   `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
 * The transports take turns, the one whose next row has waited longest first,
   so one transport's backlog does not hold up the others.
@@ -294,7 +295,7 @@ time) and marks each one published after dispatching it.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
 * SIGTERM and SIGINT (with the `pcntl` extension) let the relay finish the
-  current row, then it exits with `1`. A deploy or a container stop therefore
+  current row, then a single run exits with `1`, and `--watch` with `0`. A deploy or a container stop therefore
   does not leave a row half done. A send blocked on the network ends only with the
   transport's timeout, and a wait for another process upgrading the table (at
   most 30 seconds) ends first; a second signal stops the relay at once.
@@ -346,6 +347,12 @@ What the watching relay does:
   off).
 * A transport that keeps failing is left alone for 30 seconds, doubling up to
   5 minutes, instead of being tried again every second.
+* A handler run in the relay's process that leaves a transaction open on the
+  outbox connection fails its row: the relay rolls that transaction back, with
+  what the handler wrote in it, instead of writing its next rows into it.
+* It exits with `0` when a signal or `--time-limit` stops it: restart it
+  whatever its exit code (`autorestart=true`, systemd `Restart=always`), not
+  only on failure.
 * When the database or the lock store fails, it exits with `1`: the process
   manager restarts it (with the settings above, about every second until the
   database is back), and the rows wait in the table meanwhile.

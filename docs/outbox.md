@@ -738,7 +738,7 @@ Two ways to see the messages handled while developing:
   - **How many.** Up to 10 runs of 100 messages after each request, command or worker
     message: the relay goes on while a run stops at its limit, or while the relayed handlers
     store more. A bulk load (fixtures, an import) of more than 1 000 messages leaves the rest
-    in the table, with a notice in the log: run `bin/console somework:cqrs:outbox:relay`, or
+    in the table, with a notice in the log (also when exactly 1 000 were left): run `bin/console somework:cqrs:outbox:relay`, or
     keep `--watch` running while you load.
   - **Several requests at once.** Only one relay runs at a time: the next one waits up to
     2 seconds for the lock, then leaves its messages to the relay holding it, which fetches

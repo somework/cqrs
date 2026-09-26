@@ -730,43 +730,78 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
      */
     public function dispatchInUnitOfWork(\Closure $dispatch): mixed
     {
-        // Only with auto-commit off: the handlers the relay runs in its own process would otherwise
-        // share DBAL's implicit transaction with the relay's writes (a failed handler's writes
-        // committed with the next publish mark, or an aborted PostgreSQL transaction failing them).
-        if ($this->connection->isAutoCommit()) {
-            return $dispatch();
+        $autoCommit = $this->connection->isAutoCommit();
+        if (!$autoCommit) {
+            // DBAL opens its implicit transaction when it connects.
+            $this->connection->getNativeConnection();
         }
-        // DBAL opens its implicit transaction when it connects.
-        $this->connection->getNativeConnection();
-        if (1 !== $this->connection->getTransactionNestingLevel()) {
-            return $dispatch();
-        }
+        $level = $this->connection->getTransactionNestingLevel();
 
-        $this->connection->beginTransaction();
+        // With auto-commit off, the handlers the relay runs in its own process would otherwise share
+        // DBAL's implicit transaction with the relay's writes (a failed handler's writes committed
+        // with the next publish mark, or an aborted PostgreSQL transaction failing them). A
+        // transaction the application opened on top (level above 1) is left alone.
+        $unitOfWork = !$autoCommit && 1 === $level;
+        if ($unitOfWork) {
+            $this->connection->beginTransaction();
+        }
+        $inner = $unitOfWork ? $level + 1 : $level;
+
         try {
             $result = $dispatch();
         } catch (\Throwable $exception) {
+            $leaked = $this->connection->getTransactionNestingLevel() > $inner;
+            $this->rollBackTo($level, $exception);
+
+            throw $leaked ? self::leakedTransaction($exception) : $exception;
+        }
+
+        // A handler that began a transaction and did not end it (an exception it caught, a missing
+        // commit): every later write of the relay would go into it, and be rolled back when the
+        // process exits (every message sent again), or read a snapshot that no longer changes.
+        if ($this->connection->getTransactionNestingLevel() > $inner) {
+            $leak = self::leakedTransaction();
+            $this->rollBackTo($level, $leak);
+
+            throw $leak;
+        }
+
+        if ($unitOfWork) {
             try {
-                $this->connection->rollBack();
-            } catch (\Throwable) {
+                $this->connection->commit();
+            } catch (\Throwable $exception) {
                 $this->discardConnection();
 
-                // The error may be a missing savepoint of a middleware (doctrine_transaction), not the cause.
-                throw new \RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $exception->getMessage()), 0, $exception);
+                throw $exception;
             }
-
-            throw $exception;
+            $this->commitImplicitTransaction();
         }
-        try {
-            $this->connection->commit();
-        } catch (\Throwable $exception) {
-            $this->discardConnection();
-
-            throw $exception;
-        }
-        $this->commitImplicitTransaction();
 
         return $result;
+    }
+
+    /**
+     * Rolls back the transactions opened since the dispatch started.
+     */
+    private function rollBackTo(int $level, \Throwable $cause): void
+    {
+        try {
+            while ($this->connection->getTransactionNestingLevel() > $level) {
+                $this->connection->rollBack();
+            }
+        } catch (\Throwable) {
+            $this->discardConnection();
+
+            // The error may be a missing savepoint of a middleware (doctrine_transaction), not the cause.
+            throw new \RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $cause->getMessage()), 0, $cause);
+        }
+    }
+
+    private static function leakedTransaction(?\Throwable $cause = null): \RuntimeException
+    {
+        $message = 'A handler of this message left a transaction open on the outbox connection: it was rolled back, with what the handlers wrote in it. Commit or roll back every transaction a handler begins.';
+
+        return new \RuntimeException(null === $cause ? $message : sprintf('%s Error: %s', $message, $cause->getMessage()), 0, $cause);
     }
 
     /**

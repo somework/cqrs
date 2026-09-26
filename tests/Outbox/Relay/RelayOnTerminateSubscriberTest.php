@@ -136,7 +136,7 @@ final class RelayOnTerminateSubscriberTest extends TestCase
         $subscriber->relay();
 
         self::assertCount(10, $relay->runs);
-        self::assertTrue($logger->hasRecordContaining('notice', 'The outbox still has messages to relay after {count} runs'));
+        self::assertTrue($logger->hasRecordContaining('notice', 'The outbox may still have messages to relay after {count} runs'));
     }
 
     public function test_a_failing_relay_is_logged_without_breaking_the_request(): void

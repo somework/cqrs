@@ -117,7 +117,7 @@ final class RelayOnTerminateSubscriber implements EventSubscriberInterface
             }
 
             if ($this->stored || $more) {
-                $this->logger?->notice('The outbox still has messages to relay after {count} runs of up to {limit} messages: run "bin/console somework:cqrs:outbox:relay" (or keep "--watch" running) for bulk loads.', ['count' => self::MAX_PASSES, 'limit' => $this->limit]);
+                $this->logger?->notice('The outbox may still have messages to relay after {count} runs of up to {limit} messages: run "bin/console somework:cqrs:outbox:relay" (or keep "--watch" running) for bulk loads.', ['count' => self::MAX_PASSES, 'limit' => $this->limit]);
             }
         } catch (\Throwable $exception) {
             // The rows stay in the outbox for the next run; the request or command already finished.

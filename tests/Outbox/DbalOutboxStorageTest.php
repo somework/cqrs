@@ -18,6 +18,7 @@ use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
 use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
@@ -1499,6 +1500,71 @@ final class DbalOutboxStorageTest extends TestCase
 
             self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'), 'The failed dispatch is rolled back, the other committed.');
             self::assertSame(1, $connection->getTransactionNestingLevel());
+        } finally {
+            unlink($file);
+        }
+    }
+
+    /**
+     * @return iterable<string, array{bool}>
+     */
+    public static function autoCommitModes(): iterable
+    {
+        yield 'auto-commit' => [true];
+        yield 'auto-commit off' => [false];
+    }
+
+    #[DataProvider('autoCommitModes')]
+    public function test_a_transaction_a_handler_left_open_is_rolled_back_and_fails_the_dispatch(bool $autoCommit): void
+    {
+        // Otherwise every later write of a --watch relay goes into it, and is rolled back when the
+        // process exits: the messages it sent meanwhile are sent again.
+        $file = tempnam(sys_get_temp_dir(), 'cqrs-outbox');
+        $params = ['driver' => 'pdo_sqlite', 'path' => $file];
+        $configuration = new Configuration();
+        $configuration->setAutoCommit($autoCommit);
+
+        try {
+            $other = DriverManager::getConnection($params);
+            $other->executeStatement('CREATE TABLE handled (id VARCHAR(10) NOT NULL)');
+            (new DbalOutboxStorage($other))->setup();
+            $connection = DriverManager::getConnection($params, $configuration);
+            $storage = new DbalOutboxStorage($connection, autoSetup: false);
+            $connection->getNativeConnection();
+            $level = $connection->getTransactionNestingLevel();
+            $handle = static function (string $id) use ($connection): string {
+                if ('ok' !== $id) {
+                    $connection->beginTransaction();
+                }
+                $connection->insert('handled', ['id' => $id]);
+                if ('failed' === $id) {
+                    throw new \RuntimeException('The handler failed.');
+                }
+
+                return $id;
+            };
+
+            $causes = [];
+            foreach (['leaked', 'failed'] as $id) {
+                try {
+                    $storage->dispatchInUnitOfWork(static fn (): string => $handle($id));
+                    self::fail('The dispatch fails.');
+                } catch (\RuntimeException $exception) {
+                    self::assertStringStartsWith('A handler of this message left a transaction open on the outbox connection: it was rolled back', $exception->getMessage());
+                    self::assertSame($level, $connection->getTransactionNestingLevel());
+                    $causes[] = $exception->getPrevious()?->getMessage();
+                }
+            }
+            self::assertSame([null, 'The handler failed.'], $causes);
+
+            self::assertSame('ok', $storage->dispatchInUnitOfWork(static fn (): string => $handle('ok')));
+            $storage->store(self::message(self::ID_1, '2026-01-01 10:00:00'));
+            if (!$autoCommit) {
+                $connection->commit();
+            }
+
+            self::assertSame(['ok'], $other->fetchFirstColumn('SELECT id FROM handled'), 'The leaked writes are rolled back, the next ones committed.');
+            self::assertSame(1, (int) $other->fetchOne('SELECT COUNT(*) FROM somework_cqrs_outbox'));
         } finally {
             unlink($file);
         }
