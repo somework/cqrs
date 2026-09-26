@@ -190,8 +190,9 @@ the outbox are stored in it without an explicit `transactional()`.
   with side effects runs twice too; Doctrine's `doctrine_transaction` and
   `doctrine_open_transaction_logger` are skipped when the message is stored, wherever they are
   listed, and run in the relay (they would flush the caller's entity manager, or report its open
-  transaction). Middleware must pass an outbox dispatch on to the next one: one that returns early
-  makes `dispatch()` throw a `LogicException`.
+  transaction). Middleware must pass an outbox dispatch (an envelope carrying
+  `StoreInOutboxStamp`) on to the next one: one that returns early makes `dispatch()` throw a
+  `LogicException`.
 - **The relay's run has no caller context.** It happens in the relay's process, without the
   caller's request, user or tenant, and without a `ReceivedStamp`. Middleware that checks the
   dispatching context (authorization, for example) and skips received messages should also skip

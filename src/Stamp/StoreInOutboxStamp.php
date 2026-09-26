@@ -15,12 +15,18 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  * Messenger's DeduplicateStamps travel inside it: Messenger's deduplication middleware would
  * otherwise take the lock now and drop the relay's dispatch of the stored message.
  *
- * @internal
+ * Application middleware can recognise a message being stored in the outbox by this stamp, and
+ * must pass such an envelope on to the next middleware (a filter that returns early makes the
+ * dispatch fail).
+ *
+ * @api
  */
 final class StoreInOutboxStamp implements NonSendableStampInterface
 {
     /**
      * @param list<StampInterface> $deduplicate The DeduplicateStamps to store with the message
+     *
+     * @internal
      */
     public function __construct(
         public readonly array $deduplicate = [],
