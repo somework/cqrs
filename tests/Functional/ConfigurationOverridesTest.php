@@ -8,10 +8,10 @@ use PHPUnit\Framework\Attributes\CoversNothing;
 use Psr\Container\ContainerInterface;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Retry\CqrsRetryStrategy;
 use SomeWork\CqrsBundle\Support\DispatchAfterCurrentBusDecider;
-use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
-use SomeWork\CqrsBundle\Support\NullRetryPolicy;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\OverridesTestKernel;
@@ -57,7 +57,7 @@ final class ConfigurationOverridesTest extends KernelTestCase
 
     public function test_message_specific_dispatch_after_current_bus_toggle_is_honoured(): void
     {
-        $decider = self::getContainer()->get(DispatchAfterCurrentBusDecider::class);
+        $decider = self::getContainer()->get('somework_cqrs.dispatch_after_current_bus_decider');
         self::assertInstanceOf(DispatchAfterCurrentBusDecider::class, $decider);
 
         self::assertFalse($decider->shouldDefer(new CreateTaskCommand('1', 'x')));
@@ -102,7 +102,7 @@ final class ConfigurationOverridesTest extends KernelTestCase
         $display = $tester->getDisplay(true);
         self::assertSame(Command::SUCCESS, $tester->getStatusCode(), $display);
         self::assertStringContainsString(sprintf('Handler "%s" is resolvable', CreateTaskHandler::class), $display);
-        self::assertStringContainsString('Transport "async" is valid', $display);
+        self::assertStringContainsString('Transport "async" can be created (the connection is not tested)', $display);
         self::assertStringNotContainsString('CRITICAL', $display);
     }
 }

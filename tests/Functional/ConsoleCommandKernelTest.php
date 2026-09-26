@@ -36,7 +36,7 @@ final class ConsoleCommandKernelTest extends KernelTestCase
 
         $display = $tester->getDisplay(true);
 
-        self::assertStringContainsString('Type', $display);
+        self::assertStringContainsString('Handler', $display);
         self::assertStringContainsString('CreateTaskCommand', $display);
         self::assertStringContainsString('GenerateReportCommand', $display);
         self::assertStringContainsString('FindTaskQuery', $display);
@@ -68,9 +68,9 @@ final class ConsoleCommandKernelTest extends KernelTestCase
 
         self::assertStringContainsString('Dispatch Mode', $display);
         self::assertStringContainsString('Async Defers', $display);
-        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullRetryPolicy', $display);
-        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\NullMessageSerializer', $display);
-        self::assertStringContainsString('SomeWork\\CqrsBundle\\Support\\RandomCorrelationMetadataProvider', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Policy\\NullRetryPolicy', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Policy\\NullMessageSerializer', $display);
+        self::assertStringContainsString('SomeWork\\CqrsBundle\\Policy\\RandomCorrelationMetadataProvider', $display);
 
         $this->assertTableContainsRows($display, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', [
             ['Message', 'CreateTaskCommand'],

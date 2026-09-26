@@ -7,10 +7,10 @@ namespace SomeWork\CqrsBundle\Exception;
 use function sprintf;
 
 /** @api */
-final class MultipleHandlersException extends \LogicException
+final class MultipleHandlersException extends \LogicException implements CqrsException
 {
     public function __construct(
-        public readonly string $messageFqcn,
+        public readonly string $messageClass,
         public readonly string $busName,
         public readonly int $handlerCount,
         ?\Throwable $previous = null,
@@ -18,7 +18,7 @@ final class MultipleHandlersException extends \LogicException
         parent::__construct(
             sprintf(
                 'Message "%s" was handled by %d handlers on the %s bus. Exactly one handler is required.',
-                $messageFqcn,
+                $messageClass,
                 $handlerCount,
                 $busName,
             ),

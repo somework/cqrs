@@ -21,6 +21,10 @@ final class EventBus extends AbstractMessengerBus implements EventBusInterface
 {
     protected const BUS_NAME = 'event';
 
+    /**
+     * @internal Get the bus from the container (autowire the interface); the constructor
+     *           arguments are internal services and change without notice
+     */
     public function __construct(
         MessageBusInterface $syncBus,
         ?MessageBusInterface $asyncBus = null,

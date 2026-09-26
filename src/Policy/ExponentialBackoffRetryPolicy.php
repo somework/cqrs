@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Support;
+namespace SomeWork\CqrsBundle\Policy;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\RetryConfiguration;
@@ -17,7 +17,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  * Returns no stamps at dispatch time -- retry delays are handled
  * exclusively at the transport level.
  *
- * @internal
+ * @api
  */
 final class ExponentialBackoffRetryPolicy implements RetryPolicy, RetryConfiguration
 {

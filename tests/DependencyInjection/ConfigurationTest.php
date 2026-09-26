@@ -10,9 +10,13 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\DependencyInjection\Configuration;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\Config\Definition\Processor;
 
+use function array_values;
 use function sprintf;
 
 #[CoversClass(Configuration::class)]
@@ -230,6 +234,26 @@ final class ConfigurationTest extends TestCase
         self::assertSame('my_outbox', $config['outbox']['table_name']);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function invalidTableNames(): iterable
+    {
+        yield 'statement separator' => ['outbox;drop', 'use letters, digits and underscores'];
+        yield 'trailing newline' => ["outbox\n", 'use letters, digits and underscores'];
+        yield 'two dots' => ['a.b.c', 'use letters, digits and underscores'];
+        yield 'reserved word' => ['user', 'it is a reserved SQL word'];
+    }
+
+    #[DataProvider('invalidTableNames')]
+    public function test_rejects_invalid_outbox_table_names(string $name, string $error): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage($error);
+
+        $this->processConfiguration(['outbox' => ['table_name' => $name]]);
+    }
+
     public function test_map_keys_drop_a_leading_backslash(): void
     {
         $config = $this->processConfiguration([
@@ -253,7 +277,7 @@ final class ConfigurationTest extends TestCase
         yield 'metadata' => [['metadata' => ['event' => ['map' => [$typo => 'app.metadata']]]], 'somework_cqrs.metadata.event.map'];
         yield 'dispatch mode' => [['dispatch_modes' => ['command' => ['map' => [$typo => 'sync']]]], 'somework_cqrs.dispatch_modes.command.map'];
         yield 'transport' => [['transports' => ['command' => ['map' => [$typo => 'async']]]], 'somework_cqrs.transports.command.map'];
-        yield 'dispatch after current bus' => [['async' => ['dispatch_after_current_bus' => ['event' => ['map' => [$typo => false]]]]], 'somework_cqrs.async.dispatch_after_current_bus.event.map'];
+        yield 'dispatch after current bus' => [['dispatch_after_current_bus' => ['event' => ['map' => [$typo => false]]]], 'somework_cqrs.dispatch_after_current_bus.event.map'];
         yield 'rate limiter' => [['rate_limiting' => ['query' => ['map' => [$typo => 'limiter']]]], 'somework_cqrs.rate_limiting.query.map'];
     }
 
@@ -267,6 +291,31 @@ final class ConfigurationTest extends TestCase
         $this->expectExceptionMessage(sprintf('Invalid configuration for path "%s": "App\\Command\\CreateTaks" is not an existing class or interface', $path));
 
         $this->processConfiguration($config);
+    }
+
+    public function test_retry_strategy_transports_accept_a_list_of_names(): void
+    {
+        $config = $this->processConfiguration(['retry_strategy' => ['transports' => ['async', 'async-events']]]);
+
+        self::assertSame(['async' => 'command', 'async-events' => 'command'], $config['retry_strategy']['transports']);
+    }
+
+    public function test_rejects_map_keys_of_another_message_type(): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('Invalid configuration for path "somework_cqrs.dispatch_modes.command.map": "%s" is a query, not a command: it never matches here.', FindTaskQuery::class));
+
+        $this->processConfiguration(['dispatch_modes' => ['command' => ['map' => [FindTaskQuery::class => 'async']]]]);
+    }
+
+    public function test_accepts_map_keys_of_the_section_type_and_other_interfaces(): void
+    {
+        $config = $this->processConfiguration([
+            'retry_policies' => ['event' => ['map' => [TaskCreatedEvent::class => 'app.retry', RetryAwareMessage::class => 'app.retry']]],
+            'transports' => ['command_async' => ['map' => [CreateTaskCommand::class => 'async']]],
+        ]);
+
+        self::assertSame(['app.retry', 'app.retry'], array_values($config['retry_policies']['event']['map']));
     }
 
     /**
@@ -283,6 +332,9 @@ final class ConfigurationTest extends TestCase
         yield 'integer metadata provider' => [['metadata' => ['command' => ['default' => 1]]]];
         yield 'empty transport name' => [['transports' => ['command' => ['default' => ['']]]]];
         yield 'empty rate limiter name' => [['rate_limiting' => ['command' => ['map' => [CreateTaskCommand::class => '']]]]];
+        yield 'empty default rate limiter' => [['rate_limiting' => ['default' => '']]];
+        yield 'empty global retry policy' => [['retry_policies' => ['default' => '']]];
+        yield 'empty naming strategy of a type' => [['naming' => ['query' => ['default' => '']]]];
         yield 'empty causation bus' => [['causation_id' => ['buses' => ['']]]];
         yield 'boolean outbox serializer' => [['outbox' => ['serializer' => true]]];
     }
@@ -321,5 +373,44 @@ final class ConfigurationTest extends TestCase
         $processor = new Processor();
 
         return $processor->processConfiguration(new Configuration(), ['somework_cqrs' => $config]);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, mixed>, string}>
+     */
+    public static function movedOptions(): iterable
+    {
+        yield 'async wrapper' => [['async' => ['dispatch_after_current_bus' => []]], '"somework_cqrs.async.dispatch_after_current_bus" moved to "somework_cqrs.dispatch_after_current_bus".'];
+        yield 'flat naming strategy' => [['naming' => ['event' => 'app.naming']], '"somework_cqrs.naming.event" moved to "somework_cqrs.naming.event.default".'];
+        yield 'transport stamp' => [['transports' => ['command_async' => ['stamp' => 'transport_names']]], '"somework_cqrs.transports.command_async.stamp" was removed'];
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    #[DataProvider('movedOptions')]
+    public function test_options_of_earlier_versions_say_where_they_moved(array $config, string $message): void
+    {
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage($message);
+
+        $this->processConfiguration($config);
+    }
+
+    public function test_every_per_message_section_has_the_same_shape(): void
+    {
+        $config = $this->processConfiguration([]);
+
+        foreach (['retry_policies', 'serialization', 'metadata'] as $section) {
+            self::assertIsString($config[$section]['default'], $section);
+            foreach (['command', 'query', 'event'] as $type) {
+                self::assertSame(['default' => null, 'map' => []], $config[$section][$type], $section.'.'.$type);
+            }
+        }
+        self::assertSame(['default' => null], $config['naming']['query']);
+        self::assertNull($config['rate_limiting']['default']);
+        self::assertSame(['default' => null, 'map' => []], $config['rate_limiting']['event']);
+        self::assertSame(['default' => true, 'map' => []], $config['dispatch_after_current_bus']['command']);
+        self::assertSame(['default' => [], 'map' => []], $config['transports']['event_async']);
     }
 }

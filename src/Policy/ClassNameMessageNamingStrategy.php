@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Support;
+namespace SomeWork\CqrsBundle\Policy;
 
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 
 /**
  * Uses the short class name as the human readable message name.
  *
- * @internal
+ * @api
  */
 final class ClassNameMessageNamingStrategy implements MessageNamingStrategy
 {

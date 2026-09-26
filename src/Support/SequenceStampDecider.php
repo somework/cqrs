@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\SequenceAware;
 use SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
@@ -45,7 +46,7 @@ final class SequenceStampDecider implements MessageTypeAwareStampDecider
         return [...$stamps, new AggregateSequenceStamp(
             $message->getAggregateId(),
             $message->getSequenceNumber(),
-            $message::class,
+            $message->getAggregateType(),
         )];
     }
 }

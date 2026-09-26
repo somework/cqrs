@@ -16,6 +16,37 @@ use function sprintf;
 /** @internal */
 final class ContainerHelper
 {
+    /** Parameter listing the services the configuration names, checked by ValidateConfiguredServicesPass. */
+    public const CONFIGURED_SERVICES = 'somework_cqrs.configured_services';
+
+    /**
+     * Remembers that the option at $path (below "somework_cqrs.") names the service $serviceId, so
+     * a missing service is reported with that option instead of an internal service id.
+     */
+    /**
+     * @param class-string|null $interface What the service must implement
+     */
+    public function recordConfiguredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): void
+    {
+        /** @var list<array{string, string, class-string|null}> $services */
+        $services = $container->hasParameter(self::CONFIGURED_SERVICES) ? $container->getParameter(self::CONFIGURED_SERVICES) : [];
+        $services[] = [$path, $serviceId, $interface];
+        $container->setParameter(self::CONFIGURED_SERVICES, $services);
+    }
+
+    /**
+     * {@see ensureServiceExists()} for a service the option at $path names.
+     */
+    /**
+     * @param class-string|null $interface What the service must implement
+     */
+    public function configuredService(ContainerBuilder $container, string $path, string $serviceId, ?string $interface = null): string
+    {
+        $this->recordConfiguredService($container, $path, $serviceId, $interface);
+
+        return $this->ensureServiceExists($container, $serviceId);
+    }
+
     /**
      * Registers a service for a class name used as service id, unless it is already defined.
      * Abstract classes are left alone: they cannot be instantiated, and the missing service is
@@ -50,7 +81,7 @@ final class ContainerHelper
         $serviceMap = [];
 
         foreach ($map as $messageClass => $enabled) {
-            $serviceId = sprintf('somework_cqrs.async.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
+            $serviceId = sprintf('somework_cqrs.dispatch_after_current_bus.%s.%s', $type, md5($messageClass));
 
             $definition = new Definition('bool');
             $definition->setFactory([self::class, 'createBooleanToggle']);
@@ -62,7 +93,7 @@ final class ContainerHelper
         }
 
         $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);
-        $container->setAlias(sprintf('somework_cqrs.async.dispatch_after_current_bus.%s_locator', $type), (string) $locatorReference)->setPublic(false);
+        $container->setAlias(sprintf('somework_cqrs.dispatch_after_current_bus.%s_locator', $type), (string) $locatorReference)->setPublic(false);
 
         return $locatorReference;
     }

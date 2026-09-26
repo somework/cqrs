@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Support;
 
+use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Contract\Query;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
@@ -28,22 +30,6 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
  */
 final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
 {
-    /**
-     * @var array<string, string>
-     */
-    public const DEFAULT_STAMP_TYPES = [
-        'command' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'command_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'query' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-        'event_async' => MessageTransportStampFactory::TYPE_TRANSPORT_NAMES,
-    ];
-
-    /**
-     * @var array<string, string>
-     */
-    private array $stampTypes;
-
     public const DEFAULT_ASYNC_TRANSPORT = 'async';
 
     /**
@@ -57,18 +43,15 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     private array $asynchronousAttributes = [];
 
     /**
-     * @param array<string, string> $stampTypes
-     * @param list<string>          $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
+     * @param list<string> $routedMessageTypes Keys of framework.messenger.routing: classes, interfaces, namespace wildcards and "*"
      */
     public function __construct(
-        private readonly MessageTransportStampFactory $stampFactory,
         private readonly TransportResolverMap $commandResolvers,
         private readonly TransportResolverMap $queryResolvers,
         private readonly TransportResolverMap $eventResolvers,
-        array $stampTypes = self::DEFAULT_STAMP_TYPES,
         array $routedMessageTypes = [],
+        private readonly ?LoggerInterface $logger = null,
     ) {
-        $this->stampTypes = array_replace(self::DEFAULT_STAMP_TYPES, $stampTypes);
         $this->routedMessageTypes = array_fill_keys($routedMessageTypes, true);
     }
 
@@ -90,6 +73,35 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             }
         }
 
+        $transports = $this->transportsFor($message, $mode);
+
+        if (null === $transports) {
+            // Messenger handles a message that no transport is routed to right away: an async dispatch
+            // that silently runs in the calling process is almost always a missing transport. (Warned
+            // here, before the dispatch: inside a handler it is deferred until the handler finished.)
+            if (DispatchMode::ASYNC === $mode && ($message instanceof Command || $message instanceof Event) && !$this->isRouted($message)) {
+                $this->logger?->warning('{message} is dispatched asynchronously, but no transport is configured for it, so Messenger handles it synchronously. Set "somework_cqrs.transports.{type}_async", #[Asynchronous(transport: ...)] or framework.messenger.routing.', [
+                    'message' => $message::class,
+                    'type' => $message instanceof Event ? 'event' : 'command',
+                ]);
+            }
+
+            return $stamps;
+        }
+
+        $stamps[] = new TransportNamesStamp($transports);
+
+        return $stamps;
+    }
+
+    /**
+     * The transports the bundle's configuration (or #[Asynchronous]) gives the message, or null
+     * when Messenger's routing decides.
+     *
+     * @return non-empty-list<string>|null
+     */
+    public function transportsFor(object $message, DispatchMode $mode): ?array
+    {
         $resolver = $this->resolverFor($message, $mode);
         $attribute = DispatchMode::SYNC === $mode ? null : $this->asynchronousAttribute($message);
 
@@ -107,16 +119,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             $transports = [self::DEFAULT_ASYNC_TRANSPORT];
         }
 
-        if (null === $transports || [] === $transports) {
-            return $stamps;
-        }
-
-        $typeKey = $this->typeKeyFor($message, $mode);
-        $stampType = $this->stampTypes[$typeKey] ?? MessageTransportStampFactory::TYPE_TRANSPORT_NAMES;
-
-        $stamps[] = $this->stampFactory->create($stampType, $transports);
-
-        return $stamps;
+        return null === $transports || [] === $transports ? null : $transports;
     }
 
     private function resolverFor(object $message, DispatchMode $mode): ?MessageTransportResolver
@@ -129,23 +132,6 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
         };
 
         return $map?->resolverFor($mode);
-    }
-
-    private function typeKeyFor(object $message, DispatchMode $mode): ?string
-    {
-        if ($message instanceof Command) {
-            return DispatchMode::ASYNC === $mode ? 'command_async' : 'command';
-        }
-
-        if ($message instanceof Query) {
-            return 'query';
-        }
-
-        if ($message instanceof Event) {
-            return DispatchMode::ASYNC === $mode ? 'event_async' : 'event';
-        }
-
-        return null;
     }
 
     private function asynchronousAttribute(object $message): ?Asynchronous
@@ -161,10 +147,14 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
     }
 
     /**
-     * Whether framework.messenger.routing routes the message.
+     * Whether framework.messenger.routing, or #[AsMessage(transport: ...)], routes the message.
      */
     private function isRouted(object $message): bool
     {
+        if (AsMessageRouting::hasTransport($message::class)) {
+            return true;
+        }
+
         if ([] === $this->routedMessageTypes) {
             return false;
         }

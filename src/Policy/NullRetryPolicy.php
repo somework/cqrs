@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Support;
+namespace SomeWork\CqrsBundle\Policy;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
@@ -11,7 +11,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 /**
  * Retry policy that applies no additional stamps.
  *
- * @internal
+ * @api
  */
 final class NullRetryPolicy implements RetryPolicy
 {

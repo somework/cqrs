@@ -17,7 +17,7 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  */
 final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
 {
-    /** @var list<array{message: Event, mode: DispatchMode, stamps: list<StampInterface>}> */
+    /** @var list<RecordedDispatch<Event>> */
     private array $dispatched = [];
 
     public function dispatch(Event $event, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope
@@ -36,7 +36,7 @@ final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
     }
 
     /**
-     * @return list<array{message: Event, mode: DispatchMode, stamps: list<StampInterface>}>
+     * @return list<RecordedDispatch<Event>>
      */
     public function getDispatched(): array
     {
@@ -55,11 +55,7 @@ final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
     {
         $stamps = array_values($stamps);
 
-        $this->dispatched[] = [
-            'message' => $event,
-            'mode' => $mode,
-            'stamps' => $stamps,
-        ];
+        $this->dispatched[] = new RecordedDispatch($event, $mode, $stamps);
 
         return new Envelope($event, $stamps);
     }

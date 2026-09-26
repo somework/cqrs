@@ -98,6 +98,20 @@ final class CqrsExtensionRateLimitTest extends TestCase
         self::assertSame('limiter.order_limiter', (string) $values[0]);
     }
 
+    public function test_a_default_limiter_activates_rate_limiting_for_every_type(): void
+    {
+        // Each message class consumes its own bucket of the default limiter.
+        $container = $this->createContainer(['rate_limiting' => ['default' => 'api', 'event' => ['default' => 'events']]]);
+
+        foreach (['command' => 'limiter.api', 'query' => 'limiter.api', 'event' => 'limiter.events'] as $type => $limiter) {
+            $locator = $container->getDefinition($container->getDefinition(sprintf('somework_cqrs.rate_limit.%s_resolver', $type))->getArgument('$limiters')->__toString());
+            $factories = $locator->getArgument(0);
+            self::assertIsArray($factories);
+            self::assertArrayHasKey(RateLimitResolver::DEFAULT_KEY, $factories, $type);
+            self::assertSame($limiter, (string) $factories[RateLimitResolver::DEFAULT_KEY]->getValues()[0], $type);
+        }
+    }
+
     public function test_stamp_deciders_registered_with_priority_225(): void
     {
         $container = $this->createContainer(self::ALL_TYPES_CONFIG);

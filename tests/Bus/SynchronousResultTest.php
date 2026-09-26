@@ -40,7 +40,7 @@ final class SynchronousResultTest extends TestCase
             SynchronousResult::handledStamps($envelope, 'command');
             self::fail('Expected MessageSentToTransportException.');
         } catch (MessageSentToTransportException $exception) {
-            self::assertSame(CreateTaskCommand::class, $exception->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $exception->messageClass);
             self::assertSame(['async'], $exception->transportNames);
             self::assertStringContainsString('instead of being handled synchronously', $exception->getMessage());
         }

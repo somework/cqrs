@@ -34,6 +34,5 @@ final class DispatchAfterCurrentBusRegistrar
         $definition->setPublic(false);
 
         $container->setDefinition('somework_cqrs.dispatch_after_current_bus_decider', $definition);
-        $container->setAlias(DispatchAfterCurrentBusDecider::class, 'somework_cqrs.dispatch_after_current_bus_decider')->setPublic(false);
     }
 }

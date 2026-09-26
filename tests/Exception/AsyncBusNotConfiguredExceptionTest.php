@@ -23,7 +23,7 @@ final class AsyncBusNotConfiguredExceptionTest extends TestCase
     {
         $exception = new AsyncBusNotConfiguredException('App\Command\Foo', 'command');
 
-        self::assertSame('App\Command\Foo', $exception->messageFqcn);
+        self::assertSame('App\Command\Foo', $exception->messageClass);
         self::assertSame('command', $exception->busName);
     }
 
@@ -46,7 +46,7 @@ final class AsyncBusNotConfiguredExceptionTest extends TestCase
         $exception = new AsyncBusNotConfiguredException('App\Command\Foo', 'command');
 
         self::assertSame(
-            'Asynchronous command bus is not configured. Cannot dispatch "App\Command\Foo" in async mode.',
+            'Asynchronous command bus is not configured. Cannot dispatch "App\Command\Foo" in async mode. Set "somework_cqrs.buses.command_async" to a Messenger bus.',
             $exception->getMessage()
         );
     }
@@ -56,7 +56,7 @@ final class AsyncBusNotConfiguredExceptionTest extends TestCase
         $exception = new AsyncBusNotConfiguredException('App\Event\Bar', 'event');
 
         self::assertSame(
-            'Asynchronous event bus is not configured. Cannot dispatch "App\Event\Bar" in async mode.',
+            'Asynchronous event bus is not configured. Cannot dispatch "App\Event\Bar" in async mode. Set "somework_cqrs.buses.event_async" to a Messenger bus.',
             $exception->getMessage()
         );
     }

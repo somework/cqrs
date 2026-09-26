@@ -5,12 +5,13 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
  * Adds DispatchAfterCurrentBusStamp to asynchronous dispatches according to the
- * "async.dispatch_after_current_bus" configuration.
+ * "dispatch_after_current_bus" configuration.
  *
  * The configuration only controls the automatic stamp: a DispatchAfterCurrentBusStamp
  * passed by the caller (e.g. to handle an event only once the current command succeeded)

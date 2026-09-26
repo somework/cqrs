@@ -6,7 +6,8 @@ namespace SomeWork\CqrsBundle\Tests\Fixture\Handler;
 
 final class HandlesAttributeHandler
 {
-    public function __invoke(): void
+    public function __invoke(): mixed
     {
+        return null;
     }
 }

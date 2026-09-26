@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Support;
+namespace SomeWork\CqrsBundle\Policy;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
@@ -11,7 +11,7 @@ use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 /**
  * Generates random correlation identifiers for dispatched messages.
  *
- * @internal
+ * @api
  */
 final class RandomCorrelationMetadataProvider implements MessageMetadataProvider
 {

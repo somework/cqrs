@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Fixture\Kernel;
 
 use Psr\Log\NullLogger;
+use SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy;
 use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
-use SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\ListTasksHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
@@ -64,11 +64,9 @@ final class OverridesTestKernel extends Kernel
                     'map' => [CreateTaskCommand::class => ExponentialBackoffRetryPolicy::class],
                 ],
             ],
-            'async' => [
-                'dispatch_after_current_bus' => [
-                    'command' => [
-                        'map' => [CreateTaskCommand::class => false],
-                    ],
+            'dispatch_after_current_bus' => [
+                'command' => [
+                    'map' => [CreateTaskCommand::class => false],
                 ],
             ],
             'retry_strategy' => [

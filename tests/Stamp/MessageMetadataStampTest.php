@@ -185,4 +185,52 @@ final class MessageMetadataStampTest extends TestCase
 
         self::assertSame('', $stamp->getCausationId());
     }
+
+    public function test_every_stamp_has_its_own_message_id_which_the_with_methods_keep(): void
+    {
+        $stamp = new MessageMetadataStamp('flow');
+        $other = new MessageMetadataStamp('flow');
+
+        self::assertNotSame($stamp->getMessageId(), $other->getMessageId());
+        self::assertSame($stamp->getMessageId(), $stamp->withCausationId('parent')->withCorrelationId('other')->withExtra('k', 1)->getMessageId());
+        self::assertSame('given', (new MessageMetadataStamp('flow', [], null, 'given'))->getMessageId());
+    }
+
+    public function test_the_first_message_of_a_flow_uses_its_message_id_as_correlation_id(): void
+    {
+        $stamp = MessageMetadataStamp::createWithRandomCorrelationId();
+
+        self::assertSame($stamp->getMessageId(), $stamp->getCorrelationId());
+    }
+
+    public function test_constructor_rejects_an_empty_message_id(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new MessageMetadataStamp('flow', [], null, '');
+    }
+
+    public function test_survives_serialization(): void
+    {
+        $stamp = new MessageMetadataStamp('flow', ['k' => 'v'], 'parent');
+
+        $copy = unserialize(serialize($stamp));
+        self::assertInstanceOf(MessageMetadataStamp::class, $copy);
+        self::assertSame(
+            [$stamp->getMessageId(), 'flow', ['k' => 'v'], 'parent'],
+            [$copy->getMessageId(), $copy->getCorrelationId(), $copy->getExtras(), $copy->getCausationId()],
+        );
+    }
+
+    public function test_reads_a_stamp_serialized_by_0_4(): void
+    {
+        // serialize(new MessageMetadataStamp('abc', ['k' => 1])) with the class of v0.4.0 (no message id).
+        $stamp = unserialize((string) base64_decode('Tzo0NjoiU29tZVdvcmtcQ3Fyc0J1bmRsZVxTdGFtcFxNZXNzYWdlTWV0YWRhdGFTdGFtcCI6Mzp7czo2MToiAFNvbWVXb3JrXENxcnNCdW5kbGVcU3RhbXBcTWVzc2FnZU1ldGFkYXRhU3RhbXAAY29ycmVsYXRpb25JZCI7czozOiJhYmMiO3M6NTQ6IgBTb21lV29ya1xDcXJzQnVuZGxlXFN0YW1wXE1lc3NhZ2VNZXRhZGF0YVN0YW1wAGV4dHJhcyI7YToxOntzOjE6ImsiO2k6MTt9czo1OToiAFNvbWVXb3JrXENxcnNCdW5kbGVcU3RhbXBcTWVzc2FnZU1ldGFkYXRhU3RhbXAAY2F1c2F0aW9uSWQiO047fQ==', true));
+
+        self::assertInstanceOf(MessageMetadataStamp::class, $stamp);
+        self::assertSame('abc', $stamp->getCorrelationId());
+        self::assertSame('abc', $stamp->getMessageId(), 'The correlation id of 0.4 was unique per message.');
+        self::assertSame(['k' => 1], $stamp->getExtras());
+        self::assertNull($stamp->getCausationId());
+    }
 }

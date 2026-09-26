@@ -10,7 +10,6 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\TransportResolverMap;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\RetryAwareMessage;
@@ -85,7 +84,6 @@ final class MessageTransportStampDeciderAsynchronousTest extends TestCase
         }
 
         return new MessageTransportStampDecider(
-            new MessageTransportStampFactory(),
             new TransportResolverMap(async: new MessageTransportResolver(new ServiceLocator($factories))),
             new TransportResolverMap(),
             new TransportResolverMap(),

@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function sprintf;
