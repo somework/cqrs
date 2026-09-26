@@ -5,6 +5,10 @@
          colors="true"
          failOnWarning="true"
          failOnNotice="true"
+         failOnDeprecation="true"
+         failOnPhpunitDeprecation="true"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
+         displayDetailsOnPhpunitDeprecations="true"
          beStrictAboutTestsThatDoNotTestAnything="true">
     <testsuites>
         <testsuite name="Cqrs Bundle Test Suite">
