@@ -154,6 +154,21 @@ final class OutboxFailedCommandTest extends TestCase
         self::assertSame(Command::SUCCESS, $allowed->execute(['--requeue' => true, '--sign' => true, '--allow-class' => [UnserializeGadget::class], 'ids' => [$id]], ['interactive' => false]));
     }
 
+    public function test_formatter_tags_read_from_a_row_are_shown_as_text(): void
+    {
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new CreateTaskCommand('1', 'a')), new PhpSerializer(), 'async');
+        $forged = '00000000-0000-7000-8000-000000000005';
+        $this->storage->store(new OutboxMessage($forged, $encoded->body, json_encode(['type' => '<href=https://example.com>App\Message\Harmless</>'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $forged, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret')));
+        $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$forged]], ['interactive' => false]);
+
+        // In the table and in the error block alike: not interpreted, and not escaped twice.
+        self::assertSame(2, substr_count(self::display($tester), '<href=https://example.com>App\Message\Harmless</>'));
+        self::assertStringNotContainsString('\<href', self::display($tester));
+    }
+
     public function test_signing_checks_the_type_header_of_a_body_of_another_serializer(): void
     {
         // The Symfony serializer instantiates the class its type header names, with the body as arguments.
