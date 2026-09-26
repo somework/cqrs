@@ -554,7 +554,8 @@ What happens in special cases:
   records the failure (`attempts`, `last_error`) and postpones the row: the next attempt
   waits 1 minute, then 2, 4, 8 … minutes, at most 1 hour. It prints
   `Failed to relay message "<id>" (attempt 1 of 10, next attempt after <time>): <reason>`
-  and moves on to the next row. When any row failed, the command exits with code `1`. See
+  and moves on to the next row. When any row failed, a single run exits with code `1`
+  (`--watch` goes on, and its exit code does not change). See
   [Failures](#failures) for what happens after the last attempt.
 - **A failing transport is paused, the other transports go on.** A send that fails with
   Messenger's `TransportException` (the broker cannot be reached, or it rejects the message)
@@ -612,7 +613,7 @@ What happens in special cases:
   relay finishes the row it is working on, starts no other, marks the sent rows as published,
   releases the claims of the others, prints `Stopped by signal <number>
   after <count> message(s); the remaining messages wait for the next run.`, releases the lock
-  and exits with `1`. A second signal stops it at once. PHP handles signals between
+  and exits with `1` (`--watch` prints `Stopped by signal <number>.` and exits with `0`). A second signal stops it at once. PHP handles signals between
   operations: a send blocked on the network is only interrupted by the transport's own
   timeout, so configure timeouts on your transports (and a grace period longer than them).
   While the relay waits for another process to add the columns to the table (at most 30
@@ -679,7 +680,8 @@ outbox within `--sleep` seconds instead of up to a minute:
 command=php /path/to/project/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autorestart=true
 ; exits with 1 when the database or the lock store fails: restarted at once, about every
-; second while it is down (startsecs=0: never FATAL, the relay resumes when it is back)
+; second while it is down (startsecs=0: never FATAL); it resumes when the database is back,
+; or when the relay lock expires (up to 60 s) if the lock store is that database
 startsecs=0
 stopsignal=TERM
 stopwaitsecs=30

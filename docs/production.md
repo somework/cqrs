@@ -324,7 +324,8 @@ command=php /var/www/app/bin/console somework:cqrs:outbox:relay --watch --time-l
 autostart=true
 autorestart=true
 ; exits with 1 when the database or the lock store fails: restarted at once, about every
-; second while it is down (startsecs=0: never FATAL, the relay resumes when it is back)
+; second while it is down (startsecs=0: never FATAL); it resumes when the database is back,
+; or when the relay lock expires (up to 60 s) if the lock store is that database
 startsecs=0
 stopsignal=TERM
 stopwaitsecs=30
@@ -355,7 +356,10 @@ What the watching relay does:
   only on failure.
 * When the database or the lock store fails, it exits with `1`: the process
   manager restarts it (with the settings above, about every second until the
-  database is back), and the rows wait in the table meanwhile.
+  database is back), and the rows wait in the table meanwhile. When the lock
+  store is that same database (`framework.lock` on its DSN), the stopped relay
+  cannot release its lock: the new one waits for it to expire, up to 60 seconds
+  after the database is back. A lock store of its own (Redis) avoids that wait.
 * With Doctrine's `auto_commit: false`, the relay commits after each fetch, so an
   idle watcher holds no snapshot and no locks. DBAL starts the next transaction
   right after each commit, though: PostgreSQL shows the connection as `idle in
