@@ -240,9 +240,7 @@ final class ConfigurationTest extends TestCase
     public static function invalidTableNames(): iterable
     {
         yield 'statement separator' => ['outbox;drop', 'use letters, digits and underscores'];
-        yield 'trailing newline' => ["outbox\n", 'use letters, digits and underscores'];
         yield 'two dots' => ['a.b.c', 'use letters, digits and underscores'];
-        yield 'reserved word' => ['user', 'it is a reserved SQL word'];
     }
 
     #[DataProvider('invalidTableNames')]

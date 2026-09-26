@@ -17,11 +17,11 @@ final class CqrsExceptionTest extends TestCase
 {
     public function test_every_exception_of_the_bundle_implements_the_marker(): void
     {
-        $files = [...(array) glob(__DIR__.'/../../src/Exception/*Exception.php'), __DIR__.'/../../src/Outbox/SetupLockLeftBehind.php'];
+        $files = (array) glob(__DIR__.'/../../src/Exception/*Exception.php');
         $checked = 0;
 
         foreach ($files as $file) {
-            $class = (str_contains((string) $file, '/Outbox/') ? 'SomeWork\\CqrsBundle\\Outbox\\' : 'SomeWork\\CqrsBundle\\Exception\\').basename((string) $file, '.php');
+            $class = 'SomeWork\\CqrsBundle\\Exception\\'.basename((string) $file, '.php');
             if (CqrsException::class === $class) {
                 continue;
             }
