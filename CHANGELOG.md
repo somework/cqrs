@@ -7,7 +7,9 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
-Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) explains each of them.
+## [0.5.0] - 2026-09-27
+
+Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) explains each of them.
 
 ### Added
 
@@ -183,7 +185,6 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - Console formatter tags stored in a row (e.g. `<href=…>` in `last_error`) are escaped in the output of `outbox:failed`, and text read from a row (its transport name, a previous error) is stored and printed without control characters.
 - `outbox:failed` no longer reads every body to list the given-up rows (large rows exhausted the memory of the command).
 
-
 ## [0.4.0] - 2026-03-23
 
 ### Added
@@ -256,7 +257,8 @@ This release was documented as "1.0.0" to "3.0.0" in earlier revisions of this f
 - Metadata stamps and providers for correlation details.
 - Async bus configuration, handler listing and message/handler generator commands.
 
-[Unreleased]: https://github.com/somework/cqrs/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/somework/cqrs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/somework/cqrs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/somework/cqrs/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/somework/cqrs/compare/v0.2.3...v0.2.4
