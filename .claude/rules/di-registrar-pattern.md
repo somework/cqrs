@@ -7,7 +7,7 @@ paths:
 
 ## Registrar Pattern
 
-Every registrar implements `register(ContainerBuilder $container, array $config): void` and is stateless — instantiated in `CqrsExtension::load()`, called once, discarded.
+Every registrar has a `register(ContainerBuilder $container, …): void` method and is stateless — instantiated in `CqrsExtension::load()`, called once, discarded. Most take the section's configuration (`register($container, array $config)`: dispatch modes, naming, retry policies, serialization, metadata, transports, dispatch-after-current-bus); the others take what they need: `BusInterfaceRegistrar::register($container)`, `BusWiringRegistrar` and `AllowNoHandlerMiddlewareRegistrar::register($container, array $buses, string $defaultBusId)`, `RateLimitRegistrar::register($container, array $config, ?ContainerHelper $helper)`, `OutboxRegistrar::register()` (configuration, whether doctrine/orm is installed, the buses, the default bus and the helper) and `StampsDeciderRegistrar::register()` (the buses and the idempotency, causation id, sequence and rate-limiting sections, and whether the outbox is enabled). Registrars that need `ContainerHelper` get it in the constructor or, for `RateLimitRegistrar` and `OutboxRegistrar`, as an argument.
 
 When adding a new registrar:
 1. Create it in `src/DependencyInjection/Registration/`
@@ -23,7 +23,11 @@ Follow the established naming: `somework_cqrs.{concern}.{type}` for aliases, `so
 
 ## Per-Message Override Hierarchy
 
-All registrars that support message-specific config follow a 3-level resolution: message-specific map entry → per-type default (command/query/event) → global default. The registrar collapses the two defaults at compile time (`$config[$type]['default'] ?? $config['default']`) and stores the result under the resolver's `DEFAULT_KEY` in the locator, next to the map entries.
+All registrars that support message-specific config follow a 3-level resolution: message-specific map entry → per-type default (command/query/event) → global default. The registrar collapses the two defaults at compile time (`$config[$type]['default'] ?? $config['default']`); where the result goes depends on the resolver:
+
+- `SerializerRegistrar` and `MetadataRegistrar` always store it under the resolver's `DEFAULT_KEY` in the locator, next to the map entries;
+- `TransportRegistrar` and `RateLimitRegistrar` store it under `DEFAULT_KEY` only when a default exists (no transport, no rate limiter otherwise);
+- `RetryPolicyRegistrar` aliases it as `somework_cqrs.retry.<type>` and passes that as the resolver's `$defaultPolicy`, next to a locator of the map entries only.
 
 ## Compiler Passes
 
@@ -38,15 +42,15 @@ Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the containe
 | `OutboxSigningSecretPass` | BEFORE_OPTIMIZATION, 0 | Binds `%kernel.secret%` (FrameworkBundle's parameter, unknown while the extension loads) to the outbox signer unless `outbox.signing.secret` is set; fails clearly without it |
 | `ValidateConfiguredServicesPass` | BEFORE_OPTIMIZATION, 10 | Reports a missing service or rate limiter, or a service that does not implement the interface its option needs, with the config path that names it (recorded by `ContainerHelper::configuredService()`), before other passes fail on the dangling reference |
 | `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |
-| `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass`, `OutboxStoreMiddlewarePass` | BEFORE_OPTIMIZATION, -24 (`MessengerMiddlewareInjector::AFTER_MESSENGER_PASS`) | Run after `MessengerPass` built the handler locators and bus middleware lists on every supported Symfony version, and before optimization so references to aliases still resolve (Symfony's `ResettableServicePass` and `LoggerPass` run at -32) |
+| `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass`, `OutboxStoreMiddlewarePass` (which also gives `outbox:failed` the type map `MessengerPass` sets on Messenger's Symfony serializer) | BEFORE_OPTIMIZATION, -24 (`MessengerMiddlewareInjector::AFTER_MESSENGER_PASS`) | Run after `MessengerPass` built the handler locators and bus middleware lists on every supported Symfony version, and before optimization so references to aliases still resolve (Symfony's `ResettableServicePass` and `LoggerPass` run at -32) |
 | `TransportRoutingPass` | BEFORE_OPTIMIZATION, -24 | Passes the message types routed by `framework.messenger.routing` and, on Symfony 8.2, `#[AsMessageHandler(transport: ...)]` (keys of `messenger.senders_locator`, completed by `MessengerPass`) to `MessageTransportStampDecider` |
-| `OutboxStoragePass` | BEFORE_OPTIMIZATION, 0 | Keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage` (decorators are applied during optimization); checks that a custom storage implements `OutboxStorage` |
+| `OutboxStoragePass` | BEFORE_OPTIMIZATION, 0 | Keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage` (decorators are applied during optimization); checks that a custom storage implements `OutboxStorage`; logs a warning when `outbox.require_transaction` cannot be enforced |
 | `LoggerChannelPass` | BEFORE_OPTIMIZATION, -25 | Moves the bundle's services to the `cqrs` Monolog channel, after every pass that adds a service with a logger |
 | `ValidateTransportNamesPass` | BEFORE_OPTIMIZATION, -24 | Validates configured transports, `#[Asynchronous(transport: ...)]` of handled messages and `#[AsEventHandler(fromTransport: ...)]` against the complete routing |
 | `ValidateHandlerCountPass` | BEFORE_OPTIMIZATION, 0 (default) | Validates the handler counts collected by `CqrsHandlerPass` |
 | `RemoveHandlerMetadataParameterPass` | AFTER_REMOVING | Drops `somework_cqrs.handler_metadata` once `HandlerRegistry` received it, so it is not dumped into the main container class |
 
-Middleware is inserted with `MessengerMiddlewareInjector`, right after Messenger's `dispatch_after_current_bus` middleware (deferred messages continue with the stack after it). Resolve bus ids with `CqrsBusIds` (aliases such as `messenger.default_bus` are only known in compiler passes).
+Middleware is inserted with `MessengerMiddlewareInjector`, usually right after Messenger's `dispatch_after_current_bus` middleware (deferred messages continue with the stack after it): `inject()` (after a given middleware, `dispatch_after_current_bus` by default, or first), `prepend()` and `injectBefore()` (before `send_message`/`handle_message`, or last). The exceptions: `TraceContextCaptureMiddleware` is prepended (it records the trace context before a message is deferred), `OutboxPrepareMiddleware` goes after `add_default_stamps_middleware`, `DeduplicationLockReleaseMiddleware` after `deduplicate_middleware`, and `OutboxStoreMiddleware` before `send_message`. Resolve bus ids with `CqrsBusIds` (aliases such as `messenger.default_bus` are only known in compiler passes).
 
 A pass that reads what `MessengerPass` builds (bus middleware lists, `<bus>.messenger.handlers_locator`, the routing handlers add) runs at `MessengerMiddlewareInjector::AFTER_MESSENGER_PASS` and calls `MessengerMiddlewareInjector::assertMessengerPassHasRun()` (the injector and `findBusDefinition()` already do): before `MessengerPass`, a bus still has its `<bus>.middleware` parameter and argument 0 is `[]`, and a silent `false`/skip would leave the buses without the bundle's middleware. `tests/Functional/BusMiddlewareOrderTest.php` snapshots the resulting middleware of every CQRS bus.
 

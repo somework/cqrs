@@ -16,6 +16,10 @@ use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
 use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use Symfony\Component\Messenger\Envelope;
+use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\Exception\NoHandlerForMessageException;
+use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -38,6 +42,10 @@ interface CommandBusInterface
      * @throws OutboxRequiresTransactionException when the message goes to the outbox outside a transaction on its connection
      * @throws UnknownOutboxTransportException    when the message goes to the outbox for a transport that is not defined
      * @throws RateLimitExceededException         when the rate limiter of the message rejects it
+     * @throws HandlerFailedException             when a handler of a synchronous dispatch fails (Messenger's, wrapping its exception)
+     * @throws NoHandlerForMessageException       when a synchronous dispatch finds no handler on the bus (Messenger's)
+     * @throws DelayedMessageHandlingException    when a message the handler deferred (DispatchAfterCurrentBusStamp) fails afterwards (Messenger's)
+     * @throws TransportException                 when a transport fails to send the message (Messenger's)
      */
     public function dispatch(Command $command, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope;
 
@@ -51,12 +59,15 @@ interface CommandBusInterface
      * @throws DuplicateMessageException       when deduplication dropped it
      * @throws DeferredDispatchFailedException when the handler succeeded but a message it deferred (DispatchAfterCurrentBusStamp) failed afterwards
      * @throws RateLimitExceededException      when the rate limiter of the message rejects it
+     * @throws HandlerFailedException          when several handlers failed (Messenger's)
+     * @throws TransportException              when the routing sends it to a transport that fails (Messenger's)
      */
     public function dispatchSync(Command $command, StampInterface ...$stamps): mixed;
 
     /**
      * @throws AsyncBusNotConfiguredException when no async command bus is configured
      * @throws RateLimitExceededException     when the rate limiter of the message rejects it
+     * @throws TransportException             when the transport fails to send it (Messenger's)
      */
     public function dispatchAsync(Command $command, StampInterface ...$stamps): Envelope;
 }

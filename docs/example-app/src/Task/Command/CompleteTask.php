@@ -8,6 +8,8 @@ use SomeWork\CqrsBundle\Contract\Command;
 
 /**
  * Command to mark an existing task as completed.
+ *
+ * @psalm-immutable
  */
 final class CompleteTask implements Command
 {

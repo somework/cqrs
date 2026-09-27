@@ -134,7 +134,8 @@ final class OutboxRegistrar
         $relayDef->setArgument('$transports', new Reference('messenger.receiver_locator', ContainerInterface::NULL_ON_INVALID_REFERENCE));
         $relayDef->setArgument('$signer', $signer);
         $relayDef->setArgument('$acceptUnsigned', $signing['accept_unsigned']);
-        // --watch resets the services between runs, as Messenger's workers do between messages.
+        // Resets the services after each row whose handlers ran in the relay's process (or failed there),
+        // in single runs and with --watch alike, as Messenger's workers do after each message (--no-reset).
         $relayDef->setArgument('$resetter', (new Definition(RelayServicesResetter::class))
             ->setArgument('$services', new Reference('services_resetter', ContainerInterface::NULL_ON_INVALID_REFERENCE))
             ->setArgument('$doctrine', new Reference('doctrine', ContainerInterface::NULL_ON_INVALID_REFERENCE)));

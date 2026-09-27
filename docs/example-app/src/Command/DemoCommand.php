@@ -68,7 +68,7 @@ final class DemoCommand extends Command
 
         $io->section('Queries');
 
-        /** @var list<array{id: string, title: string, completed: bool}> $tasks */
+        // ListTasks implements Query<list<array{…}>>: static analysis knows what ask() returns.
         $tasks = $this->queryBus->ask(new ListTasks());
         $io->writeln('ListTasks:');
         $io->table(
@@ -79,7 +79,6 @@ final class DemoCommand extends Command
             ),
         );
 
-        /** @var array{id: string, title: string, completed: bool}|null $task */
         $task = $this->queryBus->ask(new FindTaskById('task-2'));
         $io->writeln(null === $task
             ? 'FindTaskById(task-2): not found'

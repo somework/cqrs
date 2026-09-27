@@ -161,9 +161,12 @@ somework_cqrs:
             default: async_commands
 ```
 
-Check the result with `bin/console somework:cqrs:list --details` (the
-*Dispatch Mode* and *Async Transports* columns) and
-`bin/console somework:cqrs:debug-transports`.
+Check the dispatch mode with `bin/console somework:cqrs:list --details` (the
+*Dispatch Mode* column). Its *Async Transports* column, like
+`bin/console somework:cqrs:debug-transports`, only shows the bundle's
+`transports` configuration: a transport named by `#[Asynchronous]` or `#[Outbox]`,
+`framework.messenger.routing` or `#[AsMessage(transport: …)]` shows as `None`
+there. Check those in the attribute, the routing, or with `bin/console debug:messenger`.
 
 ### Async bus not configured
 
@@ -299,7 +302,9 @@ Messenger bus directly instead of through the facades.
 
 **Fix.** Compare the *Bus* column of `bin/console somework:cqrs:list` with your
 `somework_cqrs.buses` configuration. Bus ids are shown after alias resolution
-(for example the real id behind `messenger.default_bus`).
+(for example the real id behind `messenger.default_bus`). A handler registered
+without a bus (for example a plain `#[AsMessageHandler]` on a CQRS message) shows
+`default`, although Messenger registers it on every bus.
 
 ## Configuration errors
 
@@ -383,12 +388,15 @@ Rate limiters are configured under "somework_cqrs.rate_limiting" but symfony/rat
 ```
 
 ```
-Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.
+Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal", configure another storage under somework_cqrs.outbox.storage, or set somework_cqrs.outbox.enabled to false.
 ```
 
-The outbox also needs the `doctrine.dbal.<connection>_connection` service from
-DoctrineBundle; without it Symfony reports that `somework_cqrs.outbox.storage`
-depends on a non-existent service.
+The DBAL storage also needs the `doctrine.dbal.<connection>_connection` service from
+DoctrineBundle (the connection of `outbox.connection`); without it the build fails with:
+
+```
+The Doctrine DBAL connection service "doctrine.dbal.default_connection" for "somework_cqrs.outbox.connection" does not exist. Configure the connection under "doctrine.dbal.connections".
+```
 
 ## Idempotency and outbox
 

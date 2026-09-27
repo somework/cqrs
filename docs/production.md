@@ -263,9 +263,10 @@ application a role that can only read and write rows, run the setup with a role 
 
 ### Relay
 
-`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new
-rows in the order they were stored, then retries in the order of their retry
-time) and marks each one published after dispatching it.
+`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (per
+transport, new rows in the order of their `created_at` and id, then retries in the
+order of their retry time; see [Delivery guarantees](outbox.md#delivery-guarantees)
+for what that order guarantees) and marks each one published after dispatching it.
 
 * Rows are dispatched on the Messenger bus of their type (the async command or
   event bus when configured, otherwise the sync one; the default bus for other
@@ -274,10 +275,13 @@ time) and marks each one published after dispatching it.
   hand each message to the bus where its handlers are registered. A row that is
   not sent to any transport is handled synchronously, and the command prints and
   logs a warning.
-* The stamp pipeline does not run for relayed messages: add the stamps you need
-  to the envelope you store. Only a message stored while a handler runs gets a
-  `MessageMetadataStamp` without one being passed (it continues the handled
-  message's correlation); outside a handler, pass one yourself if you need it.
+* The relay does not run the stamp pipeline. A message stored through the buses
+  (`DispatchMode::OUTBOX`, `#[Outbox]`, `dispatch_modes`) went through it when it
+  was stored, as an asynchronous dispatch, and its stamps are stored with it. A
+  message stored with `OutboxWriter::store()` never goes through it: add the stamps
+  you need to the envelope you store. Only a message stored while a handler runs
+  then gets a `MessageMetadataStamp` without one being passed (it continues the
+  handled message's correlation); outside a handler, pass one yourself if you need it.
 * A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
   makes a single run exit with `1` (`--watch` goes on, and its exit code does
   not change); the rows behind it are not blocked. After
@@ -490,12 +494,16 @@ monolog:
 Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
 message in the calling process), an event with handlers that a worker received on a bus without them (it is
 acknowledged without being handled), and the outbox relay's failures, paused transports and
-given-up messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
+given-up messages. Every dispatch through the command and event buses logs a debug line with the
+bus, the dispatch mode and the classes of the stamps (a dispatch through the outbox logs a
+second one once the message is stored, with its transports); `ask()` logs the number of stamps
+before the query is handled, and a second line once it was handled.
 
 ### Correlation and causation ids
 
-Every message dispatched through the facades gets a `MessageMetadataStamp` with
-three ids:
+Every message dispatched through the facades gets a `MessageMetadataStamp` from
+the default metadata provider (a [provider of your own](usage.md#metadata-providers-and-correlation-ids) that returns
+`null` leaves the message without one), with three ids:
 
 - the **message id**, unique per message (a retry keeps it);
 - the **correlation id** of the flow: the first message uses its own message id,
@@ -616,8 +624,11 @@ Messages often carry personal data, and the bundle keeps or passes on parts of t
   `DuplicateMessageException` (and so in error trackers) and serialized with the message. Do
   not put personal data such as e-mail addresses in keys; hash client-supplied values
   (`hash('sha256', $tenantId.':'.$requestId)`).
-- **Metadata.** Values returned by your `MessageMetadataProvider` travel with every message
-  and appear in logs and spans; keep them to ids.
+- **Metadata.** Values returned by your `MessageMetadataProvider` are serialized with every
+  message: they are stored in the transports, the outbox table and failure transports, and
+  appear wherever messages are dumped or logged whole. The bundle's own spans only carry the
+  message class and type, and its log lines the stamp classes, not their values; keep the
+  extras to ids anyway.
 
 ## Message versioning
 

@@ -44,7 +44,8 @@ final class QueryBus implements QueryBusInterface
     /**
      * Handles the query synchronously and returns the result of its single handler.
      *
-     * A DispatchAfterCurrentBusStamp is ignored because the result is needed immediately.
+     * A DispatchAfterCurrentBusStamp passed by the caller is dropped because the result is needed
+     * immediately (the stamp pipeline adds none to synchronous dispatches).
      * When the handler throws, its exception is rethrown as is (not wrapped in Messenger's
      * HandlerFailedException).
      *

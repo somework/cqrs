@@ -15,7 +15,8 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
  *
  * The configuration only controls the automatic stamp: a DispatchAfterCurrentBusStamp
  * passed by the caller (e.g. to handle an event only once the current command succeeded)
- * is always kept.
+ * is kept here. dispatchSync() and ask() drop it (they need the result at once), and so does
+ * OutboxPrepareMiddleware for a message stored in the outbox (it is stored at once).
  *
  * @internal
  */

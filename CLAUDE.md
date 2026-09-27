@@ -34,7 +34,7 @@ vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --
 CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
 ```
 
-CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
+CI runs php-cs-fixer and PHPStan once (PHP 8.4, highest dependencies) and PHPUnit across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency PHPUnit job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
 
 Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.1, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
@@ -102,7 +102,7 @@ reports messages that were sent to a transport or deduplicated).
 
 **Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `TraceContextCaptureMiddleware` (records the dispatching trace context before a message is deferred), `OutboxPrepareMiddleware`, `OutboxStoreMiddleware`, `OutboxBypassMiddleware` (wraps `doctrine_transaction` and `DoctrineDbalTransactionMiddleware` so a message stored in the outbox skips them).
 
-**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`; `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
+**Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop `OutboxRelayCommand` runs, reporting to the console through the `ConsoleRelayReporter` it creates itself (`OutboxRelay`, `RelayReporter` and `RelayResult` are `@internal`: there is no supported way to plug in another reporter); `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 
