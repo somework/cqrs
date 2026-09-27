@@ -90,11 +90,13 @@ final class AggregateSequenceStampTest extends TestCase
         new AggregateSequenceStamp('agg-1', -100, 'App\\Entity');
     }
 
-    public function test_aggregate_type_can_be_empty_string(): void
+    public function test_aggregate_type_cannot_be_empty(): void
     {
-        $stamp = new AggregateSequenceStamp('agg-1', 1, '');
+        // Consumers order per aggregate type and id: an empty type would merge unrelated aggregates.
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Aggregate type cannot be empty');
 
-        self::assertSame('', $stamp->aggregateType);
+        new AggregateSequenceStamp('agg-1', 1, '');
     }
 
     public function test_uuid_style_aggregate_id_is_accepted(): void

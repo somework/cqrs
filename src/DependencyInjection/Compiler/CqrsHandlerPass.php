@@ -19,13 +19,16 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 
 use function array_filter;
+use function array_is_list;
 use function array_key_first;
 use function array_keys;
 use function array_values;
 use function class_exists;
 use function implode;
+use function in_array;
 use function interface_exists;
 use function is_a;
+use function is_array;
 use function is_iterable;
 use function is_string;
 use function sprintf;
@@ -49,6 +52,9 @@ final class CqrsHandlerPass implements CompilerPassInterface
     public const INTERFACE_TAG = 'somework_cqrs.handler_interface';
     public const TYPE_ATTRIBUTE = 'somework_cqrs_type';
 
+    /** Handler routes of non-CQRS types, for ValidateHandlerCountPass (removed by it). */
+    public const OTHER_ROUTES_PARAMETER = 'somework_cqrs.other_handler_routes';
+
     private const BUS_KEYS = [
         'command' => ['command', 'command_async'],
         'query' => ['query'],
@@ -62,6 +68,8 @@ final class CqrsHandlerPass implements CompilerPassInterface
             'query' => [],
             'event' => [],
         ];
+        /** @var list<array{message: string, handler_class: string, service_id: string, bus: string|null}> $otherRoutes */
+        $otherRoutes = [];
 
         $this->convertInterfaceTags($container);
 
@@ -94,6 +102,12 @@ final class CqrsHandlerPass implements CompilerPassInterface
                 $declaredType = $attributes[self::TYPE_ATTRIBUTE] ?? null;
                 $hasExplicitHandles = isset($attributes['handles']);
                 $routes = $this->resolveRoutes($handlerClass, $attributes, null !== $declaredType);
+
+                // Only the bundle's attributes and interfaces: plain Messenger tags keep Messenger's rules
+                // (e.g. #[AsMessageHandler(handles: '*')]).
+                if ($hasExplicitHandles && null !== $declaredType) {
+                    $this->assertMethodAcceptsMessages($serviceId, $handlerClass, $attributes, $routes);
+                }
 
                 if ([] === $routes && null !== $declaredType && !$hasExplicitHandles) {
                     throw new InvalidArgumentException(sprintf('Cannot determine the message handled by "%s" (service "%s"). Type-hint the first parameter of %s::%s() with the message class or declare it explicitly, e.g. #[As%sHandler(%s: YourMessage::class)].', $handlerClass, $serviceId, $handlerClass, $attributes['method'] ?? '__invoke', ucfirst((string) $declaredType), (string) $declaredType));
@@ -137,6 +151,10 @@ final class CqrsHandlerPass implements CompilerPassInterface
 
                 $routes = array_values($routes);
 
+                if (in_array('query', $cqrsMessages, true)) {
+                    $this->assertReturnsAResult($serviceId, $handlerClass, $attributes);
+                }
+
                 // Every member belongs to another interface of the handler (e.g. QueryHandler next to
                 // CommandHandler and EventHandler): this tag has nothing left to route.
                 if ([] === $routes && $coveredElsewhere > 0) {
@@ -154,6 +172,18 @@ final class CqrsHandlerPass implements CompilerPassInterface
                             'service_id' => $serviceId,
                             'bus' => $bus,
                         ];
+                    }
+                }
+
+                // Handlers of other types (e.g. a plain Messenger handler of an interface, or "*") also
+                // run for the CQRS messages that inherit the type: ValidateHandlerCountPass counts them.
+                foreach ($routes as $messageClass) {
+                    if (isset($cqrsMessages[$messageClass])) {
+                        continue;
+                    }
+
+                    foreach ($buses as $bus) {
+                        $otherRoutes[] = ['message' => $messageClass, 'handler_class' => $handlerClass, 'service_id' => $serviceId, 'bus' => $bus];
                     }
                 }
 
@@ -188,6 +218,7 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         $container->setParameter('somework_cqrs.handler_metadata', $metadata);
+        $container->setParameter(self::OTHER_ROUTES_PARAMETER, $otherRoutes);
     }
 
     /**
@@ -338,6 +369,105 @@ final class CqrsHandlerPass implements CompilerPassInterface
         }
 
         return array_keys($routes);
+    }
+
+    /**
+     * QueryBus::ask() returns the result of the handler: a query handler declared ": void" or
+     * ": never" would make every query return null.
+     *
+     * @param array<string, mixed> $attributes
+     */
+    private function assertReturnsAResult(string $serviceId, string $handlerClass, array $attributes): void
+    {
+        // Per-message options (e.g. ['Msg' => ['method' => 'onMsg']]) may route to different methods.
+        if (isset($attributes['handles']) && is_array($attributes['handles']) && !array_is_list($attributes['handles'])) {
+            return;
+        }
+
+        /** @var class-string $handlerClass */
+        $reflection = new ReflectionClass($handlerClass);
+        $methodName = is_string($attributes['method'] ?? null) ? $attributes['method'] : '__invoke';
+
+        if (!$reflection->hasMethod($methodName)) {
+            return;
+        }
+
+        $type = $reflection->getMethod($methodName)->getReturnType();
+
+        if ($type instanceof ReflectionNamedType && in_array($type->getName(), ['void', 'never'], true)) {
+            throw new InvalidArgumentException(sprintf('Query handler "%s" (service "%s") declares %s::%s(): %s, but a query handler must return the result of the query.', $handlerClass, $serviceId, $handlerClass, $methodName, $type->getName()));
+        }
+    }
+
+    /**
+     * A declared message the handler method cannot accept would fail every dispatch with a TypeError
+     * (e.g. #[AsCommandHandler(ShipOrder::class)] copied onto a handler of PlaceOrder).
+     *
+     * @param array<string, mixed> $attributes
+     * @param list<string>         $messages
+     */
+    private function assertMethodAcceptsMessages(string $serviceId, string $handlerClass, array $attributes, array $messages): void
+    {
+        // Per-message options (e.g. ['Msg' => ['method' => 'onMsg']]) may route to different methods.
+        if (is_array($attributes['handles']) && !array_is_list($attributes['handles'])) {
+            return;
+        }
+
+        /** @var class-string $handlerClass */
+        $reflection = new ReflectionClass($handlerClass);
+        $methodName = is_string($attributes['method'] ?? null) ? $attributes['method'] : '__invoke';
+
+        if (!$reflection->hasMethod($methodName)) {
+            return;
+        }
+
+        $parameters = $reflection->getMethod($methodName)->getParameters();
+        $type = [] === $parameters ? null : $parameters[0]->getType();
+
+        if (null === $type) {
+            return;
+        }
+
+        foreach ($messages as $messageClass) {
+            if ('*' !== $messageClass && !self::accepts($type, $messageClass)) {
+                throw new InvalidArgumentException(sprintf('"%s" (service "%s") is registered for %s, but %s::%s() only accepts %s. Fix the message class of the attribute or the parameter type.', $handlerClass, $serviceId, $messageClass, $handlerClass, $methodName, (string) $type));
+            }
+        }
+    }
+
+    private static function accepts(ReflectionType $type, string $messageClass): bool
+    {
+        if ($type instanceof ReflectionUnionType) {
+            foreach ($type->getTypes() as $member) {
+                if (self::accepts($member, $messageClass)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        if ($type instanceof ReflectionIntersectionType) {
+            foreach ($type->getTypes() as $member) {
+                if (!self::accepts($member, $messageClass)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        if (!$type instanceof ReflectionNamedType) {
+            return true;
+        }
+
+        $name = $type->getName();
+
+        if ($type->isBuiltin()) {
+            return 'object' === $name || 'mixed' === $name;
+        }
+
+        return in_array($name, ['self', 'static', 'parent'], true) || is_a($messageClass, $name, true);
     }
 
     /**

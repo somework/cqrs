@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Testing\Constraint;
 
 use PHPUnit\Framework\Constraint\Constraint;
+use SomeWork\CqrsBundle\Testing\RecordedDispatch;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
 
 use function array_map;
@@ -45,7 +46,7 @@ final class DispatchedMessage extends Constraint
         }
 
         foreach ($other->getDispatched() as $record) {
-            if (!$record['message'] instanceof $this->expectedClass) {
+            if (!$record->message instanceof $this->expectedClass) {
                 continue;
             }
 
@@ -53,12 +54,24 @@ final class DispatchedMessage extends Constraint
                 return true;
             }
 
-            if (($this->callback)($record['message'])) {
+            if (($this->callback)($record->message)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * Names the bus instead of exporting it (with every record and configured result).
+     */
+    protected function failureDescription(mixed $other): string
+    {
+        if (!$other instanceof RecordsBusDispatches) {
+            return parent::failureDescription($other);
+        }
+
+        return $other::class.' '.$this->toString();
     }
 
     protected function additionalFailureDescription(mixed $other): string
@@ -74,7 +87,7 @@ final class DispatchedMessage extends Constraint
         }
 
         $classes = array_unique(array_map(
-            static fn (array $record): string => $record['message']::class,
+            static fn (RecordedDispatch $record): string => $record->message::class,
             $dispatched,
         ));
 

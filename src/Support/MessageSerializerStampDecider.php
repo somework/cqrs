@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Support;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use Symfony\Component\Messenger\Stamp\SerializerStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 

@@ -55,8 +55,8 @@ the policy only configures transport retries.
 
 | Class | Stamps | `RetryConfiguration` | Notes |
 |-------|--------|----------------------|-------|
-| `SomeWork\CqrsBundle\Support\NullRetryPolicy` | none | no | The default policy of every message type. Transports keep their own Messenger retry strategy. |
-| `SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy` | none | yes | Constructor `(int $maxRetries = 3, int $initialDelay = 1000, float $multiplier = 2.0)`. Rejects `$maxRetries < 0`, `$initialDelay < 1` and `$multiplier <= 0`. |
+| `SomeWork\CqrsBundle\Policy\NullRetryPolicy` | none | no | The default policy of every message type. Transports keep their own Messenger retry strategy. |
+| `SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy` | none | yes | Constructor `(int $maxRetries = 3, int $initialDelay = 1000, float $multiplier = 2.0)`. Rejects `$maxRetries < 0`, `$initialDelay < 1` and `$multiplier <= 0`. |
 
 Both are registered as services under their class names. The `ExponentialBackoffRetryPolicy`
 service uses the constructor defaults, and `somework_cqrs.exponential_backoff_retry_policy`
@@ -66,7 +66,7 @@ is an alias of it. For other values, register your own service:
 # config/services.yaml
 services:
     app.retry.payment:
-        class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+        class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         arguments:
             $maxRetries: 5
             $initialDelay: 1000   # milliseconds
@@ -75,28 +75,30 @@ services:
 
 ## Mapping policies to messages
 
-`retry_policies` has one section per message type. Each section has a `default` service id
-and a `map` from message class or interface names to service ids:
+`retry_policies` has a global `default` and one section per message type. Each section has
+an optional `default` service id and a `map` from message class or interface names to
+service ids:
 
 ```yaml
 # config/packages/somework_cqrs.yaml
 somework_cqrs:
     retry_policies:
+        default: SomeWork\CqrsBundle\Policy\NullRetryPolicy
         command:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: ~
             map:
                 App\Application\Command\ProcessPayment: app.retry.payment
-                App\Application\Command\TalksToPaymentGateway: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+                App\Application\Command\TalksToPaymentGateway: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
         event:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: ~
             map: {}
         query:
-            default: SomeWork\CqrsBundle\Support\NullRetryPolicy
+            default: ~
             map: {}
 ```
 
 A message's policy is looked up in this order: exact class, parent classes, interfaces,
-then the section's `default`. Map keys must be existing class or interface names (a
+the section's `default`, then the global `default`. Map keys must be existing class or interface names (a
 leading `\` is allowed), and a typo fails container compilation. Each value must be a
 service that implements `RetryPolicy`.
 
@@ -117,7 +119,7 @@ somework_cqrs:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `transports` | `{}` | Maps a Messenger transport name to `command`, `query` or `event`. The type selects the `retry_policies` section used to resolve policies for messages on that transport. |
+| `transports` | `{}` | Messenger transport names, as a list or mapped to `command`, `query` or `event`. Commands, queries and events received from the transport use the `retry_policies` section of their own type; the mapped type (`command` for a list) is used for any other message. |
 | `jitter` | `0.0` | Random variation of each computed delay, between `0.0` and `1.0`. `0.1` means ±10 %. |
 | `max_delay` | `0` | Upper bound for each delay, in milliseconds. `0` means no cap. |
 
@@ -130,10 +132,10 @@ original strategy is kept as the fallback. Keep the following in mind:
   `async-events` must be listed as `async-events`, not `async_events`.
 - **Unknown transports are rejected.** Compilation fails with
   `Transport "<name>" configured under "somework_cqrs.retry_strategy.transports" is not a Messenger transport. Known transports: "..."`.
-- **One type per transport.** Every message on the transport is resolved against that
-  type's section. A message of another type finds no entry in the map and gets that
-  section's `default` policy. Give commands and events separate transports if they need
-  different policies.
+- **Each message uses its own type.** A command received from the transport is resolved
+  against `retry_policies.command`, an event against `retry_policies.event`, whatever type
+  the transport is mapped to; commands and events can share a transport. The mapped type
+  only applies to messages that are neither commands, queries nor events.
 
 ## How CqrsRetryStrategy decides
 

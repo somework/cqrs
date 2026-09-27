@@ -49,6 +49,7 @@ use function strlen;
 use function strrpos;
 use function strtolower;
 use function substr;
+use function usort;
 
 use const JSON_THROW_ON_ERROR;
 
@@ -73,7 +74,7 @@ final class GenerateMessageCommand extends SymfonyCommand
         'event' => AsEventHandler::class,
     ];
 
-    private const CLASS_NAME_PATTERN = '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(?:\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)+$/';
+    private const CLASS_NAME_PATTERN = '/^[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*(?:\\\\[A-Za-z_\x80-\xff][A-Za-z0-9_\x80-\xff]*)+$/D';
 
     /** Words that cannot be used as a class name. */
     private const RESERVED_CLASS_NAMES = [
@@ -137,6 +138,11 @@ final class GenerateMessageCommand extends SymfonyCommand
 
             foreach ([$messagePath, $handlerPath] as $path) {
                 self::assertWithinProject($path, $projectDir);
+            }
+
+            // In "src/", a class Composer cannot load breaks the service import of the directory (and the whole application).
+            if (null === $baseDir && (!$messageAutoloaded || !$handlerAutoloaded)) {
+                throw new InvalidArgumentException(sprintf('The namespace of "%s" is not covered by a PSR-4 prefix in composer.json, so Composer could not autoload the class. Use a namespace of your "autoload.psr-4" entries, add one, or choose the directory with --dir.', $messageAutoloaded ? $handlerClass : $messageClass));
             }
         } catch (InvalidArgumentException $exception) {
             $io->error($exception->getMessage());
@@ -284,6 +290,15 @@ final class GenerateMessageCommand extends SymfonyCommand
         $interfaceAlias = 0 === strcasecmp($messageShortName, self::shortName($interface)) ? self::shortName($interface).'Contract' : self::shortName($interface);
         $interfaceImport = $interfaceAlias === self::shortName($interface) ? $interface : sprintf('%s as %s', $interface, $interfaceAlias);
 
+        // The marker interfaces are @psalm-immutable, which Psalm requires on implementing classes too.
+        $docblock = ['/**', ' * @psalm-immutable'];
+        if ('query' === $type) {
+            $docblock[] = ' * TODO: Replace mixed with the result type of the handler.';
+            $docblock[] = ' *';
+            $docblock[] = sprintf(' * @implements %s<mixed>', $interfaceAlias);
+        }
+        $docblock[] = ' */';
+
         return implode("\n", [
             '<?php',
             '',
@@ -293,6 +308,7 @@ final class GenerateMessageCommand extends SymfonyCommand
             '',
             sprintf('use %s;', $interfaceImport),
             '',
+            ...$docblock,
             sprintf('final class %s implements %s', $messageShortName, $interfaceAlias),
             '{',
             '    public function __construct(',
@@ -349,6 +365,8 @@ final class GenerateMessageCommand extends SymfonyCommand
         };
 
         $lines = ['<?php', '', 'declare(strict_types=1);', '', sprintf('namespace %s;', $handlerNamespace), ''];
+        // In alphabetical order, as coding standards (e.g. PHP-CS-Fixer's ordered_imports) expect.
+        usort($imports, strcasecmp(...));
         foreach ($imports as $import) {
             $lines[] = sprintf('use %s;', $import);
         }

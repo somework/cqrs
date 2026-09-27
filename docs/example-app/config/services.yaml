@@ -17,7 +17,7 @@ services:
 
     # Per-message retry policy used by the commented retry example in somework_cqrs.yaml:
     # app.retry.exponential:
-    #     class: SomeWork\CqrsBundle\Support\ExponentialBackoffRetryPolicy
+    #     class: SomeWork\CqrsBundle\Policy\ExponentialBackoffRetryPolicy
     #     arguments:
     #         $maxRetries: 5
     #         $initialDelay: 500      # milliseconds

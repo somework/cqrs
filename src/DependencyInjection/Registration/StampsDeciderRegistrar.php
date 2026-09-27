@@ -13,7 +13,6 @@ use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use SomeWork\CqrsBundle\Support\MessageMetadataStampDecider;
 use SomeWork\CqrsBundle\Support\MessageSerializerStampDecider;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
-use SomeWork\CqrsBundle\Support\MessageTransportStampFactory;
 use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
 use SomeWork\CqrsBundle\Support\RetryPolicyStampDecider;
 use SomeWork\CqrsBundle\Support\SequenceStampDecider;
@@ -49,9 +48,8 @@ final class StampsDeciderRegistrar
      */
     public function register(ContainerBuilder $container, array $buses, array $idempotencyConfig = ['enabled' => false, 'ttl' => 300], array $causationIdConfig = ['enabled' => true], array $sequenceConfig = ['enabled' => true], array $rateLimitConfig = ['enabled' => false]): void
     {
-        $container->setDefinition('somework_cqrs.transport_stamp_factory', (new Definition(MessageTransportStampFactory::class))
-            ->setPublic(false));
-        $container->setAlias(MessageTransportStampFactory::class, 'somework_cqrs.transport_stamp_factory')->setPublic(false);
+        // Child messages inherit the correlation id of the handled message.
+        $causationContext = true === $causationIdConfig['enabled'] ? new Reference('somework_cqrs.causation_id_context') : null;
 
         $deciderConfigurations = [
             [
@@ -96,6 +94,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'query'),
                     '$messageType' => Query::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],
@@ -105,6 +104,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'command'),
                     '$messageType' => Command::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],
@@ -132,6 +132,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$providers' => $this->helper->createResolverReference('metadata', 'event'),
                     '$messageType' => Event::class,
+                    '$causation' => $causationContext,
                 ],
                 'priority' => 125,
             ],
@@ -139,8 +140,6 @@ final class StampsDeciderRegistrar
                 'service_id_suffix' => 'message_transport',
                 'class' => MessageTransportStampDecider::class,
                 'arguments' => [
-                    '$stampFactory' => new Reference('somework_cqrs.transport_stamp_factory'),
-                    '$stampTypes' => '%somework_cqrs.transport_stamp_types%',
                     '$commandResolvers' => $this->createTransportResolverMapDefinition(
                         $this->helper->createResolverReference('transports', 'command'),
                         $this->helper->createOptionalTransportResolverReference('command_async', $buses),
@@ -153,6 +152,7 @@ final class StampsDeciderRegistrar
                         $this->helper->createResolverReference('transports', 'event'),
                         $this->helper->createOptionalTransportResolverReference('event_async', $buses),
                     ),
+                    '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],
                 // Also resolves the #[Asynchronous] transport; TransportRoutingPass adds $routedMessageTypes.
                 'priority' => 175,
@@ -214,7 +214,8 @@ final class StampsDeciderRegistrar
             'arguments' => [
                 '$decider' => new Reference('somework_cqrs.dispatch_after_current_bus_decider'),
             ],
-            'priority' => 0,
+            // Below the default priority (0) of custom deciders: runs last, deterministically.
+            'priority' => -10,
         ];
 
         foreach ($deciderConfigurations as $configuration) {

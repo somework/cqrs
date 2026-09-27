@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateIdempotencyDependenciesPass;
+use SomeWork\CqrsBundle\Support\IdempotencyStampDecider;
 use Symfony\Component\DependencyInjection\ChildDefinition;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
@@ -16,6 +17,8 @@ use Symfony\Component\Lock\PersistingStoreInterface;
 use Symfony\Component\Lock\Store\StoreFactory;
 use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
+
+use function str_replace;
 
 #[CoversClass(ValidateIdempotencyDependenciesPass::class)]
 final class ValidateIdempotencyDependenciesPassTest extends TestCase
@@ -91,11 +94,11 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
      */
     public static function lockStores(): iterable
     {
-        yield 'flock (FrameworkBundle default)' => ['flock', 'only lives in one process or host'];
-        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'only lives in one process or host'];
-        yield 'in-memory' => ['in-memory', 'only lives in one process or host'];
-        yield 'flock with a path' => ['flock:///var/lock', 'only lives in one process or host'];
-        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'ties its keys to one connection'];
+        yield 'flock (FrameworkBundle default)' => ['flock', 'releases a key as soon as the dispatch returns'];
+        yield 'semaphore (FrameworkBundle default with ext-sysvsem)' => ['semaphore', 'releases a key as soon as the dispatch returns'];
+        yield 'in-memory' => ['in-memory', 'only deduplicates within one process'];
+        yield 'flock with a path' => ['flock:///var/lock', 'releases a key as soon as the dispatch returns'];
+        yield 'PostgreSQL advisory locks' => ['postgresql+advisory://db:5432/app', 'a key stays locked while the connection lives, whatever the TTL'];
         yield 'ZooKeeper' => ['zookeeper://localhost:2181', 'ties its keys to one connection'];
         yield 'redis' => ['redis://localhost', null];
         yield 'dbal' => ['mysql://db/app', null];
@@ -132,6 +135,22 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         self::assertStringContainsString('"flock" (the environment value when the container was compiled)', $log[0]);
     }
 
+    public function test_hands_the_problem_to_the_stamp_decider(): void
+    {
+        // The decider logs it as a warning the first time a message carries an IdempotencyStamp.
+        $container = $this->containerWithLockStore('flock');
+        $container->register('somework_cqrs.stamp_decider.idempotency', IdempotencyStampDecider::class);
+
+        (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
+
+        $problem = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$problem');
+        self::assertIsString($problem);
+        self::assertStringContainsString('releases a key as soon as the dispatch returns', $problem);
+        // Escaped: the advice names "%env(LOCK_DSN)%", which must not become an environment variable.
+        self::assertStringContainsString('"%%env(LOCK_DSN)%%"', $problem);
+        self::assertStringContainsString(str_replace('%%', '%', $problem), $container->getCompiler()->getLog()[0]);
+    }
+
     public function test_the_credentials_of_the_lock_store_are_not_logged(): void
     {
         $container = $this->enabledContainer();
@@ -140,8 +159,14 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         self::assertIsString($placeholder);
         $container = $this->containerWithLockStore($placeholder, $container);
 
+        $container->register('somework_cqrs.stamp_decider.idempotency', IdempotencyStampDecider::class);
+
         (new ValidateIdempotencyDependenciesPass(static fn (): bool => true))->process($container);
 
+        // Nor handed to the decider, which logs it at runtime and is dumped in the compiled container.
+        $problem = $container->getDefinition('somework_cqrs.stamp_decider.idempotency')->getArgument('$problem');
+        self::assertIsString($problem);
+        self::assertStringNotContainsString('s3cret', $problem);
         $log = $container->getCompiler()->getLog();
         self::assertCount(1, $log);
         self::assertStringNotContainsString('s3cret', $log[0]);

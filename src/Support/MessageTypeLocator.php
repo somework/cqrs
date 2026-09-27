@@ -13,7 +13,6 @@ use function array_values;
 use function class_implements;
 use function get_parent_class;
 use function implode;
-use function iterator_to_array;
 use function max;
 use function sort;
 use function usort;
@@ -32,6 +31,9 @@ final class MessageTypeLocator
     /** @var array<string, int> */
     private static array $interfaceDepths = [];
 
+    /** @var array<class-string, list<class-string>> */
+    private static array $types = [];
+
     /**
      * @param list<string> $ignoredKeys
      */
@@ -43,13 +45,20 @@ final class MessageTypeLocator
 
         $messageClass = $message::class;
 
-        $signatureKeys = array_values(array_unique($ignoredKeys));
-        $sortedSignature = $signatureKeys;
-        sort($sortedSignature);
-        $ignoredSignature = implode("\0", $sortedSignature);
+        // Runs on every dispatch: resolvers pass no key or one key, which needs no normalising.
+        if (!isset($ignoredKeys[1])) {
+            $signatureKeys = $ignoredKeys;
+            $ignoredSignature = $ignoredKeys[0] ?? '';
+        } else {
+            $signatureKeys = array_values(array_unique($ignoredKeys));
+            $sortedSignature = $signatureKeys;
+            sort($sortedSignature);
+            $ignoredSignature = implode("\0", $sortedSignature);
+        }
 
-        if (isset(self::$matchCache[$services][$messageClass]) && array_key_exists($ignoredSignature, self::$matchCache[$services][$messageClass])) {
-            $type = self::$matchCache[$services][$messageClass][$ignoredSignature];
+        $cached = self::$matchCache[$services][$messageClass] ?? null;
+        if (null !== $cached && array_key_exists($ignoredSignature, $cached)) {
+            $type = $cached[$ignoredSignature];
 
             return null === $type ? null : new MessageTypeMatch($type, $services->get($type));
         }
@@ -60,9 +69,7 @@ final class MessageTypeLocator
             $ignored[$key] = true;
         }
 
-        $classHierarchy = iterator_to_array(self::classHierarchy($messageClass), false);
-
-        foreach ($classHierarchy as $type) {
+        foreach (self::typesOf($messageClass) as $type) {
             if (isset($ignored[$type])) {
                 continue;
             }
@@ -71,20 +78,6 @@ final class MessageTypeLocator
                 self::storeMatch($services, $messageClass, $ignoredSignature, $type);
 
                 return new MessageTypeMatch($type, $services->get($type));
-            }
-        }
-
-        // Most specific interface first (same order as DispatchModeDecider), independent of the
-        // order in which the class happens to declare its interfaces.
-        foreach (self::interfacesByDepth($messageClass) as $interface) {
-            if (isset($ignored[$interface])) {
-                continue;
-            }
-
-            if ($services->has($interface)) {
-                self::storeMatch($services, $messageClass, $ignoredSignature, $interface);
-
-                return new MessageTypeMatch($interface, $services->get($interface));
             }
         }
 
@@ -119,8 +112,9 @@ final class MessageTypeLocator
     }
 
     /**
-     * The types a per-message configuration can name for a class, in the order match() looks them
-     * up: the class, its parent classes, then its interfaces, most specific first.
+     * The types a per-message configuration can name for a class, in the order they are looked
+     * up: the class, its parent classes, then its interfaces, most specific first (independent of
+     * the order in which the class declares them). Shared with DispatchModeDecider.
      *
      * @param class-string $class
      *
@@ -128,7 +122,7 @@ final class MessageTypeLocator
      */
     public static function typesOf(string $class): array
     {
-        return [...iterator_to_array(self::classHierarchy($class), false), ...self::interfacesByDepth($class)];
+        return self::$types[$class] ??= [...iterator_to_array(self::classHierarchy($class), false), ...self::interfacesByDepth($class)];
     }
 
     /**

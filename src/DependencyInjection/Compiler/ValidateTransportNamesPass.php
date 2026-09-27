@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Compiler;
 
+use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\AsMessageRouting;
@@ -18,7 +19,6 @@ use function array_values;
 use function class_exists;
 use function class_implements;
 use function class_parents;
-use function in_array;
 use function is_array;
 use function is_string;
 use function sprintf;
@@ -48,18 +48,43 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
         }
 
         $this->validateAsynchronousAttributes($container);
+
+        // #[AsEventHandler(fromTransport: ...)]: a worker would skip the handler for every message.
+        foreach ($container->findTaggedServiceIds('messenger.message_handler') as $id => $tags) {
+            $class = $container->findDefinition($id)->getClass();
+            $reflection = null === $class ? null : $container->getReflectionClass($container->getParameterBag()->resolveValue($class), false);
+            if (null === $reflection) {
+                continue;
+            }
+            foreach ($reflection->getAttributes(AsEventHandler::class) as $attribute) {
+                $fromTransport = $attribute->newInstance()->fromTransport;
+                if (null !== $fromTransport && !self::transportExists($container, $fromTransport)) {
+                    throw new InvalidConfigurationException(sprintf('#[AsEventHandler(fromTransport: "%s")] on "%s" names a Messenger transport that is not defined.', $fromTransport, $reflection->getName()));
+                }
+            }
+        }
     }
 
     /**
-     * An #[Asynchronous] message needs a transport. Messages are only known through their handlers
-     * (CqrsHandlerPass records them).
+     * An #[Asynchronous] message needs an async bus and a transport. Messages are only known
+     * through their handlers (CqrsHandlerPass records them).
      */
     private function validateAsynchronousAttributes(ContainerBuilder $container): void
     {
         $metadata = $container->hasParameter('somework_cqrs.handler_metadata') ? $container->getParameter('somework_cqrs.handler_metadata') : [];
         $checked = [];
 
-        foreach (is_array($metadata) ? $metadata : [] as $type => $entries) {
+        // Queries are always handled synchronously: the attribute would be silently ignored.
+        foreach (is_array($metadata) && is_array($metadata['query'] ?? null) ? $metadata['query'] : [] as $entry) {
+            $messageClass = is_array($entry) ? ($entry['message'] ?? null) : null;
+            if (is_string($messageClass) && [] !== ($container->getReflectionClass($messageClass, false)?->getAttributes(Asynchronous::class) ?? [])) {
+                throw new InvalidConfigurationException(sprintf('"%s" is a query and carries #[Asynchronous]: queries are always handled synchronously. Remove the attribute.', $messageClass));
+            }
+        }
+
+        foreach (['command', 'event'] as $type) {
+            $entries = is_array($metadata) ? ($metadata[$type] ?? []) : [];
+
             foreach (is_array($entries) ? $entries : [] as $entry) {
                 $messageClass = is_array($entry) ? ($entry['message'] ?? null) : null;
                 if (!is_string($messageClass) || isset($checked[$messageClass])) {
@@ -67,22 +92,23 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
                 }
                 $checked[$messageClass] = true;
 
-                $reflection = $container->getReflectionClass($messageClass, false);
-                $attribute = $reflection?->getAttributes(Asynchronous::class)[0] ?? null;
-                $transport = $attribute?->newInstance()->transport;
+                $attribute = $container->getReflectionClass($messageClass, false)?->getAttributes(Asynchronous::class)[0] ?? null;
+                if (null === $attribute || self::isForcedSynchronous($container, $type, $messageClass)) {
+                    continue;
+                }
+
+                $transport = $attribute->newInstance()->transport;
 
                 if (null !== $transport && !self::transportExists($container, $transport)) {
                     throw new InvalidConfigurationException(sprintf('#[Asynchronous(transport: "%s")] on "%s" names a Messenger transport that is not defined.', $transport, $messageClass));
                 }
 
-                // A bare attribute falls back to the "async" transport unless the message is
-                // routed. Queries are handled synchronously, an exact "dispatch_modes" sync entry
-                // wins over the attribute, and without an async bus nothing is sent.
-                if (null === $attribute || null !== $transport || !in_array($type, ['command', 'event'], true) || self::isForcedSynchronous($container, $type, $messageClass) || !self::hasAsyncBus($container, $type)) {
-                    continue;
+                $asyncBus = $container->hasParameter('somework_cqrs.bus.'.$type.'_async') ? $container->getParameter('somework_cqrs.bus.'.$type.'_async') : null;
+                if (!is_string($asyncBus) || '' === $asyncBus) {
+                    throw new InvalidConfigurationException(sprintf('"%s" carries #[Asynchronous], but "somework_cqrs.buses.%s_async" is not configured: dispatching it would fail with AsyncBusNotConfiguredException.', $messageClass, $type));
                 }
 
-                if (!self::hasConfiguredTransport($container, $type, $messageClass) && !self::isRouted($container, $messageClass) && !self::transportExists($container, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT)) {
+                if (null === $transport && !self::hasConfiguredTransport($container, $type, $messageClass) && !self::isRouted($container, $messageClass) && !self::transportExists($container, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT)) {
                     throw new InvalidConfigurationException(sprintf('"%s" carries #[Asynchronous] without a transport, but there is no "%s" transport, no "somework_cqrs.transports.%s_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.', $messageClass, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT, $type));
                 }
             }
@@ -101,13 +127,6 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
         $map = $container->getDefinition('somework_cqrs.dispatch_mode_decider')->getArguments()['$'.$type.'Map'] ?? [];
 
         return is_array($map) && DispatchMode::SYNC === ($map[$messageClass] ?? null);
-    }
-
-    private static function hasAsyncBus(ContainerBuilder $container, string $type): bool
-    {
-        $asyncBus = $container->hasParameter('somework_cqrs.bus.'.$type.'_async') ? $container->getParameter('somework_cqrs.bus.'.$type.'_async') : null;
-
-        return is_string($asyncBus) && '' !== $asyncBus;
     }
 
     private static function hasConfiguredTransport(ContainerBuilder $container, string $type, string $messageClass): bool

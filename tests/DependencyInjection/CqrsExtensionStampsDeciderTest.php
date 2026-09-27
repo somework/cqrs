@@ -71,7 +71,7 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
             'somework_cqrs.stamp_decider.event_metadata' => 125,
             'somework_cqrs.stamp_decider.message_transport' => 175,
             'somework_cqrs.stamp_decider.event_sequence' => 110,
-            'somework_cqrs.dispatch_after_current_bus_stamp_decider' => 0,
+            'somework_cqrs.dispatch_after_current_bus_stamp_decider' => -10,
         ];
 
         foreach ($expectedPriorities as $serviceId => $priority) {

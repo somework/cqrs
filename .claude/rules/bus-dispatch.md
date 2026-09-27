@@ -37,14 +37,14 @@ When mode is `DEFAULT`, the decider resolves to SYNC or ASYNC by checking (first
 
 **QueryBus**: `ask()` validates exactly one `HandledStamp` exists and returns its result. Zero handlers throw `NoHandlerException`, several `MultipleHandlersException`. Queries always return data.
 
-**Synchronous results** (`dispatchSync()`, `ask()`) go through `SynchronousResult`: it strips `DispatchAfterCurrentBusStamp`, throws `MessageSentToTransportException` when the message was sent to a transport, `DuplicateMessageException` when deduplication dropped it, and rethrows the single cause of a `HandlerFailedException`.
+**Synchronous results** (`dispatchSync()`, `ask()`) go through `SynchronousResult`: it strips `DispatchAfterCurrentBusStamp`, throws `MessageSentToTransportException` when the message was sent to a transport, `DuplicateMessageException` when deduplication dropped it, and rethrows the single cause of a `HandlerFailedException`. Both `dispatchSync()` and `ask()` throw `MultipleHandlersException` when more than one handler ran (the result would be ambiguous).
 
 **EventBus**: All methods return `Envelope`. Never extract handler results from events — they are fire-and-forget notifications.
 
 ## Error Propagation
 
-- **CommandBus/QueryBus** — Exceptions propagate immediately to the caller (the handler's own exception when exactly one handler failed). Failed commands mean the operation failed; failed queries mean data couldn't be retrieved.
-- **EventBus** — Handler failures in async mode are handled by retry/dead-letter mechanisms, not propagated to the caller. For sync events, `AllowNoHandlerMiddleware` suppresses `NoHandlerForMessageException` specifically for `Event` instances.
+- **CommandBus/QueryBus** — Exceptions propagate immediately to the caller. `dispatchSync()` and `ask()` rethrow the handler's own exception when exactly one handler failed; `dispatch()` (also in sync mode) surfaces Messenger's `HandlerFailedException`. Failed commands mean the operation failed; failed queries mean data couldn't be retrieved.
+- **EventBus** — Handler failures in async mode are handled by retry/dead-letter mechanisms, not propagated to the caller. `AllowNoHandlerMiddleware` suppresses `NoHandlerForMessageException` for `Event` instances on the event buses; an event a worker received without a handler on its bus is acknowledged, with a warning log when the event has handlers elsewhere (another bus, or `fromTransport`).
 
 ## Caller Stamps
 

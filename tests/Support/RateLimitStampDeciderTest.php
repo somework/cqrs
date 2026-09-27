@@ -10,12 +10,13 @@ use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
 use SomeWork\CqrsBundle\Support\RateLimitStampDecider;
-use SomeWork\CqrsBundle\Support\StampDecider;
 use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ChargePaymentCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -117,7 +118,7 @@ final class RateLimitStampDeciderTest extends TestCase
             $decider->decide($message, DispatchMode::SYNC, []);
             self::fail('Expected RateLimitExceededException');
         } catch (RateLimitExceededException $e) {
-            self::assertSame(CreateTaskCommand::class, $e->messageFqcn);
+            self::assertSame(CreateTaskCommand::class, $e->messageClass);
             /* @phpstan-ignore staticMethod.alreadyNarrowedType */
             self::assertInstanceOf(\DateTimeImmutable::class, $e->retryAfter);
             self::assertSame(0, $e->remainingTokens);
@@ -183,6 +184,26 @@ final class RateLimitStampDeciderTest extends TestCase
         $stamps = $decider->decide($message, DispatchMode::ASYNC, $existing);
 
         self::assertSame($existing, $stamps);
+    }
+
+    public function test_each_message_class_has_its_own_bucket_of_a_shared_limiter(): void
+    {
+        $factory = new RateLimiterFactory(
+            ['id' => 'shared', 'policy' => 'fixed_window', 'limit' => 1, 'interval' => '1 hour'],
+            new InMemoryStorage(),
+        );
+        $resolver = new RateLimitResolver(new ServiceLocator([
+            CreateTaskCommand::class => static fn () => $factory,
+            ChargePaymentCommand::class => static fn () => $factory,
+        ]));
+        $decider = new RateLimitStampDecider($resolver, Command::class);
+
+        $decider->decide(new CreateTaskCommand('1', 'x'), DispatchMode::SYNC, []);
+
+        // The other class still has its token.
+        self::assertSame([], $decider->decide(new ChargePaymentCommand('p-1'), DispatchMode::SYNC, []));
+        $this->expectException(RateLimitExceededException::class);
+        $decider->decide(new CreateTaskCommand('2', 'y'), DispatchMode::SYNC, []);
     }
 
     public function test_different_message_types_use_separate_limiters(): void

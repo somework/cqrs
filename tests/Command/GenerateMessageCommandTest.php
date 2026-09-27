@@ -56,7 +56,7 @@ final class GenerateMessageCommandTest extends TestCase
 
         $message = $this->read('src/Application/Command/ShipOrder.php');
         self::assertStringContainsString('namespace App\\Application\\Command;', $message);
-        self::assertStringContainsString('final class ShipOrder implements Command', $message);
+        self::assertStringContainsString("/**\n * @psalm-immutable\n */\nfinal class ShipOrder implements Command", $message);
         self::assertStringContainsString('public readonly string $id,', $message);
 
         $handler = $this->read('src/Application/Command/ShipOrderHandler.php');
@@ -89,12 +89,22 @@ final class GenerateMessageCommandTest extends TestCase
         self::assertFileExists($this->projectDir.'/lib/Command/DoSomethingHandler.php');
     }
 
-    public function test_without_a_psr4_mapping_the_full_class_path_is_used_and_a_warning_shown(): void
+    public function test_a_namespace_without_a_psr4_mapping_is_refused(): void
     {
+        // A class in "src/" that Composer cannot load would break the service import of the directory.
         $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething']);
 
+        self::assertSame(SymfonyCommand::INVALID, $tester->getStatusCode());
+        self::assertFileDoesNotExist($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertStringContainsString('is not covered by a PSR-4 prefix in composer.json', self::display($tester));
+    }
+
+    public function test_with_a_directory_a_namespace_without_a_psr4_mapping_is_generated_with_a_warning(): void
+    {
+        $tester = $this->execute(['type' => 'command', 'name' => '\\App\\Command\\DoSomething', '--dir' => 'lib']);
+
         self::assertSame(SymfonyCommand::SUCCESS, $tester->getStatusCode());
-        self::assertFileExists($this->projectDir.'/src/App/Command/DoSomething.php');
+        self::assertFileExists($this->projectDir.'/lib/App/Command/DoSomething.php');
         self::assertStringContainsString('not covered by a PSR-4 prefix', self::display($tester));
     }
 
@@ -209,10 +219,11 @@ final class GenerateMessageCommandTest extends TestCase
         $this->execute(['type' => 'event', 'name' => 'App\\Event\\SomethingHappened']);
 
         $queryHandler = $this->read('src/Handler/FindSomethingHandler.php');
-        self::assertStringContainsString('use App\\Query\\FindSomething;', $queryHandler);
+        // Imports in alphabetical order, as coding standards expect.
+        self::assertStringContainsString("use App\\Query\\FindSomething;\nuse SomeWork\\CqrsBundle\\Attribute\\AsQueryHandler;", $queryHandler);
         self::assertStringContainsString('#[AsQueryHandler(FindSomething::class)]', $queryHandler);
         self::assertStringContainsString('public function __invoke(FindSomething $query): mixed', $queryHandler);
-        self::assertStringContainsString('final class FindSomething implements Query', $this->read('src/Query/FindSomething.php'));
+        self::assertStringContainsString(" * @psalm-immutable\n * TODO: Replace mixed with the result type of the handler.\n *\n * @implements Query<mixed>\n */\nfinal class FindSomething implements Query", $this->read('src/Query/FindSomething.php'));
 
         $eventHandler = $this->read('src/Event/SomethingHappenedHandler.php');
         self::assertStringContainsString('#[AsEventHandler(SomethingHappened::class)]', $eventHandler);
@@ -255,6 +266,7 @@ final class GenerateMessageCommandTest extends TestCase
         yield 'parent segment' => ['App\\..\\..\\Evil', 'not a valid fully-qualified class name'];
         yield 'slashes' => ['App/Command/DoSomething', 'not a valid fully-qualified class name'];
         yield 'trailing separator' => ['App\\Command\\', 'not a valid fully-qualified class name'];
+        yield 'trailing newline' => ["App\\Command\\DoSomething\n", 'not a valid fully-qualified class name'];
         yield 'reserved word' => ['App\\Command\\List', '"List" is a reserved word'];
     }
 

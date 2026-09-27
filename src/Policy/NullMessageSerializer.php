@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace SomeWork\CqrsBundle\Support;
+namespace SomeWork\CqrsBundle\Policy;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
@@ -11,7 +11,7 @@ use Symfony\Component\Messenger\Stamp\SerializerStamp;
 /**
  * Message serializer that never applies additional stamps.
  *
- * @internal
+ * @api
  */
 final class NullMessageSerializer implements MessageSerializer
 {

@@ -9,7 +9,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\PlainEvent;
 
 /**
  * Handler using only the attribute, no EventHandler interface.
- * Used to test attribute-only handler discovery (DX-02).
+ * Used to test attribute-only handler discovery.
  */
 #[AsEventHandler(event: PlainEvent::class)]
 final class AttributeOnlyEventHandler

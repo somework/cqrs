@@ -24,7 +24,7 @@ final class MultipleHandlersExceptionTest extends TestCase
     {
         $exception = new MultipleHandlersException('App\Query\Bar', 'query', 3);
 
-        self::assertSame('App\Query\Bar', $exception->messageFqcn);
+        self::assertSame('App\Query\Bar', $exception->messageClass);
         self::assertSame('query', $exception->busName);
         self::assertSame(3, $exception->handlerCount);
     }

@@ -38,9 +38,9 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame($event, $dispatched[0]['message']);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame($event, $dispatched[0]->message);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_uses_default_mode(): void
@@ -51,7 +51,7 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
     }
 
     public function test_dispatch_sync_records_with_sync_mode(): void
@@ -66,7 +66,7 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame(DispatchMode::SYNC, $dispatched[0]['mode']);
+        self::assertSame(DispatchMode::SYNC, $dispatched[0]->mode);
     }
 
     public function test_dispatch_async_records_with_async_mode(): void
@@ -82,8 +82,8 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(1, $dispatched);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[0]['mode']);
-        self::assertSame([$stamp], $dispatched[0]['stamps']);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[0]->mode);
+        self::assertSame([$stamp], $dispatched[0]->stamps);
     }
 
     public function test_records_multiple_dispatches(): void
@@ -128,9 +128,9 @@ final class FakeEventBusTest extends TestCase
 
         $dispatched = $bus->getDispatched();
         self::assertCount(3, $dispatched);
-        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]['mode']);
-        self::assertSame(DispatchMode::SYNC, $dispatched[1]['mode']);
-        self::assertSame(DispatchMode::ASYNC, $dispatched[2]['mode']);
+        self::assertSame(DispatchMode::DEFAULT, $dispatched[0]->mode);
+        self::assertSame(DispatchMode::SYNC, $dispatched[1]->mode);
+        self::assertSame(DispatchMode::ASYNC, $dispatched[2]->mode);
     }
 
     public function test_dispatch_sync_with_multiple_stamps(): void
@@ -143,9 +143,9 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatchSync($event, $stamp1, $stamp2);
 
         $dispatched = $bus->getDispatched();
-        self::assertCount(2, $dispatched[0]['stamps']);
-        self::assertSame($stamp1, $dispatched[0]['stamps'][0]);
-        self::assertSame($stamp2, $dispatched[0]['stamps'][1]);
+        self::assertCount(2, $dispatched[0]->stamps);
+        self::assertSame($stamp1, $dispatched[0]->stamps[0]);
+        self::assertSame($stamp2, $dispatched[0]->stamps[1]);
     }
 
     public function test_dispatch_without_stamps_records_empty_stamps_array(): void
@@ -156,7 +156,7 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         $dispatched = $bus->getDispatched();
-        self::assertSame([], $dispatched[0]['stamps']);
+        self::assertSame([], $dispatched[0]->stamps);
     }
 
     public function test_dispatch_sync_returns_envelope_wrapping_event(): void

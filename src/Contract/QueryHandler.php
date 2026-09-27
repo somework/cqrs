@@ -15,8 +15,11 @@ namespace SomeWork\CqrsBundle\Contract;
  *
  * Handlers SHOULD be stateless services and MUST NOT mutate the query.
  *
- * @template TQuery of Query
- * @template TResult
+ * The templates document the handled message (and result) for readers and tools; PHPStan
+ * cannot check them against __invoke(), which the interface does not declare.
+ *
+ * @template TQuery of Query = Query
+ * @template TResult = mixed
  *
  * @api
  */

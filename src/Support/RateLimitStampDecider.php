@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 

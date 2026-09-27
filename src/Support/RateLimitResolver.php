@@ -19,6 +19,9 @@ use function sprintf;
  */
 final class RateLimitResolver extends AbstractMessageTypeResolver
 {
+    /** Key of the limiter of the message type (the type default, else the global one). */
+    public const DEFAULT_KEY = '__somework_cqrs_rate_limit_default';
+
     public function __construct(
         ContainerInterface $limiters,
         ?LoggerInterface $logger = null,
@@ -32,7 +35,7 @@ final class RateLimitResolver extends AbstractMessageTypeResolver
     public function resolveFor(object $message): ?object
     {
         /** @var RateLimiterFactory|RateLimiterFactoryInterface|null $factory */
-        $factory = $this->resolveService($message);
+        $factory = $this->resolveService($message, [self::DEFAULT_KEY]);
 
         return $factory;
     }
@@ -52,6 +55,6 @@ final class RateLimitResolver extends AbstractMessageTypeResolver
 
     protected function resolveFallback(object $message): ?object
     {
-        return null;
+        return $this->hasService(self::DEFAULT_KEY) ? $this->getService(self::DEFAULT_KEY) : null;
     }
 }

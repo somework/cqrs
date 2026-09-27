@@ -54,7 +54,7 @@ Things to know about the pipeline:
   `MessageMetadataStamp`, `SerializerStamp`, `TransportNamesStamp`,
   `AggregateSequenceStamp`, `DeduplicateStamp` or `DispatchAfterCurrentBusStamp`
   passed by the caller, and an explicit causation id is kept. Retry policy
-  stamps are always appended.
+  stamps are added only for stamp classes the caller did not pass.
 
 ## Middleware classes
 
@@ -105,11 +105,15 @@ by commands and events still reports commands without a handler.
 
 ### CausationIdMiddleware
 
-While a message is handled, pushes the correlation id of its
-`MessageMetadataStamp` onto the `CausationIdContext` stack and pops it
-afterwards (also when the handler throws). `CausationIdStampDecider` reads this
-stack: a message dispatched from inside the handler gets the parent's
-correlation id as its causation id.
+While a message is handled, pushes its `MessageMetadataStamp` onto the
+`CausationIdContext` stack and pops it afterwards (also when the handler
+throws). The metadata deciders read this stack: a message dispatched from
+inside the handler inherits the parent's correlation id and gets the parent's
+message id as its causation id. A message without a `MessageMetadataStamp` is
+pushed as "no parent", so the messages its handlers dispatch start a new flow.
+With `buses`, the other CQRS buses get a variant
+(`somework_cqrs.messenger.middleware.causation_id_isolation`) that only pushes
+"no parent".
 
 Configure it under `somework_cqrs.causation_id`:
 
@@ -143,9 +147,11 @@ Creates one span each time a message passes through a CQRS bus:
 * The status is `OK`, or `ERROR` with the exception recorded when the rest of
   the stack throws.
 
-**Trace propagation.** On dispatch, the middleware adds a `TraceContextStamp`
-holding the W3C `traceparent`/`tracestate` headers of the dispatch span, unless
-the envelope already has one. The stamp travels with the message through the
+**Trace propagation.** On dispatch, the middleware sets a `TraceContextStamp`
+holding the W3C `traceparent`/`tracestate` headers of the dispatch span; a
+`TraceContextStamp` already on the envelope (for example one passed by the
+caller or captured for a deferred dispatch) becomes the parent of that span and
+is replaced. The stamp travels with the message through the
 transport, and the worker's `cqrs.consume` span uses it as its parent, so the
 consumer continues the producer's trace.
 
@@ -174,14 +180,14 @@ events.
 | Priority | Decider | Applies to | Registered when | Leaves alone |
 |----------|---------|------------|-----------------|--------------|
 | 225 | `RateLimitStampDecider` | per type | a limiter is mapped under `rate_limiting` | - |
-| 200 | `RetryPolicyStampDecider` | per type | always | - (stamps are appended) |
+| 200 | `RetryPolicyStampDecider` | per type | always | policy stamps of a class the caller passed |
 | 175 | `MessageTransportStampDecider` | commands, queries, events | always | an existing `TransportNamesStamp` |
 | 150 | `MessageSerializerStampDecider` | per type | always | an existing `SerializerStamp` |
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
 | 100 | `CausationIdStampDecider` | all messages | `causation_id.enabled` (default `true`) | an explicit causation id |
 | 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`), symfony/messenger 7.3+ and symfony/lock installed | an existing `DeduplicateStamp` |
-| 0 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
+| -10 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
 
 ### RateLimitStampDecider (225)
 
@@ -209,7 +215,7 @@ A `TransportNamesStamp` passed by the caller wins; otherwise, in this order:
 3. the transports configured for a parent class or interface, then the section's
    `default`;
 4. on asynchronous dispatches of a class with a bare `#[Asynchronous]`, the
-   `async` transport, unless `framework.messenger.routing` routes the message.
+   `async` transport, unless `framework.messenger.routing` or `#[AsMessage(transport: ...)]` routes the message.
 
 When nothing applies it adds nothing and Messenger's routing decides. See
 [`transports`](reference.md#transports) and
@@ -224,20 +230,27 @@ if any.
 ### MessageMetadataStampDecider (125)
 
 Adds the `MessageMetadataStamp` returned by the `MessageMetadataProvider`
-resolved for the message. The default provider generates a random correlation
-id.
+resolved for the message. The default provider generates a random message id,
+which is also the correlation id of the first message of a flow. While another
+message is handled, the provider's stamp takes the correlation id of that
+message and its message id as causation id (unless the provider set a
+causation id).
 
 ### SequenceStampDecider (110)
 
 For events implementing `SequenceAware`, adds an `AggregateSequenceStamp` with
-the aggregate id, the sequence number and the event class. See
+the aggregate type, the aggregate id and the sequence number. See
 [Event ordering](event-ordering.md).
 
 ### CausationIdStampDecider (100)
 
-When a message is dispatched while another one is being handled, sets the
-causation id of the last `MessageMetadataStamp` to the parent's correlation id.
-It runs after the metadata deciders, so the stamp already exists.
+When a message is dispatched while another one is being handled with a
+`MessageMetadataStamp` passed by the caller, sets its causation id to the
+parent's message id and keeps the caller's correlation id. A copy of the
+handled message's own stamp (forwarded, e.g. `$received->withExtra(...)`)
+becomes a new stamp: new message id, same correlation id and extras, the
+handled message as cause. It runs after the
+metadata deciders, so the stamp already exists.
 
 ### IdempotencyStampDecider (50)
 
@@ -245,15 +258,15 @@ Turns an `IdempotencyStamp` into Messenger's `DeduplicateStamp`, with the key
 `<message class>::<idempotency key>` and the TTL from `idempotency.ttl`. The
 `IdempotencyStamp` stays on the envelope. See [Idempotency](idempotency.md).
 
-### DispatchAfterCurrentBusStampDecider (0)
+### DispatchAfterCurrentBusStampDecider (-10)
 
 For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
-`async.dispatch_after_current_bus` disables it for the message. See
-[`async.dispatch_after_current_bus`](reference.md#asyncdispatch_after_current_bus).
+`dispatch_after_current_bus` disables it for the message. See
+[`dispatch_after_current_bus`](reference.md#dispatch_after_current_bus).
 
 ## Creating custom stamp deciders
 
-Implement `SomeWork\CqrsBundle\Support\StampDecider` (`@api`) to add your own
+Implement `SomeWork\CqrsBundle\Contract\StampDecider` (`@api`) to add your own
 stamps to every dispatch through the facades.
 
 ### 1. Implement the interface
@@ -266,7 +279,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 use Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface;
 
@@ -314,9 +327,12 @@ keep stamps passed by the caller unless you have a reason not to.
 ### 2. Register it
 
 With autoconfiguration, implementing `StampDecider` adds the
-`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`. Set
-the priority explicitly to control where the decider runs, either in the service
-definition:
+`somework_cqrs.dispatch_stamp_decider` tag automatically, with priority `0`: the
+decider runs after every built-in decider except
+`DispatchAfterCurrentBusStampDecider` (-10), so it can add its own
+`DispatchAfterCurrentBusStamp`. Use a priority below -10 to see the final
+stamps. Set the priority explicitly to control where the decider runs, either in
+the service definition:
 
 ```yaml
 services:
@@ -330,7 +346,7 @@ or with Symfony's attribute on the class:
 ```php
 <?php
 
-use SomeWork\CqrsBundle\Support\StampDecider;
+use SomeWork\CqrsBundle\Contract\StampDecider;
 use Symfony\Component\DependencyInjection\Attribute\AsTaggedItem;
 
 #[AsTaggedItem(priority: 130)]
@@ -344,7 +360,7 @@ Without autoconfiguration, add the tag (with its priority) yourself.
 
 ### 3. Restrict it to message types (optional)
 
-Implement `SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider` (`@api`) to
+Implement `SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider` (`@api`) to
 run the decider only for some messages. `messageTypes()` returns classes or
 interfaces; the decider is called only for messages that are an instance of one
 of them:
@@ -358,7 +374,7 @@ namespace App\Infrastructure\Cqrs;
 
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
-use SomeWork\CqrsBundle\Support\MessageTypeAwareStampDecider;
+use SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 final class CommandAuditStampDecider implements MessageTypeAwareStampDecider

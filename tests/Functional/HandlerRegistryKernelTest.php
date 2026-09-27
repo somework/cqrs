@@ -7,10 +7,12 @@ namespace SomeWork\CqrsBundle\Tests\Functional;
 use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
+use SomeWork\CqrsBundle\Registry\MessageType;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\TestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ImportTasksCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ListTasksQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -37,7 +39,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $commands = $registry->byType('command');
+        $commands = $registry->byType(MessageType::Command);
 
         $actual = array_map(
             static fn (HandlerDescriptor $descriptor): array => [
@@ -57,6 +59,8 @@ final class HandlerRegistryKernelTest extends KernelTestCase
                 [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands'],
                 [CreateTaskCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\CreateTaskHandler', 'messenger.bus.commands_async'],
                 [GenerateReportCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\GenerateReportHandler', 'messenger.bus.commands_async'],
+                [ImportTasksCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\ImportTasksHandler', 'messenger.bus.commands'],
+                [ImportTasksCommand::class, 'SomeWork\\CqrsBundle\\Tests\\Fixture\\Handler\\ImportTasksHandler', 'messenger.bus.commands_async'],
             ],
             $actual,
         );
@@ -67,7 +71,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $queries = $registry->byType('query');
+        $queries = $registry->byType(MessageType::Query);
 
         $actual = array_map(
             static fn (HandlerDescriptor $descriptor): array => [
@@ -94,7 +98,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         $registry = static::getContainer()->get(HandlerRegistry::class);
         assert($registry instanceof HandlerRegistry);
 
-        $events = $registry->byType('event');
+        $events = array_filter($registry->byType(MessageType::Event), static fn (HandlerDescriptor $descriptor): bool => TaskCreatedEvent::class === $descriptor->messageClass);
 
         self::assertCount(2, $events);
 
@@ -119,7 +123,7 @@ final class HandlerRegistryKernelTest extends KernelTestCase
         assert($registry instanceof HandlerRegistry);
 
         $descriptor = null;
-        foreach ($registry->byType('command') as $candidate) {
+        foreach ($registry->byType(MessageType::Command) as $candidate) {
             if (CreateTaskCommand::class === $candidate->messageClass) {
                 $descriptor = $candidate;
 

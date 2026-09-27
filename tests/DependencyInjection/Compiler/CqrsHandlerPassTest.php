@@ -10,7 +10,9 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\ChargePaymentHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\FindTaskHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\HandlesAttributeHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\InterfaceOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\IntersectionTypeHandler;
@@ -23,6 +25,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\TaskProcessManager;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnionIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UnroutableIntersectionHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\UntypedInterfaceHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\ChargePaymentCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\FindTaskQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\GenerateReportCommand;
@@ -405,6 +408,24 @@ final class CqrsHandlerPassTest extends TestCase
         self::assertSame([], $metadata['event']);
     }
 
+    public function test_a_query_handler_without_a_result_is_rejected(): void
+    {
+        // QueryBus::ask() would return null for every query.
+        $handler = new class {
+            public function __invoke(PlainQuery $query): void
+            {
+            }
+        };
+        $container = new ContainerBuilder();
+        $container->register('app.void_query_handler', $handler::class)
+            ->addTag('messenger.message_handler', ['somework_cqrs_type' => 'query']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('declares '.$handler::class.'::__invoke(): void, but a query handler must return the result of the query.');
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
     public function test_attribute_only_event_handler_discovered(): void
     {
         $container = new ContainerBuilder();
@@ -524,7 +545,7 @@ final class CqrsHandlerPassTest extends TestCase
         $container->setAlias('app.query_bus', 'messenger.default_bus');
         $container->register('handler.create_task', CreateTaskHandler::class)
             ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, 'somework_cqrs_type' => 'command']);
-        $container->register('handler.find_task', CreateTaskHandler::class)
+        $container->register('handler.find_task', FindTaskHandler::class)
             ->addTag('messenger.message_handler', ['handles' => FindTaskQuery::class, 'somework_cqrs_type' => 'query', 'bus' => 'app.query_bus']);
 
         (new CqrsHandlerPass())->process($container);
@@ -723,5 +744,251 @@ final class CqrsHandlerPassTest extends TestCase
         foreach ($container->getDefinition('handler.process_manager')->getTag('messenger.message_handler') as $tag) {
             self::assertContains($tag['handles'] ?? null, [CreateTaskCommand::class, TaskCreatedEvent::class], 'No tag lets Messenger route every union member.');
         }
+    }
+
+    public function test_an_attribute_for_a_message_the_handler_cannot_accept_is_rejected(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // e.g. #[AsCommandHandler(CreateTaskCommand::class)] copied onto the handler of another command.
+        $container->register('handler.charge', ChargePaymentHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage(sprintf('"%s" (service "handler.charge") is registered for %s, but %s::__invoke() only accepts %s.', ChargePaymentHandler::class, CreateTaskCommand::class, ChargePaymentHandler::class, ChargePaymentCommand::class));
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_a_declared_message_matching_a_union_member_is_accepted(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.process_manager', TaskProcessManager::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([CreateTaskCommand::class], array_values(array_unique(array_column($metadata['command'], 'message'))));
+    }
+
+    public function test_plain_messenger_tags_are_not_checked_against_the_signature(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // #[AsMessageHandler(handles: '*')] on __invoke(ChargePaymentCommand) is valid for Messenger.
+        $container->register('handler.catch_all', ChargePaymentHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => '*']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame('*', $container->getDefinition('handler.catch_all')->getTag('messenger.message_handler')[0]['handles'] ?? null);
+    }
+
+    public function test_records_the_routes_of_handlers_for_other_types(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.plain', NonCqrsHandler::class)
+            ->addTag('messenger.message_handler');
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [['message' => \stdClass::class, 'handler_class' => NonCqrsHandler::class, 'service_id' => 'handler.plain', 'bus' => null]],
+            $container->getParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER),
+        );
+    }
+
+    public function test_a_message_without_marker_interface_inferred_for_a_handler_interface_takes_its_type(): void
+    {
+        $handler = new class {
+            public function __invoke(PlainCommand $command): void
+            {
+            }
+        };
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.plain_command', $handler::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [
+                ['method' => '__invoke', 'handles' => PlainCommand::class, 'bus' => 'messenger.bus.commands'],
+                ['method' => '__invoke', 'handles' => PlainCommand::class, 'bus' => 'messenger.bus.commands_async'],
+            ],
+            $container->getDefinition('handler.plain_command')->getTag('messenger.message_handler'),
+        );
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([PlainCommand::class, PlainCommand::class], array_column($metadata['command'], 'message'));
+        self::assertSame([], $container->getParameter(CqrsHandlerPass::OTHER_ROUTES_PARAMETER));
+    }
+
+    public function test_handlers_are_only_registered_on_the_sync_bus_without_an_async_bus(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+        $container->register('handler.notification', TaskNotificationHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => TaskCreatedEvent::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'event']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.default']],
+            $container->getDefinition('handler.create_task')->getTag('messenger.message_handler'),
+        );
+        self::assertSame(
+            [['handles' => TaskCreatedEvent::class, 'bus' => 'messenger.bus.default']],
+            $container->getDefinition('handler.notification')->getTag('messenger.message_handler'),
+        );
+    }
+
+    public function test_async_bus_aliases_are_resolved_and_a_bus_used_twice_gets_the_handler_once(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->register('messenger.bus.default');
+        $container->register('messenger.bus.async');
+        $container->setAlias('app.command_bus', 'messenger.bus.default');
+        $container->setAlias('app.async_event_bus', 'messenger.bus.async');
+        // The command facade dispatches asynchronous commands on its sync bus.
+        $container->setParameter('somework_cqrs.bus.command', 'app.command_bus');
+        $container->setParameter('somework_cqrs.bus.command_async', 'messenger.bus.default');
+        $container->setParameter('somework_cqrs.bus.event_async', 'app.async_event_bus');
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+        $container->register('handler.notification', TaskNotificationHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => TaskCreatedEvent::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'event']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame(
+            [['handles' => CreateTaskCommand::class, 'bus' => 'messenger.bus.default']],
+            $container->getDefinition('handler.create_task')->getTag('messenger.message_handler'),
+        );
+        self::assertSame(
+            ['messenger.bus.default', 'messenger.bus.async'],
+            array_column($container->getDefinition('handler.notification')->getTag('messenger.message_handler'), 'bus'),
+        );
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame(['messenger.bus.default'], array_column($metadata['command'], 'bus'));
+        self::assertSame(['messenger.bus.default', 'messenger.bus.async'], array_column($metadata['event'], 'bus'));
+    }
+
+    public function test_it_skips_a_handler_whose_class_does_not_exist(): void
+    {
+        $tag = ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command'];
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.missing', 'App\\Missing\\CreateTaskHandler')
+            ->addTag('messenger.message_handler', $tag);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame([$tag], $container->getDefinition('handler.missing')->getTag('messenger.message_handler'));
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame([], $metadata['command']);
+    }
+
+    public function test_a_declared_message_is_accepted_by_an_object_or_untyped_parameter(): void
+    {
+        $objectHandler = new class {
+            public function __invoke(object $command): void
+            {
+            }
+        };
+        $untypedHandler = new class {
+            /** @param CreateTaskCommand $command */
+            public function __invoke($command): void
+            {
+            }
+        };
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.object', $objectHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+        $container->register('handler.untyped', $untypedHandler::class)
+            ->addTag('messenger.message_handler', ['handles' => CreateTaskCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame(
+            ['handler.object', 'handler.object', 'handler.untyped', 'handler.untyped'],
+            array_column($metadata['command'], 'service_id'),
+        );
+    }
+
+    public function test_a_query_handler_that_never_returns_is_rejected(): void
+    {
+        $handler = new class {
+            public function __invoke(PlainQuery $query): never
+            {
+                throw new \LogicException('Not implemented.');
+            }
+        };
+        $container = new ContainerBuilder();
+        $container->register('app.never_query_handler', $handler::class)
+            ->addTag('messenger.message_handler', [CqrsHandlerPass::TYPE_ATTRIBUTE => 'query']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('declares '.$handler::class.'::__invoke(): never, but a query handler must return the result of the query.');
+
+        (new CqrsHandlerPass())->process($container);
+    }
+
+    public function test_an_abstract_service_with_the_interface_tag_does_not_stop_the_conversion_of_later_handlers(): void
+    {
+        $container = $this->createContainerWithBuses();
+        $container->register('handler.base', InterfaceOnlyCommandHandler::class)
+            ->setAbstract(true)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command']);
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag(CqrsHandlerPass::INTERFACE_TAG, ['method' => '__invoke', 'type' => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertFalse($container->getDefinition('handler.base')->hasTag('messenger.message_handler'));
+        $handled = array_column($container->getDefinition('handler.create_task')->getTag('messenger.message_handler'), 'handles');
+        self::assertSame([CreateTaskCommand::class, CreateTaskCommand::class], $handled, 'Registered on the sync and the async bus.');
+        self::assertFalse($container->getDefinition('handler.create_task')->hasTag(CqrsHandlerPass::INTERFACE_TAG));
+    }
+
+    public function test_a_handler_without_a_class_does_not_stop_the_normalisation_of_later_handlers(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // A factory-built service: its class is unknown at compile time.
+        $factoryTag = ['handles' => ChargePaymentCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command'];
+        $container->register('handler.from_factory')
+            ->setFactory([ChargePaymentHandler::class, 'create'])
+            ->addTag('messenger.message_handler', $factoryTag);
+        $container->register('handler.create_task', CreateTaskHandler::class)
+            ->addTag('messenger.message_handler', [CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        (new CqrsHandlerPass())->process($container);
+
+        self::assertSame([$factoryTag], $container->getDefinition('handler.from_factory')->getTag('messenger.message_handler'), 'Left to Messenger as it is.');
+        $tags = $container->getDefinition('handler.create_task')->getTag('messenger.message_handler');
+        self::assertSame([CreateTaskCommand::class, CreateTaskCommand::class], array_column($tags, 'handles'), 'The message is inferred from __invoke().');
+        self::assertSame(['messenger.bus.commands', 'messenger.bus.commands_async'], array_column($tags, 'bus'));
+        $metadata = $container->getParameter('somework_cqrs.handler_metadata');
+        self::assertIsArray($metadata);
+        self::assertSame(['handler.create_task', 'handler.create_task'], array_column($metadata['command'], 'service_id'));
+    }
+
+    public function test_an_attribute_for_a_message_no_union_member_accepts_is_rejected(): void
+    {
+        $container = $this->createContainerWithBuses();
+        // e.g. #[AsCommandHandler(ChargePaymentCommand::class)] on __invoke(CreateTaskCommand|TaskCreatedEvent $message).
+        $container->register('handler.process_manager', TaskProcessManager::class)
+            ->addTag('messenger.message_handler', ['handles' => ChargePaymentCommand::class, CqrsHandlerPass::TYPE_ATTRIBUTE => 'command']);
+
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage(sprintf('"%s" (service "handler.process_manager") is registered for %s, but %s::__invoke() only accepts %s|%s.', TaskProcessManager::class, ChargePaymentCommand::class, TaskProcessManager::class, CreateTaskCommand::class, TaskCreatedEvent::class));
+
+        (new CqrsHandlerPass())->process($container);
     }
 }

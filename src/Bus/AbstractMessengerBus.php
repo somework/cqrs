@@ -13,7 +13,6 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_map;
 use function array_values;
-use function count;
 
 /** @internal */
 abstract class AbstractMessengerBus
@@ -44,31 +43,20 @@ abstract class AbstractMessengerBus
     {
         $resolvedMode = $this->dispatchModeDecider->resolve($message, $mode);
 
-        $this->logger?->debug('Dispatch mode resolved', [
-            'message' => $message::class,
-            'requested_mode' => $mode->value,
-            'resolved_mode' => $resolvedMode->value,
-            'bus' => static::BUS_NAME,
-        ]);
-
         // Select the bus first: the pipeline has side effects (a rate limiter consumes a token).
         $bus = $this->selectBus($resolvedMode, $message);
 
         $stamps = $this->stampsDecider->decide($message, $resolvedMode, array_values($stamps));
 
-        $this->logger?->debug('Stamps decided', [
+        $this->logger?->debug('Dispatching {message} on the {mode} {bus} bus', [
             'message' => $message::class,
-            'stamp_count' => count($stamps),
-            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
-            'bus' => static::BUS_NAME,
-        ]);
-
-        $this->logger?->debug('Dispatching via {mode} bus', [
-            'message' => $message::class,
+            'requested_mode' => $mode->value,
             'mode' => $resolvedMode->value,
             'bus' => static::BUS_NAME,
+            'stamp_types' => array_map(static fn (StampInterface $stamp): string => $stamp::class, $stamps),
         ]);
 
+        // MessageTransportStampDecider warns when an async dispatch has no transport.
         return $bus->dispatch($message, $stamps);
     }
 

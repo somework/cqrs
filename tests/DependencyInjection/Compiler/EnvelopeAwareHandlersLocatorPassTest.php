@@ -9,6 +9,8 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsBusIds;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
 use SomeWork\CqrsBundle\Messenger\EnvelopeAwareHandlersLocator;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
+use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
@@ -25,6 +27,8 @@ final class EnvelopeAwareHandlersLocatorPassTest extends TestCase
         $container->setAlias('messenger.default_bus', 'messenger.bus.default');
         $container->register('messenger.bus.default.messenger.handlers_locator', HandlersLocator::class);
         $container->register('messenger.bus.events_async.messenger.handlers_locator', HandlersLocator::class);
+        // An EnvelopeAware handler without a bus is registered on every bus.
+        $container->register(CreateTaskHandler::class, CreateTaskHandler::class)->addTag('messenger.message_handler');
 
         (new EnvelopeAwareHandlersLocatorPass())->process($container);
 
@@ -43,10 +47,44 @@ final class EnvelopeAwareHandlersLocatorPassTest extends TestCase
         // Handler attributes may name any bus, e.g. #[AsCommandHandler(X::class, bus: 'legacy.bus')].
         $container->register('legacy.bus')->addTag('messenger.bus');
         $container->register('legacy.bus.messenger.handlers_locator', HandlersLocator::class);
+        $container->register(CreateTaskHandler::class, CreateTaskHandler::class)->addTag('messenger.message_handler', ['bus' => 'legacy.bus']);
 
         (new EnvelopeAwareHandlersLocatorPass())->process($container);
 
         self::assertTrue($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.legacy.bus'));
+    }
+
+    public function test_only_buses_with_an_envelope_aware_handler_are_decorated(): void
+    {
+        // The decorator costs time on every dispatch.
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->setParameter('somework_cqrs.bus.command', 'command.bus');
+        $container->setParameter('somework_cqrs.bus.event', 'event.bus');
+        $container->setAlias('commands', 'command.bus');
+        foreach (['command.bus', 'event.bus'] as $busId) {
+            $container->register($busId.'.messenger.handlers_locator', HandlersLocator::class);
+        }
+        $container->register(CreateTaskHandler::class, CreateTaskHandler::class)->addTag('messenger.message_handler', ['bus' => 'commands']);
+        $container->register(AttributeOnlyEventHandler::class, AttributeOnlyEventHandler::class)->addTag('messenger.message_handler', ['bus' => 'event.bus']);
+
+        (new EnvelopeAwareHandlersLocatorPass())->process($container);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.command.bus'));
+        self::assertFalse($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.event.bus'));
+    }
+
+    public function test_every_bus_is_decorated_when_a_handler_class_is_unknown(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->setParameter('somework_cqrs.bus.event', 'event.bus');
+        $container->register('event.bus.messenger.handlers_locator', HandlersLocator::class);
+        $container->register('app.handler', 'App\\Missing\\Handler')->addTag('messenger.message_handler', ['bus' => 'other.bus']);
+
+        (new EnvelopeAwareHandlersLocatorPass())->process($container);
+
+        self::assertTrue($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.event.bus'));
     }
 
     public function test_the_default_bus_is_only_a_cqrs_bus_when_a_facade_falls_back_to_it(): void
