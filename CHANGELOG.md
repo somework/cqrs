@@ -7,6 +7,8 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-27
+
 ### Fixed
 - Symfony 8.2 support. Symfony 8.2 runs Messenger's `MessengerPass` at priority -16 (in the new `MessengerBundle`) instead of 0, so the compiler passes of the bundle that need the bus middleware lists, the handlers locators and the routing it builds ran before it (at -8 and 0): the causation id, OpenTelemetry, trace context capture and deduplication lock release middleware were missing from the CQRS buses, events without handlers threw `NoHandlerForMessageException`, `EnvelopeAware` handlers failed with "Messenger envelope has not been set", the container did not compile with the outbox enabled, and the routes of `#[AsMessageHandler(transport: …)]` were ignored (a bare `#[Asynchronous]` message was sent to `async`, and the build reported a missing transport). These passes now run at priority -24, after `MessengerPass` on every supported Symfony version.
 - With the outbox, a message stored through a bus also skips DoctrineBridge 8.2's `DoctrineDbalTransactionMiddleware` and `DoctrineDbalOpenTransactionLoggerMiddleware`, whatever service id they are registered under (they have no configuration shortcut), like `doctrine_transaction` and `doctrine_open_transaction_logger` (they run in the relay).
@@ -266,7 +268,8 @@ This release was documented as "1.0.0" to "3.0.0" in earlier revisions of this f
 - Metadata stamps and providers for correlation details.
 - Async bus configuration, handler listing and message/handler generator commands.
 
-[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/somework/cqrs/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/somework/cqrs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/somework/cqrs/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/somework/cqrs/compare/v0.2.4...v0.3.0

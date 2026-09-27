@@ -36,7 +36,7 @@ CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverV
 
 CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
 
-Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.0, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
+Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.1, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
 ### Console Commands
 
