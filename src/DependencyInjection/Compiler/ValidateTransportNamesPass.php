@@ -108,7 +108,7 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
                     throw new InvalidConfigurationException(sprintf('"%s" carries #[Asynchronous], but "somework_cqrs.buses.%s_async" is not configured: dispatching it would fail with AsyncBusNotConfiguredException.', $messageClass, $type));
                 }
 
-                if (null === $transport && !self::transportExists($container, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT) && !self::hasConfiguredTransport($container, $type, $messageClass) && !self::isRouted($container, $messageClass)) {
+                if (null === $transport && !self::hasConfiguredTransport($container, $type, $messageClass) && !self::isRouted($container, $messageClass) && !self::transportExists($container, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT)) {
                     throw new InvalidConfigurationException(sprintf('"%s" carries #[Asynchronous] without a transport, but there is no "%s" transport, no "somework_cqrs.transports.%s_async" entry and no framework.messenger.routing route for it. Name a transport in the attribute or route the message.', $messageClass, MessageTransportStampDecider::DEFAULT_ASYNC_TRANSPORT, $type));
                 }
             }
@@ -152,35 +152,38 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
 
     /**
      * Whether framework.messenger.routing routes the message, the way Messenger's senders locator
-     * looks it up (class, parents, interfaces, namespace wildcards, "*"), or #[AsMessage(transport: ...)].
+     * looks it up (class, parents, interfaces, namespace wildcards, "*"), or else
+     * #[AsMessage(transport: ...)], whose transports must then exist: Messenger reads the attribute
+     * only without a routing entry, and fails at dispatch for an unknown transport.
      */
     private static function isRouted(ContainerBuilder $container, string $messageClass): bool
     {
-        if (class_exists($messageClass) && AsMessageRouting::hasTransport($messageClass)) {
-            return true;
-        }
-
         $routing = $container->hasDefinition('messenger.senders_locator') ? ($container->getDefinition('messenger.senders_locator')->getArguments()[0] ?? null) : null;
 
-        if (!is_array($routing) || [] === $routing) {
-            return false;
-        }
+        if (is_array($routing) && [] !== $routing) {
+            $parents = class_parents($messageClass);
+            $interfaces = class_implements($messageClass);
+            $types = [$messageClass, ...array_values(false === $parents ? [] : $parents), ...array_values(false === $interfaces ? [] : $interfaces), '*'];
+            for ($wildcard = $messageClass.'\\*'; $i = strrpos($wildcard, '\\', -3);) {
+                $wildcard = substr_replace($wildcard, '\\*', $i);
+                $types[] = $wildcard;
+            }
 
-        $parents = class_parents($messageClass);
-        $interfaces = class_implements($messageClass);
-        $types = [$messageClass, ...array_values(false === $parents ? [] : $parents), ...array_values(false === $interfaces ? [] : $interfaces), '*'];
-        for ($wildcard = $messageClass.'\\*'; $i = strrpos($wildcard, '\\', -3);) {
-            $wildcard = substr_replace($wildcard, '\\*', $i);
-            $types[] = $wildcard;
-        }
-
-        foreach ($types as $routedType) {
-            if (isset($routing[$routedType])) {
-                return true;
+            foreach ($types as $routedType) {
+                if (isset($routing[$routedType])) {
+                    return true;
+                }
             }
         }
 
-        return false;
+        $transports = class_exists($messageClass) ? AsMessageRouting::transports($messageClass) : [];
+        foreach ($transports as $transport) {
+            if (!self::transportExists($container, $transport)) {
+                throw new InvalidConfigurationException(sprintf('#[AsMessage(transport: "%s")] routes "%s" to a Messenger transport that is not defined.', $transport, $messageClass));
+            }
+        }
+
+        return [] !== $transports;
     }
 
     private static function transportExists(ContainerBuilder $container, string $transportName): bool
