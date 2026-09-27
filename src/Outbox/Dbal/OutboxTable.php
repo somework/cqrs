@@ -6,21 +6,20 @@ namespace SomeWork\CqrsBundle\Outbox\Dbal;
 
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
-use Doctrine\DBAL\Schema\Name\Parsers;
 use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaConfig;
-use Doctrine\DBAL\Schema\SchemaEditor;
 use Doctrine\DBAL\Schema\Table;
 
 use function array_filter;
 use function array_keys;
 use function array_map;
-use function class_exists;
+use function explode;
+use function sprintf;
 
 /**
- * Builds and changes schema tables with the API of the installed DBAL version: the editors
- * of DBAL 4.5+, which deprecates the Table and Column mutators, and those mutators before.
+ * Builds and changes schema tables with DBAL's table, column and index editors, which DBAL 4.5
+ * makes the only non-deprecated way to change a table.
  *
  * @phpstan-type ColumnDefinition array{type: string, notnull: bool, length?: int, default?: int}
  * @phpstan-type Indexes array<non-empty-string, non-empty-list<non-empty-string>>
@@ -37,15 +36,9 @@ final class OutboxTable
      */
     public static function create(string $name, array $columns, string $primaryKey, array $indexes, SchemaConfig $config): Table
     {
-        if (!self::hasEditors()) {
-            $table = (new Schema([], [], $config))->createTable($name); // @phpstan-ignore method.deprecated
-            self::configure($table, $columns, $primaryKey, $indexes);
-
-            return $table;
-        }
-
+        [$table, $schema] = self::name($name);
         $editor = Table::editor()
-            ->setName(Parsers::getOptionallyQualifiedNameParser()->parse($name))
+            ->setUnquotedName($table, $schema)
             ->setColumns(...self::columns($columns))
             ->setPrimaryKeyConstraint(PrimaryKeyConstraint::editor()->setUnquotedColumnNames($primaryKey)->create())
             ->setOptions($config->getDefaultTableOptions())
@@ -60,7 +53,8 @@ final class OutboxTable
     /**
      * Adds the table to a schema that is changed in place (a Doctrine schema listener, a
      * migration). DBAL 4.5 has no replacement for Schema::createTable() there yet, so this
-     * uses the mutators on every version, as Doctrine ORM's SchemaTool does.
+     * uses the mutators, as Doctrine ORM's SchemaTool does. DBAL 5 removes them: this waits for
+     * the schema API that Doctrine ORM will use with DBAL 5.
      *
      * @param non-empty-array<non-empty-string, ColumnDefinition> $columns
      * @param Indexes                                             $indexes
@@ -69,7 +63,13 @@ final class OutboxTable
     public static function addToSchema(Schema $schema, string $name, array $columns, string $primaryKey, array $indexes): Table
     {
         $table = $schema->createTable($name); // @phpstan-ignore method.deprecated
-        self::configure($table, $columns, $primaryKey, $indexes);
+        foreach ($columns as $columnName => $definition) {
+            $table->addColumn($columnName, $definition['type'], self::options($definition)); // @phpstan-ignore method.deprecated
+        }
+        $table->addPrimaryKeyConstraint(PrimaryKeyConstraint::editor()->setUnquotedColumnNames($primaryKey)->create()); // @phpstan-ignore method.deprecated
+        foreach ($indexes as $indexName => $indexColumns) {
+            $table->addIndex($indexColumns, $indexName); // @phpstan-ignore method.deprecated
+        }
 
         return $table;
     }
@@ -81,12 +81,6 @@ final class OutboxTable
     {
         if ([] === $columns) {
             return $table;
-        }
-        if (!self::hasEditors()) {
-            $changed = clone $table;
-            self::addColumns($changed, $columns);
-
-            return $changed;
         }
 
         $editor = $table->edit();
@@ -105,14 +99,6 @@ final class OutboxTable
         if ([] === $indexes) {
             return $table;
         }
-        if (!self::hasEditors()) {
-            $changed = clone $table;
-            foreach ($indexes as $name => $indexColumns) {
-                $changed->addIndex($indexColumns, $name); // @phpstan-ignore method.deprecated
-            }
-
-            return $changed;
-        }
 
         $editor = $table->edit();
         foreach (self::indexes($indexes) as $index) {
@@ -124,52 +110,24 @@ final class OutboxTable
 
     public static function withoutIndex(Table $table, string $name): Table
     {
-        if (!self::hasEditors()) {
-            $changed = clone $table;
-            $changed->dropIndex($name); // @phpstan-ignore method.deprecated
-
-            return $changed;
-        }
-
         return '' === $name ? $table : $table->edit()->dropIndexByUnquotedName($name)->create();
     }
 
-    private static function hasEditors(): bool
-    {
-        // Schema::edit() and the table and column editors are complete since DBAL 4.5.
-        return class_exists(SchemaEditor::class);
-    }
-
     /**
-     * @param non-empty-array<non-empty-string, ColumnDefinition> $columns
-     * @param Indexes                                             $indexes
-     * @param non-empty-string                                    $primaryKey
+     * The configuration only allows "table" and "schema.table", without quotes.
+     *
+     * @return array{non-empty-string, non-empty-string|null} The table and its schema
      */
-    private static function configure(Table $table, array $columns, string $primaryKey, array $indexes): void
+    private static function name(string $name): array
     {
-        self::addColumns($table, $columns);
-
-        // PrimaryKeyConstraint and Table::addPrimaryKeyConstraint() exist since DBAL 4.3;
-        // Table::setPrimaryKey() is the only option on 4.0-4.2 (deprecated from 4.3).
-        if (class_exists(PrimaryKeyConstraint::class)) {
-            $table->addPrimaryKeyConstraint(PrimaryKeyConstraint::editor()->setUnquotedColumnNames($primaryKey)->create()); // @phpstan-ignore method.deprecated
-        } else {
-            $table->setPrimaryKey([$primaryKey]); // @phpstan-ignore method.deprecated
+        $parts = explode('.', $name, 2);
+        $table = $parts[1] ?? $parts[0];
+        $schema = isset($parts[1]) ? $parts[0] : null;
+        if ('' === $table || '' === $schema) {
+            throw new \LogicException(sprintf('Invalid outbox table name "%s".', $name));
         }
 
-        foreach ($indexes as $name => $indexColumns) {
-            $table->addIndex($indexColumns, $name); // @phpstan-ignore method.deprecated
-        }
-    }
-
-    /**
-     * @param array<non-empty-string, ColumnDefinition> $columns
-     */
-    private static function addColumns(Table $table, array $columns): void
-    {
-        foreach ($columns as $name => $definition) {
-            $table->addColumn($name, $definition['type'], self::options($definition)); // @phpstan-ignore method.deprecated
-        }
+        return [$table, $schema];
     }
 
     /**

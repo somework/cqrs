@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -265,7 +264,6 @@ final class MessageTransportStampDeciderTest extends TestCase
         self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::ASYNC, []));
     }
 
-    #[RequiresMethod(AsMessage::class, '__construct')]
     public function test_a_message_routed_by_as_message_keeps_its_routing(): void
     {
         // A bare #[Asynchronous] defers to Messenger's routing, #[AsMessage(transport: ...)] included.

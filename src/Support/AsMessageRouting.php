@@ -6,7 +6,6 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Symfony\Component\Messenger\Attribute\AsMessage;
 
-use function class_exists;
 use function class_implements;
 use function class_parents;
 use function in_array;
@@ -38,10 +37,6 @@ final class AsMessageRouting
      */
     public static function transports(string $messageClass): array
     {
-        if (!class_exists(AsMessage::class)) {
-            return [];
-        }
-
         $transports = [];
         $parents = class_parents($messageClass);
         $interfaces = class_implements($messageClass);

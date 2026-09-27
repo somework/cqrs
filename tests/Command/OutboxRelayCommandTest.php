@@ -7,7 +7,6 @@ namespace SomeWork\CqrsBundle\Tests\Command;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\Attributes\RequiresPhpExtension;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\ConsoleRelayReporter;
@@ -1051,7 +1050,6 @@ final class OutboxRelayCommandTest extends TestCase
         self::assertTrue($this->storage->isPublished($message->id));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, 'getKey')]
     public function test_a_retry_dropped_by_the_deduplication_is_not_marked_as_published(): void
     {
         // The lock is most likely held by the attempt before, which did not send the message.

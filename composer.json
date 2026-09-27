@@ -19,17 +19,17 @@
         "php": "^8.2",
         "psr/container": "^1.1 || ^2.0",
         "psr/log": "^3.0",
-        "symfony/config": "^7.2 || ^8.0",
-        "symfony/console": "^7.2 || ^8.0",
-        "symfony/dependency-injection": "^7.2 || ^8.0",
-        "symfony/filesystem": "^7.2 || ^8.0",
-        "symfony/framework-bundle": "^7.2 || ^8.0",
-        "symfony/http-kernel": "^7.2 || ^8.0",
-        "symfony/messenger": "^7.2 || ^8.0",
+        "symfony/config": "^7.4.9 || ^8.1",
+        "symfony/console": "^7.4.9 || ^8.1",
+        "symfony/dependency-injection": "^7.4.9 || ^8.1",
+        "symfony/filesystem": "^7.4.9 || ^8.1",
+        "symfony/framework-bundle": "^7.4.9 || ^8.1",
+        "symfony/http-kernel": "^7.4.9 || ^8.1",
+        "symfony/messenger": "^7.4.9 || ^8.1",
         "symfony/service-contracts": "^3.5"
     },
     "require-dev": {
-        "doctrine/dbal": "^4.0",
+        "doctrine/dbal": "^4.3",
         "doctrine/orm": "^3.6",
         "friendsofphp/php-cs-fixer": "^3.58",
         "open-telemetry/api": "^1.8",
@@ -39,22 +39,22 @@
         "phpstan/phpstan-phpunit": "^2.0",
         "phpstan/phpstan-strict-rules": "^2.0",
         "phpstan/phpstan-symfony": "^2.0",
-        "phpunit/phpunit": "^11.5",
-        "symfony/lock": "^7.2 || ^8.0",
-        "symfony/rate-limiter": "^7.2 || ^8.0"
+        "phpunit/phpunit": "^11.5 || ^12.5 || ^13",
+        "symfony/lock": "^7.4 || ^8.1",
+        "symfony/rate-limiter": "^7.4 || ^8.1"
     },
     "conflict": {
-        "doctrine/dbal": "<4.0 || >=5.0",
+        "doctrine/dbal": "<4.3 || >=5.0",
         "open-telemetry/api": "<1.8",
-        "symfony/lock": "<7.2",
-        "symfony/rate-limiter": "<7.2"
+        "symfony/lock": "<7.4 || >=8.0,<8.1",
+        "symfony/rate-limiter": "<7.4 || >=8.0,<8.1"
     },
     "suggest": {
-        "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",
+        "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage, ^4.3)",
         "doctrine/doctrine-bundle": "Provides the \"doctrine.dbal.<name>_connection\" services used by the transactional outbox",
         "doctrine/orm": "Adds the outbox table to schema generation and Doctrine migrations (OutboxSchemaSubscriber)",
         "open-telemetry/api": "Required for OpenTelemetry tracing bridge (^1.8)",
-        "phpunit/phpunit": "Required by the testing helpers in SomeWork\\CqrsBundle\\Testing (CqrsTestCase, CqrsAssertionsTrait)",
+        "phpunit/phpunit": "Required by the testing helpers in SomeWork\\CqrsBundle\\Testing (CqrsTestCase, CqrsAssertionsTrait): ^11.5, ^12.5 or ^13",
         "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",
         "symfony/rate-limiter": "Required for rate limiting message dispatch (RateLimitStampDecider)"
     },

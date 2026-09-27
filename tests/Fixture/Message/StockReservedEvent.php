@@ -10,8 +10,8 @@ use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 
 /**
- * Provides a deduplication key and a deferral as default stamps (symfony/messenger 7.4+), which
- * Messenger's add_default_stamps_middleware adds on the bus.
+ * Provides a deduplication key and a deferral as default stamps, which Messenger's
+ * add_default_stamps_middleware adds on the bus.
  *
  * @psalm-immutable
  */

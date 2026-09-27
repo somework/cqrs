@@ -17,7 +17,6 @@ use Symfony\Component\Lock\Key;
 use Symfony\Component\Lock\PersistingStoreInterface;
 use Symfony\Component\Lock\Store\StoreFactory;
 use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 use function str_replace;
 
@@ -57,25 +56,15 @@ final class ValidateIdempotencyDependenciesPassTest extends TestCase
         self::assertSame([], $container->getCompiler()->getLog());
     }
 
-    /**
-     * @return iterable<string, array{string}>
-     */
-    public static function missingClasses(): iterable
-    {
-        yield 'messenger < 7.3' => [DeduplicateStamp::class];
-        yield 'no symfony/lock' => [Key::class];
-    }
-
-    #[DataProvider('missingClasses')]
-    public function test_logs_missing_packages(string $missingClass): void
+    public function test_logs_a_missing_lock_component(): void
     {
         $container = $this->enabledContainer();
 
-        (new ValidateIdempotencyDependenciesPass(static fn (string $class): bool => $class !== $missingClass))->process($container);
+        (new ValidateIdempotencyDependenciesPass(static fn (string $class): bool => Key::class !== $class))->process($container);
 
         $log = $container->getCompiler()->getLog();
         self::assertCount(1, $log);
-        self::assertStringContainsString('needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock', $log[0]);
+        self::assertStringContainsString('Idempotency is enabled but needs symfony/lock; IdempotencyStamp is ignored until it is installed.', $log[0]);
     }
 
     public function test_logs_a_missing_deduplicate_middleware(): void

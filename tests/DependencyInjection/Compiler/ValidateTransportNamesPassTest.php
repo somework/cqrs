@@ -6,7 +6,6 @@ namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -26,7 +25,6 @@ use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Exception\LogicException;
 use Symfony\Component\DependencyInjection\ServiceLocator;
-use Symfony\Component\Messenger\Attribute\AsMessage;
 use Symfony\Component\Messenger\MessageBus;
 
 use function array_map;
@@ -115,7 +113,6 @@ final class ValidateTransportNamesPassTest extends TestCase
         $this->addToAssertionCount(1);
     }
 
-    #[RequiresMethod(AsMessage::class, '__construct')]
     public function test_it_accepts_a_bare_asynchronous_attribute_routed_by_as_message(): void
     {
         $container = $this->asyncContainer([AttributeRoutedCommand::class]);
@@ -129,7 +126,6 @@ final class ValidateTransportNamesPassTest extends TestCase
     /**
      * Also with an "async" transport: Messenger sends the message to the attribute's transport.
      */
-    #[RequiresMethod(AsMessage::class, '__construct')]
     public function test_it_rejects_an_unknown_transport_of_as_message(): void
     {
         $container = $this->asyncContainer([AttributeRoutedCommand::class]);
@@ -144,7 +140,6 @@ final class ValidateTransportNamesPassTest extends TestCase
     /**
      * framework.messenger.routing wins over the attribute, which Messenger then ignores.
      */
-    #[RequiresMethod(AsMessage::class, '__construct')]
     public function test_it_ignores_as_message_when_the_messenger_routing_routes_the_message(): void
     {
         $container = $this->asyncContainer([AttributeRoutedCommand::class]);

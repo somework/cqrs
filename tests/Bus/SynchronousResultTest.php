@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\SynchronousResult;
 use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
@@ -46,7 +45,6 @@ final class SynchronousResultTest extends TestCase
         }
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_deduplicated_message_is_reported(): void
     {
         $envelope = new Envelope(new CreateTaskCommand('1', 'x'), [new DeduplicateStamp('task-1')]);

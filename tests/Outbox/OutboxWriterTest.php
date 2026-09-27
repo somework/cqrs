@@ -8,7 +8,6 @@ use OpenTelemetry\API\Trace\Span;
 use OpenTelemetry\API\Trace\SpanContext;
 use OpenTelemetry\API\Trace\TraceFlags;
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
@@ -31,7 +30,6 @@ use Symfony\Component\Lock\Store\FlockStore;
 use Symfony\Component\Lock\Store\InMemoryStore;
 use Symfony\Component\Lock\Strategy\UnanimousStrategy;
 use Symfony\Component\Messenger\Envelope;
-use Symfony\Component\Messenger\Middleware\AddDefaultStampsMiddleware;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
@@ -85,7 +83,6 @@ final class OutboxWriterTest extends TestCase
         self::assertCount(1, $this->storage->fetchUnpublished(10), 'No row of a refused message, not even for its known transport.');
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_deduplicate_stamp_is_refused_when_the_lock_store_keys_stay_local(): void
     {
         // The relay's deduplication would lock the key and fail to send it on every attempt. The
@@ -118,7 +115,6 @@ final class OutboxWriterTest extends TestCase
         self::assertCount(1, $this->storage->fetchUnpublished(10));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_deduplicate_stamp_is_stored_with_a_lock_store_whose_keys_can_be_sent(): void
     {
         $writer = new OutboxWriter($this->storage, new PhpSerializer(), lockStore: static fn (): InMemoryStore => new InMemoryStore());
@@ -128,7 +124,6 @@ final class OutboxWriterTest extends TestCase
         self::assertCount(1, $this->storage->fetchUnpublished(10));
     }
 
-    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
     public function test_a_deduplicate_stamp_among_the_default_stamps_is_scoped_to_each_transport(): void
     {
         // Otherwise the relay's bus adds the same key to every row, and drops all but the first.
@@ -140,7 +135,6 @@ final class OutboxWriterTest extends TestCase
         self::assertSame(['stock-B@t1', 'stock-B@t2'], array_map(static fn (OutboxMessage $row): string => (string) (new PhpSerializer())->decode(['body' => $row->body])->last(DeduplicateStamp::class)?->getKey(), $rows));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_lock_store_combining_a_local_store_is_refused(): void
     {
         $combined = new CombinedStore([new InMemoryStore(), new FlockStore()], new UnanimousStrategy());
@@ -152,7 +146,6 @@ final class OutboxWriterTest extends TestCase
         $writer->store(new CreateTaskCommand('1', 'a'), 'async', new DeduplicateStamp('key'));
     }
 
-    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
     public function test_a_deduplicate_stamp_among_the_default_stamps_of_the_message_is_refused_too(): void
     {
         // The relay's bus adds it (add_default_stamps_middleware).
@@ -257,7 +250,6 @@ final class OutboxWriterTest extends TestCase
         self::assertCount(2, $this->storage->fetchUnpublished(10));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, 'getKey')]
     public function test_rows_of_several_transports_get_their_own_deduplication_key(): void
     {
         // Rows sharing a key would drop each other when relayed: the second transport would never get it.

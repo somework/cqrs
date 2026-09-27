@@ -77,8 +77,8 @@ final class TestDatabase
     {
         $schemaManager = $connection->createSchemaManager();
 
-        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
-        $table = method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType
+        // introspectTableByUnquotedName() exists since DBAL 4.4, where introspectTable() is deprecated.
+        $table = method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType (DBAL 4.3)
             ? $schemaManager->introspectTableByUnquotedName($tableName)
             : $schemaManager->introspectTable($tableName); // @phpstan-ignore method.deprecated
 

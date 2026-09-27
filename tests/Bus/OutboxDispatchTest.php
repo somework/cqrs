@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Bus;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\AbstractMessengerBus;
 use SomeWork\CqrsBundle\Bus\CommandBus;
@@ -133,7 +132,6 @@ final class OutboxDispatchTest extends TestCase
         self::assertSame([], $this->storage->fetchUnpublished(10));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_the_deduplication_stamp_skips_the_bus_middleware_and_is_stored(): void
     {
         $spy = new class implements MiddlewareInterface {
@@ -157,7 +155,6 @@ final class OutboxDispatchTest extends TestCase
         self::assertNotNull($envelope->last(DeduplicateStamp::class));
     }
 
-    #[RequiresMethod(AddDefaultStampsMiddleware::class, 'handle')]
     public function test_default_stamps_of_the_message_neither_lock_nor_defer_the_store(): void
     {
         // Messenger's default stamps come after the bus hid its own: a lock taken now would make the

@@ -8,14 +8,12 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Index;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaConfig;
-use Doctrine\DBAL\Schema\SchemaEditor;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\Deprecations\Deprecation;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 use SomeWork\CqrsBundle\Outbox\Dbal\OutboxTable;
@@ -31,9 +29,9 @@ use function ksort;
 use function method_exists;
 
 /**
- * OutboxTable builds tables with the schema editors of DBAL 4.5+ and with the Table mutators
- * before (and in addToSchema(), on every version): both must build the same table, and the
- * editor path must not call the APIs DBAL 4.5 deprecates.
+ * OutboxTable builds tables with DBAL's schema editors, and with the Table mutators in
+ * addToSchema(): both must build the same table, and the editor path must not call the APIs
+ * DBAL 4.5 deprecates.
  */
 #[CoversClass(OutboxTable::class)]
 final class OutboxTableTest extends TestCase
@@ -141,8 +139,7 @@ final class OutboxTableTest extends TestCase
         self::assertSame($table, OutboxTable::withIndexes($table, []), 'Nothing to add.');
     }
 
-    #[RequiresMethod(SchemaEditor::class, 'addTable')]
-    public function test_the_editors_of_dbal_4_5_build_and_change_the_table_without_deprecated_calls(): void
+    public function test_the_editors_build_and_change_the_table_without_deprecated_calls(): void
     {
         $legacyIndex = ['idx_somework_cqrs_outbox_published_created' => ['published_at', 'created_at']];
 
@@ -159,7 +156,6 @@ final class OutboxTableTest extends TestCase
     }
 
     #[Group('database')]
-    #[RequiresMethod(SchemaEditor::class, 'addTable')]
     public function test_the_setup_creates_the_table_without_deprecated_calls(): void
     {
         $connection = TestDatabase::connect();
@@ -171,7 +167,6 @@ final class OutboxTableTest extends TestCase
     }
 
     #[Group('database')]
-    #[RequiresMethod(SchemaEditor::class, 'addTable')]
     public function test_the_setup_upgrades_a_table_of_0_4_without_deprecated_calls(): void
     {
         $connection = TestDatabase::connect();
@@ -215,7 +210,7 @@ final class OutboxTableTest extends TestCase
     }
 
     /**
-     * The table in a form that is the same on every DBAL version (4.0 to 4.5+).
+     * The table in a form that is the same on every DBAL version (4.3 to 5).
      *
      * @return array{name: string, columns: array<string, array{type: string, length: int|null, notnull: bool, default: mixed}>, primary_key: list<string>, indexes: array<string, list<string>>}
      */
@@ -232,8 +227,9 @@ final class OutboxTableTest extends TestCase
         }
 
         $indexes = [];
-        foreach ($table->getIndexes() as $name => $index) {
-            // The primary key is also listed as the index "primary".
+        foreach ($table->getIndexes() as $index) {
+            // DBAL 4 also lists the primary key, as the index "primary" (DBAL 5 returns a list without it).
+            $name = $index->getObjectName()->toString();
             if ('primary' !== $name) {
                 $indexes[$name] = self::indexedColumns($index);
             }
@@ -250,10 +246,7 @@ final class OutboxTableTest extends TestCase
 
     private static function tableName(Table $table): string
     {
-        // getObjectName() exists since DBAL 4.3, where getName() is deprecated.
-        return method_exists($table, 'getObjectName') // @phpstan-ignore function.alreadyNarrowedType
-            ? $table->getObjectName()->toString()
-            : $table->getName(); // @phpstan-ignore method.deprecated
+        return $table->getObjectName()->toString();
     }
 
     private static function typeName(Column $column): string
@@ -266,9 +259,7 @@ final class OutboxTableTest extends TestCase
 
     private static function columnName(Column $column): string
     {
-        return method_exists($column, 'getObjectName') // @phpstan-ignore function.alreadyNarrowedType
-            ? $column->getObjectName()->toString()
-            : $column->getName(); // @phpstan-ignore method.deprecated
+        return $column->getObjectName()->toString();
     }
 
     /**
@@ -276,10 +267,7 @@ final class OutboxTableTest extends TestCase
      */
     private static function indexedColumns(Index $index): array
     {
-        // getIndexedColumns() replaces getColumns() in DBAL 4.4.
-        return method_exists($index, 'getIndexedColumns') // @phpstan-ignore function.alreadyNarrowedType
-            ? array_map(static fn ($column): string => $column->getColumnName()->toString(), $index->getIndexedColumns())
-            : $index->getColumns(); // @phpstan-ignore method.deprecated
+        return array_map(static fn ($column): string => $column->getColumnName()->toString(), $index->getIndexedColumns());
     }
 
     /**
@@ -287,15 +275,8 @@ final class OutboxTableTest extends TestCase
      */
     private static function primaryKey(Table $table): array
     {
-        // getPrimaryKeyConstraint() exists since DBAL 4.3, where getPrimaryKey() is deprecated.
-        if (method_exists($table, 'getPrimaryKeyConstraint')) { // @phpstan-ignore function.alreadyNarrowedType
-            $constraint = $table->getPrimaryKeyConstraint();
+        $constraint = $table->getPrimaryKeyConstraint();
 
-            return null === $constraint ? [] : array_map(static fn ($name): string => $name->toString(), $constraint->getColumnNames());
-        }
-
-        $primaryKey = $table->getPrimaryKey(); // @phpstan-ignore method.deprecated
-
-        return null === $primaryKey ? [] : $primaryKey->getColumns(); // @phpstan-ignore method.deprecated
+        return null === $constraint ? [] : array_map(static fn ($name): string => $name->toString(), $constraint->getColumnNames());
     }
 }
