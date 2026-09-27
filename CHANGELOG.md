@@ -7,6 +7,9 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+### Fixed
+- The compilation log did not say that `outbox.require_transaction` is not enforced when the class of the outbox storage is not known when the container is built (e.g. a service created by a factory without a class): the bundle cannot tell whether it implements `Contract\Outbox\TransactionalOutbox`, so messages were stored outside transactions without a warning. It now warns, as for a storage without `TransactionalOutbox` ([UPGRADE.md](UPGRADE.md#upgrading-from-052-to-053)).
+
 ## [0.5.2] - 2026-09-27
 
 ### Fixed
