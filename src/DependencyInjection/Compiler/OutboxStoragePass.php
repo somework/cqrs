@@ -31,8 +31,9 @@ use function sprintf;
  * keeps its storage everywhere; the features its storage does not implement then refuse to run.
  *
  * When OutboxWriter cannot tell whether a transaction is open (the configured storage does not
- * implement TransactionalOutbox, or the application replaced the storage), "outbox.require_transaction"
- * is not enforced: the compilation log says so.
+ * implement TransactionalOutbox, its class is not known when the container is built, or the
+ * application replaced the storage), "outbox.require_transaction" is not enforced: the compilation
+ * log says so.
  *
  * Runs before the optimization passes: decorators are only applied by DecoratorServicePass.
  *
@@ -85,7 +86,12 @@ final class OutboxStoragePass implements CompilerPassInterface
             return;
         }
 
-        if (null !== $class && !is_a($class, TransactionalOutbox::class, true)) {
+        if (null === $class) {
+            // Only a storage that exists: a missing one fails the build in ValidateConfiguredServicesPass.
+            if ($container->has($base)) {
+                $this->reportUncheckedTransactions($container, sprintf('the class of the outbox storage "%s" is not known when the container is built (e.g. a service created by a factory without a class: declare its class)', $base));
+            }
+        } elseif (!is_a($class, TransactionalOutbox::class, true)) {
             $this->reportUncheckedTransactions($container, sprintf('the outbox storage "%s" (%s) does not implement %s', $base, $class, TransactionalOutbox::class));
         }
 
