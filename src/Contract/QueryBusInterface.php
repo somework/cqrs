@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
 use SomeWork\CqrsBundle\Exception\RateLimitExceededException;
+use Symfony\Component\Messenger\Exception\HandlerFailedException;
+use Symfony\Component\Messenger\Exception\TransportException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -36,6 +38,8 @@ interface QueryBusInterface
      * @throws DuplicateMessageException       when deduplication dropped it
      * @throws DeferredDispatchFailedException when the handler succeeded but a message it deferred (DispatchAfterCurrentBusStamp) failed afterwards
      * @throws RateLimitExceededException      when the rate limiter of the message rejects it
+     * @throws HandlerFailedException          when several handlers failed (Messenger's)
+     * @throws TransportException              when the routing sends it to a transport that fails (Messenger's)
      *
      * @return TResult
      */

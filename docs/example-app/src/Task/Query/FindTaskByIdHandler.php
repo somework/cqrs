@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Contract\QueryHandler;
 
 /**
  * Returns a single task by ID, or null if not found.
+ *
+ * @implements QueryHandler<FindTaskById, array{id: string, title: string, completed: bool}|null>
  */
 #[AsQueryHandler(query: FindTaskById::class)]
 final class FindTaskByIdHandler implements QueryHandler

@@ -10,6 +10,7 @@ use Doctrine\DBAL\Schema\PrimaryKeyConstraint;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\SchemaConfig;
 use Doctrine\DBAL\Schema\Table;
+use SomeWork\CqrsBundle\Exception\LogicException;
 
 use function array_filter;
 use function array_keys;
@@ -124,7 +125,7 @@ final class OutboxTable
         $table = $parts[1] ?? $parts[0];
         $schema = isset($parts[1]) ? $parts[0] : null;
         if ('' === $table || '' === $schema) {
-            throw new \LogicException(sprintf('Invalid outbox table name "%s".', $name));
+            throw new LogicException(sprintf('Invalid outbox table name "%s".', $name));
         }
 
         return [$table, $schema];

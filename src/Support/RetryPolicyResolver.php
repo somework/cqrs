@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -43,7 +44,7 @@ final class RetryPolicyResolver extends AbstractMessageTypeResolver
     protected function assertService(string $type, mixed $service): RetryPolicy
     {
         if (!$service instanceof RetryPolicy) {
-            throw new \LogicException(sprintf('Retry policy override for "%s" must implement %s.', $type, RetryPolicy::class));
+            throw new LogicException(sprintf('Retry policy override for "%s" must implement %s.', $type, RetryPolicy::class));
         }
 
         return $service;

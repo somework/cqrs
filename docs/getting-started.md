@@ -335,7 +335,7 @@ final class GenerateReport implements Command
 }
 ```
 
-The attribute also adds a `TransportNamesStamp` for the transport named `async`; pass `#[Asynchronous(transport: 'reports')]` to use another transport.
+Pass `#[Asynchronous(transport: 'reports')]` to name the transport. A bare `#[Asynchronous]` sends the message where `transports.command_async` (or `event_async`) sends it, or where `framework.messenger.routing` / `#[AsMessage(transport: …)]` routes it; only when none of them applies does it fall back to the transport named `async`.
 
 **Per configuration** -- map classes (or their parent classes and interfaces) to a dispatch mode:
 

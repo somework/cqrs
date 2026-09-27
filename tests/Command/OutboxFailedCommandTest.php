@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Tests\Command;
 use DateTimeImmutable;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
@@ -27,7 +28,9 @@ use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\BusNameStamp;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 use Symfony\Component\Messenger\Stamp\NoAutoAckStamp;
+use Symfony\Component\Messenger\Transport\Serialization\MessageTypeAwareSerializerInterface;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function addslashes;
 use function array_map;
@@ -187,6 +190,107 @@ final class OutboxFailedCommandTest extends TestCase
         $signed = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
         self::assertSame(Command::SUCCESS, $signed->execute(['--requeue' => true, '--sign' => true, 'ids' => [$genuine]], ['interactive' => false]));
         self::assertStringContainsString('not a PHP-serialized body: the type header names the class', self::display($signed));
+    }
+
+    public function test_signing_resolves_a_serialized_type_name_through_the_type_map_of_messengers_serializer(): void
+    {
+        // #[AsMessage(serializedTypeName: 'shop.create_task')] with the Symfony serializer (Messenger 8.1).
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, '{"id":"1","name":"a"}', json_encode(['type' => 'shop.create_task'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+        $signer = new OutboxSigner('secret');
+
+        // Without the map, the name is no class: refused as before.
+        $refused = new CommandTester(new OutboxFailedCommand($this->storage, $signer));
+        self::assertSame(Command::FAILURE, $refused->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('instantiates shop.create_task, which is neither', self::display($refused));
+
+        $signed = new CommandTester(new OutboxFailedCommand($this->storage, $signer, serializedTypes: ['shop.create_task' => CreateTaskCommand::class]));
+        self::assertSame(Command::SUCCESS, $signed->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]), $signed->getDisplay());
+        self::assertStringContainsString(CreateTaskCommand::class.' (shop.create_task)', self::display($signed));
+        self::assertTrue($signer->verify(OutboxRows::due($this->storage, $id)));
+    }
+
+    public function test_signing_keeps_refusing_a_serialized_type_name_of_a_class_the_bundle_does_not_dispatch(): void
+    {
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, '{}', json_encode(['type' => 'app.gadget'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret'), serializedTypes: ['app.gadget' => UnserializeGadget::class]));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('instantiates '.UnserializeGadget::class.', which is neither the envelope, a stamp, a command, query or event', self::display($tester));
+        self::assertCount(1, $this->storage->fetchFailed(10, [$id]), 'Nothing was signed or requeued.');
+    }
+
+    public function test_signing_compares_the_class_of_a_serialized_type_name_with_the_class_in_the_body(): void
+    {
+        $encoded = OutboxMessage::fromEnvelope(new Envelope(new UnserializeGadget()), new PhpSerializer(), 'async');
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, $encoded->body, json_encode(['type' => 'shop.create_task'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, new OutboxSigner('secret'), serializedTypes: ['shop.create_task' => CreateTaskCommand::class]));
+
+        self::assertSame(Command::FAILURE, $tester->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]));
+        self::assertStringContainsString('The type header of message "'.$id.'" ('.CreateTaskCommand::class.' (shop.create_task)) does not match the class in its body ('.UnserializeGadget::class.')', self::display($tester));
+    }
+
+    #[RequiresMethod(MessageTypeAwareSerializerInterface::class, 'getMessageType')]
+    public function test_signing_asks_the_outbox_serializer_for_the_class_of_a_type_header(): void
+    {
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, '{"id":"1","name":"a"}', json_encode(['type' => 'shop.create_task'], JSON_THROW_ON_ERROR), new DateTimeImmutable(), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+        $serializer = new class implements SerializerInterface, MessageTypeAwareSerializerInterface {
+            /** @var list<array{body: string, headers?: array<string, string>}> */
+            public array $asked = [];
+
+            public function decode(array $encodedEnvelope): Envelope
+            {
+                throw new \LogicException('The body is never decoded.');
+            }
+
+            public function encode(Envelope $envelope): array
+            {
+                throw new \LogicException('Nothing is encoded.');
+            }
+
+            public function getMessageType(array $encodedEnvelope): ?string
+            {
+                $this->asked[] = $encodedEnvelope;
+
+                return 'shop.create_task' === ($encodedEnvelope['headers']['type'] ?? null) ? CreateTaskCommand::class : null;
+            }
+        };
+        $signer = new OutboxSigner('secret');
+
+        $listed = new CommandTester(new OutboxFailedCommand($this->storage, $signer, $serializer));
+        self::assertSame(Command::SUCCESS, $listed->execute([]));
+        self::assertStringContainsString($id.' '.CreateTaskCommand::class.' (shop.create_task) async', self::display($listed));
+
+        $signed = new CommandTester(new OutboxFailedCommand($this->storage, $signer, $serializer));
+        self::assertSame(Command::SUCCESS, $signed->execute(['--requeue' => true, '--sign' => true, 'ids' => [$id]], ['interactive' => false]), $signed->getDisplay());
+        self::assertTrue($signer->verify(OutboxRows::due($this->storage, $id)));
+        // The header alone: the body stays unread.
+        self::assertContains(['body' => '', 'headers' => ['type' => 'shop.create_task']], $serializer->asked);
+    }
+
+    public function test_lists_the_class_of_a_serialized_type_name_next_to_it(): void
+    {
+        $id = '00000000-0000-7000-8000-000000000003';
+        $this->storage->store(new OutboxMessage($id, '{"id":"1","name":"a"}', json_encode(['type' => 'shop.create_task'], JSON_THROW_ON_ERROR), new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
+        OutboxRows::fail($this->storage, $id, 1, 'not signed', null);
+        $other = '00000000-0000-7000-8000-000000000004';
+        $this->storage->store(new OutboxMessage($other, '{}', json_encode(['type' => CreateTaskCommand::class], JSON_THROW_ON_ERROR), new DateTimeImmutable('2026-01-01 10:00:00+00:00'), 'async'));
+        OutboxRows::fail($this->storage, $other, 1, 'not signed', null);
+
+        $tester = new CommandTester(new OutboxFailedCommand($this->storage, serializedTypes: ['shop.create_task' => CreateTaskCommand::class]));
+
+        self::assertSame(Command::SUCCESS, $tester->execute([]));
+        self::assertStringContainsString($id.' '.CreateTaskCommand::class.' (shop.create_task) async', self::display($tester));
+        self::assertStringContainsString($other.' '.CreateTaskCommand::class.' async', self::display($tester));
     }
 
     public function test_signing_finds_the_message_under_any_form_of_its_property_name(): void

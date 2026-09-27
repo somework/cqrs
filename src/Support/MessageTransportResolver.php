@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use ReflectionFunction;
+use SomeWork\CqrsBundle\Exception\LogicException;
 
 use function array_key_exists;
 use function get_debug_type;
@@ -133,7 +134,7 @@ final class MessageTransportResolver
         } elseif ($value instanceof \Traversable) {
             $value = iterator_to_array($value, false);
         } elseif (!is_array($value)) {
-            throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got %s.', $key, get_debug_type($value)));
+            throw new LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got %s.', $key, get_debug_type($value)));
         }
 
         $transports = [];
@@ -141,7 +142,7 @@ final class MessageTransportResolver
 
         foreach ($value as $transport) {
             if (!is_string($transport)) {
-                throw new \LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element of type %s.', $key, get_debug_type($transport)));
+                throw new LogicException(sprintf('Transport override for "%s" must be a string or list of strings, got element of type %s.', $key, get_debug_type($transport)));
             }
 
             if (isset($seen[$transport])) {

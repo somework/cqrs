@@ -18,7 +18,7 @@ paths:
 
 Extend `AbstractMessageTypeResolver` and implement two hooks:
 
-- **`assertService(string $key, mixed $service): mixed`** — Validate the resolved service matches your expected type. Throw `LogicException` with `get_debug_type()` for clear diagnostics. The locator returns the service itself (registrars pass plain references to `ServiceLocatorTagPass::register()`), never a closure.
+- **`assertService(string $key, mixed $service): mixed`** — Validate the resolved service matches your expected type. Throw `Exception\LogicException` (a `\LogicException` that implements `CqrsException`) with `get_debug_type()` for clear diagnostics. The bundle's registrars pass plain references to `ServiceLocatorTagPass::register()`, so the locator returns the service itself, never a closure, and a new resolver need not handle closures. `MessageSerializerResolver` and `MessageMetadataProviderResolver` still call a closure they get, for locators built by hand (tests, applications).
 - **`resolveFallback(object $message): mixed`** — Provide the default when no hierarchy match is found. Two variants exist in the codebase:
   - **Simple:** Return a stored default (see `RetryPolicyResolver`)
   - **Default key:** Look up the resolver's `DEFAULT_KEY` in the locator (see `MessageSerializerResolver`, `MessageMetadataProviderResolver`, `RateLimitResolver`). The registrar stores the per-type default, or the global default when the type has none, under that key; the resolver never walks two levels of defaults
@@ -31,14 +31,14 @@ Pass `DEFAULT_KEY` as an ignored key to `resolveService()` so the hierarchy walk
 
 Cache key structure: `container → messageClass → ignoredSignature`; misses are cached as `null` too. Service locators are immutable, so the cache is never reset at runtime (there is no `kernel.reset` hook). The ignored signature is computed from sorted, deduped, null-byte-joined key names. When adding a new resolver that needs to exclude keys from hierarchy walk (like serializer/metadata exclude their default keys), pass them as `$ignoredKeys` to `resolveService()` — the cache handles this automatically.
 
-On top of it, `AbstractMessageTypeResolver::resolveService()` keeps the resolved service per message class and ignored keys in an instance array (resolution runs on every dispatch; the array makes it about five times cheaper than the WeakMap lookup plus `ServiceLocator::get()`). Services are therefore resolved once per class: they must be stateless, and a service defined as not shared is reused. `MessageTransportResolver` does the same per class but skips values computed by closures, which are re-invoked on every call.
+On top of it, `AbstractMessageTypeResolver::resolveService()` keeps the resolved service per message class and ignored keys in an instance array (resolution runs on every dispatch; the array makes it about five times cheaper than the WeakMap lookup plus `ServiceLocator::get()`). Services are therefore resolved once per class: they must be stateless, and a service defined as not shared is reused. `MessageTransportResolver` does the same per class but skips values computed by closures (only found in locators built by hand), which are re-invoked on every call.
 
 ## MessageTransportResolver Exception
 
 `MessageTransportResolver` does NOT extend `AbstractMessageTypeResolver` because it needs:
 - Nullable return type (`?array` vs always-resolved service)
 - Selective caching: static sources cached, closures re-invoked each call
-- Complex normalization logic (strings, arrays, Traversables, Closures with optional container parameter)
+- Complex normalization logic: `TransportRegistrar` stores each transport list as an `ArrayObject` service (a `Traversable`); strings, arrays and closures (with an optional container parameter, re-invoked on every call) are accepted from locators built by hand
 
 If your new resolver needs nullable returns or dynamic sources, follow `MessageTransportResolver`'s standalone pattern. Otherwise, extend the abstract base.
 

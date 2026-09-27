@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Outbox;
 
 use DateTimeImmutable;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
@@ -53,17 +54,17 @@ final class OutboxMessage
         public readonly ?string $signature = null,
     ) {
         if ('' === $id) {
-            throw new \InvalidArgumentException('Outbox message id cannot be empty.');
+            throw new InvalidArgumentException('Outbox message id cannot be empty.');
         }
 
         $this->id = strtolower($id);
 
         if ($this->attempts < 0) {
-            throw new \InvalidArgumentException('Outbox message attempts cannot be negative.');
+            throw new InvalidArgumentException('Outbox message attempts cannot be negative.');
         }
 
         if ('' === $this->body) {
-            throw new \InvalidArgumentException('Outbox message body cannot be empty.');
+            throw new InvalidArgumentException('Outbox message body cannot be empty.');
         }
     }
 

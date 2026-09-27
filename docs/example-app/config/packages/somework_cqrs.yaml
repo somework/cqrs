@@ -40,6 +40,6 @@ somework_cqrs:
     #     max_delay: 60000
 
     # IdempotencyStamp deduplication is enabled by default but only takes effect with
-    # symfony/messenger 7.3+, symfony/lock and framework.lock; without them the stamp is ignored.
+    # symfony/lock and framework.lock; without them the stamp is ignored.
     # idempotency:
     #     ttl: 300

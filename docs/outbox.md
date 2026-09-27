@@ -7,10 +7,19 @@ database table **in the same transaction** as the business change. The
 `somework:cqrs:outbox:relay` command later sends the stored messages to Messenger.
 
 !!! note "Stability"
-    `OutboxWriter`, `OutboxStorage`, `OutboxMessage` and `DbalOutboxStorage` are part of the
-    public API (`@api`). Write with `OutboxWriter`, or type-hint the `OutboxStorage` interface;
-    `DbalOutboxStorage` is public for `addTableToSchema()` in migrations and for the setup and
-    failed-message tools.
+    The public API (`@api`) of the outbox is:
+
+    - `OutboxWriter` and `Contract\Outbox\OutboxWriterInterface`, `OutboxMessage` and
+      `DbalOutboxStorage` (public for `addTableToSchema()` in migrations and for the setup
+      and failed-message tools);
+    - the storage contracts of `Contract\Outbox`: `OutboxStorage` and the capabilities
+      `OutboxSchema`, `FailedOutboxMessages`, `OutboxMonitoring` and `TransactionalOutbox`,
+      with the `OutboxStatus` and `FailedOutboxMessage` DTOs;
+    - the `#[Outbox]` attribute, `DispatchMode::OUTBOX`, the stamps `OutboxStoredStamp`,
+      `RelayedFromOutboxStamp` and `StoreInOutboxStamp`, and `Testing\FakeOutboxWriter`.
+
+    Write with `OutboxWriter` (or through the buses), or type-hint the interfaces. The relay
+    (`OutboxRelay`, its `RelayReporter` and `RelayResult`) and `RelayUnitOfWork` are internal.
 
 ## How it works
 
@@ -218,6 +227,13 @@ the outbox are stored in it without an explicit `transactional()`.
   `transports.<type>_async` set: the relay dispatches on `buses.<type>_async`, or on the
   synchronous bus without one. A message with none of them is stored with a warning, and the
   relay handles it synchronously in its own process when it relays it.
+- **Delays.** A `DelayStamp` (passed by the caller, among the default stamps of the message,
+  or added by a middleware) is stored with the message untouched and applies when the relay
+  sends the row: the delay counts from that send, not from the dispatch. The row itself is due
+  at once, so the next relay run sends it; with a transport that supports delays the message is
+  then handled the delay later, and without a transport (handled in the relay's process) the
+  delay is ignored. The same holds for `OutboxWriter::store()`. A later version may start the
+  delay at the dispatch instead.
 - **What bypasses the outbox.** `dispatchSync()` and `ask()` (they need the result) and
   `dispatchAsync()` (an explicit asynchronous dispatch) ignore the `outbox` mode.
 - **Idempotency.** An `IdempotencyStamp` becomes a `DeduplicateStamp` scoped to each row's
@@ -390,9 +406,10 @@ it. Until then (the relay checks for the index every 10 seconds, also with `auto
 it fetches with one query along the index of 0.4, in the order the rows were stored: the
 transports do not take turns, and rows that are not due (retries, given-up rows, paused
 transports) are read past, which slows fetches when many of them are ahead. The health
-check reads all pending rows, which takes seconds with a large backlog, and warns while the table
-lacks the columns, and turns critical once messages have waited there for more than 10 minutes
-(the relay cannot send them until the setup command has run). It never creates the table inside an open
+check reports the outbox as critical while the table lacks the columns (storing a message inside
+a transaction fails until then); once messages have waited there for more than 10 minutes, it also
+says how many wait and for how long (the relay cannot send them until the setup command has run),
+which reads all pending rows and takes seconds with a large backlog. It never creates the table inside an open
 transaction: DDL would implicitly commit your transaction on MySQL or abort it on
 PostgreSQL. `store()` normally runs inside your transaction, so a missing table then raises
 a `LogicException` that tells you to run `somework:cqrs:outbox:setup`. Dates are stored in
@@ -732,8 +749,11 @@ Two ways to see the messages handled while developing:
     4 … minutes): by the relay that runs after the next request that stores a message, or by
     `bin/console somework:cqrs:outbox:relay` (or `--watch`) at any time. After
     `max_attempts`, the relay gives it up: `somework:cqrs:outbox:failed` lists it, and
-    `--requeue` retries it after you fixed the handler. `failed` also works for a row whose
-    message class you renamed.
+    `--requeue` retries it after you fixed the handler. `failed` also lists a row whose
+    message class you renamed (it does not decode the body), but after `--requeue` the relay
+    fails to decode it again (and gives it up after `max_attempts`), and `--sign` refuses it (the class in the body cannot be
+    found): restore the old class (or a `class_alias()` of it) until the row is relayed, or
+    delete the row with `--delete`.
   - **When it does not run.** While a transaction is still open on the outbox connection (the
     rows are not committed yet): with Doctrine's `auto_commit: false` that is always the case,
     so use `--watch` there. After a command that a signal interrupted, and after the relay
@@ -813,8 +833,9 @@ Publishing a row clears its `failed_at`, `last_error` and claim. `purge` never d
   per transport along the index, so it stays cheap on a large backlog.
 - The relay logs failed attempts, paused transports, messages handled inline or dropped, a
   table that needs the setup command, and
-  runs stopped by a signal (warning), and given-up rows and stopped runs (error) to the
-  application's `logger` service, besides printing them.
+  runs stopped by a signal (warning), and given-up rows and stopped runs (error), besides
+  printing them: on the `cqrs` channel with MonologBundle (`monolog.logger.cqrs`), otherwise
+  to the application's `logger` service.
 - Alert on `somework:cqrs:health` (exit code `1` for a warning, `2` for critical) and on
   given-up rows, not on every exit code `1` of the relay: the relay also exits with `1` when a
   single row failed and will be retried, and when a signal stopped it (a deployment). Runs
@@ -848,12 +869,17 @@ daily.
   to several transports is sent to all of them again when one of them fails: store one row
   per transport to avoid that. **Consumers must be idempotent**, for example by
   recording processed message ids under a unique constraint. The bundle's
-  [idempotency bridge](idempotency.md) does not cover this case: relayed messages do not
-  pass through the CQRS stamp pipeline.
-- **Order.** New rows are relayed in the order they were stored. A row that fails is
-  postponed, so later rows overtake it, and so do the rows of other transports while its
-  transport is paused. Several workers consuming the
-  transport can also process messages out of order.
+  [idempotency bridge](idempotency.md) does not prevent these duplicates either: the
+  `DeduplicateStamp` of a row stored with an `IdempotencyStamp` is applied when the relay
+  sends it, but its lock is released once a worker handled the message (or expires after
+  `idempotency.ttl`), and the relay retries the unmarked row until a send goes through.
+- **Order.** New rows of a transport are relayed in the order of their `created_at`, the
+  time (to the second) at which `OutboxMessage::fromEnvelope()` encoded them in PHP, then of
+  their time-ordered id. That is not the order in which they were committed: a row stored
+  early in a long transaction is relayed after newer rows that were already published.
+  There is no order across transports, which take turns. A row that fails is postponed, so
+  later rows overtake it, and so do the rows of other transports while its transport is
+  paused. Several workers consuming the transport can also process messages out of order.
 - **Latency.** Messages leave the outbox only when the relay runs. Your schedule sets the
   delay.
 
@@ -974,7 +1000,7 @@ An implementation must meet these rules:
 - `fetchUnpublished()` returns due messages only (unpublished, not given up, retry time
   passed). The transports take turns, the one whose next message has waited longest first;
   within a transport, first the messages never attempted,
-  in the order they were stored, then the others, in the order of their retry time. It skips
+  in the order they were stored (`createdAt`, then id), then the others, in the order of their retry time. It skips
   the excluded transports. The relay excludes a transport after 3 send failures in a row (after 10, or 3 over at least
   10 seconds, once it accepted a message in the run); a storage that
   ignores the exclusion makes it stop early instead of reaching the other transports.
@@ -1018,6 +1044,7 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 | `OutboxSchema` | `setup(?\Closure $onWait = null): void`, `pendingChanges(): list<string>` | `somework:cqrs:outbox:setup`; the relay and the health check report what `pendingChanges()` returns |
 | `FailedOutboxMessages` | `fetchFailed(int $limit, array $ids = []): list<FailedOutboxMessage>`, `requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int`, `deleteFailed(array $ids): int` | `somework:cqrs:outbox:failed` |
 | `OutboxMonitoring` | `status(): OutboxStatus` | the outbox check of `somework:cqrs:health` |
+| `TransactionalOutbox` | `isInTransaction(): bool` | `outbox.require_transaction` (`OutboxWriter` and `DispatchMode::OUTBOX` refuse to store outside a transaction); `outbox.relay_on_terminate` waits for the transaction to be committed |
 
 `fetchFailed()` returns only the given ids when there are any. When `requeueFailed()` gets
 `$sign`, it calls `$sign($message)` with each requeued row as stored (id, body, headers) and
@@ -1030,7 +1057,23 @@ checks before it signs a row. Fill them only for messages asked for by id: a lis
 given-up messages should not read every body.
 
 Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
-health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.
+health check reports the outbox as not checked. `DbalOutboxStorage` implements all four.
+
+> **Without `TransactionalOutbox`, `outbox.require_transaction` is not enforced.** The bundle
+> cannot tell whether a transaction is open, so `OutboxWriter` and `DispatchMode::OUTBOX` also
+> store messages outside one, which are then not part of the business change, and
+> `relay_on_terminate` relays without waiting for the transaction to be committed. The same
+> holds when the application replaces the `somework_cqrs.outbox.storage` service instead of
+> configuring its storage under `outbox.storage` or decorating it. In debug mode, the container
+> compilation log warns about it (`grep require_transaction var/cache/<env>/*Compiler.log`): implement
+> `TransactionalOutbox` (`isInTransaction()` returns whether a store would join an open
+> transaction of your business data), or set `outbox.require_transaction: false` to acknowledge
+> it. 0.5.x only warns; a later minor version may refuse to build.
+
+`DbalOutboxStorage` also runs each message the relay handles in its own process (no transport,
+`sync://`) as a unit of work of its own on a connection with `auto_commit: false`, and rolls
+back a transaction such a handler left open. That interface (`RelayUnitOfWork`) is internal: a
+custom storage relays without it.
 
 To add behaviour to the storage instead (logging, metrics), decorate it:
 `#[AsDecorator('somework_cqrs.outbox.storage')]` on a class that implements `OutboxStorage`
@@ -1091,10 +1134,14 @@ Operating it:
   `outbox.signing.secret`.
 - **A row you checked** (e.g. one stored while signing was disabled) is signed with the current
   secret and handed back to the relay with
-  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
-  header, the message class of a PHP-serialized body, every class the body would instantiate
-  (read as text, never unserialized) and a SHA-256 prefix of the body. It refuses a row whose
-  `type` header does not match the class in its body; a body that instantiates a class that is
+  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the class the
+  `type` header names, the message class of a PHP-serialized body, every class the body would
+  instantiate (read as text, never unserialized) and a SHA-256 prefix of the body. A serialized
+  type name (`#[AsMessage(serializedTypeName: 'shop.place_order')]` with the Symfony serializer)
+  is shown after its class, `App\Message\PlaceOrder (shop.place_order)`: the outbox serializer
+  tells the class (`MessageTypeAwareSerializerInterface`), or the type map of Messenger's
+  Symfony serializer when it is the outbox serializer; any other header names the class itself.
+  It refuses a row whose `type` header does not match the class in its body; a body that instantiates a class that is
   neither the envelope, a stamp, a command, query or event (as the message) nor a type declared by
   the properties of those (recursively); and a body with custom serialization (a class
   implementing only `Serializable`, whose data the review cannot read). A forged row therefore

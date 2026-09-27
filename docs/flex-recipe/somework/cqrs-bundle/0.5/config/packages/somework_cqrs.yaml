@@ -40,7 +40,7 @@ somework_cqrs:
 
     # Transport-level retry strategy using per-message RetryPolicy
     # retry_strategy:
-    #     transports: {}              # Map of transport names to message types (command|query|event)
+    #     transports: {}              # Transports that use CqrsRetryStrategy: a list of names, or names => command|query|event
     #     jitter: 0.0                 # Jitter factor (0.0-1.0)
     #     max_delay: 0                # Maximum delay in ms (0 = no cap)
 
@@ -70,7 +70,7 @@ somework_cqrs:
     #         default: ~
     #         map: {}
 
-    # Default dispatch modes (sync or async)
+    # Default dispatch modes (sync, async or outbox)
     # dispatch_modes:
     #     command:
     #         default: sync
@@ -142,6 +142,8 @@ somework_cqrs:
     #     connection: default         # Doctrine DBAL connection name
     #     serializer: messenger.default_serializer
     #     auto_setup: true            # Create or upgrade the table on first use (never inside a transaction)
+    #     relay_on_terminate: false   # Development only: relay after each request, command or worker message that stored rows
+    #     require_transaction: true   # Refuse to store outside a transaction on the outbox connection
     #     max_attempts: 10            # Attempts before the relay gives up on a row (see somework:cqrs:outbox:failed)
     #     signing:                    # HMAC signatures: the relay only decodes rows this application stored
     #         enabled: true

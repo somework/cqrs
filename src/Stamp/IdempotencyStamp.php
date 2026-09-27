@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Stamp;
 
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -20,7 +21,7 @@ final class IdempotencyStamp implements StampInterface
         private readonly string $key,
     ) {
         if ('' === $this->key) {
-            throw new \InvalidArgumentException('Idempotency key cannot be empty.');
+            throw new InvalidArgumentException('Idempotency key cannot be empty.');
         }
     }
 

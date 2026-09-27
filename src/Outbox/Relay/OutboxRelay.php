@@ -12,6 +12,10 @@ use SomeWork\CqrsBundle\Contract\Command as CommandMessage;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
+use SomeWork\CqrsBundle\Exception\LogicException;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
+use SomeWork\CqrsBundle\Exception\UnexpectedValueException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
 use SomeWork\CqrsBundle\Stamp\RelayedFromOutboxStamp;
@@ -36,6 +40,7 @@ use function array_shift;
 use function array_values;
 use function bin2hex;
 use function count;
+use function get_parent_class;
 use function implode;
 use function in_array;
 use function is_array;
@@ -88,6 +93,9 @@ final class OutboxRelay
     private const MAX_RETRY_DELAY = 3600;
 
     private const MAX_ERROR_LENGTH = 2000;
+
+    /** The bundle's exceptions that only add CqrsException to an SPL class. */
+    private const SPL_EXCEPTIONS = [LogicException::class, InvalidArgumentException::class, RuntimeException::class, UnexpectedValueException::class];
 
     /** Rows fetched at once: bodies can be large. */
     private const BATCH_SIZE = 50;
@@ -176,7 +184,7 @@ final class OutboxRelay
         private readonly ?RelayUnitOfWork $unitOfWork = null,
     ) {
         if ($maxAttempts < 1) {
-            throw new \InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
+            throw new InvalidArgumentException(sprintf('The maximum number of attempts must be at least 1, %d given.', $maxAttempts));
         }
     }
 
@@ -499,7 +507,7 @@ final class OutboxRelay
     /**
      * Records a failed attempt: the message is retried after a delay, or given up after its last attempt.
      *
-     * @return self::FAILED|self::TRANSPORT_FAILED
+     * @return self::FAILED|self::TRANSPORT_FAILED|self::CLAIMED_ELSEWHERE
      */
     private function fail(OutboxMessage $message, int $attempt, \Throwable $exception, RelayReporter $reporter): string
     {
@@ -511,11 +519,12 @@ final class OutboxRelay
         $outcome = $transportFailure ? self::TRANSPORT_FAILED : self::FAILED;
 
         if (!$this->recordFailure($message, $attempt, $error, $retryAt)) {
-            // Published or claimed by an overlapping relay in the meantime: its outcome counts.
+            // Published or claimed by an overlapping relay in the meantime: its outcome counts, not
+            // this run's (no failure, exit code or transport pause), as for a message given up.
             $reporter->claimedElsewhereAfterFailure($message, $error);
             $this->logger?->warning('Could not relay outbox message {id}, which another relay claimed in the meantime: {error}', ['id' => $message->id, 'error' => $error, 'exception' => $exception] + self::logContext($message));
 
-            return $outcome;
+            return self::CLAIMED_ELSEWHERE;
         }
 
         if (null === $retryAt) {
@@ -549,7 +558,7 @@ final class OutboxRelay
         try {
             return $this->outboxStorage->claim($messages, $retryAt, $this->token);
         } catch (\Throwable $exception) {
-            throw new \RuntimeException(sprintf('Could not claim %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
+            throw new RuntimeException(sprintf('Could not claim %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
         }
     }
 
@@ -570,7 +579,7 @@ final class OutboxRelay
         try {
             return $this->outboxStorage->renew($messages, $retryAt, $this->token);
         } catch (\Throwable $exception) {
-            throw new \RuntimeException(sprintf('Could not renew the claims of %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
+            throw new RuntimeException(sprintf('Could not renew the claims of %d outbox message(s): %s', count($messages), self::describe($exception)), 0, $exception);
         }
     }
 
@@ -588,7 +597,7 @@ final class OutboxRelay
         try {
             $this->outboxStorage->release($messages, $this->token);
         } catch (\Throwable $exception) {
-            throw new \RuntimeException(sprintf('Could not release the claims of %d outbox message(s), which the next runs retry as interrupted attempts: %s', count($messages), self::describe($exception)), 0, $exception);
+            throw new RuntimeException(sprintf('Could not release the claims of %d outbox message(s), which the next runs retry as interrupted attempts: %s', count($messages), self::describe($exception)), 0, $exception);
         }
     }
 
@@ -600,7 +609,7 @@ final class OutboxRelay
         try {
             return $this->outboxStorage->recordFailure($message->id, $this->token, $attempts, $error, $retryAt);
         } catch (\Throwable $exception) {
-            throw new \RuntimeException(sprintf('Could not record the failed attempt to relay message "%s": %s', $message->id, self::describe($exception)), 0, $exception);
+            throw new RuntimeException(sprintf('Could not record the failed attempt to relay message "%s": %s', $message->id, self::describe($exception)), 0, $exception);
         }
     }
 
@@ -624,7 +633,7 @@ final class OutboxRelay
             $this->outboxStorage->markPublished($ids);
         } catch (RetryableException $exception) {
             if ($final) {
-                throw new \RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);
+                throw new RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);
             }
 
             // Marking is idempotent: try again at the next flush.
@@ -632,7 +641,7 @@ final class OutboxRelay
             $this->logger?->warning('Could not mark {count} sent outbox message(s) as published yet, retrying at the next flush: {error}', ['count' => count($ids), 'error' => self::describe($exception)]);
         } catch (\Throwable $exception) {
             // The claims stay, so the messages are sent again later (at least once).
-            throw new \RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);
+            throw new RuntimeException(sprintf('%d sent message(s) could not be marked as published, so they will be sent again (%s): %s', count($ids), implode(', ', $ids), self::describe($exception)), 0, $exception);
         }
     }
 
@@ -677,7 +686,10 @@ final class OutboxRelay
 
     public static function describe(\Throwable $exception): string
     {
-        return self::clean('' === $exception->getMessage() ? $exception::class : sprintf('%s: %s', $exception::class, $exception->getMessage()));
+        // The bundle's own SPL exceptions go by the SPL class they extend, which callers catch.
+        $class = in_array($exception::class, self::SPL_EXCEPTIONS, true) ? (string) get_parent_class($exception) : $exception::class;
+
+        return self::clean('' === $exception->getMessage() ? $class : sprintf('%s: %s', $class, $exception->getMessage()));
     }
 
     /**
@@ -776,7 +788,7 @@ final class OutboxRelay
         // backoff, by when the lock (300 seconds by default) has usually expired.
         $deduplicate = $envelope->last(DeduplicateStamp::class);
         if ($deduplicate instanceof DeduplicateStamp && $message->attempts > 0 && null === $envelope->last(HandledStamp::class)) {
-            throw new \RuntimeException(sprintf('Messenger\'s deduplication dropped this retry: the lock "%s" is still held, probably by an earlier attempt of this message. It is retried when the lock has expired.', (string) $deduplicate->getKey()));
+            throw new RuntimeException(sprintf('Messenger\'s deduplication dropped this retry: the lock "%s" is still held, probably by an earlier attempt of this message. It is retried when the lock has expired.', (string) $deduplicate->getKey()));
         }
 
         $warning = null !== $envelope->last(HandledStamp::class)

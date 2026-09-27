@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Command;
 
-use InvalidArgumentException;
-use RuntimeException;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
 use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\Event;
 use SomeWork\CqrsBundle\Contract\Query;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
 use Symfony\Component\Console\Attribute\AsCommand;
 use Symfony\Component\Console\Command\Command as SymfonyCommand;
 use Symfony\Component\Console\Input\InputArgument;
@@ -144,7 +144,7 @@ final class GenerateMessageCommand extends SymfonyCommand
             if (null === $baseDir && (!$messageAutoloaded || !$handlerAutoloaded)) {
                 throw new InvalidArgumentException(sprintf('The namespace of "%s" is not covered by a PSR-4 prefix in composer.json, so Composer could not autoload the class. Use a namespace of your "autoload.psr-4" entries, add one, or choose the directory with --dir.', $messageAutoloaded ? $handlerClass : $messageClass));
             }
-        } catch (InvalidArgumentException $exception) {
+        } catch (\InvalidArgumentException $exception) {
             $io->error($exception->getMessage());
 
             return self::INVALID;
@@ -165,7 +165,7 @@ final class GenerateMessageCommand extends SymfonyCommand
 
             $this->dumpFile($messagePath, $this->generateMessage($type, $messageClass));
             $this->dumpFile($handlerPath, $this->generateHandler($type, $messageClass, $handlerClass));
-        } catch (RuntimeException $exception) {
+        } catch (\RuntimeException $exception) {
             $io->error($exception->getMessage());
 
             return self::FAILURE;

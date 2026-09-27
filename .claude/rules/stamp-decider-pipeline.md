@@ -18,7 +18,7 @@ Choose the right interface:
 
 The `decide(object $message, DispatchMode $mode, array $stamps): array` method receives the current stamp list and MUST return the updated list. Four patterns exist in the codebase:
 
-1. **Append-only** — Spread new stamps onto the array: `[...$stamps, ...$newStamps]` (see `RetryPolicyStampDecider`)
+1. **Append, skipping caller classes** — Append each new stamp unless a stamp of the same class is already in the array (Messenger reads the last stamp of a class, so an appended one would override the caller's; see `RetryPolicyStampDecider`)
 2. **Conditional append** — Check if the resolver returns a stamp, append only if non-null (see `MessageSerializerStampDecider`)
 3. **Early-exit-if-present** — Check if a stamp type already exists in the array, return unchanged if so (see `MessageTransportStampDecider`, `MessageMetadataStampDecider`, `DispatchAfterCurrentBusStampDecider`)
 4. **Enrich the last stamp** — Replace the last stamp of a type with an enriched copy (see `CausationIdStampDecider`)

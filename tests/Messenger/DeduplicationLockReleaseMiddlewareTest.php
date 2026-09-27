@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Tests\Messenger;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Exception\CqrsException;
 use SomeWork\CqrsBundle\Messenger\DeduplicationLockReleaseMiddleware;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\RecordingLogger;
@@ -171,6 +172,7 @@ final class DeduplicationLockReleaseMiddlewareTest extends TestCase
         } catch (\LogicException $exception) {
             self::assertStringContainsString(sprintf('The idempotency lock of "%s" cannot be sent to a transport', CreateTaskCommand::class), $exception->getMessage());
             self::assertInstanceOf(UnserializableKeyException::class, $exception->getPrevious());
+            self::assertInstanceOf(CqrsException::class, $exception);
         }
 
         self::assertSame([], $transport->getSent());

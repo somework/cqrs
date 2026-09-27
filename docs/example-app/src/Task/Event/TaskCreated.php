@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Contract\Event;
  * Event dispatched after a task is created.
  *
  * Events represent facts that already happened. Zero to many handlers may react.
+ *
+ * @psalm-immutable
  */
 final class TaskCreated implements Event
 {

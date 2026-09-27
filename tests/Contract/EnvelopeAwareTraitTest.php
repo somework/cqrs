@@ -8,6 +8,7 @@ use PHPUnit\Framework\Attributes\CoversTrait;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\EnvelopeAware;
 use SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait;
+use SomeWork\CqrsBundle\Exception\CqrsException;
 use Symfony\Component\Messenger\Envelope;
 
 #[CoversTrait(EnvelopeAwareTrait::class)]
@@ -27,10 +28,14 @@ final class EnvelopeAwareTraitTest extends TestCase
     {
         $dummy = new DummyEnvelopeAwareObject();
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('Messenger envelope has not been set.');
-
-        $dummy->getEnvelope();
+        try {
+            $dummy->getEnvelope();
+            self::fail('Expected the missing envelope to be reported.');
+        } catch (\LogicException $exception) {
+            self::assertSame('Messenger envelope has not been set.', $exception->getMessage());
+            // Thrown in a handler: catch (CqrsException) catches it too.
+            self::assertInstanceOf(CqrsException::class, $exception);
+        }
     }
 }
 
