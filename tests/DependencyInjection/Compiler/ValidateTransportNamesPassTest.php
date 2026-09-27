@@ -165,11 +165,40 @@ final class ValidateTransportNamesPassTest extends TestCase
     }
 
     /**
+     * @return iterable<string, array{array<string, list<string>>, list<string>}>
+     */
+    public static function emptyTransportEntries(): iterable
+    {
+        yield 'empty class entry' => [[AsyncTaskCommand::class => []], ['jobs']];
+        yield 'empty interface entry' => [[Command::class => []], ['jobs']];
+    }
+
+    /**
+     * An empty entry resolves to no transport, and the decider falls back to "async": it shadows
+     * the default and less specific entries.
+     *
+     * @param array<string, list<string>> $map
+     * @param list<string>                $default
+     */
+    #[DataProvider('emptyTransportEntries')]
+    public function test_an_empty_transport_entry_does_not_give_a_bare_attribute_a_transport(array $map, array $default): void
+    {
+        $container = $this->asyncContainer([AsyncTaskCommand::class]);
+        $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => $default, 'map' => $map]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries #[Asynchronous]', AsyncTaskCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
      * @return iterable<string, array{\Closure(ContainerBuilder): mixed}>
      */
     public static function waysToGiveABareAttributeATransport(): iterable
     {
         yield 'section default' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => ['jobs'], 'map' => []]])];
+        yield 'class entry before an empty interface entry' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => [], 'map' => [Command::class => [], AsyncTaskCommand::class => ['jobs']]]])];
         yield 'map entry for an interface' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => [], 'map' => [Command::class => ['jobs']]]])];
         yield 'namespace wildcard route' => [static fn (ContainerBuilder $container) => $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['SomeWork\\CqrsBundle\\Tests\\*' => ['jobs']]])];
         yield 'catch-all route' => [static fn (ContainerBuilder $container) => $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['*' => ['jobs']]])];
