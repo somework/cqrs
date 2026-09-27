@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Bus;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Exception\OutboxNotConfiguredException;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
@@ -109,7 +110,7 @@ abstract class AbstractMessengerBus
 
         $stored = $envelope->last(OutboxStoredStamp::class);
         if (!$stored instanceof OutboxStoredStamp) {
-            throw new \LogicException(sprintf('The %s bus did not store "%s" in the outbox: a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.', static::BUS_NAME, $message::class));
+            throw new LogicException(sprintf('The %s bus did not store "%s" in the outbox: a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware (middleware must call the next one for outbox dispatches), or the bus lacks it.', static::BUS_NAME, $message::class));
         }
 
         $this->logger?->debug('Stored {message} in the outbox for the {transports} transport(s)', [

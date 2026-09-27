@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Outbox\Signing;
 
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 
 use function array_map;
@@ -44,7 +45,7 @@ final class OutboxSigner
     public function __construct(#[\SensitiveParameter] string $secret, #[\SensitiveParameter] array $previousSecrets = [])
     {
         if ('' === $secret) {
-            throw new \LogicException('Outbox signing needs a secret: set "framework.secret" or "somework_cqrs.outbox.signing.secret", or disable "somework_cqrs.outbox.signing".');
+            throw new LogicException('Outbox signing needs a secret: set "framework.secret" or "somework_cqrs.outbox.signing.secret", or disable "somework_cqrs.outbox.signing".');
         }
 
         $this->key = self::derive($secret);

@@ -9,6 +9,8 @@ use Doctrine\DBAL\Driver\AbstractException;
 use Doctrine\DBAL\Exception\DeadlockException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Exception\LogicException;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\Relay\OutboxRelay;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayReporter;
@@ -28,6 +30,7 @@ use Symfony\Component\Messenger\Stamp\SentStamp;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 use Symfony\Contracts\Service\ResetInterface;
 
+use function assert;
 use function sprintf;
 use function str_contains;
 
@@ -345,6 +348,70 @@ final class OutboxRelayTest extends TestCase
 
         // Another instance (a cron run) does not know about the pause.
         self::assertSame(3, (new OutboxRelay($this->storage, new PhpSerializer(), $bus))->run(10, $this->reporter())->processed);
+    }
+
+    public function test_a_failure_of_a_message_another_relay_took_over_is_not_a_failure_of_the_run(): void
+    {
+        // Each send fails on the transport while an overlapping relay claims the message again.
+        $bus = new CallbackBus(function (object $message): void {
+            assert($message instanceof CreateTaskCommand);
+            $this->storage->interrupt($message->id, 2, new DateTimeImmutable('+1 minute'));
+
+            throw new TransportException('Connection refused');
+        });
+        $reporter = new class implements RelayReporter {
+            /** @var list<string> */
+            public array $events = [];
+
+            public function attemptFailed(OutboxMessage $message, int $attempt, int $maxAttempts, DateTimeImmutable $retryAt, string $error): void
+            {
+                $this->events[] = 'failed '.$message->id;
+            }
+
+            public function claimedElsewhereAfterFailure(OutboxMessage $message, string $error): void
+            {
+                $this->events[] = 'claimed elsewhere '.$message->id;
+            }
+
+            public function gaveUp(OutboxMessage $message, int $attempts, string $error): void
+            {
+                $this->events[] = 'gave up '.$message->id;
+            }
+
+            public function notSent(string $warning): void
+            {
+            }
+
+            public function transportPaused(?string $transportName, int $failures, int $seconds): void
+            {
+                $this->events[] = 'paused '.$transportName;
+            }
+
+            public function continueAfterMessage(): bool
+            {
+                return true;
+            }
+
+            public function stopRequested(): bool
+            {
+                return false;
+            }
+        };
+
+        $result = (new OutboxRelay($this->storage, new PhpSerializer(), $bus))->run(10, $reporter);
+
+        // Like a message given up by a relay that no longer owns it: the other relay's attempt counts.
+        self::assertSame([0, 0, 0, 3], [$result->processed, $result->relayed, $result->failed, $result->claimedElsewhere]);
+        self::assertSame(['claimed elsewhere m1', 'claimed elsewhere m2', 'claimed elsewhere m3'], $reporter->events, 'Three transport failures do not pause the transport.');
+        self::assertSame(2, $this->storage->attempts('m1'), 'The failure is not recorded over the other relay\'s claim.');
+    }
+
+    public function test_errors_name_the_spl_class_of_the_bundles_own_exceptions(): void
+    {
+        // Stored and printed as before 0.5.2, when the bundle threw the SPL classes themselves.
+        self::assertSame('RuntimeException: Could not claim', OutboxRelay::describe(new RuntimeException('Could not claim')));
+        self::assertSame('LogicException', OutboxRelay::describe(new LogicException()));
+        self::assertSame(TransportException::class.': Connection refused', OutboxRelay::describe(new TransportException('Connection refused')));
     }
 
     private function relay(): OutboxRelay

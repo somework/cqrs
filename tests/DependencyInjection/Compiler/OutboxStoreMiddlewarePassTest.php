@@ -17,6 +17,8 @@ use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\LogicException;
 use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+use Symfony\Component\Messenger\Transport\Serialization\Serializer;
 
 use function array_map;
 use function array_values;
@@ -68,6 +70,41 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         (new OutboxStoreMiddlewarePass())->process($container);
 
         self::assertNull($container->getDefinition('somework_cqrs.outbox.writer')->getArgument('$transportNames'));
+    }
+
+    public function test_gives_the_failed_command_the_type_map_of_messengers_symfony_serializer(): void
+    {
+        $container = $this->createContainer();
+        $container->register('somework_cqrs.outbox.failed_command');
+        // As MessengerPass leaves it (Messenger 8.1); a decorator (e.g. the signing serializer) is not applied yet.
+        $container->register('messenger.transport.symfony_serializer', Serializer::class)
+            ->setArguments([new Reference('serializer'), 'json', [], ['shop.create_task' => 'App\Message\CreateTask']]);
+        $container->setAlias('messenger.default_serializer', 'messenger.transport.symfony_serializer');
+        $container->setAlias('somework_cqrs.outbox.serializer', 'messenger.default_serializer');
+
+        (new OutboxStoreMiddlewarePass())->process($container);
+
+        self::assertSame(['shop.create_task' => 'App\Message\CreateTask'], $container->getDefinition('somework_cqrs.outbox.failed_command')->getArgument('$serializedTypes'));
+    }
+
+    public function test_the_failed_command_gets_no_type_map_from_another_serializer(): void
+    {
+        $container = $this->createContainer();
+        $container->register('somework_cqrs.outbox.failed_command');
+        $container->register('messenger.transport.symfony_serializer', Serializer::class)
+            ->setArguments([new Reference('serializer'), 'json', [], ['shop.create_task' => 'App\Message\CreateTask']]);
+        $container->register('messenger.transport.native_php_serializer', PhpSerializer::class);
+        $container->setAlias('somework_cqrs.outbox.serializer', 'messenger.transport.native_php_serializer');
+
+        (new OutboxStoreMiddlewarePass())->process($container);
+        self::assertSame([], $container->getDefinition('somework_cqrs.outbox.failed_command')->getArgument('$serializedTypes'));
+
+        // Nor from a Symfony serializer before Messenger 8.1, whose type map MessengerPass never sets.
+        $container->register('messenger.transport.symfony_serializer', Serializer::class)
+            ->setArguments([new Reference('serializer'), 'json', []]);
+        $container->setAlias('somework_cqrs.outbox.serializer', 'messenger.transport.symfony_serializer');
+        (new OutboxStoreMiddlewarePass())->process($container);
+        self::assertSame([], $container->getDefinition('somework_cqrs.outbox.failed_command')->getArgument('$serializedTypes'));
     }
 
     public function test_does_nothing_when_the_outbox_is_disabled(): void

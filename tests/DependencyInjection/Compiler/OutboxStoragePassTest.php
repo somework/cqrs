@@ -9,6 +9,7 @@ use Doctrine\DBAL\DriverManager;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxStoragePass;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
@@ -22,6 +23,10 @@ use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\Messenger\MessageBus;
 use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
+
+use function array_filter;
+use function array_values;
+use function str_starts_with;
 
 #[CoversClass(OutboxStoragePass::class)]
 #[CoversClass(OutboxRegistrar::class)]
@@ -114,6 +119,44 @@ final class OutboxStoragePassTest extends TestCase
         self::assertNull(self::argument($custom->get('somework_cqrs.outbox.writer'), 'transaction'));
     }
 
+    public function test_the_compilation_log_says_when_stores_outside_a_transaction_cannot_be_refused(): void
+    {
+        $custom = $this->container(['storage' => 'app.outbox', 'relay_on_terminate' => true]);
+        $custom->register('app.outbox', InMemoryOutboxStorage::class);
+        $custom->compile();
+        self::assertSame(
+            [OutboxStoragePass::class.': "somework_cqrs.outbox.require_transaction" is not enforced: the outbox storage "app.outbox" ('.InMemoryOutboxStorage::class.') does not implement '.TransactionalOutbox::class.', so OutboxWriter and DispatchMode::OUTBOX cannot tell whether a transaction is open and store messages outside one too, and "somework_cqrs.outbox.relay_on_terminate" relays without waiting for the transaction to be committed. Configure a storage that implements '.TransactionalOutbox::class.' under "somework_cqrs.outbox.storage" (decorate "somework_cqrs.outbox.storage" instead of replacing it), or set "somework_cqrs.outbox.require_transaction: false" to acknowledge it.'],
+            self::warnings($custom),
+        );
+
+        // A replaced storage keeps OutboxWriter from checking transactions, whatever it implements.
+        $replaced = $this->container();
+        $replaced->setDefinition('somework_cqrs.outbox.storage', new Definition(DbalOutboxStorage::class, [new Reference('doctrine.dbal.default_connection')]));
+        $replaced->compile();
+        self::assertCount(1, self::warnings($replaced));
+        self::assertStringContainsString('"somework_cqrs.outbox.require_transaction" is not enforced: the service "somework_cqrs.outbox.storage" is replaced, so OutboxWriter and DispatchMode::OUTBOX cannot tell whether a transaction is open and store messages outside one too.', self::warnings($replaced)[0]);
+    }
+
+    public function test_the_compilation_log_stays_quiet_when_transactions_are_checked_or_not_required(): void
+    {
+        $dbal = $this->container(['relay_on_terminate' => true]);
+        $dbal->register('app.logging_outbox', DecoratingOutboxStorage::class)
+            ->setDecoratedService('somework_cqrs.outbox.storage')
+            ->setArguments([new Reference('.inner')]);
+        $dbal->compile();
+        self::assertSame([], self::warnings($dbal));
+
+        $capable = $this->container(['storage' => 'app.outbox']);
+        $capable->register('app.outbox', CapableOutboxStorage::class);
+        $capable->compile();
+        self::assertSame([], self::warnings($capable));
+
+        $acknowledged = $this->container(['storage' => 'app.outbox', 'require_transaction' => false]);
+        $acknowledged->register('app.outbox', InMemoryOutboxStorage::class);
+        $acknowledged->compile();
+        self::assertSame([], self::warnings($acknowledged));
+    }
+
     public function test_capabilities_autowire_to_the_storage_that_implements_them(): void
     {
         $container = $this->container(['storage' => 'app.outbox']);
@@ -156,6 +199,14 @@ final class OutboxStoragePassTest extends TestCase
         }
 
         return $container;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private static function warnings(ContainerBuilder $container): array
+    {
+        return array_values(array_filter($container->getCompiler()->getLog(), static fn (string $line): bool => str_starts_with($line, OutboxStoragePass::class.': ')));
     }
 
     private static function argument(object $service, string $property): mixed

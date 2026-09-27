@@ -980,8 +980,10 @@ final class OutboxRelayCommandTest extends TestCase
         $tester = new CommandTester(new OutboxRelayCommand($this->storage, new PhpSerializer(), $bus, $this->locks));
         $tester->execute([]);
 
-        self::assertSame(Command::FAILURE, $tester->getStatusCode());
+        // The other relay's attempt decides: this run did not fail.
+        self::assertSame(Command::SUCCESS, $tester->getStatusCode());
         self::assertStringContainsString(sprintf('Failed to relay message "%s", but another relay claimed it in the meantime: DomainException: boom', $message->id), self::display($tester));
+        self::assertStringContainsString('Skipped 1 message(s) that another relay claimed first.', self::display($tester));
         self::assertSame(2, $this->storage->attempts($message->id));
     }
 

@@ -23,6 +23,8 @@ use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Schema\TableDiff;
 use Doctrine\DBAL\Types\Types;
+use SomeWork\CqrsBundle\Exception\LogicException;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
 use SomeWork\CqrsBundle\Outbox\SetupLockLeftBehind;
 
 use function array_filter;
@@ -298,7 +300,7 @@ final class DbalOutboxSchema
 
         if (!$this->connection->getDatabasePlatform() instanceof PostgreSQLPlatform) {
             if (!$plan['create'] && $this->oldTransactionOnMySql()) {
-                throw new \RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version and is not changed while a transaction of the database server has been open for more than %d second(s): MySQL does not tell which tables it holds, and the writes to the table would wait behind the change. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName, self::AUTO_DDL_LOCK_TIMEOUT));
+                throw new RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version and is not changed while a transaction of the database server has been open for more than %d second(s): MySQL does not tell which tables it holds, and the writes to the table would wait behind the change. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName, self::AUTO_DDL_LOCK_TIMEOUT));
             }
             $this->whileLocked(fn () => $this->withLockTimeout(fn () => $this->addMissingColumns(), self::AUTO_DDL_LOCK_TIMEOUT), self::AUTO_SETUP_LOCK_TIMEOUT, $stillNeeded);
 
@@ -394,7 +396,7 @@ final class DbalOutboxSchema
                     throw $exception;
                 }
 
-                throw new \RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version, which this database cannot add without rebuilding the table. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName), 0, $exception);
+                throw new RuntimeException(sprintf('The outbox table "%s" lacks the columns of this version, which this database cannot add without rebuilding the table. Run "bin/console somework:cqrs:outbox:setup".', $this->tableName), 0, $exception);
             }
 
             return;
@@ -538,7 +540,7 @@ final class DbalOutboxSchema
         $building = array_values(array_filter(array_keys($plan['indexes']), fn (string $suffix): bool => in_array(strtolower(self::indexName($this->tableName, $suffix)), $plan['building'], true)));
         if ([] !== $building) {
             // e.g. a migration: dropping its index would fail once it is done, and throw its work away.
-            throw new \RuntimeException(sprintf('Another process is building the index "%s" of the outbox table "%s". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', self::indexName($this->tableName, $building[0]), $this->tableName));
+            throw new RuntimeException(sprintf('Another process is building the index "%s" of the outbox table "%s". Run "bin/console somework:cqrs:outbox:setup" again once it has finished.', self::indexName($this->tableName, $building[0]), $this->tableName));
         }
     }
 
@@ -820,7 +822,7 @@ final class DbalOutboxSchema
             return $operation();
         }
         if (null === $current) {
-            throw new \LogicException(sprintf('The outbox table "%s" can only be set up when the connection selects a database (its "dbname").', $this->tableName));
+            throw new LogicException(sprintf('The outbox table "%s" can only be set up when the connection selects a database (its "dbname").', $this->tableName));
         }
 
         $use = static fn (string $database): string => 'USE `'.str_replace('`', '``', $database).'`';
@@ -933,7 +935,7 @@ final class DbalOutboxSchema
         $schema = isset($parts[1]) && !$this->connection->getDatabasePlatform() instanceof AbstractMySQLPlatform ? $parts[0] : null;
         // The configuration only allows "table" and "schema.table".
         if ('' === $table || '' === $schema) {
-            throw new \LogicException(sprintf('Invalid outbox table name "%s".', $this->tableName));
+            throw new LogicException(sprintf('Invalid outbox table name "%s".', $this->tableName));
         }
 
         // The queries find the table along the search path, DBAL would only look into its first schema.
@@ -966,7 +968,7 @@ final class DbalOutboxSchema
     private function assertNoTransaction(string $problem): void
     {
         if ($this->connection->isTransactionActive()) {
-            throw new \LogicException(sprintf('The outbox table "%s" %s and cannot be changed inside an open database transaction. Run "bin/console somework:cqrs:outbox:setup" or a Doctrine migration beforehand.', $this->tableName, $problem));
+            throw new LogicException(sprintf('The outbox table "%s" %s and cannot be changed inside an open database transaction. Run "bin/console somework:cqrs:outbox:setup" or a Doctrine migration beforehand.', $this->tableName, $problem));
         }
     }
 
@@ -984,13 +986,13 @@ final class DbalOutboxSchema
         try {
             return $operation();
         } catch (TableNotFoundException $exception) {
-            throw new \LogicException(sprintf('The outbox table "%s" does not exist. Create it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration; it is never created inside an open transaction.', $this->tableName), 0, $exception);
+            throw new LogicException(sprintf('The outbox table "%s" does not exist. Create it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration; it is never created inside an open transaction.', $this->tableName), 0, $exception);
         } catch (SyntaxErrorException $exception) {
-            throw new \LogicException(sprintf('The database rejected a query on the outbox table "%s"; the name is probably a reserved word of this database. Choose another "somework_cqrs.outbox.table_name".', $this->tableName), 0, $exception);
+            throw new LogicException(sprintf('The database rejected a query on the outbox table "%s"; the name is probably a reserved word of this database. Choose another "somework_cqrs.outbox.table_name".', $this->tableName), 0, $exception);
         } catch (DriverException $exception) {
             // Not every driver reports an unknown column as InvalidFieldNameException (SQLite does not).
             if (!$exception instanceof ConnectionException && ($exception instanceof InvalidFieldNameException || $this->lacksColumns())) {
-                throw new \LogicException(sprintf('The outbox table "%s" lacks columns this version of the bundle needs (%s). Upgrade it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.', $this->tableName, implode(', ', self::COLUMNS_SINCE_0_4)), 0, $exception);
+                throw new LogicException(sprintf('The outbox table "%s" lacks columns this version of the bundle needs (%s). Upgrade it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.', $this->tableName, implode(', ', self::COLUMNS_SINCE_0_4)), 0, $exception);
             }
 
             throw $exception;

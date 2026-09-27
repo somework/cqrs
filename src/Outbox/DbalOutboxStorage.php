@@ -22,6 +22,9 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
+use SomeWork\CqrsBundle\Exception\UnexpectedValueException;
 use SomeWork\CqrsBundle\Outbox\Dbal\DbalOutboxSchema;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayUnitOfWork;
 
@@ -207,7 +210,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         foreach ($groups as $group) {
             $attempts = $group[0]->attempts;
             if (!isset($retryAt[$attempts])) {
-                throw new \InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
+                throw new InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
             }
 
             $query = $this->connection->createQueryBuilder()
@@ -282,7 +285,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         $now = self::now();
         foreach ($groups as $attempts => $group) {
             if (!isset($retryAt[$attempts])) {
-                throw new \InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
+                throw new InvalidArgumentException(sprintf('No retry time was given for messages with %d attempt(s).', $attempts));
             }
             $query = $this->connection->createQueryBuilder()
                 ->update($this->tableName)
@@ -807,7 +810,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
             $this->discardConnection();
 
             // The error may be a missing savepoint of a middleware (doctrine_transaction), not the cause.
-            throw new \RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $cause->getMessage()), 0, $cause);
+            throw new RuntimeException(sprintf('The database rolled back the unit of work of this message itself (a deadlock or a lock wait timeout?): %s', $cause->getMessage()), 0, $cause);
         }
     }
 
@@ -1284,7 +1287,7 @@ final class DbalOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutb
         }
 
         if (!is_string($value)) {
-            throw new \UnexpectedValueException(sprintf('Unexpected outbox date value of type %s.', get_debug_type($value)));
+            throw new UnexpectedValueException(sprintf('Unexpected outbox date value of type %s.', get_debug_type($value)));
         }
 
         $utc = new DateTimeZone('UTC');

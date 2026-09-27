@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Stamp;
 
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
+use SomeWork\CqrsBundle\Exception\UnexpectedValueException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function bin2hex;
@@ -46,13 +48,13 @@ final class MessageMetadataStamp implements StampInterface
         ?string $messageId = null,
     ) {
         if ('' === $correlationId) {
-            throw new \InvalidArgumentException('Correlation ID cannot be empty.');
+            throw new InvalidArgumentException('Correlation ID cannot be empty.');
         }
 
         $this->correlationId = $correlationId;
 
         if ('' === $messageId) {
-            throw new \InvalidArgumentException('Message ID cannot be empty.');
+            throw new InvalidArgumentException('Message ID cannot be empty.');
         }
 
         $this->messageId = $messageId ?? self::generateId();
@@ -151,7 +153,7 @@ final class MessageMetadataStamp implements StampInterface
         $causationId = $values['causationId'] ?? null;
         $messageId = $values['messageId'] ?? $correlationId;
         if (!is_string($correlationId) || '' === $correlationId || !is_array($extras) || (null !== $causationId && !is_string($causationId)) || !is_string($messageId) || '' === $messageId) {
-            throw new \UnexpectedValueException('Invalid serialized MessageMetadataStamp.');
+            throw new UnexpectedValueException('Invalid serialized MessageMetadataStamp.');
         }
 
         $this->correlationId = $correlationId;
