@@ -11,9 +11,3 @@ parameters:
             identifier: return.deprecatedInterface
             path: tests/Fixture/Kernel/*
             reportUnmatched: false
-        # DBAL 4.5 deprecates the Schema API this storage builds its table with; the outbox rewrite
-        # builds it with the schema editors of DBAL 4.5 instead.
-        -
-            identifier: method.deprecated
-            path: src/Outbox/DbalOutboxStorage.php
-            reportUnmatched: false

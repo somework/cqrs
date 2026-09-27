@@ -23,7 +23,7 @@ Symfony Messenger is a powerful transport layer, but it leaves CQRS wiring as an
 ```mermaid
 flowchart LR
     A[Your code] --> B[CommandBus / QueryBus / EventBus]
-    B --> C[DispatchModeDecider: sync or async]
+    B --> C[DispatchModeDecider: sync, async or outbox]
     C --> D[StampsDecider pipeline]
     D --> E[Messenger bus]
     E --> F[Handler]
@@ -46,7 +46,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 | **Stamps** | Added by the caller | Composable `StampDecider` pipeline with priority ordering |
 | **Testing** | `InMemoryTransport` or mocks | Fake buses plus `assertDispatched()` / `assertNotDispatched()` |
 | **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` |
-| **Transactional outbox** | Only with a Doctrine transport on the business connection | `OutboxStorage` interface + DBAL implementation and relay command, for any transport (AMQP, Redis, SQS, …) |
+| **Transactional outbox** | Only with a Doctrine transport on the business connection | `#[Outbox]` / `dispatch_modes` / `DispatchMode::OUTBOX` on the buses (or `OutboxWriter`), DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
 | **OpenTelemetry** | Not built-in | Middleware producing dispatch and consume spans |
 
 > **Choose plain Messenger** when your app has simple dispatch needs and you want no additional dependency.
@@ -75,7 +75,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - Idempotency bridge (`IdempotencyStamp` to Messenger's `DeduplicateStamp`)
 - Event ordering metadata with `SequenceAware` and `AggregateSequenceStamp`
 - Rate limiting via Symfony Rate Limiter
-- Transactional outbox with DBAL storage and relay, setup, and purge commands
+- Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands; messages reach it through the buses (`DispatchMode::OUTBOX`, `#[Outbox]`, `dispatch_modes`) or `OutboxWriter`
 
 **Developer experience**
 - `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing
@@ -192,9 +192,10 @@ final class CreateTaskHandler
 An asynchronous event dispatched from a handler is sent once the handler has returned, after its
 transaction committed; if the broker is down then, the event is lost and `dispatchSync()` throws
 `DeferredDispatchFailedException`. For events that must not be lost, enable the
-[transactional outbox](docs/outbox.md) and store the event with `OutboxStorage::store()`
-(`OutboxMessage::fromEnvelope()`) in the transaction of the handler's database work, on the outbox
-connection; `bin/console somework:cqrs:outbox:relay` then sends it to its transport.
+[transactional outbox](docs/outbox.md#through-the-buses), mark the event class `#[Outbox]` (or map
+it to `outbox` in `dispatch_modes`) and run the handler's database work in a transaction on the
+outbox connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+middleware): the same `dispatch()` then stores the event in that transaction.
 
 ### Step 3 -- Define a query and its handler
 

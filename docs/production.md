@@ -237,7 +237,11 @@ database transaction and a relay sends them to Messenger afterwards. See
 
 The table is created on first use (`auto_setup: true`), but never inside an open
 transaction: storing the first message inside a transaction throws a
-`LogicException` if the table does not exist yet. Create it during deployment:
+`LogicException` if the table does not exist yet or lacks the columns of this
+version (a table of 0.4). Outside a transaction, storing and the relay add the
+missing columns, but leave the indexes to the setup command (the relay and the
+health check report it until it has run; missing columns are critical). Create
+the table, or upgrade one of an earlier version, before deploying the code:
 
 ```bash
 bin/console somework:cqrs:outbox:setup
@@ -247,43 +251,62 @@ If Doctrine migrations manage your schema, set `outbox.auto_setup: false`. With
 doctrine/orm installed, `doctrine:migrations:diff` includes the outbox table of
 the configured connection.
 
-The rows are not signed: whoever can write to the table can have the relay
-decode and send any message. Give the application a role that can only read and
-write rows, create the table with a role that may change the schema, and see
+Run `somework:cqrs:outbox:setup` over a direct database connection: it holds a
+session lock, which a pooler in transaction mode (PgBouncer) would move to
+another client. The automatic setup is safe behind such a pooler: on PostgreSQL
+it runs in one transaction.
+
+The relay only decodes rows with a valid signature (`outbox.signing`), but
+whoever writes to the table can still delay, redirect or drop messages: give the
+application a role that can only read and write rows, run the setup with a role that may change the schema, and see
 [Security](outbox.md#security) for the serializer and the Symfony version to use.
 
 ### Relay
 
-`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) unpublished rows,
-oldest first, and marks each one published after dispatching it.
+`somework:cqrs:outbox:relay` sends up to `--limit` (default 100) due rows (new
+rows in the order they were stored, then retries in the order of their retry
+time) and marks each one published after dispatching it.
 
 * Rows are dispatched on the Messenger bus of their type (the async command or
   event bus when configured, otherwise the sync one; the default bus for other
   messages) with their stored transport name as `TransportNamesStamp`; rows
   without a transport name follow `framework.messenger.routing`. Workers then
   hand each message to the bus where its handlers are registered. A row that is
-  not sent to any transport is handled synchronously, and the command prints a
-  warning.
+  not sent to any transport is handled synchronously, and the command prints and
+  logs a warning.
 * The stamp pipeline does not run for relayed messages: add the stamps you need
-  (for example a `MessageMetadataStamp`) to the envelope you store.
-* A row that fails is printed (`Failed to relay message "<id>": <reason>`),
-  skipped for the rest of the run, and makes the command exit with `1`. It is
-  retried on the next run, without a limit on the number of attempts. After 5
-  consecutive send failures (broker or database down) the run stops early.
+  to the envelope you store. Only a message stored while a handler runs gets a
+  `MessageMetadataStamp` without one being passed (it continues the handled
+  message's correlation); outside a handler, pass one yourself if you need it.
+* A row that fails is logged, postponed (1 minute, doubling up to 1 hour) and
+  makes a single run exit with `1` (`--watch` goes on, and its exit code does
+  not change); the rows behind it are not blocked. After
+  `outbox.max_attempts` attempts (default 10) the relay gives up on the row.
+* The transports take turns, the one whose next row has waited longest first,
+  so one transport's backlog does not hold up the others.
+* A transport that fails 3 times in a row with a `TransportException` (broker
+  down, or rejecting messages) is paused until the next run (with `--watch`, for
+  30 seconds, doubling up to 5 minutes until it accepts a message), while the rows of
+  the other transports are relayed (10 times, or 3 times taking more than 10
+  seconds, when it accepted a message earlier in the run: it is up and only
+  rejects some messages). Its rows get three times `max_attempts`
+  (about a day) before they are given up. If the database fails, the run stops
+  right away.
 * Delivery is at least once: if the process stops between dispatching a row and
   marking it published, the row is sent again. Make handlers idempotent.
+* SIGTERM and SIGINT (with the `pcntl` extension) let the relay finish the
+  current row, then a single run exits with `1`, and `--watch` with `0`. A deploy or a container stop therefore
+  does not leave a row half done. A send blocked on the network ends only with the
+  transport's timeout, and a wait for another process upgrading the table (at
+  most 30 seconds) ends first; a second signal stops the relay at once.
 * When symfony/lock is installed, only one relay runs at a time; a second one
-  prints "Another outbox relay is already running." and exits with `0`. The lock
+  prints "Another outbox relay is already running." and exits with `0`
+  (`--wait-for-lock=<seconds>` waits for the lock first, then exits with `3`;
+  `--watch` waits as long as it runs). The lock
   uses `lock.factory` when `framework.lock` is enabled. Otherwise it is a local
-  lock, which only protects relays on the same host. The lock name includes the
-  project directory: when every release is deployed to a new directory, stop the
-  relays of the old release before the new ones start.
-
-Exit codes: `0` when every selected row was relayed, there was nothing to relay, or another
-relay holds the lock; `1` when a row failed, the run stopped after 5 send
-failures in a row, or the lock was lost; `2` for an invalid `--limit`. The relay
-prints to its output only, not to the application log: keep the output of the
-scheduled runs.
+  lock, which only protects relays on the same host. The lock name includes
+  `framework.cache.prefix_seed`; set it to a stable value when every release is
+  deployed to a new directory, so old and new relays share the lock.
 
 Run the relay from cron:
 
@@ -293,18 +316,56 @@ Run the relay from cron:
 0 3 * * * cd /var/www/app && php bin/console somework:cqrs:outbox:purge --older-than="7 days"
 ```
 
-or as a supervised loop when a minute of latency is too much:
+or keep it running with `--watch` when a minute of latency is too much:
 
 ```ini
 [program:cqrs-outbox-relay]
-command=/bin/sh -c 'while true; do php /var/www/app/bin/console somework:cqrs:outbox:relay --limit=100; sleep 1; done'
+command=php /var/www/app/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600
 autostart=true
 autorestart=true
+; exits with 1 when the database or the lock store fails: restarted at once, about every
+; second while it is down (startsecs=0: never FATAL); it resumes when the database is back,
+; or when the relay lock expires (up to 60 s) if the lock store is that database
+startsecs=0
+stopsignal=TERM
+stopwaitsecs=30
 user=www-data
 ```
 
-Each run of the loop is a new process, so a message handled inline by the relay
-does not leak state into the next run.
+What the watching relay does:
+
+* It looks for due rows every `--sleep` seconds (default 1) and relays them in
+  runs of `--limit`. `--time-limit` restarts it now and then, like
+  `messenger:consume`, and lets a deploy's new code take over.
+* It holds the relay lock while it runs. A second watcher (another server, or
+  the new process of a deploy while the old one finishes its row) prints
+  "Waiting for the relay lock held by another relay." and waits: it takes over
+  when the first one stops. Only the relay that holds the lock works, so more
+  watchers add failover, not throughput.
+* After each row that its own process handled (no transport, `sync://`), it
+  resets the services, as a worker does between messages: Doctrine's entity
+  managers are cleared, and a closed one is reset (`--no-reset` turns that
+  off).
+* A transport that keeps failing is left alone for 30 seconds, doubling up to
+  5 minutes, instead of being tried again every second.
+* A handler run in the relay's process that leaves a transaction open on the
+  outbox connection fails its row: the relay rolls that transaction back, with
+  what the handler wrote in it, instead of writing its next rows into it.
+* It exits with `0` when a signal or `--time-limit` stops it: restart it
+  whatever its exit code (`autorestart=true`, systemd `Restart=always`), not
+  only on failure.
+* When the database or the lock store fails, it exits with `1`: the process
+  manager restarts it (with the settings above, about every second until the
+  database is back), and the rows wait in the table meanwhile. When the lock
+  store is that same database (`framework.lock` on its DSN), the stopped relay
+  cannot release its lock: the new one waits for it to expire, up to 60 seconds
+  after the database is back. A lock store of its own (Redis) avoids that wait.
+* With Doctrine's `auto_commit: false`, the relay commits after each fetch, so an
+  idle watcher holds no snapshot and no locks. DBAL starts the next transaction
+  right after each commit, though: PostgreSQL shows the connection as `idle in
+  transaction`, and `idle_in_transaction_session_timeout` ends it (the relay
+  exits with `1` and is restarted). Give the relay a connection with auto-commit,
+  or exempt its database user from that timeout.
 
 ### Purge
 
@@ -312,18 +373,26 @@ does not leak state into the next run.
 the given age (a relative date such as `"12 hours"`; default `7 days`).
 Unpublished rows are never deleted.
 
-### Rows that keep failing
+### Given-up rows
 
-The bundle has no health check for the outbox. Alert on relay runs that keep
-exiting with `1`, and on unpublished rows that wait too long:
+Monitor the health check and the given-up rows:
 
-```sql
-SELECT COUNT(*), MIN(created_at) FROM somework_cqrs_outbox WHERE published_at IS NULL;
+```bash
+bin/console somework:cqrs:outbox:failed                 # what the relay gave up on, and why
+bin/console somework:cqrs:outbox:failed --requeue       # after fixing the cause
+bin/console somework:cqrs:outbox:failed --delete <id>   # a row that must not be sent
 ```
 
-A row that can never be relayed (its message class was removed, its transport
-does not exist) fails on every run: fix the cause, or delete the row by hand.
-See [Monitoring](outbox.md#monitoring).
+Rows that failed and wait for another attempt are not listed: the relay logs each failed
+attempt with the row's transport and message type (`transport`, `type`), and the health check
+warns while such rows keep failing.
+
+A broker outage uses up attempts slowly: rows whose transport fails get three
+times `max_attempts` (30 attempts by default, about a day of retries), and each
+run tries 3 rows of a failing transport (3 of the rows stored for it by name, and
+3 of the rows without a transport name routed to it), new ones first. Once the
+outage is over, requeue the rows it gave up on. The health check warns while
+rows keep failing, long before they are given up.
 
 ## Health checks
 
@@ -338,6 +407,13 @@ See [Monitoring](outbox.md#monitoring).
   its `lazy` option is `true`: an unreachable Redis server is then `CRITICAL`,
   after the transport's `timeout`, which is unlimited by default (set it, e.g.
   `?timeout=2`, or `lazy=true`, when a probe runs the check).
+* **outbox** (when `outbox.enabled`): a `WARNING` when the relay gave up on
+  rows, when failed rows wait for another attempt and the oldest was stored more
+  than 10 minutes ago, when due rows have waited more than 10 minutes, or when
+  the table needs `somework:cqrs:outbox:setup` (e.g. its index is missing);
+  `CRITICAL` when the table cannot be read, or when it lacks the columns of
+  this version (storing a message inside a transaction fails until the setup
+  command has run).
 
 The command prints a table of results and exits with the highest severity:
 `0` OK, `1` warnings, `2` critical. A checker that throws is reported as
@@ -413,10 +489,8 @@ monolog:
 
 Warnings to watch for: an asynchronous dispatch without a transport (Messenger handles the
 message in the calling process), an event with handlers that a worker received on a bus without them (it is
-acknowledged without being handled), a dispatch throttled by a rate limiter, and an `IdempotencyStamp`
-that may not prevent duplicates. Every dispatch logs one debug line with the bus, the dispatch
-mode and the stamps. The outbox relay prints its failures and warnings to its own output, not
-to the log.
+acknowledged without being handled), and the outbox relay's failures, paused transports and
+given-up messages. Every dispatch logs one debug line with the bus, the dispatch mode and the stamps.
 
 ### Correlation and causation ids
 
@@ -528,14 +602,15 @@ for the details.
 
 Messages often carry personal data, and the bundle keeps or passes on parts of them:
 
-- **Outbox rows.** The body (the whole serialized message) stays in the table until the row
-  is purged. Published rows are only deleted by `somework:cqrs:outbox:purge`: schedule it with
-  an `--older-than` that fits your retention policy. Unpublished rows are never purged; delete
-  a row that must not be sent (for example to answer an erasure request) by hand, after
-  finding it by id or with SQL.
-- **Error texts.** Exception messages can contain personal data. They end up in the relay's
-  output and, with OpenTelemetry, in the span status and exception events sent to your
-  tracing backend.
+- **Outbox rows.** The body (the whole serialized message) and `last_error` stay in the table
+  until the row is purged. Published rows are only deleted by
+  `somework:cqrs:outbox:purge`: schedule it with an `--older-than` that fits your retention
+  policy. Rows the relay gave up on are never purged; delete them with
+  `somework:cqrs:outbox:failed --delete <id>…` once handled (for example to answer an erasure
+  request), after finding them by id or with SQL.
+- **Error texts.** Exception messages can contain personal data. They end up in `last_error`,
+  in the relay's output and logs, in the output of `outbox:failed`, and, with OpenTelemetry, in
+  the span status and exception events sent to your tracing backend.
 - **Idempotency keys.** An `IdempotencyStamp` key is stored in the lock store (e.g. Redis) for
   its TTL, written to the debug log of the bundle, included in the message of
   `DuplicateMessageException` (and so in error trackers) and serialized with the message. Do

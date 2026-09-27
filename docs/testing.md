@@ -187,10 +187,13 @@ final class TaskCreatedEventTest extends TestCase
 
 ## Assertions
 
-`CqrsAssertionsTrait` provides two `protected static` assertions:
+`CqrsAssertionsTrait` provides these `protected static` assertions:
 
 - `assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
 - `assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void`
+- `assertStoredInOutbox()` and `assertNotStoredInOutbox()`, with the same parameters: they only
+  match dispatches with `DispatchMode::OUTBOX`, or with the default mode of a class carrying
+  `#[Outbox]` (see [Code that stores messages in the outbox](#code-that-stores-messages-in-the-outbox)).
 
 Their parameters work as follows:
 
@@ -232,8 +235,9 @@ final class AssertionExamplesTest extends CqrsTestCase
 }
 ```
 
-On failure, the message names the classes that were actually dispatched
-(`Actually dispatched: App\Application\Command\CreateTask`), or says
+On failure, the message names the classes that were actually dispatched, with
+the mode each dispatch was recorded with
+(`Actually dispatched: App\Application\Command\CreateTask (DispatchMode::DEFAULT)`), or says
 `No messages were dispatched.`
 
 ### CqrsTestCase or CqrsAssertionsTrait
@@ -249,8 +253,9 @@ you never need to call it yourself.
 
 ### Using the constraint directly
 
-`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null)`.
-You can combine it with PHPUnit's logical constraints:
+`Constraint\DispatchedMessage` takes `(string $expectedClass, ?callable $callback = null, ?DispatchMode $mode = null)`;
+with a mode, it only matches dispatches with that mode (`new DispatchedMessage(OrderPlaced::class, null, DispatchMode::OUTBOX)`
+is what `assertStoredInOutbox()` uses). You can combine it with PHPUnit's logical constraints:
 
 ```php
 <?php
@@ -508,59 +513,50 @@ assert on what the handler did).
 
 ## Code that stores messages in the outbox
 
-Code that writes to the outbox calls `OutboxStorage::store()` with an
-`OutboxMessage::fromEnvelope()` row (see [Writing to the outbox](outbox.md#writing-to-the-outbox)).
-`SomeWork\CqrsBundle\Contract\OutboxStorage` is an interface, so a unit test passes a test
-double and decodes the stored row with the serializer it gave the code under test. For a
-`PlaceOrderHandler` that inserts the order and stores an `OrderPlaced` event for the
-`async_events` transport in one transaction:
+Code that stores messages through the buses is tested with the fake buses. For the
+`PlaceOrderHandler` of [Through the buses](outbox.md#through-the-buses), which dispatches the
+`#[Outbox]` event `OrderPlaced` with the default mode:
 
 ```php
-<?php
+$connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
+$connection->executeStatement('CREATE TABLE orders (id VARCHAR(36) NOT NULL)');
+$eventBus = new FakeEventBus();
 
-declare(strict_types=1);
+(new PlaceOrderHandler($connection, $eventBus))(new PlaceOrder('order-1'));
 
-namespace App\Tests\Unit;
-
-use App\Application\Command\PlaceOrder;
-use App\Application\Command\PlaceOrderHandler;
-use App\Application\Event\OrderPlaced;
-use Doctrine\DBAL\DriverManager;
-use PHPUnit\Framework\TestCase;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
-use SomeWork\CqrsBundle\Outbox\OutboxMessage;
-use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
-
-final class PlaceOrderHandlerTest extends TestCase
-{
-    public function test_the_order_placed_event_is_stored_in_the_outbox(): void
-    {
-        $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true]);
-        $connection->executeStatement('CREATE TABLE orders (id VARCHAR(36) NOT NULL, customer_id VARCHAR(36) NOT NULL)');
-        $serializer = new PhpSerializer();
-
-        $outbox = $this->createMock(OutboxStorage::class);
-        $outbox->expects(self::once())->method('store')->with(self::callback(
-            static function (OutboxMessage $row) use ($serializer): bool {
-                $event = $serializer->decode(['body' => $row->body, 'headers' => json_decode($row->headers, true)])->getMessage();
-
-                return $event instanceof OrderPlaced && 'order-1' === $event->orderId && 'async_events' === $row->transportName;
-            },
-        ));
-
-        (new PlaceOrderHandler($connection, $outbox, $serializer))(new PlaceOrder('order-1', 'customer-1'));
-    }
-}
+self::assertStoredInOutbox($eventBus, OrderPlaced::class, static fn (OrderPlaced $event): bool => 'order-1' === $event->orderId);
 ```
 
-The fake buses play no part here: storing a row does not go through the CQRS buses.
+The assertion matches a dispatch with `DispatchMode::OUTBOX`, or with the default mode of a
+class carrying `#[Outbox]`, and the fakes return an envelope with an `OutboxStoredStamp` (with a
+generated id) for it. A fake bus does not know the configuration: a `dispatch()` with the default
+mode that `dispatch_modes` sends to the outbox is recorded as `DispatchMode::DEFAULT`, so check it
+with `assertDispatched()`, or test the resolution in a kernel test as below. The failure message
+lists each recorded dispatch with its mode.
+
+Code that calls `OutboxWriter::store()` itself type-hints `Contract\Outbox\OutboxWriterInterface`
+(the container autowires it to the writer), and unit tests pass a `Testing\FakeOutboxWriter`.
+It records each stored message with `DispatchMode::OUTBOX` (and the transport given to `store()`
+as a `TransportNamesStamp`), so the outbox assertions work on it too:
+
+```php
+$writer = new FakeOutboxWriter();
+(new ExportOrderHandler($writer))(new ExportOrder('order-1'));
+
+self::assertStoredInOutbox($writer, OrderExported::class, static fn (OrderExported $event): bool => 'order-1' === $event->orderId);
+```
+
+`getStoredRows()` returns the rows `store()` returned (encoded with PHP's serializer), and
+`willThrow()` makes `store()` fail, e.g. with `OutboxRequiresTransactionException`. The fake does
+not resolve the configured transports and checks no transaction.
 
 To test the outbox itself, run the code against a real outbox table. The outbox stores its rows
 in the transaction of the code under test, so it uses the same connection: in the `test`
 environment, point that connection at a test database (an SQLite file or in-memory database is
 enough), and create the table before the code under test opens its transaction (the automatic
-setup never runs inside one). Then read the stored rows through the `OutboxStorage` service, or
-relay them to an in-memory transport:
+setup never runs inside one). An outbox on a connection of its own only works when the code
+under test opens its transaction on that connection. Then read the stored rows through the `OutboxStorage`
+service, or relay them to an in-memory transport:
 
 ```php
 <?php
@@ -570,9 +566,10 @@ declare(strict_types=1);
 namespace App\Tests\Integration;
 
 use App\Application\Command\PlaceOrder;
-use App\Application\Event\OrderPlaced;
+use App\Domain\Event\OrderPlaced;
 use SomeWork\CqrsBundle\Bus\CommandBus;
-use SomeWork\CqrsBundle\Contract\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use Symfony\Bundle\FrameworkBundle\Console\Application;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -583,23 +580,28 @@ final class PlaceOrderOutboxTest extends KernelTestCase
     {
         self::bootKernel();
         $container = static::getContainer();
-        $application = new Application(self::$kernel);
-        (new CommandTester($application->find('somework:cqrs:outbox:setup')))->execute([]);
+        $container->get(OutboxSchema::class)->setup();
 
-        $container->get(CommandBus::class)->dispatchSync(new PlaceOrder('order-1', 'customer-1'));
+        $container->get(CommandBus::class)->dispatchSync(new PlaceOrder('order-1'));
 
-        self::assertCount(1, $container->get(OutboxStorage::class)->fetchUnpublished(10));
+        // Each row records the message class in its "type" header.
+        $rows = $container->get(OutboxStorage::class)->fetchUnpublished(10);
+        self::assertCount(1, $rows);
+        self::assertSame(OrderPlaced::class, json_decode($rows[0]->headers, true)['type']);
 
-        $relay = new CommandTester($application->find('somework:cqrs:outbox:relay'));
+        $relay = new CommandTester((new Application(self::$kernel))->find('somework:cqrs:outbox:relay'));
         self::assertSame(0, $relay->execute([]));
-
-        // The row was stored for the "async_events" transport, an in-memory transport in the test environment.
-        $sent = $container->get('messenger.transport.async_events')->getSent();
-        self::assertCount(1, $sent);
-        self::assertInstanceOf(OrderPlaced::class, $sent[0]->getMessage());
+        self::assertCount(1, $container->get('messenger.transport.async')->getSent());
     }
 }
 ```
+
+The relay resets the services after each row it handles in the test's process (no transport,
+`sync://`), which also empties the in-memory transports: pass `'--no-reset' => true` when the
+test relays such rows and then asserts on `getSent()`.
+
+To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
+`new Envelope($message, [new RelayedFromOutboxStamp()])`.
 
 ## Tips
 

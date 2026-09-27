@@ -119,7 +119,7 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
 |----------|------|-------------|
 | `aggregateId` | `string` | The aggregate identifier returned by `SequenceAware::getAggregateId()`. Must be non-empty; an empty string throws `InvalidArgumentException` at construction time. |
 | `sequenceNumber` | `int` | The sequence number returned by `SequenceAware::getSequenceNumber()`. Must be non-negative; a negative value throws `InvalidArgumentException` at construction time. |
-| `aggregateType` | `string` | The aggregate type returned by `SequenceAware::getAggregateType()`, the same for every event of an aggregate. Aggregate ids are unique per type, so consumers keep one sequence per type and id. Must be non-empty; an empty string throws `InvalidArgumentException` at construction time. |
+| `aggregateType` | `string` | The aggregate type returned by `SequenceAware::getAggregateType()`, the same for every event of an aggregate. Aggregate ids are unique per type, so consumers keep one sequence per type and id. |
 
 ## Limitations
 
@@ -127,9 +127,9 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
   enforce processing order. Consumers are responsible for detecting gaps or
   reordering.
 
-- **Not with the outbox.** A message stored in the [transactional outbox](outbox.md) does not
-  run the stamp pipeline, and the relay dispatches it on the Messenger bus directly: add an
-  `AggregateSequenceStamp` to the envelope you pass to `OutboxMessage::fromEnvelope()`.
+- **Not with `OutboxWriter`.** A message stored with `OutboxWriter::store()` does not run the
+  stamp pipeline: pass an `AggregateSequenceStamp` to `store()` yourself. A dispatch through the
+  [outbox](outbox.md#through-the-buses) with the buses gets the stamp as usual.
 
 - **Events only.** SequenceStampDecider only processes Event-type messages. Commands
   and queries are not affected.

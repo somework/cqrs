@@ -10,11 +10,14 @@ The promise covers:
 
 - classes, interfaces, traits and enums annotated with `@api` in their class-level PHPDoc block,
   including parameter names (named arguments), except members marked `@internal` (the constructors
-  of `CommandBus`, `QueryBus`, `EventBus` and `HandlerRegistry`: get them from the container);
+  of `CommandBus`, `QueryBus`, `EventBus`, `OutboxWriter` and `HandlerRegistry`: get them from the
+  container);
 - the `somework_cqrs` configuration tree;
 - the documented service ids and tags: `somework_cqrs.outbox.storage`,
-  `somework_cqrs.outbox.serializer`, `somework_cqrs.exponential_backoff_retry_policy`,
-  `somework_cqrs.dispatch_stamp_decider` and `somework_cqrs.health_checker`;
+  `somework_cqrs.outbox.base_storage`, `somework_cqrs.outbox.dbal_storage`,
+  `somework_cqrs.outbox.serializer`, `somework_cqrs.outbox.writer`,
+  `somework_cqrs.exponential_backoff_retry_policy`, `somework_cqrs.dispatch_stamp_decider` and
+  `somework_cqrs.health_checker`;
 - the priorities of the built-in stamp deciders, console command names, options and exit codes,
   the OpenTelemetry span names and the `cqrs` log channel.
 
@@ -30,8 +33,8 @@ The promise covers:
 - Adding required constructor parameters
 - Changing a return type to an incompatible type
 - Adding or removing methods of interfaces meant to be implemented (the message and handler
-  markers, the policy contracts, `StampDecider` and `MessageTypeAwareStampDecider`, `OutboxStorage`,
-  `HealthChecker`, and the bus interfaces)
+  markers, the policy contracts, `StampDecider` and `MessageTypeAwareStampDecider`, the outbox
+  contracts in `Contract\Outbox`, `HealthChecker`, and the bus interfaces)
 - Adding methods to the classes and traits you extend or use (`CqrsTestCase`,
   `CqrsAssertionsTrait`, `EnvelopeAwareTrait`): they can clash with yours
 
@@ -68,22 +71,46 @@ rejects the new options.
    - `$exception->messageFqcn` (now `$messageClass`) and `HandlerRegistry::byType('command')` (now a
      `MessageType`);
    - events implementing `SequenceAware`, which need `getAggregateType()` ([Event ordering](#event-ordering));
-   - custom `OutboxStorage` implementations and decorators, which need `purgePublished()` and the `$offset` of
-     `fetchUnpublished()` ([Transactional outbox](#transactional-outbox));
-   - tests that read `getDispatched()` of the fake buses as arrays.
+   - custom `OutboxStorage` implementations and decorators, and imports of `Contract\OutboxStorage` (now
+     `Contract\Outbox\OutboxStorage`) ([Transactional outbox](#transactional-outbox));
+   - tests that read `getDispatched()` of the fake buses as arrays;
+   - a `match` over `DispatchMode` without a `default` arm, which needs the new `OUTBOX` case
+     ([Dispatch through the outbox](#dispatch-through-the-outbox));
+   - `OutboxWriter::store()` calls outside a transaction on the outbox connection, which now throw
+     ([Dispatch through the outbox](#dispatch-through-the-outbox)).
 2. **Configuration**: the moved options ([Configuration shape](#configuration-shape)), per-message map keys of
    deleted classes or of another message type, `#[Asynchronous]` on queries, and `%env()%` values in
    compile-time options
    ([Environment variables](#environment-variables-in-the-configuration)).
-3. **Outbox, before the deployment**: check that every stored transport name exists, because 0.4 ignored it and
-   0.5 sends to it (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`). Stop
-   the 0.4 relay before the 0.5 relay starts: 0.4 runs without a lock.
+3. **Outbox, before the deployment**:
+   - 0.5 signs rows and only relays signed ones ([Signed rows](docs/outbox.md#signed-rows)). Rows stored by
+     0.4 are unsigned, including those that 0.4 instances store during a rolling deployment: set
+     `outbox.signing.accept_unsigned: true` for the upgrade, and remove it once those rows are relayed. Stop
+     the 0.4 relay before the 0.5 relay starts;
+   - check that every stored transport name exists, because 0.4 ignored it and 0.5 sends to it
+     (`SELECT DISTINCT transport_name FROM somework_cqrs_outbox WHERE published_at IS NULL`);
+   - make sure `framework.secret` is set (or set `outbox.signing.secret`). When you rotate it later, keep the old
+     value in `outbox.signing.previous_secrets` until the rows signed with it are relayed;
+   - on MySQL and MariaDB, a table that 0.4 created in a `latin1` database is still `latin1` (0.5 creates new
+     tables with the connection's defaults, but does not convert existing ones), and fails to store messages
+     with 4-byte characters such as emoji. Check with `SHOW CREATE TABLE somework_cqrs_outbox` and convert it
+     while the relay is stopped: `ALTER TABLE somework_cqrs_outbox CONVERT TO CHARACTER SET utf8mb4 COLLATE
+     utf8mb4_unicode_ci` (it copies the table and blocks writes meanwhile).
 4. `composer update somework/cqrs-bundle`, committed together with steps 1 to 3.
 5. **Workers, before the deployment**, with OpenTelemetry enabled: messages dispatched by 0.5 carry a
    `TraceContextStamp`, a class 0.4 does not have, so a 0.4 worker fails to decode them. Stop the 0.4 workers
    (or drain their queues) before 0.5 code dispatches, and roll back only once no message sent by 0.5 is
    queued. Messages sent by 0.4 are read by 0.5.
-6. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+6. **Before the new version takes traffic**, run `bin/console somework:cqrs:outbox:setup` (or your Doctrine
+   migration): writes need the new columns.
+7. Start the relay and the workers; `bin/console somework:cqrs:health` shows what is still missing.
+
+**Rolling back to 0.4** after the setup has run: stop the 0.5 relays first. 0.4 ignores the new columns, so it
+relays the rows 0.5 gave up on (including rows refused for a missing or invalid signature, which then reach
+`unserialize()`), ignores claims and retry times, and scans the table without the index of 0.4, which the setup
+dropped. Before starting the 0.4 relay, inspect the given-up rows (`somework:cqrs:outbox:failed`) and delete or
+mark as published those you do not want sent, and recreate the index of 0.4 if the table is large:
+`CREATE INDEX idx_somework_cqrs_outbox_published_created ON somework_cqrs_outbox (published_at, created_at)`.
 
 ### Requirements
 
@@ -281,6 +308,28 @@ correlation id and names the handled message as its cause.
   failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
   Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
 
+### Dispatch through the outbox
+
+- **Breaking:** `DispatchMode` has a new case, `OUTBOX`. A `match` over `DispatchMode` without a `default` arm
+  fails with `UnhandledMatchError` when it meets it: in bus decorators or wrappers implementing
+  `CommandBusInterface`/`EventBusInterface`, and in tests reading `RecordedDispatch::$mode` of the fake buses.
+  Stamp deciders, retry policies, serializers and metadata providers never see it: a message dispatched through
+  the outbox has its stamps decided as an `ASYNC` dispatch, so they cannot tell the two apart.
+- **Breaking:** `OutboxWriter::store()` refuses to store outside a transaction on the outbox connection
+  (`OutboxRequiresTransactionException`) unless `outbox.require_transaction: false` is set. A connection with
+  `auto_commit: false` counts as being in a transaction.
+- `OutboxWriter::store()` refuses a transport that is not a Messenger transport (`UnknownOutboxTransportException`)
+  instead of storing a row the relay gives up on.
+- With the outbox enabled, the bundle's outbox middleware sits right after Messenger's
+  `add_default_stamps_middleware` and right before `send_message` on the CQRS buses, and wraps Doctrine's
+  `doctrine_transaction` and `doctrine_open_transaction_logger` there. It only acts on messages dispatched through
+  the outbox: the middleware before the store runs when they are stored (except those two Doctrine middleware),
+  and again when the relay sends them (the stamps it adds again give way to the stored ones). Middleware must call
+  the next middleware for such a dispatch. The relay's run has no caller context and no `ReceivedStamp`: middleware
+  that checks the dispatching context (authorization) should skip envelopes with `RelayedFromOutboxStamp`.
+- With the outbox enabled, `transports.command_async`/`event_async` no longer require an async bus: the outbox
+  stores its rows for them.
+
 ### Event ordering
 
 - **Breaking:** `SequenceAware` has a new method, `getAggregateType(): string`. Return the same value for every event
@@ -340,7 +389,8 @@ Options the container compilation needs (dispatch modes, transport names, bus id
 `retry_strategy.transports`, and `outbox.table_name`, `outbox.connection` and `outbox.serializer`) reject
 `%env(...)%` with a clear message; before, they failed with
 "Incompatible use of dynamic environment variables" or an invalid enum value. Environment variables still work in
-`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup` and the
+`retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`, `outbox.auto_setup`, `outbox.max_attempts`,
+`outbox.signing.secret`, `outbox.signing.previous_secrets`, `outbox.signing.accept_unsigned` and the
 `dispatch_after_current_bus` flags.
 
 ### Handler attributes must match the handler method
@@ -383,8 +433,8 @@ The container build now fails for configuration that used to be silently ignored
 - `#[Asynchronous]` on a query is an error: queries are always handled synchronously.
 - `causation_id.buses` entries must be existing bus services (aliases are resolved), and so must
   `default_bus` when a command, query or event bus is not configured.
-- The `enabled` flags of `outbox`, `idempotency`, `causation_id`, `sequence` and `rate_limiting` decide which
-  services are registered and can no longer use `%env()%`.
+- The `enabled` flags of `outbox`, `outbox.signing`, `idempotency`, `causation_id`, `sequence` and
+  `rate_limiting` decide which services are registered and can no longer use `%env()%`.
 - Rate limiting is inactive while no limiter is configured; configuring a limiter without symfony/rate-limiter
   installed is an error instead of a silent no-op.
 
@@ -396,34 +446,109 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
 
 ### Transactional outbox
 
-- `OutboxStorage` gained `fetchUnpublished(int $limit, int $offset = 0)` (the relay skips the messages that
-  failed in the current run) and `purgePublished(DateTimeImmutable $publishedBefore): int`. Custom
-  implementations, and decorators of `somework_cqrs.outbox.storage`, must add them. `markPublished()` of an
-  already published message is now a no-op (a concurrent relay may have published it); an unknown id still
-  throws a `RuntimeException`.
+- **The table gains seven columns** (`attempts`, `available_at`, `failed_at`, `last_error`, `claim_token`,
+  `claimed_at`, `signature`) **and two indexes** (`idx_<table>_pending`, which replaces
+  `idx_<table>_published_created`, and `idx_<table>_claimed`). **Writes need the columns**: run
+  `bin/console somework:cqrs:outbox:setup` (or your migration) before the new version takes traffic (checklist
+  step 6), over a direct connection, not through PgBouncer in transaction mode. Without it, a write inside a
+  transaction fails with `The outbox table "…" lacks columns this version of the bundle needs (…)`; outside one,
+  `auto_setup` adds the columns first, but never the indexes. On a large table, purge the published rows first.
+  The details (locks, timeouts, `CREATE INDEX CONCURRENTLY`, the SQL for a migration of your own) are in
+  [Upgrading from 0.4](docs/outbox.md#upgrading-from-04). Stop the 0.4 relays before the new version runs: they
+  ignore retry times, given-up rows and claims.
+- The relay lock expires after 60 seconds (it was the lock factory's default, 300 seconds) and is extended every
+  10 seconds; a relay killed without cleanup blocks the next runs for at most a minute.
+- The relay resets the application's services (`services_resetter`, and Doctrine's entity managers) after each row it handles in its own process
+  (a row without a transport, or a `sync://` transport), as Messenger's workers do; pass `--no-reset` to keep the
+  0.4 behaviour. Replace a shell loop around the relay with `--watch` (see
+  [Production](docs/production.md#relay)).
+- `OutboxWriter::store()` called while a handler runs adds a `MessageMetadataStamp` that continues the flow of the
+  handled message, unless you pass one.
+- Each application needs its own outbox table: a relay gives up the rows of another application sharing its table
+  (other secret, unknown transports).
+- `OutboxStorage` is now `@api`, moved to `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`, and changed (see
+  [Custom storage](docs/outbox.md#custom-storage)). Custom implementations must:
+  - change `fetchUnpublished(int $limit)` to `fetchUnpublished(int $limit, array $excludedTransports = [])`: it
+    returns only due messages (unpublished, not given up, retry time passed), the transports taking turns and,
+    within a transport, first those never attempted in the order they were stored, then the others in the order
+    of their retry time; it skips the messages of the excluded transports (`null` stands for messages without a
+    transport name);
+  - add `claim(array $messages, array $retryAt, string $token): array`, which counts an attempt and postpones
+    each fetched message atomically while its attempts and transport are unchanged, and returns the claimed ids;
+    `renew(array $messages, array $retryAt, string $token): array`, which extends the claims still held;
+    `release(array $messages, string $token): void`, which undoes the claims of unattempted messages; and
+    `recordFailure(string $id, string $token, int $attempts, string $error, ?DateTimeImmutable $retryAt): bool`;
+  - change `markPublished(string $id)` to `markPublished(array $ids)`, which ignores unknown or published ids;
+  - add `purgePublished(DateTimeImmutable $publishedBefore): int`;
+  - return the stored state with each message: `OutboxMessage` has the new properties `attempts`, `lastError`,
+    `claimedAt`, `availableAt` and `signature` (constructor arguments after `$transportName`, all optional).
+    Ids are lowercased.
+
+  A decorator of `somework_cqrs.outbox.storage` needs the same methods; `setup`, `failed` and the health
+  check keep using the storage behind it.
 - The table is never created inside an open database transaction; `store()` then throws a `LogicException`
   that tells you to create it first. Run `bin/console somework:cqrs:outbox:setup` once per environment, use
   Doctrine migrations (with doctrine/orm installed the table is added to generated migrations for the
   configured connection), or set `outbox.auto_setup: false` when migrations own the table.
 - New options: `outbox.connection` (DBAL connection name, default `default`), `outbox.serializer`
-  (default `messenger.default_serializer`) and `outbox.auto_setup` (default `true`).
+  (default `messenger.default_serializer`), `outbox.auto_setup` (default `true`) and `outbox.max_attempts`
+  (default `10`).
 - Build rows with `OutboxMessage::fromEnvelope($envelope, $serializer, 'transport')`: ids are time-ordered UUIDv7;
   the constructor rejects empty ids and bodies.
 - The relay dispatches each message on the bus of its type (`buses.command_async`, else `buses.command`, for
   commands; `buses.event_async`, else `buses.event`, for events; the default bus otherwise), so workers route it
   to the bus that has its handlers. A `BusNameStamp` stored with the envelope is kept.
-- The relay sends each message to its stored transport, runs as a single instance when symfony/lock is
-  installed (the lock is named after the project directory, the connection and the table), skips rows that
-  fail, stops after 5 consecutive send failures and exits with code 1 when any row failed (monitor the exit
-  code); an invalid `--limit` now exits with 2 instead of 1.
+- The relay sends each message to its stored transport and runs as a single instance when symfony/lock is
+  installed. A row that fails is postponed (1 minute, doubling up to 1 hour) instead of being retried on every
+  run, and given up after `outbox.max_attempts` attempts; list and requeue given-up rows with the new
+  `somework:cqrs:outbox:failed` command. Every attempt is claimed before the message is sent, so a row that
+  crashes the relay process is retried on its own and not forever, and overlapping relays skip each other's rows.
+  Sent rows are marked as published every 2 seconds and at the end of the run: when the relay dies, the rows of
+  the last 2 seconds are sent again. Rows whose
+  transport fails (`TransportException`) get three times `outbox.max_attempts`, and a transport that fails 3
+  times in a row is paused until the next run while the other transports are relayed. Rows are relayed in the
+  order: the transports take turns; within one, new rows first, in the order they were stored, then the rows due
+  for a retry. The relay exits
+  with code 1 when any row failed, the storage failed or a signal (SIGTERM, SIGINT) stopped it after the current
+  row (monitor the exit code, or the new outbox check of `somework:cqrs:health`); an invalid `--limit` now exits
+  with 2 instead of 1. `--limit` counts processed rows, failed ones included. The relay logs failures to the
+  `logger` service.
+- The relay lock is named after `framework.cache.prefix_seed` when you set it (the project directory
+  otherwise), the connection and the table. If every release is deployed to a new directory, set `prefix_seed` to a stable value so the
+  relays of two releases cannot run at the same time.
 - Dates are now stored in UTC. Rows written by earlier versions keep the local time they were written in;
-  this only matters for the relay order and the purge cut-off of rows written in the last hours before the upgrade.
-- `OutboxMessage` and `OutboxStorage` are now `@api`.
-- `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores), and
-  `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` (e.g. `7 days`).
+  this only matters for the relay order, the purge cut-off and the ages the health check reports for rows written in
+  the last hours before the upgrade (west of UTC they look older: a backlog of 0.4 rows can be reported as critical
+  right after the deploy).
+- `OutboxMessage`, `OutboxStorage` and `DbalOutboxStorage` are now `@api`.
+- `outbox.table_name` must be a plain or schema-qualified identifier (letters, digits, underscores) and not a
+  word reserved in MySQL, MariaDB, PostgreSQL or SQLite (`order`, `user`, …), and
+  `somework:cqrs:outbox:purge --older-than` accepts only `<number> <unit>` with at most 6 digits (e.g. `7 days`).
 - Remove old rows with `bin/console somework:cqrs:outbox:purge --older-than="7 days"`.
-- Tables created by earlier versions keep working. With very long table names the index is now named
-  `idx_<hash>_published_created`; generated migrations may propose renaming it.
+- With very long table names the new index is named `idx_<hash>_pending`.
+- **Reads go to the primary.** With a `PrimaryReadReplicaConnection`, the relay, the health check and the
+  outbox commands switch the connection to the primary before reading (0.4 read from a replica, where rows
+  already published could look pending). Later reads of the application through that connection go to the
+  primary too, as after any write.
+- **Rows are signed** (`outbox.signing`, on by default, with `framework.secret`): the relay gives up rows
+  without a valid signature without decoding them. Store rows through the `OutboxStorage` service or
+  `OutboxWriter` (the signature is added by a decorator of `somework_cqrs.outbox.storage`), not through SQL; the
+  autowiring alias of `DbalOutboxStorage` is gone (type-hint `OutboxSchema`, `FailedOutboxMessages` or
+  `OutboxMonitoring` for the table operations). Rows of 0.4 are unsigned: see step 3 of the checklist. An empty
+  `framework.secret` makes every service that stores rows fail to start. Disable signing with
+  `outbox.signing.enabled: false` to keep trusting the table as before.
+- A storage of your own is configured with `outbox.storage: App\Outbox\MyStorage` instead of redefining the
+  `somework_cqrs.outbox.storage` service (which still works), and no longer needs doctrine/dbal. The setup and
+  failed commands and the health check use it when it implements `SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema`,
+  `FailedOutboxMessages` or `OutboxMonitoring` (see [Custom storage](docs/outbox.md#custom-storage)).
+- Code that calls `DbalOutboxStorage::status()` or `fetchFailed()` gets an `OutboxStatus` and `FailedOutboxMessage`
+  objects instead of arrays (`$status->oldestDue` instead of `$status['oldest_due']`). `fetchFailed()` reads the
+  bodies (`bodyClass`, `bodyClasses`, `digest`) only for the messages asked for by id.
+- `outbox:failed --requeue --sign` refuses a row whose message is not a command, query or event, whose body
+  instantiates a class that is neither the envelope, a stamp, the message class nor a type declared by their
+  properties, or that uses custom serialization (`Serializable`). A message of yours that is not a command, query or
+  event, or has an object in an untyped property (`mixed`, `object`, arrays), needs `--allow-class=<class or
+  interface>` to be signed.
 
 ### Console commands
 
@@ -435,6 +560,8 @@ A failed synchronous dispatch releases the idempotency lock, so the message can 
   is resolved against the project directory and replaces the directory mapped to the namespace prefix; a namespace
   that no prefix covers is refused unless `--dir` is given.
   Handlers are generated with the attribute and a typed `__invoke()`. Invalid input exits with code 2.
+- `somework:cqrs:outbox:failed` lists the message class (from the serializer's `type` header) and gains `--sign`
+  (with `--requeue` and ids) to sign rows you checked.
 - `somework:cqrs:list --type=<unknown>` exits with code 2. Without `--details` it prints one compact table per
   message type (message class, handler, bus); `--details` keeps one table per handler.
 

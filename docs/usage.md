@@ -210,9 +210,9 @@ The bundle registers these console commands:
 * `somework:cqrs:generate` -- scaffolds a message class and its handler.
 * `somework:cqrs:debug-transports` -- the transport configuration of the bundle.
 * `somework:cqrs:health` -- checks that handlers and transports can be built.
-* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup` and
-  `somework:cqrs:outbox:purge` -- only when the transactional outbox is
-  enabled; see [Transactional Outbox](outbox.md).
+* `somework:cqrs:outbox:relay`, `somework:cqrs:outbox:setup`,
+  `somework:cqrs:outbox:failed` and `somework:cqrs:outbox:purge` -- only when
+  the transactional outbox is enabled; see [Transactional Outbox](outbox.md).
 
 ### Listing handlers
 
@@ -342,12 +342,14 @@ metadata via `$this->getEnvelope()`.
 
 `CommandBus::dispatch()` and `EventBus::dispatch()` accept an optional
 `SomeWork\CqrsBundle\Bus\DispatchMode` argument with the cases `SYNC`, `ASYNC`,
-and `DEFAULT` (the default). `SYNC` and `ASYNC` are used as given. For
-`DEFAULT`, the bundle resolves the mode per message class, first match wins:
+`OUTBOX` and `DEFAULT` (the default). `SYNC`, `ASYNC` and `OUTBOX` are used as
+given; `OUTBOX` stores the message in the [transactional outbox](outbox.md#through-the-buses)
+instead of sending it. For `DEFAULT`, the bundle resolves the mode per message
+class, first match wins:
 
 1. An entry for the exact message class in `dispatch_modes.<type>.map`.
-2. The `#[Asynchronous]` attribute on the message class itself (PHP
-   attributes are not inherited), which selects `async`.
+2. The `#[Outbox]` or `#[Asynchronous]` attribute on the message class itself
+   (PHP attributes are not inherited), which selects `outbox` or `async`.
 3. An entry in `dispatch_modes.<type>.map` for a parent class (nearest first),
    then for an implemented interface (most specific first).
 4. `dispatch_modes.<type>.default` (`sync` unless configured otherwise).
@@ -379,6 +381,7 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 
 $commandBus->dispatch($command);                     // Uses the resolved mode
 $commandBus->dispatch($command, DispatchMode::ASYNC);
+$commandBus->dispatch($command, DispatchMode::OUTBOX); // Stored in the outbox, in the current transaction
 $commandBus->dispatchAsync($command);                // Always on the async bus (sent to a transport when one is configured or routed)
 $result = $commandBus->dispatchSync($command);       // Always synchronous, returns the handler result
 ```
@@ -640,15 +643,15 @@ Events dispatched without any registered handler do not throw an exception
     event is lost with only a warning in the Messenger log.
 
     For events that must not be lost, store them in the
-    [transactional outbox](outbox.md#writing-to-the-outbox) in the same transaction instead
-    of dispatching them: enable the outbox and, inside the handler's transaction on the
-    outbox connection (`$connection->transactional()`), pass
-    `OutboxMessage::fromEnvelope(new Envelope($event), $serializer, 'async_events')` to
-    `OutboxStorage::store()` (with the `somework_cqrs.outbox.serializer` serializer).
-    `somework:cqrs:outbox:relay` then sends the committed event to its transport. With a
+    [transactional outbox](outbox.md#through-the-buses) in the same transaction instead:
+    enable the outbox, mark the event class `#[Outbox]` (or map it to `outbox` in
+    `dispatch_modes`), and run the handler's database work in a transaction on the outbox
+    connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
+    middleware): the `dispatch()` above then stores the event in that transaction (outside
+    one, it throws `OutboxRequiresTransactionException`). With a
     Doctrine transport on the connection of your business data, disabling
-    `dispatch_after_current_bus` for those events also makes the send part of the
-    transaction.
+    `dispatch_after_current_bus` for those events also makes the send part of the transaction
+    (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
 Multiple handlers can subscribe to the same event; each is a class of its own:
 

@@ -46,7 +46,9 @@ use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 
 use function array_filter;
+use function array_keys;
 use function class_exists;
+use function implode;
 use function is_array;
 use function is_bool;
 use function is_int;
@@ -92,6 +94,16 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         /* @phpstan-ignore argument.type */
         $this->guardAsyncBusConfiguration($config);
+        // Messages stored through the buses need the outbox.
+        if (true !== $config['outbox']['enabled']) {
+            foreach (['command', 'event'] as $type) {
+                $modes = $config['dispatch_modes'][$type];
+                $outboxMessages = array_keys(array_filter($modes['map'], static fn (string $mode): bool => DispatchMode::OUTBOX->value === $mode));
+                if (DispatchMode::OUTBOX->value === $modes['default'] || [] !== $outboxMessages) {
+                    throw new InvalidConfigurationException(sprintf('"somework_cqrs.dispatch_modes.%s" stores messages in the outbox (%s), but the outbox is disabled. Enable "somework_cqrs.outbox".', $type, DispatchMode::OUTBOX->value === $modes['default'] ? '"default: outbox"' : implode(', ', $outboxMessages)));
+                }
+            }
+        }
 
         $loader = new PhpFileLoader($container, new FileLocator(__DIR__.'/../../config'));
         $loader->load('services.php');
@@ -134,14 +146,18 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         }
 
         if (true === $config['outbox']['enabled']) {
-            if (!($this->classExists)(Connection::class)) {
-                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal" or set somework_cqrs.outbox.enabled to false.');
+            if (null === $config['outbox']['storage'] && !($this->classExists)(Connection::class)) {
+                throw new InvalidConfigurationException('Outbox is enabled (somework_cqrs.outbox.enabled: true) but doctrine/dbal is not installed. Run "composer require doctrine/dbal", configure another storage under somework_cqrs.outbox.storage, or set somework_cqrs.outbox.enabled to false.');
             }
-            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId);
+            (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
         if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
             throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
+        }
+
+        if (is_int($config['outbox']['max_attempts']) && $config['outbox']['max_attempts'] < 1) {
+            throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
         }
 
         // Registered without symfony/lock too, so the first IdempotencyStamp logs that it is ignored.
@@ -193,7 +209,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      * Options read only at runtime; every other option names services, buses, transports, dispatch
      * modes or message classes that must be known when the container is compiled.
      */
-    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'dispatch_after_current_bus'];
+    private const RUNTIME_OPTIONS = ['retry_strategy.jitter', 'retry_strategy.max_delay', 'idempotency.ttl', 'outbox.auto_setup', 'outbox.max_attempts', 'outbox.signing.secret', 'outbox.signing.previous_secrets', 'outbox.signing.accept_unsigned', 'dispatch_after_current_bus'];
 
     /**
      * Without this check an environment variable in such an option fails later with Symfony's
@@ -247,6 +263,11 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             if (!is_bool($value)) {
                 throw new InvalidConfigurationException(sprintf('"somework_cqrs.%s.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.', $section));
             }
+        }
+
+        $signing = $config['outbox']['signing'] ?? null;
+        if (is_array($signing) && !is_bool($signing['enabled'] ?? null)) {
+            throw new InvalidConfigurationException('"somework_cqrs.outbox.signing.enabled" decides which services are registered when the container is compiled, so it must be a boolean and cannot use an environment variable.');
         }
     }
 
@@ -359,16 +380,20 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      *         event: array{default: list<string>, map: array<string, list<string>>},
      *         event_async: array{default: list<string>, map: array<string, list<string>>},
      *     },
+     *     outbox: array{enabled: bool, ...},
      * } $config
      */
     private function guardAsyncBusConfiguration(array $config): void
     {
         $commandAsyncBus = $config['buses']['command_async'] ?? null;
         $eventAsyncBus = $config['buses']['event_async'] ?? null;
+        // The outbox stores its rows for the async transports: they need no async bus then.
+        $outbox = true === $config['outbox']['enabled'];
 
         $commandAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['command'],
-            $config['transports']['command_async']
+            $config['transports']['command_async'],
+            $outbox,
         );
         if (null === $commandAsyncBus && $this->hasAsyncConfiguration($commandAsyncSources)) {
             $this->throwMissingAsyncBusException('command', $commandAsyncSources, 'command_async');
@@ -376,7 +401,8 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
 
         $eventAsyncSources = $this->collectAsyncSources(
             $config['dispatch_modes']['event'],
-            $config['transports']['event_async']
+            $config['transports']['event_async'],
+            $outbox,
         );
         if (null === $eventAsyncBus && $this->hasAsyncConfiguration($eventAsyncSources)) {
             $this->throwMissingAsyncBusException('event', $eventAsyncSources, 'event_async');
@@ -394,7 +420,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      *     transport_messages: array<string, list<string>>,
      * }
      */
-    private function collectAsyncSources(array $dispatchConfig, array $transportConfig): array
+    private function collectAsyncSources(array $dispatchConfig, array $transportConfig, bool $outbox): array
     {
         $dispatchMessages = [];
 
@@ -407,8 +433,8 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         return [
             'dispatch_default' => DispatchMode::ASYNC->value === $dispatchConfig['default'],
             'dispatch_messages' => $dispatchMessages,
-            'transport_default' => $transportConfig['default'],
-            'transport_messages' => array_filter(
+            'transport_default' => $outbox ? [] : $transportConfig['default'],
+            'transport_messages' => $outbox ? [] : array_filter(
                 $transportConfig['map'],
                 static fn (array $transports): bool => [] !== $transports
             ),

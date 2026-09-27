@@ -57,6 +57,9 @@ final class FakeEventBus implements EventBusInterface, RecordsBusDispatches
 
         $this->dispatched[] = new RecordedDispatch($event, $mode, $stamps);
 
-        return new Envelope($event, $stamps);
+        $envelope = new Envelope($event, $stamps);
+
+        // As the real bus, which stores the message instead of dispatching it.
+        return FakeOutbox::isOutboxDispatch($event, $mode) ? $envelope->with(FakeOutbox::storedStamp($event)) : $envelope;
     }
 }

@@ -134,10 +134,17 @@ somework_cqrs:
     #         default: ~
     #         map: {}
 
-    # Transactional outbox (requires doctrine/dbal and doctrine/doctrine-bundle)
+    # Transactional outbox (the DBAL storage requires doctrine/dbal and doctrine/doctrine-bundle)
     # outbox:
     #     enabled: false
+    #     storage: ~                  # OutboxStorage service id or class; null = DBAL storage below
     #     table_name: somework_cqrs_outbox
     #     connection: default         # Doctrine DBAL connection name
     #     serializer: messenger.default_serializer
-    #     auto_setup: true            # Create the table on first use (never inside a transaction)
+    #     auto_setup: true            # Create or upgrade the table on first use (never inside a transaction)
+    #     max_attempts: 10            # Attempts before the relay gives up on a row (see somework:cqrs:outbox:failed)
+    #     signing:                    # HMAC signatures: the relay only decodes rows this application stored
+    #         enabled: true
+    #         secret: ~               # null = framework.secret
+    #         previous_secrets: []    # accepted during a rotation
+    #         accept_unsigned: false  # true while rows of an earlier version drain

@@ -8,12 +8,16 @@ use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Event;
+use SomeWork\CqrsBundle\Stamp\OutboxStoredStamp;
 use SomeWork\CqrsBundle\Testing\FakeEventBus;
+use SomeWork\CqrsBundle\Testing\FakeOutbox;
 use SomeWork\CqrsBundle\Testing\RecordsBusDispatches;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditedOutboxEvent;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\DelayStamp;
 
 #[CoversClass(FakeEventBus::class)]
+#[CoversClass(FakeOutbox::class)]
 final class FakeEventBusTest extends TestCase
 {
     public function test_implements_records_bus_dispatches(): void
@@ -194,5 +198,18 @@ final class FakeEventBusTest extends TestCase
         $bus->dispatch($event);
 
         self::assertCount(1, $bus->getDispatched());
+    }
+
+    public function test_an_outbox_dispatch_returns_the_envelope_of_a_stored_message(): void
+    {
+        $bus = new FakeEventBus();
+
+        $stored = $bus->dispatch(new AuditedOutboxEvent('1'))->last(OutboxStoredStamp::class);
+        self::assertInstanceOf(OutboxStoredStamp::class, $stored);
+        self::assertSame(['audit'], $stored->transportNames, 'The transport of #[Outbox].');
+        self::assertCount(1, $stored->ids);
+
+        self::assertInstanceOf(OutboxStoredStamp::class, $bus->dispatch(new class implements Event {}, DispatchMode::OUTBOX)->last(OutboxStoredStamp::class));
+        self::assertNull($bus->dispatchAsync(new AuditedOutboxEvent('2'))->last(OutboxStoredStamp::class), 'An explicit mode wins over the attribute.');
     }
 }

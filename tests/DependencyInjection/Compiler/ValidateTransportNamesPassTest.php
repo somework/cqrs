@@ -17,7 +17,11 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\TransportBoundHandlers;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsynchronousQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AuditedOutboxEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\DoublyRoutedEvent;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\OutboxQuery;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ServiceLocator;
@@ -243,6 +247,112 @@ final class ValidateTransportNamesPassTest extends TestCase
         (new ValidateTransportNamesPass())->process($container);
 
         $this->expectNotToPerformAssertions();
+    }
+
+    public function test_it_rejects_an_outbox_attribute_on_a_query(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['query' => [['message' => OutboxQuery::class]]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" is a query and carries #[Outbox]: queries are always handled synchronously.', OutboxQuery::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_it_rejects_both_attributes_on_a_message(): void
+    {
+        $container = $this->outboxContainer([DoublyRoutedEvent::class]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries both #[Outbox] and #[Asynchronous]: keep one', DoublyRoutedEvent::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_an_outbox_message_needs_the_outbox_but_no_async_bus(): void
+    {
+        $container = $this->outboxContainer([TaskArchivedEvent::class], outbox: false);
+        $container->register('messenger.transport.async', \stdClass::class);
+
+        try {
+            (new ValidateTransportNamesPass())->process($container);
+            self::fail('Expected the build to fail.');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertStringContainsString(sprintf('"%s" carries #[Outbox], but the outbox is disabled', TaskArchivedEvent::class), $exception->getMessage());
+        }
+
+        $enabled = $this->outboxContainer([TaskArchivedEvent::class]);
+        $enabled->register('messenger.transport.async', \stdClass::class);
+        (new ValidateTransportNamesPass())->process($enabled);
+        self::assertFalse($enabled->hasParameter('somework_cqrs.bus.event_async'), 'The relay dispatches on the sync bus without an async one.');
+    }
+
+    public function test_it_rejects_an_unknown_transport_of_an_outbox_attribute(): void
+    {
+        $container = $this->outboxContainer([AuditedOutboxEvent::class]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[Outbox(transport: "audit")] on "%s" names a Messenger transport that is not defined.', AuditedOutboxEvent::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_an_exact_dispatch_mode_wins_over_the_outbox_attribute(): void
+    {
+        $container = $this->outboxContainer([TaskArchivedEvent::class], outbox: false);
+        $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$eventMap', [TaskArchivedEvent::class => DispatchMode::SYNC]);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    public function test_the_transport_of_an_asynchronous_attribute_is_checked_when_the_message_is_mapped_to_the_outbox(): void
+    {
+        // The attribute's transport is where the relay sends the stored message.
+        $container = $this->asyncContainer([SendNotificationCommand::class]);
+        $container->register('somework_cqrs.outbox.writer', \stdClass::class);
+        $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$commandMap', [SendNotificationCommand::class => DispatchMode::OUTBOX]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[Asynchronous(transport: "notifications")] on "%s" names a Messenger transport that is not defined.', SendNotificationCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_a_bare_outbox_attribute_mapped_to_async_needs_the_async_bus_and_a_transport(): void
+    {
+        $container = $this->outboxContainer([TaskArchivedEvent::class]);
+        $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$eventMap', [TaskArchivedEvent::class => DispatchMode::ASYNC]);
+
+        try {
+            (new ValidateTransportNamesPass())->process($container);
+            self::fail('Expected the build to fail without an async bus.');
+        } catch (InvalidConfigurationException $exception) {
+            self::assertStringContainsString(sprintf('"%s" carries #[Outbox] and "somework_cqrs.dispatch_modes.event" maps it to "async", but "somework_cqrs.buses.event_async" is not configured', TaskArchivedEvent::class), $exception->getMessage());
+        }
+
+        $container->setParameter('somework_cqrs.bus.event_async', 'event.async_bus');
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries #[Outbox] and "somework_cqrs.dispatch_modes.event" maps it to "async" without a transport, but there is no "async" transport', TaskArchivedEvent::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
+     * @param list<class-string> $messages
+     */
+    private function outboxContainer(array $messages, bool $outbox = true): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['event' => array_map(static fn (string $message): array => ['message' => $message], $messages)]);
+        if ($outbox) {
+            $container->register('somework_cqrs.outbox.writer', \stdClass::class);
+        }
+
+        return $container;
     }
 
     /**

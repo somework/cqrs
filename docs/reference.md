@@ -75,7 +75,15 @@ somework_cqrs:
         table_name: somework_cqrs_outbox
         connection: default
         serializer: messenger.default_serializer
+        storage: null
         auto_setup: true
+        require_transaction: true
+        max_attempts: 10
+        signing:
+            enabled: true
+            secret: null
+            previous_secrets: []
+            accept_unsigned: false
 ```
 
 ## Rules that apply to every section
@@ -127,7 +135,9 @@ rejected:
 
 **Environment variables.** Only options read at runtime accept `%env(...)%`:
 `retry_strategy.jitter`, `retry_strategy.max_delay`, `idempotency.ttl`,
-`outbox.auto_setup` and the `dispatch_after_current_bus` flags. Every other option names services,
+`outbox.auto_setup`, `outbox.max_attempts`, `outbox.signing.secret`,
+`outbox.signing.previous_secrets`, `outbox.signing.accept_unsigned` and the
+`dispatch_after_current_bus` flags. Every other option names services,
 buses, transports, dispatch modes or message classes that the container
 compilation needs, and rejects an environment variable:
 
@@ -159,17 +169,18 @@ What happens when nothing matches depends on the section:
 | `dispatch_after_current_bus.<type>` | `dispatch_after_current_bus.<type>.default` |
 
 **Dispatch modes** follow a slightly different order because the
-`#[Asynchronous]` attribute takes part. For a command or event dispatched with
+`#[Outbox]` and `#[Asynchronous]` attributes take part. For a command or event dispatched with
 `DispatchMode::DEFAULT` (that is, `dispatch()` without a mode):
 
 1. an entry for the exact class in `dispatch_modes.<type>.map`;
-2. the `#[Asynchronous]` attribute on the message class (`SomeWork\CqrsBundle\Attribute\Asynchronous`) selects `async`;
+2. the `#[Outbox]` attribute on the message class (`SomeWork\CqrsBundle\Attribute\Outbox`) selects `outbox`, the `#[Asynchronous]` attribute (`SomeWork\CqrsBundle\Attribute\Asynchronous`) selects `async` (a class carrying both fails the compilation);
 3. an entry for a parent class;
 4. an entry for an interface, the most derived interface first;
 5. `dispatch_modes.<type>.default`.
 
 An explicit mode always wins: `dispatch($message, DispatchMode::ASYNC)`,
-`dispatchSync()` and `dispatchAsync()` skip this resolution. Queries are always
+`dispatch($message, DispatchMode::OUTBOX)`, `dispatchSync()` and
+`dispatchAsync()` skip this resolution. Queries are always
 synchronous.
 
 ## default_bus
@@ -446,17 +457,19 @@ One section each for `command` and `event` (queries are always synchronous):
 
 | Key | Default | Allowed values |
 |-----|---------|----------------|
-| `default` | `sync` | `sync` or `async` |
-| `map` | `{}` | message class or interface => `sync` or `async` |
+| `default` | `sync` | `sync`, `async` or `outbox` |
+| `map` | `{}` | message class or interface => `sync`, `async` or `outbox` |
 
 The mode is used when the caller does not choose one (`dispatch()` with
 `DispatchMode::DEFAULT`). See the [resolution order](#resolution-order-for-per-message-maps)
-above, including the `#[Asynchronous]` attribute. Any `async` value requires
-the matching async bus (`buses.command_async` / `buses.event_async`). An invalid
-value fails the compilation:
+above, including the `#[Outbox]` and `#[Asynchronous]` attributes. Any `async`
+value requires the matching async bus (`buses.command_async` / `buses.event_async`),
+and any `outbox` value requires `outbox.enabled` (see
+[Through the buses](outbox.md#through-the-buses)). An invalid value fails the
+compilation:
 
 ```
-Invalid configuration for path "somework_cqrs.dispatch_modes.command.map.App\Application\Command\GenerateReport": Invalid dispatch mode ""later"". Expected "sync" or "async".
+Invalid configuration for path "somework_cqrs.dispatch_modes.command.map.App\Application\Command\GenerateReport": Invalid dispatch mode ""later"". Expected "sync", "async" or "outbox".
 ```
 
 ```yaml
@@ -678,26 +691,35 @@ somework_cqrs:
 | Key | Default | Allowed values |
 |-----|---------|----------------|
 | `enabled` | `false` | boolean (no environment variables) |
+| `storage` | `null` | service id or class name of an `OutboxStorage`; `null` for the DBAL storage below |
 | `table_name` | `somework_cqrs_outbox` | letters, digits and underscores, optionally `schema.table` (`database.table` on MySQL); avoid reserved SQL words |
 | `connection` | `default` | DBAL connection name; the service `doctrine.dbal.<name>_connection` (DoctrineBundle) is used |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id; aliased as `somework_cqrs.outbox.serializer` |
 | `auto_setup` | `true` | boolean |
+| `relay_on_terminate` | `false` | boolean, for development: runs the relay after each request, console command or worker message that stored messages in the outbox (a plain boolean, not an `%env()%` value) |
+| `require_transaction` | `true` | boolean: `OutboxWriter` and `DispatchMode::OUTBOX` refuse to store outside a transaction on the outbox connection (`OutboxRequiresTransactionException`); checked with storages that implement `TransactionalOutbox` |
+| `max_attempts` | `10` | integer, at least 1: attempts before the relay gives up on a row (three times as many when its transport fails) |
+| `signing.enabled` | `true` | boolean (no environment variables): sign stored rows and verify them before the relay decodes them |
+| `signing.secret` | `null` | string; `null` uses `kernel.secret` (`framework.secret`) |
+| `signing.previous_secrets` | `[]` | list of strings: secrets whose signatures are still accepted |
+| `signing.accept_unsigned` | `false` | boolean: relay rows without a signature (e.g. of an earlier version) |
 
-Enabling the outbox requires doctrine/dbal (compilation fails otherwise) and
-registers the `SomeWork\CqrsBundle\Contract\OutboxStorage` service
-(`DbalOutboxStorage`) plus the `somework:cqrs:outbox:*` commands.
+Enabling the outbox registers the `SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage`
+service plus the `somework:cqrs:outbox:*` commands. With `storage: null` that is
+`DbalOutboxStorage`, which requires doctrine/dbal (compilation fails otherwise)
+and uses `table_name`, `connection` and `auto_setup`; another storage ignores
+them (see [Custom storage](outbox.md#custom-storage)).
 
 * Use the connection that holds your business data, so storing an outbox row
   is part of the same transaction.
-* With `auto_setup: true` the table is created on first use, but never inside an
-  open transaction: storing into a missing table there throws a `LogicException`
-  asking you to run `somework:cqrs:outbox:setup`. Disable `auto_setup` when
-  migrations manage the table. With doctrine/orm installed, the table is also
-  added to the schema of the outbox connection, so `doctrine:migrations:diff`
-  picks it up.
-* The relay decodes stored rows with `serializer`; encode them with the same
-  serializer when you call `OutboxMessage::fromEnvelope()` (inject it as
-  `somework_cqrs.outbox.serializer`).
+* With `auto_setup: true` the table is created (or upgraded with the columns
+  added in 0.5.0, but not the index, which is left to `somework:cqrs:outbox:setup`) on first use, but never inside an open transaction: that throws a `LogicException` asking you to run
+  `somework:cqrs:outbox:setup`. Disable `auto_setup` when migrations manage the
+  table. With doctrine/orm installed, the table is also added to the schema of
+  the outbox connection, so `doctrine:migrations:diff` picks it up.
+* The relay decodes stored rows with `serializer`. `OutboxWriter` encodes with
+  it; encode with the same serializer when you call `OutboxMessage::fromEnvelope()`
+  yourself.
 
 See [Transactional outbox](outbox.md).
 
@@ -721,8 +743,9 @@ only when `outbox.enabled` is `true`. Exit codes follow Symfony's convention:
 | `somework:cqrs:generate` | `<type> <name> [--handler=FQCN] [--dir=DIR] [--force]` | `0`; `1` when a file exists (without `--force`) or cannot be written; `2` for an invalid type, class name or path |
 | `somework:cqrs:debug-transports` | none | `0` |
 | `somework:cqrs:health` | none | `0` OK, `1` warnings, `2` critical |
-| `somework:cqrs:outbox:setup` | none | `0`; `1` when the storage is not `DbalOutboxStorage` |
-| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) | `0`, also when another relay holds the lock; `1` when a row failed or the relay lock was lost; `2` for an invalid limit |
+| `somework:cqrs:outbox:setup` | none | `0`; `1` for a storage that does not implement `OutboxSchema`, or when the database fails; `128 + signal` when stopped by a signal |
+| `somework:cqrs:outbox:relay` | `[--limit=100]` (`-l`) `[--watch (-w) [--sleep=1] [--time-limit=SECONDS]]` `[--wait-for-lock=0]` `[--no-reset]` | `0`, also when another relay holds the lock (without `--wait-for-lock`) or `--watch` was stopped by a signal or `--time-limit`; `1` when a row failed, the storage failed, a signal stopped a single run, or the lock could not be acquired or was lost; `2` for invalid options; `3` when another relay kept the lock for `--wait-for-lock` seconds |
+| `somework:cqrs:outbox:failed` | `[--requeue [--transport=NAME] [--sign [--allow-class=CLASS ...]]] [--delete] [<id> ...] [--limit=50]` (`-l`) | `0`; `1` for a storage that does not implement `FailedOutboxMessages`, when the database fails, when a given id was not requeued or deleted, or when `--sign` refused or the operator did not confirm; `2` for ids without `--requeue` or `--delete`, `--transport`, `--sign` or `--delete` without ids, `--delete` with `--requeue`, `--sign` or `--transport`, `--allow-class` without `--sign`, or an invalid limit |
 | `somework:cqrs:outbox:purge` | `[--older-than="7 days"]` | `0`; `2` for an invalid age |
 
 ### somework:cqrs:list
@@ -785,13 +808,20 @@ checks.
 
 ### Outbox commands
 
-* `somework:cqrs:outbox:setup` creates the outbox table if it does not exist.
-* `somework:cqrs:outbox:relay` sends up to `--limit` unpublished rows in the
-  order they were stored, each through the bus of its message type (the async
-  bus when one is configured), and marks them published. Rows that fail are
-  skipped for the rest of the run and make the command exit with `1`; after 5
-  consecutive send failures the run stops. With symfony/lock installed, a second
-  relay started while one is running exits without relaying.
+* `somework:cqrs:outbox:setup` creates the outbox table if it does not exist,
+  and adds the columns and indexes a table of an earlier version lacks (the
+  automatic setup only adds the columns).
+* `somework:cqrs:outbox:relay` sends due rows (transports take turns; new rows
+  first, then retries) and
+  marks them published. A row that fails is retried later (1 minute, doubling up
+  to 1 hour) and makes the command exit with `1`; after `max_attempts` attempts
+  (three times as many for transport failures) it is given up. A transport that
+  fails 3 times in a row (10 times, or 3 over 10 seconds, after a successful
+  send) is paused until the next run.
+* `somework:cqrs:outbox:failed` lists the given-up rows with their last error;
+  `--requeue` hands all of them, or the given ids, back to the relay, to another
+  transport with `--transport`. A row stored for a transport that does not exist
+  is given up on its first run.
 * `somework:cqrs:outbox:purge` deletes rows published before the given age.
 
 See [Production: outbox operations](production.md#outbox-operations).

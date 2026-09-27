@@ -100,8 +100,7 @@ id. Keys are global per message class: two users or tenants that send the same k
 message class collide, and the second message is dropped as a duplicate. Scope keys that come
 from clients, e.g. `new IdempotencyStamp($tenantId.':'.$userId.':'.$requestId)`. Keys are
 stored in the lock store, logged and shown in `DuplicateMessageException`: use ids, never
-personal data such as e-mail addresses; hash client-supplied values
-(`hash('sha256', $tenantId.':'.$requestId)`).
+personal data such as e-mail addresses (see [Personal data](production.md#personal-data)).
 `new IdempotencyStamp('')` throws an `InvalidArgumentException`. Stamps are variadic
 arguments of every dispatch method: `dispatch($message, DispatchMode::DEFAULT, ...$stamps)`,
 `dispatchSync($message, ...$stamps)`, `dispatchAsync($message, ...$stamps)` and
@@ -202,10 +201,17 @@ somework_cqrs:
 
 ## Limitations
 
-- **Dispatch-side only.** The conversion happens in the stamp pipeline of the CQRS buses.
-  Messages dispatched directly on a Messenger bus, and messages relayed from the
-  [transactional outbox](outbox.md), are not converted. Worker redeliveries are not checked
-  again either.
+- **Dispatch-side only.** The conversion happens in the stamp pipeline of the CQRS buses,
+  also for a dispatch through the [outbox](outbox.md#through-the-buses), where it happens when
+  the message is stored. Messages dispatched directly on a Messenger bus, and messages stored
+  with `OutboxWriter::store()`, are not converted, and the relay does not convert the rows it
+  sends. Worker redeliveries are not checked again either. A `DeduplicateStamp` stored in the
+  outbox (through the buses or with `OutboxWriter`) gets a key scoped to the row's transport
+  (`<key>@<transport>`), so it does not deduplicate against the same key dispatched directly
+  on a bus. With a lock store whose keys cannot be sent (`flock`, `semaphore`, PostgreSQL
+  advisory locks, ZooKeeper), a message stored in the outbox with a `DeduplicateStamp` (from
+  an `IdempotencyStamp`, its default stamps or the caller) is refused when it is stored, since
+  the relay could never send it.
 - **Time-bounded.** Deduplication lasts as long as the lock (see [Lock lifetime](#lock-lifetime)).
   It is not a permanent record of processed operations.
 - **Only as reliable as the lock store.** The local stores (flock, semaphore, in-memory) do
@@ -213,7 +219,6 @@ somework_cqrs:
   data (for example, a Redis restart) forgets the locks.
 
 For guarantees that do not expire, check on the consuming side as well. For example, record
-processed keys in a table with a unique constraint. A handler that implements `EnvelopeAware`
-with `EnvelopeAwareTrait` (as in the [event ordering example](event-ordering.md#usage)) can
-read the key with
+processed keys in a table with a unique constraint. An `EnvelopeAware` handler (see
+[Receiving the envelope](usage.md#receiving-the-envelope)) can read the key with
 `$this->getEnvelope()->last(IdempotencyStamp::class)?->getKey()`.

@@ -12,6 +12,7 @@ use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Exception\MessageSentToTransportException;
 use SomeWork\CqrsBundle\Exception\MultipleHandlersException;
 use SomeWork\CqrsBundle\Exception\NoHandlerException;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use SomeWork\CqrsBundle\Support\StampsDecider;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Exception\DelayedMessageHandlingException;
@@ -41,8 +42,9 @@ final class CommandBus extends AbstractMessengerBus implements CommandBusInterfa
         ?DispatchModeDecider $dispatchModeDecider = null,
         ?StampsDecider $stampsDecider = null,
         ?LoggerInterface $logger = null,
+        ?OutboxWriter $outbox = null,
     ) {
-        parent::__construct($syncBus, $asyncBus, $dispatchModeDecider, $stampsDecider, $logger);
+        parent::__construct($syncBus, $asyncBus, $dispatchModeDecider, $stampsDecider, $logger, $outbox);
     }
 
     public function dispatch(Command $command, DispatchMode $mode = DispatchMode::DEFAULT, StampInterface ...$stamps): Envelope

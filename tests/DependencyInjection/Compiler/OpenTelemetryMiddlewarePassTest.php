@@ -10,6 +10,7 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OpenTelemetryMiddlewarePass;
 use SomeWork\CqrsBundle\Messenger\OpenTelemetryMiddleware;
 use SomeWork\CqrsBundle\Messenger\TraceContextCaptureMiddleware;
+use SomeWork\CqrsBundle\Outbox\OutboxWriter;
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -112,6 +113,19 @@ final class OpenTelemetryMiddlewarePassTest extends TestCase
             'somework_cqrs.messenger.middleware.open_telemetry',
             'messenger.bus.default.middleware.handle_message',
         ], array_map('strval', $argument->getValues()));
+    }
+
+    public function test_the_outbox_writer_stores_the_trace_context(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        $container->setDefinition(TracerProviderInterface::class, new Definition(TracerProviderInterface::class));
+        $container->setDefinition('messenger.bus.default', (new Definition())->setArgument(0, new IteratorArgument([])));
+        $container->setDefinition('somework_cqrs.outbox.writer', new Definition(OutboxWriter::class));
+
+        (new OpenTelemetryMiddlewarePass())->process($container);
+
+        self::assertTrue($container->getDefinition('somework_cqrs.outbox.writer')->getArgument('$captureTraceContext'));
     }
 
     public function test_does_not_duplicate_middleware_on_second_pass(): void

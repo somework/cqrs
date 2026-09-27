@@ -122,7 +122,10 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
 
         $this->dispatched[] = new RecordedDispatch($command, $mode, $stamps);
 
-        return new Envelope($command, $stamps);
+        $envelope = new Envelope($command, $stamps);
+
+        // As the real bus, which stores the message instead of dispatching it.
+        return FakeOutbox::isOutboxDispatch($command, $mode) ? $envelope->with(FakeOutbox::storedStamp($command)) : $envelope;
     }
 
     /**
