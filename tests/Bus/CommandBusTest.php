@@ -293,7 +293,7 @@ final class CommandBusTest extends TestCase
     {
         $command = new CreateTaskCommand('123', 'Test');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
 
         $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
@@ -330,7 +330,7 @@ final class CommandBusTest extends TestCase
     {
         $command = new CreateTaskCommand('123', 'Test');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
 
         $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
@@ -833,7 +833,7 @@ final class CommandBusTest extends TestCase
     {
         $command = new CreateTaskCommand('123', 'Test');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
         $bus = new CommandBus($syncBus, stampsDecider: $this->createCommandStampsDecider());
 
         try {

@@ -20,7 +20,7 @@ final class RetryPolicyResolverTest extends TestCase
 {
     public function test_returns_default_policy_when_message_not_overridden(): void
     {
-        $default = $this->createMock(RetryPolicy::class);
+        $default = self::createStub(RetryPolicy::class);
         $resolver = new RetryPolicyResolver($default, new ServiceLocator([]));
 
         $policy = $resolver->resolveFor(new CreateTaskCommand('1', 'Test'));
@@ -31,7 +31,7 @@ final class RetryPolicyResolverTest extends TestCase
     public function test_returns_overridden_policy_for_known_message(): void
     {
         $default = new NullRetryPolicy();
-        $override = $this->createMock(RetryPolicy::class);
+        $override = self::createStub(RetryPolicy::class);
 
         $resolver = new RetryPolicyResolver($default, new ServiceLocator([
             TaskCreatedEvent::class => static fn (): RetryPolicy => $override,
@@ -45,7 +45,7 @@ final class RetryPolicyResolverTest extends TestCase
     public function test_returns_overridden_policy_for_interface(): void
     {
         $default = new NullRetryPolicy();
-        $interfacePolicy = $this->createMock(RetryPolicy::class);
+        $interfacePolicy = self::createStub(RetryPolicy::class);
 
         $resolver = new RetryPolicyResolver($default, new ServiceLocator([
             RetryAwareMessage::class => static fn (): RetryPolicy => $interfacePolicy,

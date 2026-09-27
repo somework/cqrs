@@ -24,7 +24,7 @@ final class ResolverLoggingTest extends TestCase
 {
     public function test_resolver_logs_exact_match_with_logger(): void
     {
-        $override = $this->createMock(RetryPolicy::class);
+        $override = self::createStub(RetryPolicy::class);
 
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::atLeastOnce())
@@ -49,7 +49,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_logs_interface_match_with_logger(): void
     {
-        $interfacePolicy = $this->createMock(RetryPolicy::class);
+        $interfacePolicy = self::createStub(RetryPolicy::class);
 
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::atLeastOnce())
@@ -74,7 +74,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_logs_fallback_with_logger(): void
     {
-        $default = $this->createMock(RetryPolicy::class);
+        $default = self::createStub(RetryPolicy::class);
 
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::atLeastOnce())
@@ -97,7 +97,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_works_without_logger(): void
     {
-        $default = $this->createMock(RetryPolicy::class);
+        $default = self::createStub(RetryPolicy::class);
         $resolver = new RetryPolicyResolver($default, new ServiceLocator([]));
 
         $policy = $resolver->resolveFor(new CreateTaskCommand('1', 'Test'));
@@ -107,7 +107,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_exact_match_log_context_has_exact_match_type(): void
     {
-        $override = $this->createMock(RetryPolicy::class);
+        $override = self::createStub(RetryPolicy::class);
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);
@@ -133,7 +133,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_interface_match_log_context_has_interface_match_type(): void
     {
-        $interfacePolicy = $this->createMock(RetryPolicy::class);
+        $interfacePolicy = self::createStub(RetryPolicy::class);
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);
@@ -159,7 +159,7 @@ final class ResolverLoggingTest extends TestCase
 
     public function test_resolver_fallback_log_context_has_resolver_class(): void
     {
-        $default = $this->createMock(RetryPolicy::class);
+        $default = self::createStub(RetryPolicy::class);
 
         $logContexts = [];
         $logger = $this->createMock(LoggerInterface::class);

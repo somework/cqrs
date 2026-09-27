@@ -132,7 +132,7 @@ final class RateLimitResolverTest extends TestCase
 
     public function test_accepts_any_rate_limiter_factory_implementation(): void
     {
-        $factory = $this->createMock(RateLimiterFactoryInterface::class);
+        $factory = self::createStub(RateLimiterFactoryInterface::class);
         $resolver = new RateLimitResolver(new ServiceLocator([
             CreateTaskCommand::class => static fn (): RateLimiterFactoryInterface => $factory,
         ]));

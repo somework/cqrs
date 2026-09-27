@@ -17,10 +17,10 @@ final class MessageSerializerResolverTest extends TestCase
 {
     public function test_resolves_serializer_from_class_hierarchy(): void
     {
-        $serializer = $this->createMock(MessageSerializer::class);
+        $serializer = self::createStub(MessageSerializer::class);
 
-        $globalDefault = $this->createMock(MessageSerializer::class);
-        $typeDefault = $this->createMock(MessageSerializer::class);
+        $globalDefault = self::createStub(MessageSerializer::class);
+        $typeDefault = self::createStub(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
             MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
@@ -34,9 +34,9 @@ final class MessageSerializerResolverTest extends TestCase
 
     public function test_resolves_serializer_from_interface_hierarchy(): void
     {
-        $serializer = $this->createMock(MessageSerializer::class);
-        $globalDefault = $this->createMock(MessageSerializer::class);
-        $typeDefault = $this->createMock(MessageSerializer::class);
+        $serializer = self::createStub(MessageSerializer::class);
+        $globalDefault = self::createStub(MessageSerializer::class);
+        $typeDefault = self::createStub(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
             MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
@@ -50,7 +50,7 @@ final class MessageSerializerResolverTest extends TestCase
 
     public function test_uses_type_default_when_message_not_overridden(): void
     {
-        $typeDefault = $this->createMock(MessageSerializer::class);
+        $typeDefault = self::createStub(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
             MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $typeDefault,
@@ -63,7 +63,7 @@ final class MessageSerializerResolverTest extends TestCase
 
     public function test_falls_back_to_global_default_when_type_default_missing(): void
     {
-        $globalDefault = $this->createMock(MessageSerializer::class);
+        $globalDefault = self::createStub(MessageSerializer::class);
 
         $resolver = new MessageSerializerResolver(new ServiceLocator([
             MessageSerializerResolver::DEFAULT_KEY => static fn (): MessageSerializer => $globalDefault,

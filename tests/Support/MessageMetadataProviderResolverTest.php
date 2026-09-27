@@ -17,10 +17,10 @@ final class MessageMetadataProviderResolverTest extends TestCase
 {
     public function test_resolves_provider_from_class_hierarchy(): void
     {
-        $provider = $this->createMock(MessageMetadataProvider::class);
+        $provider = self::createStub(MessageMetadataProvider::class);
 
-        $globalDefault = $this->createMock(MessageMetadataProvider::class);
-        $typeDefault = $this->createMock(MessageMetadataProvider::class);
+        $globalDefault = self::createStub(MessageMetadataProvider::class);
+        $typeDefault = self::createStub(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
             MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
@@ -34,9 +34,9 @@ final class MessageMetadataProviderResolverTest extends TestCase
 
     public function test_resolves_provider_from_interface_hierarchy(): void
     {
-        $provider = $this->createMock(MessageMetadataProvider::class);
-        $globalDefault = $this->createMock(MessageMetadataProvider::class);
-        $typeDefault = $this->createMock(MessageMetadataProvider::class);
+        $provider = self::createStub(MessageMetadataProvider::class);
+        $globalDefault = self::createStub(MessageMetadataProvider::class);
+        $typeDefault = self::createStub(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
             MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
@@ -50,7 +50,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
 
     public function test_uses_type_default_when_message_not_overridden(): void
     {
-        $typeDefault = $this->createMock(MessageMetadataProvider::class);
+        $typeDefault = self::createStub(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
             MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $typeDefault,
@@ -63,7 +63,7 @@ final class MessageMetadataProviderResolverTest extends TestCase
 
     public function test_falls_back_to_global_default_when_type_default_missing(): void
     {
-        $globalDefault = $this->createMock(MessageMetadataProvider::class);
+        $globalDefault = self::createStub(MessageMetadataProvider::class);
 
         $resolver = new MessageMetadataProviderResolver(new ServiceLocator([
             MessageMetadataProviderResolver::DEFAULT_KEY => static fn (): MessageMetadataProvider => $globalDefault,

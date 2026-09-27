@@ -11,3 +11,10 @@ parameters:
             identifier: return.deprecatedInterface
             path: tests/Fixture/Kernel/*
             reportUnmatched: false
+        # PHPUnit 13.3 deprecates expectExceptionMessage() in favour of expectExceptionMessageIs() and
+        # expectExceptionMessageIsOrContains(), which PHPUnit 11.5 and 12.5 (PHP 8.2 and 8.3) do not have.
+        -
+            message: '#^Call to deprecated method expectExceptionMessage\(\) of class PHPUnit\\Framework\\TestCase#'
+            identifier: method.deprecated
+            path: tests/*
+            reportUnmatched: false

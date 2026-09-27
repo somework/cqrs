@@ -40,7 +40,7 @@ final class CausationIdMiddlewareTest extends TestCase
         $envelope = new Envelope($message, [$metadataStamp]);
 
         $capturedCurrent = null;
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware = self::createStub(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
             ->willReturnCallback(function (Envelope $envelope, StackInterface $stack) use (&$capturedCurrent): Envelope {
                 $capturedCurrent = $this->context->current();
@@ -48,7 +48,7 @@ final class CausationIdMiddlewareTest extends TestCase
                 return $envelope;
             });
 
-        $stack = $this->createMock(StackInterface::class);
+        $stack = self::createStub(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $this->middleware->handle($envelope, $stack);
@@ -65,7 +65,7 @@ final class CausationIdMiddlewareTest extends TestCase
         $envelope = new Envelope(new class implements Command {});
 
         $captured = false;
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware = self::createStub(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
             ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
                 $captured = $this->context->current();
@@ -73,7 +73,7 @@ final class CausationIdMiddlewareTest extends TestCase
                 return $envelope;
             });
 
-        $stack = $this->createMock(StackInterface::class);
+        $stack = self::createStub(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $result = $this->middleware->handle($envelope, $stack);
@@ -89,11 +89,11 @@ final class CausationIdMiddlewareTest extends TestCase
         $metadataStamp = new MessageMetadataStamp('corr-456');
         $envelope = new Envelope($message, [$metadataStamp]);
 
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware = self::createStub(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
             ->willThrowException(new \RuntimeException('Handler failed'));
 
-        $stack = $this->createMock(StackInterface::class);
+        $stack = self::createStub(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         try {
@@ -120,7 +120,7 @@ final class CausationIdMiddlewareTest extends TestCase
         $capturedInnerContext = null;
         $capturedAfterInnerPop = null;
 
-        $innerNextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $innerNextMiddleware = self::createStub(MiddlewareInterface::class);
         $innerNextMiddleware->method('handle')
             ->willReturnCallback(function (Envelope $envelope, StackInterface $stack) use (&$capturedInnerContext): Envelope {
                 $capturedInnerContext = $this->context->current();
@@ -128,12 +128,12 @@ final class CausationIdMiddlewareTest extends TestCase
                 return $envelope;
             });
 
-        $innerStack = $this->createMock(StackInterface::class);
+        $innerStack = self::createStub(StackInterface::class);
         $innerStack->method('next')->willReturn($innerNextMiddleware);
 
         $middleware = $this->middleware;
 
-        $outerNextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $outerNextMiddleware = self::createStub(MiddlewareInterface::class);
         $outerNextMiddleware->method('handle')
             ->willReturnCallback(function (Envelope $envelope, StackInterface $stack) use (
                 &$capturedOuterContext,
@@ -152,7 +152,7 @@ final class CausationIdMiddlewareTest extends TestCase
                 return $envelope;
             });
 
-        $outerStack = $this->createMock(StackInterface::class);
+        $outerStack = self::createStub(StackInterface::class);
         $outerStack->method('next')->willReturn($outerNextMiddleware);
 
         $this->middleware->handle($outerEnvelope, $outerStack);
@@ -171,11 +171,11 @@ final class CausationIdMiddlewareTest extends TestCase
 
         $returnedEnvelope = new Envelope($message, [$metadataStamp, new \Symfony\Component\Messenger\Stamp\HandledStamp('result', 'handler')]);
 
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware = self::createStub(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
             ->willReturn($returnedEnvelope);
 
-        $stack = $this->createMock(StackInterface::class);
+        $stack = self::createStub(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $result = $this->middleware->handle($envelope, $stack);
@@ -189,14 +189,14 @@ final class CausationIdMiddlewareTest extends TestCase
         $middleware = new CausationIdMiddleware($this->context, track: false);
 
         $captured = false;
-        $nextMiddleware = $this->createMock(MiddlewareInterface::class);
+        $nextMiddleware = self::createStub(MiddlewareInterface::class);
         $nextMiddleware->method('handle')
             ->willReturnCallback(function (Envelope $envelope) use (&$captured): Envelope {
                 $captured = $this->context->current();
 
                 return $envelope;
             });
-        $stack = $this->createMock(StackInterface::class);
+        $stack = self::createStub(StackInterface::class);
         $stack->method('next')->willReturn($nextMiddleware);
 
         $middleware->handle(new Envelope(new class implements Command {}, [new MessageMetadataStamp('inner')]), $stack);
