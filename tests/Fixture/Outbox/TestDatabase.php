@@ -44,14 +44,14 @@ final class TestDatabase
      */
     public static function connect(?LoggerInterface $queryLogger = null, array $middlewares = [], bool $keepTables = false): Connection
     {
-        $url = getenv(self::URL_VARIABLE);
+        $url = self::url();
         $configuration = new Configuration();
         if (null !== $queryLogger) {
             $middlewares[] = new LoggingMiddleware($queryLogger);
         }
         $configuration->setMiddlewares($middlewares);
 
-        if (!is_string($url) || '' === $url) {
+        if (null === $url) {
             return DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true], $configuration);
         }
 
@@ -63,6 +63,16 @@ final class TestDatabase
         }
 
         return $connection;
+    }
+
+    /**
+     * The URL of CQRS_TEST_DATABASE_URL, null for in-memory SQLite.
+     */
+    public static function url(): ?string
+    {
+        $url = getenv(self::URL_VARIABLE);
+
+        return is_string($url) && '' !== $url ? $url : null;
     }
 
     public static function isSqlite(Connection $connection): bool
@@ -77,8 +87,8 @@ final class TestDatabase
     {
         $schemaManager = $connection->createSchemaManager();
 
-        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
-        $table = method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType
+        // introspectTableByUnquotedName() exists since DBAL 4.4, where introspectTable() is deprecated.
+        $table = method_exists($schemaManager, 'introspectTableByUnquotedName') // @phpstan-ignore function.alreadyNarrowedType (DBAL 4.3)
             ? $schemaManager->introspectTableByUnquotedName($tableName)
             : $schemaManager->introspectTable($tableName); // @phpstan-ignore method.deprecated
 

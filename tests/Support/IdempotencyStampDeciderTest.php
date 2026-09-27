@@ -6,7 +6,6 @@ namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\DataProvider;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -33,7 +32,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame([], (new IdempotencyStampDecider())->decide(new class implements Command {}, DispatchMode::DEFAULT, []));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_adds_a_namespaced_deduplicate_stamp_and_keeps_the_other_stamps(): void
     {
         $message = new class implements Command {};
@@ -72,7 +70,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         ]], $warnings);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_uses_the_configured_ttl(): void
     {
         $result = (new IdempotencyStampDecider(60.0))->decide(new class implements Command {}, DispatchMode::DEFAULT, [new IdempotencyStamp('key')]);
@@ -80,7 +77,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame(60.0, self::deduplicateStamp($result)->getTtl());
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_keys_are_namespaced_per_message_class(): void
     {
         $decider = new IdempotencyStampDecider();
@@ -93,7 +89,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertNotSame($commandKey, $eventKey);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_a_deduplicate_stamp_from_the_caller_wins(): void
     {
         $callerStamp = new DeduplicateStamp('custom-key');
@@ -102,7 +97,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame($stamps, (new IdempotencyStampDecider())->decide(new class implements Command {}, DispatchMode::DEFAULT, $stamps));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_the_last_idempotency_stamp_defines_the_key(): void
     {
         $message = new class implements Command {};
@@ -122,7 +116,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         }
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     #[DataProvider('dispatchModes')]
     public function test_works_for_every_dispatch_mode(DispatchMode $mode): void
     {
@@ -133,7 +126,6 @@ final class IdempotencyStampDeciderTest extends TestCase
         self::assertSame($message::class.'::key', (string) self::deduplicateStamp($result)->getKey());
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_logs_the_conversion(): void
     {
         $logger = $this->createMock(LoggerInterface::class);

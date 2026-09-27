@@ -262,8 +262,7 @@ final class Configuration implements ConfigurationInterface
         $idempotency->addDefaultsIfNotSet()->info('Idempotency bridge configuration for DeduplicateStamp integration.');
         $idempotencyChildren = $idempotency->children();
         $idempotencyChildren->booleanNode('enabled')->defaultTrue()->info('Enable IdempotencyStamp to DeduplicateStamp bridge.');
-        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
-        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->info('Default lock TTL in seconds for deduplication (at least 1).');
+        $idempotencyChildren->integerNode('ttl')->defaultValue(300)->min(1)->info('Default lock TTL in seconds for deduplication (at least 1).');
         $idempotencyChildren->end();
         $idempotency->end();
 
@@ -342,8 +341,7 @@ final class Configuration implements ConfigurationInterface
             ->info('For development: run the relay right after a request, a console command or a worker message that stored messages in the outbox (with a sync:// transport, they are then handled at once). Leave it off in production and run "somework:cqrs:outbox:relay" on a schedule or with --watch.');
         $outboxChildren->booleanNode('require_transaction')->defaultTrue()
             ->info('Refuse to store a message outside a transaction on the outbox connection (OutboxWriter and DispatchMode::OUTBOX): it would not be part of the business change.');
-        // No ->min(1): Symfony 7.2 validates an env placeholder as 0 and would reject it; CqrsExtension checks literal values.
-        $outboxChildren->integerNode('max_attempts')->defaultValue(10)
+        $outboxChildren->integerNode('max_attempts')->defaultValue(10)->min(1)
             ->info('Attempts after which the relay gives up on a message that fails to decode or send (at least 1); three times as many when its transport fails. Retries wait 1 minute, doubling up to 1 hour; see "somework:cqrs:outbox:failed".');
         $signing = $outboxChildren->arrayNode('signing');
         $signing->addDefaultsIfNotSet()

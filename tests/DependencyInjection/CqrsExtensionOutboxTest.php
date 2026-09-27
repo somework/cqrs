@@ -235,7 +235,7 @@ final class CqrsExtensionOutboxTest extends TestCase
     public function test_max_attempts_below_one_is_rejected(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('"somework_cqrs.outbox.max_attempts" must be at least 1, 0 given.');
+        $this->expectExceptionMessage('The value 0 is too small for path "somework_cqrs.outbox.max_attempts". Should be greater than or equal to 1');
 
         $this->createContainer(['outbox' => ['enabled' => true, 'max_attempts' => 0]]);
     }

@@ -190,7 +190,7 @@ final class CqrsRetryStrategyTest extends TestCase
 
     public function test_logger_receives_debug_message_when_falling_back(): void
     {
-        $fallback = $this->createMock(RetryStrategyInterface::class);
+        $fallback = self::createStub(RetryStrategyInterface::class);
         $fallback->method('isRetryable')->willReturn(true);
 
         $logger = $this->createMock(LoggerInterface::class);

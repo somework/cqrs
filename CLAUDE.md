@@ -32,11 +32,14 @@ vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --
 
 # Outbox tests on a real database instead of in-memory SQLite (tables are dropped and recreated)
 CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
+
+# Async round trip and outbox relay on a real broker (skipped without the DSN; install the bridge first, e.g. symfony/redis-messenger)
+CQRS_TEST_TRANSPORT_DSN='redis://127.0.0.1:6379/cqrs_test' vendor/bin/phpunit --group transport
 ```
 
-CI runs php-cs-fixer and PHPStan once (PHP 8.4, highest dependencies) and PHPUnit across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency PHPUnit job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
+CI runs php-cs-fixer and PHPStan once (PHP 8.4, highest dependencies) and PHPUnit across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 and DoctrineBundle 3 on PHP 8.4+, Symfony 7.4 and DoctrineBundle 2 below; PHPUnit 11.5 on 8.2, 12.5 on 8.3, 13 from 8.4, failing on PHPUnit notices from 12.5), plus a lowest-dependency PHPUnit job (PHP 8.2, Symfony 7.4, DBAL 4.3, DoctrineBundle 2.13), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4; it joins the main matrix once Symfony 8.2 is released in November 2026), a weekly non-blocking job on PHP 8.6-dev (`schedule`, also on `workflow_dispatch`), a minimal install without optional packages, the `database` test group on PostgreSQL 16, MySQL 8.4 and MariaDB 11.8, the `transport` test group once per Messenger bridge (RabbitMQ, Redis, SQS on LocalStack; only these jobs start a broker), an example-app smoke test and `mkdocs build --strict`. DoctrineBundle is a dev dependency: `DoctrineBundleOutboxTest` checks the outbox bypass against its real middleware in every PHPUnit job.
 
-Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.2, next release 0.6.0); 0.5.x patches are made on the maintenance branch `0.5` and merged into `main` with a merge commit. Record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
+Supported: PHP 8.2+ (0.7 will require 8.3), Symfony `^7.4.9 || ^8.1`, doctrine/dbal `^4.3` (5 conflicts until it is supported), PHPUnit `^11.5 || ^12.5 || ^13` for `src/Testing`. Versions follow the 0.x line (latest tag v0.5.2, next release 0.6.0; `main` is `0.6.x-dev`); 0.5.x patches are made on the maintenance branch `0.5` and merged into `main` with a merge commit. Until 1.0 a minor release may break the API without a deprecation cycle. Record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
 ### Console Commands
 
@@ -110,7 +113,7 @@ All options live under `somework_cqrs` key. The tree-builder is in `Configuratio
 
 ### Test Structure
 
-Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, and kernel setups for functional tests. `tests/Functional/` tests the full container compilation and dispatch flow, including a real async round trip (`AsyncTransportRoundTripTest`) and the minimal install without bundle configuration (`MinimalInstallTest`).
+Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, and kernel setups for functional tests. `tests/Functional/` tests the full container compilation and dispatch flow, including a real async round trip (`AsyncTransportRoundTripTest`, and on real brokers `BrokerTransportTest`), the outbox with the real DoctrineBundle (`DoctrineBundleOutboxTest`) and the minimal install without bundle configuration (`MinimalInstallTest`).
 
 ### Detailed Rules
 

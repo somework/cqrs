@@ -11,8 +11,6 @@ use Symfony\Component\Messenger\Middleware\StackInterface;
 use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 
-use function class_exists;
-
 /**
  * Prepares a message dispatched with DispatchMode::OUTBOX before Messenger's own middleware sees
  * it, right after "add_default_stamps_middleware" (which adds the stamps of a message's
@@ -36,15 +34,12 @@ final class OutboxPrepareMiddleware implements MiddlewareInterface
         }
 
         $deduplicate = $store->deduplicate;
-        // DeduplicateStamp exists since symfony/messenger 7.3.
-        if (class_exists(DeduplicateStamp::class)) {
-            foreach ($envelope->all(DeduplicateStamp::class) as $stamp) {
-                $deduplicate[] = $stamp;
-            }
-            $envelope = $envelope->withoutAll(DeduplicateStamp::class);
+        foreach ($envelope->all(DeduplicateStamp::class) as $stamp) {
+            $deduplicate[] = $stamp;
         }
 
         $envelope = $envelope
+            ->withoutAll(DeduplicateStamp::class)
             ->withoutAll(DispatchAfterCurrentBusStamp::class)
             ->withoutAll(StoreInOutboxStamp::class)
             ->with(new StoreInOutboxStamp($deduplicate));

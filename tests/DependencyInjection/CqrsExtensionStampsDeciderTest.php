@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\StampsDeciderRegistrar;
@@ -21,7 +20,6 @@ use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 #[CoversClass(CqrsExtension::class)]
 #[CoversClass(StampsDeciderRegistrar::class)]
@@ -97,7 +95,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(300, $container->getParameter('somework_cqrs.idempotency.ttl'));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_registered_when_enabled(): void
     {
         $container = $this->createContainer();
@@ -123,7 +120,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         );
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_has_priority_50(): void
     {
         $container = $this->createContainer();
@@ -135,7 +131,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame(50, $tags[0]['priority']);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_ttl_from_config(): void
     {
         $container = $this->createContainer([
@@ -149,12 +144,11 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
     public function test_idempotency_ttl_below_one_second_is_rejected(): void
     {
         $this->expectException(InvalidConfigurationException::class);
-        $this->expectExceptionMessage('"somework_cqrs.idempotency.ttl" must be at least 1 second, 0 given.');
+        $this->expectExceptionMessage('The value 0 is too small for path "somework_cqrs.idempotency.ttl". Should be greater than or equal to 1');
 
         $this->createContainer(['idempotency' => ['ttl' => 0]]);
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_receives_logger(): void
     {
         $container = $this->createContainer();
@@ -246,7 +240,6 @@ final class CqrsExtensionStampsDeciderTest extends TestCase
         self::assertSame([], $container->getParameter('somework_cqrs.causation_id.buses'));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_idempotency_decider_uses_default_ttl_when_not_configured(): void
     {
         $container = $this->createContainer();

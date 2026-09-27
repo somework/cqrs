@@ -644,7 +644,7 @@ final class QueryBusTest extends TestCase
             ->willReturn($envelope);
 
         $logMessages = [];
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = self::createStub(LoggerInterface::class);
         $logger->method('debug')
             ->willReturnCallback(static function (string $message) use (&$logMessages): void {
                 $logMessages[] = $message;
@@ -679,7 +679,7 @@ final class QueryBusTest extends TestCase
             ->willReturn($envelope);
 
         $logMessages = [];
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = self::createStub(LoggerInterface::class);
         $logger->method('debug')
             ->willReturnCallback(static function (string $message) use (&$logMessages): void {
                 $logMessages[] = $message;

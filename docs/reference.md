@@ -584,7 +584,6 @@ passed by the caller is kept.
 Deduplication only happens when all of the following hold. Missing pieces do
 not fail the build; the reason is written to the container compilation log.
 
-* symfony/messenger 7.3 or newer (it provides `DeduplicateStamp`);
 * symfony/lock is installed;
 * the lock component is enabled (`framework.lock`), which registers Messenger's
   deduplicate middleware, with a lock store shared by all processes that keeps

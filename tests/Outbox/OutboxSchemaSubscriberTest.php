@@ -156,9 +156,9 @@ final class OutboxSchemaSubscriberTest extends TestCase
 
     private function createEventArgs(Schema $schema, ?string $database = null, ?AbstractPlatform $platform = null): GenerateSchemaEventArgs
     {
-        $entityManager = $this->createMock(EntityManagerInterface::class);
+        $entityManager = self::createStub(EntityManagerInterface::class);
         if (null !== $database) {
-            $connection = $this->createMock(Connection::class);
+            $connection = self::createStub(Connection::class);
             $connection->method('getDatabasePlatform')->willReturn($platform ?? new MySQLPlatform());
             $connection->method('getDatabase')->willReturn($database);
             $entityManager->method('getConnection')->willReturn($connection);

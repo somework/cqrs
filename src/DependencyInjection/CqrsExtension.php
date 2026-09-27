@@ -152,14 +152,6 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
-        if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
-            throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
-        }
-
-        if (is_int($config['outbox']['max_attempts']) && $config['outbox']['max_attempts'] < 1) {
-            throw new InvalidConfigurationException(sprintf('"somework_cqrs.outbox.max_attempts" must be at least 1, %d given.', $config['outbox']['max_attempts']));
-        }
-
         // Registered without symfony/lock too, so the first IdempotencyStamp logs that it is ignored.
         $idempotencyConfig = $config['idempotency'];
         $idempotencyConfig['enabled'] = true === $idempotencyConfig['enabled'];

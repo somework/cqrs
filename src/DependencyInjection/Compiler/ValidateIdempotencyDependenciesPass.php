@@ -10,7 +10,6 @@ use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\Lock\Key;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 use function class_exists;
 use function is_string;
@@ -55,8 +54,8 @@ final class ValidateIdempotencyDependenciesPass implements CompilerPassInterface
             return;
         }
 
-        if (!($this->classExists)(DeduplicateStamp::class) || !($this->classExists)(Key::class)) {
-            $this->report($container, 'Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.');
+        if (!($this->classExists)(Key::class)) {
+            $this->report($container, 'Idempotency is enabled but needs symfony/lock; IdempotencyStamp is ignored until it is installed.');
 
             return;
         }

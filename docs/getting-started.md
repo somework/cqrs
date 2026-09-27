@@ -4,7 +4,7 @@ This tutorial walks you through installing the bundle and progressively using it
 
 ## Installation
 
-The bundle requires PHP 8.2 or newer and Symfony 7.2 or newer, including 8.x.
+The bundle requires PHP 8.2 or newer and Symfony 7.4 (7.4.9 or newer) or 8.1 and newer.
 
 ```bash
 composer require somework/cqrs-bundle

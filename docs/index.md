@@ -26,10 +26,10 @@ The bundle auto-discovers handlers via PHP attributes, provides a composable sta
 
 ## Requirements
 
-- PHP 8.2 or newer
-- Symfony 7.2 or newer, including 8.x
+- PHP 8.2 or newer (0.7 will require PHP 8.3)
+- Symfony 7.4 (7.4.9 or newer) or 8.1 and newer
 
-Some features need optional packages: `symfony/messenger` 7.3+ and `symfony/lock` for idempotency, `symfony/rate-limiter` for rate limiting, `doctrine/dbal` 4 and `doctrine/doctrine-bundle` for the transactional outbox, and `open-telemetry/api` 1.8+ for tracing.
+Some features need optional packages: `symfony/lock` for idempotency, `symfony/rate-limiter` for rate limiting, `doctrine/dbal` 4.3+ and `doctrine/doctrine-bundle` for the transactional outbox, `open-telemetry/api` 1.8+ for tracing, and PHPUnit 11.5, 12.5 or 13 for the testing helpers.
 
 ## License
 

@@ -9,9 +9,7 @@ use PHPUnit\Framework\Attributes\DataProvider;
 use SomeWork\CqrsBundle\Tests\Fixture\Kernel\MiddlewareOrderTestKernel;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\CallerContextMiddleware;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
-use Symfony\Component\Messenger\Middleware\AddDefaultStampsMiddleware;
 use Symfony\Component\Messenger\Middleware\DecodeFailedMessageMiddleware;
-use Symfony\Component\Messenger\Middleware\DeduplicateMiddleware;
 use Symfony\Component\Stopwatch\Stopwatch;
 
 use function array_keys;
@@ -64,16 +62,13 @@ final class BusMiddlewareOrderTest extends KernelTestCase
      */
     private static function expectedMiddleware(string $busId, array $applicationMiddleware, bool $isEventBus): array
     {
-        // Messenger 7.4: without add_default_stamps_middleware, the outbox preparation goes first.
-        $addDefaultStamps = class_exists(AddDefaultStampsMiddleware::class);
-
         return [
-            ...($addDefaultStamps ? [] : ['somework_cqrs.messenger.middleware.outbox_prepare']),
             // Before dispatch_after_current_bus: a deferred message keeps the trace it was dispatched in.
             'somework_cqrs.messenger.middleware.trace_context_capture',
             // Debug mode.
             ...(class_exists(Stopwatch::class) ? [$busId.'.middleware.traceable'] : []),
-            ...($addDefaultStamps ? ['messenger.middleware.add_default_stamps_middleware', 'somework_cqrs.messenger.middleware.outbox_prepare'] : []),
+            'messenger.middleware.add_default_stamps_middleware',
+            'somework_cqrs.messenger.middleware.outbox_prepare',
             $busId.'.middleware.add_bus_name_stamp_middleware',
             'messenger.middleware.reject_redelivered_message_middleware',
             'messenger.middleware.dispatch_after_current_bus',
@@ -83,8 +78,8 @@ final class BusMiddlewareOrderTest extends KernelTestCase
             'somework_cqrs.messenger.middleware.causation_id',
             ...($isEventBus ? ['somework_cqrs.messenger.middleware.allow_no_handler'] : []),
             'messenger.middleware.failed_message_processing_middleware',
-            // Messenger 7.3.
-            ...(class_exists(DeduplicateMiddleware::class) ? ['messenger.middleware.deduplicate_middleware', 'somework_cqrs.messenger.middleware.deduplication_lock_release'] : []),
+            'messenger.middleware.deduplicate_middleware',
+            'somework_cqrs.messenger.middleware.deduplication_lock_release',
             ...$applicationMiddleware,
             'somework_cqrs.messenger.middleware.outbox_store',
             $busId.'.middleware.send_message',

@@ -28,7 +28,6 @@ use Symfony\Component\Messenger\Stamp\TransportNamesStamp;
 use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_values;
-use function class_exists;
 use function in_array;
 use function is_iterable;
 use function is_object;
@@ -187,9 +186,6 @@ final class OutboxWriter implements OutboxWriterInterface
      */
     private static function deduplicateStamp(Envelope $envelope): ?DeduplicateStamp
     {
-        if (!class_exists(DeduplicateStamp::class)) {
-            return null;
-        }
         $stamp = $envelope->last(DeduplicateStamp::class);
         if ($stamp instanceof DeduplicateStamp) {
             return $stamp;

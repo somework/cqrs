@@ -11,6 +11,7 @@ use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\MergeExtensionConfigurationPass;
+use Symfony\Component\DependencyInjection\Compiler\RegisterEnvVarProcessorsPass;
 use Symfony\Component\DependencyInjection\Compiler\ValidateEnvPlaceholdersPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
@@ -58,10 +59,26 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
         $container = $this->container(['idempotency' => ['ttl' => '%env(int:CQRS_IDEMPOTENCY_TTL)%']]);
 
         (new MergeExtensionConfigurationPass())->process($container);
+        // Symfony re-processes the configuration with dummy values (0 for an integer): "min: 1" skips them.
+        (new RegisterEnvVarProcessorsPass())->process($container);
+        (new ValidateEnvPlaceholdersPass())->process($container);
 
         $ttl = $container->getParameter('somework_cqrs.idempotency.ttl');
         self::assertIsString($ttl);
         self::assertSame('%env(int:CQRS_IDEMPOTENCY_TTL)%', $container->resolveEnvPlaceholders($ttl, '%%env(%s)%%'));
+    }
+
+    public function test_outbox_max_attempts_accepts_an_environment_variable(): void
+    {
+        $container = $this->container(['outbox' => ['enabled' => true, 'max_attempts' => '%env(int:CQRS_OUTBOX_MAX_ATTEMPTS)%']]);
+
+        (new MergeExtensionConfigurationPass())->process($container);
+        (new RegisterEnvVarProcessorsPass())->process($container);
+        (new ValidateEnvPlaceholdersPass())->process($container);
+
+        $maxAttempts = $container->getDefinition('somework_cqrs.outbox.relay_command')->getArgument('$maxAttempts');
+        self::assertIsString($maxAttempts);
+        self::assertSame('%env(int:CQRS_OUTBOX_MAX_ATTEMPTS)%', $container->resolveEnvPlaceholders($maxAttempts, '%%env(%s)%%'));
     }
 
     public function test_the_signing_secrets_accept_environment_variables(): void

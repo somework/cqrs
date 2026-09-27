@@ -195,7 +195,6 @@ keep failing after their retries; the custom health check in
 `IdempotencyStamp` deduplication relies on Messenger's deduplicate middleware.
 It only works when:
 
-* symfony/messenger is 7.3 or newer;
 * symfony/lock is installed;
 * the lock component is enabled (`framework.lock`), with a store that all
   application and worker processes share and that keeps locks until their TTL

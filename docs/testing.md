@@ -22,8 +22,8 @@ install it:
 composer require --dev phpunit/phpunit
 ```
 
-The trait uses the `#[Before]` attribute, which needs PHPUnit 10 or newer. The bundle's own
-test suite runs on PHPUnit 11.5. The fake buses have no PHPUnit dependency.
+The helpers support PHPUnit 11.5, 12.5 and 13: the bundle's own test suite runs on each of them
+(11.5 on PHP 8.2, 12.5 on PHP 8.3, 13 from PHP 8.4). The fake buses have no PHPUnit dependency.
 
 ## Fake buses
 

@@ -946,8 +946,8 @@ final class DbalOutboxSchema
             }
         }
 
-        // introspectTableByUnquotedName() exists since DBAL 4.3, where introspectTable() is deprecated.
-        if (method_exists($schemaManager, 'introspectTableByUnquotedName')) { // @phpstan-ignore function.alreadyNarrowedType
+        // introspectTableByUnquotedName() exists since DBAL 4.4, where introspectTable() is deprecated.
+        if (method_exists($schemaManager, 'introspectTableByUnquotedName')) { // @phpstan-ignore function.alreadyNarrowedType (DBAL 4.3)
             return $schemaManager->introspectTableByUnquotedName($table, $schema);
         }
 
@@ -955,7 +955,7 @@ final class DbalOutboxSchema
         try {
             return $schemaManager->introspectTable($name); // @phpstan-ignore method.deprecated
         } catch (TableDoesNotExist $exception) {
-            // Before DBAL 4.3 the name is not folded like the database folds unquoted names
+            // DBAL 4.3 does not fold the name like the database folds unquoted names
             // (PostgreSQL stores "OutboxMessages" as "outboxmessages").
             if (strtolower($name) === $name) {
                 throw $exception;
@@ -1021,12 +1021,8 @@ final class DbalOutboxSchema
      */
     private static function compareTables(AbstractSchemaManager $schemaManager, Table $from, Table $to): TableDiff
     {
-        // The changes only add or drop indexes; DBAL 4.3+ deprecates reporting modified ones.
-        if (method_exists(ComparatorConfig::class, 'withReportModifiedIndexes')) { // @phpstan-ignore function.alreadyNarrowedType (DBAL < 4.3)
-            return $schemaManager->createComparator((new ComparatorConfig())->withReportModifiedIndexes(false))->compareTables($from, $to);
-        }
-
-        return $schemaManager->createComparator()->compareTables($from, $to);
+        // The changes only add or drop indexes; DBAL deprecates reporting modified ones.
+        return $schemaManager->createComparator((new ComparatorConfig())->withReportModifiedIndexes(false))->compareTables($from, $to);
     }
 
     /**

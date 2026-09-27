@@ -18,7 +18,6 @@ use Symfony\Component\Messenger\Stamp\StampInterface;
 use function array_filter;
 use function array_map;
 use function array_values;
-use function class_exists;
 use function count;
 
 /**
@@ -65,12 +64,9 @@ final class SynchronousResult
             throw new MessageSentToTransportException($messageClass, $busName, array_map(static fn (SentStamp $stamp): string => $stamp->getSenderAlias() ?? $stamp->getSenderClass(), $sentStamps));
         }
 
-        if (class_exists(DeduplicateStamp::class)) {
-            $deduplicateStamp = $envelope->last(DeduplicateStamp::class);
-
-            if ($deduplicateStamp instanceof DeduplicateStamp) {
-                throw new DuplicateMessageException($messageClass, $busName, (string) $deduplicateStamp->getKey());
-            }
+        $deduplicateStamp = $envelope->last(DeduplicateStamp::class);
+        if ($deduplicateStamp instanceof DeduplicateStamp) {
+            throw new DuplicateMessageException($messageClass, $busName, (string) $deduplicateStamp->getKey());
         }
 
         throw new NoHandlerException($messageClass, $busName);

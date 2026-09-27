@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
@@ -161,7 +160,7 @@ final class MessageTransportStampDeciderTest extends TestCase
     public function test_returns_stamps_unchanged_for_non_message_object(): void
     {
         $nonMessage = new stdClass();
-        $existingStamp = $this->createMock(StampInterface::class);
+        $existingStamp = self::createStub(StampInterface::class);
 
         $decider = $this->createDecider(
             command: $this->resolverThatShouldNotBeCalled(),
@@ -224,7 +223,7 @@ final class MessageTransportStampDeciderTest extends TestCase
     {
         // Messenger would handle it in the calling process; also for a dispatch deferred until a handler finished.
         $warnings = [];
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = self::createStub(LoggerInterface::class);
         $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
             $warnings[] = [$message, $context];
         });
@@ -241,7 +240,7 @@ final class MessageTransportStampDeciderTest extends TestCase
     public function test_warns_that_the_relay_handles_an_outbox_dispatch_without_a_transport(): void
     {
         $warnings = [];
-        $logger = $this->createMock(LoggerInterface::class);
+        $logger = self::createStub(LoggerInterface::class);
         $logger->method('warning')->willReturnCallback(static function (string $message, array $context) use (&$warnings): void {
             $warnings[] = [$message, $context];
         });
@@ -265,7 +264,6 @@ final class MessageTransportStampDeciderTest extends TestCase
         self::assertSame([], $decider->decide(new CreateTaskCommand('1', 'a'), DispatchMode::ASYNC, []));
     }
 
-    #[RequiresMethod(AsMessage::class, '__construct')]
     public function test_a_message_routed_by_as_message_keeps_its_routing(): void
     {
         // A bare #[Asynchronous] defers to Messenger's routing, #[AsMessage(transport: ...)] included.

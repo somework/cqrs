@@ -782,10 +782,10 @@ final class OutboxRelay
             return;
         }
 
-        // Messenger's deduplication (symfony/messenger 7.3+) dropped a retry. The lock is most likely
-        // held by an earlier attempt of this message that did not send it (the process died, or the
-        // send failed without releasing the lock): marking it published would lose it. Retry it
-        // after the backoff, by when the lock (300 seconds by default) has usually expired.
+        // Messenger's deduplication dropped a retry. The lock is most likely held by an earlier
+        // attempt of this message that did not send it (the process died, or the send failed
+        // without releasing the lock): marking it published would lose it. Retry it after the
+        // backoff, by when the lock (300 seconds by default) has usually expired.
         $deduplicate = $envelope->last(DeduplicateStamp::class);
         if ($deduplicate instanceof DeduplicateStamp && $message->attempts > 0 && null === $envelope->last(HandledStamp::class)) {
             throw new RuntimeException(sprintf('Messenger\'s deduplication dropped this retry: the lock "%s" is still held, probably by an earlier attempt of this message. It is retried when the lock has expired.', (string) $deduplicate->getKey()));

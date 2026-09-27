@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Messenger;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Exception\CqrsException;
 use SomeWork\CqrsBundle\Messenger\DeduplicationLockReleaseMiddleware;
@@ -54,7 +53,6 @@ use const E_WARNING;
 use const PHP_BINARY;
 
 #[CoversClass(DeduplicationLockReleaseMiddleware::class)]
-#[RequiresMethod(DeduplicateStamp::class, '__construct')]
 final class DeduplicationLockReleaseMiddlewareTest extends TestCase
 {
     public function test_failed_synchronous_handling_releases_the_key_so_a_retry_runs(): void

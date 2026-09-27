@@ -97,15 +97,16 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 
 ### Requirements
 
-* PHP 8.2 or newer.
-* Symfony 7.2 or newer, including 8.x (FrameworkBundle and Messenger).
+* PHP 8.2 or newer (0.7 will require PHP 8.3).
+* Symfony 7.4 (7.4.9 or newer) or 8.1 and newer (FrameworkBundle and Messenger).
 
 Optional packages enable additional features:
 
-* `symfony/messenger` 7.3+ and `symfony/lock` -- idempotency (`IdempotencyStamp`).
+* `symfony/lock` -- idempotency (`IdempotencyStamp`).
 * `symfony/rate-limiter` -- rate limiting.
-* `doctrine/dbal` 4 and `doctrine/doctrine-bundle` -- transactional outbox.
+* `doctrine/dbal` 4.3+ and `doctrine/doctrine-bundle` -- transactional outbox.
 * `open-telemetry/api` 1.8+ -- tracing.
+* `phpunit/phpunit` 11.5, 12.5 or 13 -- the testing helpers (`CqrsTestCase`, `CqrsAssertionsTrait`).
 
 ### Install the package
 

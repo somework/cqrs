@@ -290,7 +290,7 @@ final class EventBusTest extends TestCase
     {
         $event = new TaskCreatedEvent('123');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
 
         $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
 
@@ -346,7 +346,7 @@ final class EventBusTest extends TestCase
     {
         $event = new TaskCreatedEvent('123');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
 
         $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
 
@@ -695,7 +695,7 @@ final class EventBusTest extends TestCase
     {
         $event = new TaskCreatedEvent('123');
 
-        $syncBus = $this->createMock(MessageBusInterface::class);
+        $syncBus = self::createStub(MessageBusInterface::class);
         $bus = new EventBus($syncBus, stampsDecider: $this->createEventStampsDecider());
 
         try {

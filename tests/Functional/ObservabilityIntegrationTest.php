@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
 use PHPUnit\Framework\Attributes\CoversNothing;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
 use SomeWork\CqrsBundle\Exception\DuplicateMessageException;
 use SomeWork\CqrsBundle\Stamp\IdempotencyStamp;
@@ -14,7 +13,6 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\ChargePaymentCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\OpenTelemetry\RecordingTracerProvider;
 use SomeWork\CqrsBundle\Tests\Fixture\Service\TaskRecorder;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
-use Symfony\Component\Messenger\Stamp\DeduplicateStamp;
 
 #[CoversNothing]
 final class ObservabilityIntegrationTest extends KernelTestCase
@@ -40,7 +38,6 @@ final class ObservabilityIntegrationTest extends KernelTestCase
         self::assertSame(['cqrs.dispatch ChargePaymentCommand'], array_map(static fn ($builder): string => $builder->name, $tracerProvider->builders));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_duplicate_synchronous_dispatch_is_reported(): void
     {
         self::assertSame('charged:p-2', $this->commandBus()->dispatchSync(new ChargePaymentCommand('p-2'), new IdempotencyStamp('p-2')));
@@ -50,7 +47,6 @@ final class ObservabilityIntegrationTest extends KernelTestCase
         $this->commandBus()->dispatchSync(new ChargePaymentCommand('p-2'), new IdempotencyStamp('p-2'));
     }
 
-    #[RequiresMethod(DeduplicateStamp::class, '__construct')]
     public function test_failed_synchronous_dispatch_can_be_retried_with_the_same_idempotency_key(): void
     {
         try {

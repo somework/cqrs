@@ -11,6 +11,9 @@ on:
   pull_request:
     branches:
       - '**'
+  schedule:
+    # Weekly: the PHP nightly job, and every other job against the dependencies released since the last push.
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 # A new push to a pull request cancels the run of the previous one; runs on main always finish.
@@ -101,12 +104,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Highest: Symfony 7.4 and DoctrineBundle 2 below PHP 8.4, Symfony 8 and DoctrineBundle 3 from 8.4;
+        # PHPUnit 11.5 on 8.2, 12.5 on 8.3 and 13 from 8.4.
         php: ['8.2', '8.3', '8.4', '8.5']
         dependency-versions: ['highest']
         include:
           # Adds coverage to the existing 8.4/highest combination (no extra job).
           - php: '8.4'
             coverage: true
+          # Symfony 7.4, doctrine/dbal 4.3, DoctrineBundle 2.13 and PHPUnit 11.5.
           - php: '8.2'
             dependency-versions: 'lowest'
     steps:
@@ -135,10 +141,17 @@ jobs:
         run: mkdir -p build/logs
 
       - name: PHPUnit
-        run: >
-          vendor/bin/phpunit
-          --log-junit build/logs/phpunit-${{ matrix.php }}-${{ matrix.dependency-versions }}.xml
-          ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
+        # PHPUnit 12.5+ reports a mock object without expectations as a PHPUnit notice (use a stub):
+        # it fails the run where the option exists.
+        shell: bash
+        run: |
+          options=()
+          if vendor/bin/phpunit --help | grep -q -- '--fail-on-phpunit-notice'; then
+            options+=(--fail-on-phpunit-notice)
+          fi
+          vendor/bin/phpunit "${options[@]}" \
+            --log-junit build/logs/phpunit-${{ matrix.php }}-${{ matrix.dependency-versions }}.xml \
+            ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
 
       - name: Upload coverage to Codecov
         if: matrix.coverage
@@ -159,7 +172,8 @@ jobs:
     name: PHP 8.4 Tests (Symfony 8.2.x-dev, allowed to fail)
     runs-on: ubuntu-latest
     # The development branch of Symfony can break at any commit: the job warns early without
-    # blocking pull requests.
+    # blocking pull requests. Once Symfony 8.2 is released (November 2026), "highest" installs it:
+    # remove this job, or point it at the next development branch.
     continue-on-error: true
     steps:
       - name: Checkout
@@ -185,6 +199,33 @@ jobs:
           with=$(jq -r '[.packages[], ."packages-dev"[]] | .[].name | select(startswith("symfony/")) | select(test("polyfill|contracts") | not) | "--with=\(.):8.2.x-dev"' composer.lock)
           composer update --prefer-dist --no-progress $with
           composer show 'symfony/*'
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --fail-on-phpunit-notice
+
+  php-nightly:
+    name: PHP 8.6-dev Tests (scheduled, allowed to fail)
+    runs-on: ubuntu-latest
+    # The development version of PHP: weekly (and on demand), without blocking anything.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.6'
+          coverage: none
+          extensions: mbstring
+          tools: composer
+
+      - name: Install dependencies
+        # Dependencies may not declare the development version of PHP yet.
+        run: composer update --prefer-dist --no-progress --ignore-platform-req=php+
 
       - name: PHPUnit
         run: vendor/bin/phpunit
@@ -251,14 +292,14 @@ jobs:
 
       - name: Install dependencies without optional packages
         run: |
-          composer remove --dev --no-update doctrine/dbal doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
+          composer remove --dev --no-update doctrine/dbal doctrine/doctrine-bundle doctrine/orm open-telemetry/api symfony/doctrine-bridge symfony/lock symfony/rate-limiter
           composer update --prefer-dist --no-progress
 
       - name: PHPUnit (kernels that must work without optional packages)
         run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
 
   databases:
-    name: Outbox on PostgreSQL and MySQL (${{ matrix.dependency-versions }})
+    name: Outbox on PostgreSQL, MySQL and MariaDB (${{ matrix.dependency-versions }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -298,6 +339,21 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      mariadb:
+        image: mariadb:11.8
+        env:
+          TZ: Asia/Kolkata
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: cqrs_test
+          MARIADB_USER: cqrs
+          MARIADB_PASSWORD: cqrs
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -320,7 +376,8 @@ jobs:
             composer install --prefer-dist --no-progress
           fi
 
-      # The outbox storage, relay and command tests, which use in-memory SQLite elsewhere.
+      # The outbox storage, relay and command tests (and the kernel with DoctrineBundle), which use
+      # in-memory SQLite elsewhere.
       - name: PHPUnit on PostgreSQL 16
         run: vendor/bin/phpunit --group database
         env:
@@ -334,6 +391,86 @@ jobs:
         run: vendor/bin/phpunit --group database
         env:
           CQRS_TEST_DATABASE_URL: 'pdo-mysql://cqrs:cqrs@127.0.0.1:3306/cqrs_test?serverVersion=8.4.0&charset=utf8mb4'
+
+      - name: Second MariaDB database
+        run: mysql -h 127.0.0.1 -P 3307 -uroot -proot -e "CREATE DATABASE cqrs_test_other; GRANT ALL ON cqrs_test_other.* TO 'cqrs'@'%'; GRANT PROCESS ON *.* TO 'cqrs'@'%'"
+
+      - name: PHPUnit on MariaDB 11.8
+        run: vendor/bin/phpunit --group database
+        env:
+          CQRS_TEST_DATABASE_URL: 'pdo-mysql://cqrs:cqrs@127.0.0.1:3307/cqrs_test?serverVersion=11.8.0-MariaDB&charset=utf8mb4'
+
+  transports:
+    name: Transport ${{ matrix.transport }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - transport: AMQP (RabbitMQ)
+            bridge: symfony/amqp-messenger
+            extensions: mbstring, amqp
+            image: rabbitmq:4.2-alpine
+            port: 5672
+            health: rabbitmq-diagnostics -q ping
+            dsn: amqp://cqrs:cqrs@127.0.0.1:5672/%2f/cqrs_test
+          - transport: Redis
+            bridge: symfony/redis-messenger
+            extensions: mbstring, redis
+            image: redis:8-alpine
+            port: 6379
+            health: redis-cli ping
+            dsn: redis://127.0.0.1:6379/cqrs_test
+          # The LocalStack images released from 2026 need an account (LOCALSTACK_AUTH_TOKEN).
+          - transport: Amazon SQS (LocalStack)
+            bridge: symfony/amazon-sqs-messenger
+            extensions: mbstring
+            image: localstack/localstack:4.14.0
+            port: 4566
+            health: curl -sf http://localhost:4566/_localstack/health
+            dsn: sqs://127.0.0.1:4566/cqrs_test?sslmode=disable&region=us-east-1&access_key=test&secret_key=test
+    # Only this job starts a broker, one per transport.
+    services:
+      broker:
+        image: ${{ matrix.image }}
+        env:
+          # RabbitMQ only lets "guest" connect from the container itself.
+          RABBITMQ_DEFAULT_USER: cqrs
+          RABBITMQ_DEFAULT_PASS: cqrs
+          # LocalStack: SQS only, and queue URLs on localhost:4566.
+          SERVICES: sqs
+          SQS_ENDPOINT_STRATEGY: path
+        ports:
+          - ${{ matrix.port }}:${{ matrix.port }}
+        options: >-
+          --health-cmd "${{ matrix.health }}"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: ${{ matrix.extensions }}
+          tools: composer
+
+      - name: Install dependencies with the Messenger bridge
+        run: |
+          composer require --dev --no-update '${{ matrix.bridge }}:^7.4 || ^8.1'
+          composer update --prefer-dist --no-progress
+
+      # The async round trip through the CQRS buses and the outbox relay sending to the broker.
+      - name: PHPUnit
+        run: vendor/bin/phpunit --group transport --fail-on-skipped
+        env:
+          CQRS_TEST_TRANSPORT_DSN: ${{ matrix.dsn }}
 
   example-app:
     name: Example application

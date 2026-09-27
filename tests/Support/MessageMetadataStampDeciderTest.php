@@ -112,7 +112,7 @@ final class MessageMetadataStampDeciderTest extends TestCase
         $context = new CausationIdContext();
         $context->push(new MessageMetadataStamp('flow'));
         $own = new MessageMetadataStamp('own-flow', [], 'own-parent');
-        $provider = $this->createMock(MessageMetadataProvider::class);
+        $provider = self::createStub(MessageMetadataProvider::class);
         $provider->method('getStamp')->willReturn($own);
         $decider = new MessageMetadataStampDecider(MessageMetadataProviderResolver::withoutOverrides($provider), Command::class, $context);
 

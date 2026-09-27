@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Tests\Support;
 
 use PHPUnit\Framework\Attributes\CoversClass;
-use PHPUnit\Framework\Attributes\RequiresMethod;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\AbstractMessageTypeResolver;
 use SomeWork\CqrsBundle\Support\RateLimitResolver;
@@ -131,10 +130,9 @@ final class RateLimitResolverTest extends TestCase
         );
     }
 
-    #[RequiresMethod(RateLimiterFactoryInterface::class, 'create')]
     public function test_accepts_any_rate_limiter_factory_implementation(): void
     {
-        $factory = $this->createMock(RateLimiterFactoryInterface::class);
+        $factory = self::createStub(RateLimiterFactoryInterface::class);
         $resolver = new RateLimitResolver(new ServiceLocator([
             CreateTaskCommand::class => static fn (): RateLimiterFactoryInterface => $factory,
         ]));
