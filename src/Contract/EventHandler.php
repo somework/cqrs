@@ -14,8 +14,8 @@ namespace SomeWork\CqrsBundle\Contract;
  *
  * Handlers SHOULD be stateless services and MUST NOT mutate the event.
  *
- * The templates document the handled message (and result) for readers and tools; PHPStan
- * cannot check them against __invoke(), which the interface does not declare.
+ * The template documents the handled event for readers and tools; PHPStan cannot check it
+ * against __invoke(), which the interface does not declare.
  *
  * @template TEvent of Event = Event
  *

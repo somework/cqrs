@@ -6,7 +6,7 @@ Messages (commands, queries, events) are immutable DTOs — data carriers with n
 
 - `final class` with constructor property promotion
 - All properties `public readonly` (primitives: string, int, float, bool, array)
-- No methods beyond the constructor
+- No methods beyond the constructor, except the getters an interface of the bundle requires (e.g. `SequenceAware::getAggregateType()`, `getAggregateId()`, `getSequenceNumber()`), which only return properties
 - Implements the appropriate marker interface (`Command`, `Query`, or `Event`)
 - Carries `/** @psalm-immutable */`, and queries `@implements Query<ResultType>` (`Query<mixed>` when untyped), as `somework:cqrs:generate` writes
 

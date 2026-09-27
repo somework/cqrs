@@ -361,7 +361,7 @@ correlation id and names the handled message as its cause.
 - The async bus is checked before the stamp pipeline runs, so a dispatch failing with
   `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
 - `DeferredDispatchFailedException` (new, `@api`) replaces Messenger's `DelayedMessageHandlingException` when the
-  handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous events)
+  handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous commands and events)
   failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
   Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
 

@@ -8,6 +8,10 @@ use SomeWork\CqrsBundle\Contract\Query;
 
 /**
  * Query to retrieve a single task by its identifier.
+ *
+ * @psalm-immutable
+ *
+ * @implements Query<array{id: string, title: string, completed: bool}|null>
  */
 final class FindTaskById implements Query
 {

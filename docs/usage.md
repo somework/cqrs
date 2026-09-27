@@ -62,9 +62,10 @@ argument:
   configuration.
 * With `bus: 'my.bus'`, the handler is registered on that Messenger bus only. The
   facades dispatch on the buses configured under `buses`: a handler pinned to another
-  bus is not found by them (a command fails with `NoHandlerException`, an event is
-  ignored), and a handler pinned to the sync bus is not found by a worker consuming
-  the async bus.
+  bus is not found by them (a command fails with `NoHandlerException` from
+  `dispatchSync()` and Messenger's `NoHandlerForMessageException` from `dispatch()`,
+  an event is ignored), and a handler pinned to the sync bus is not found by a worker
+  consuming the async bus.
 
 `#[AsEventHandler]` also accepts `priority` (handlers of the same event with a
 higher priority run first) and `fromTransport`: a worker then only runs the
@@ -334,9 +335,11 @@ for the list of options.
 Handlers that implement `SomeWork\CqrsBundle\Contract\EnvelopeAware` (for
 example by using the bundled `EnvelopeAwareTrait`) receive the current
 Messenger `Envelope` before execution. The bundle decorates the handlers locator
-of each configured CQRS bus so that `setEnvelope()` is called for both
+of every Messenger bus that has an `EnvelopeAware` handler, CQRS bus or not (a
+handler attribute may name any bus), so that `setEnvelope()` is called for both
 synchronous and asynchronous handling, allowing you to access stamps and
-metadata via `$this->getEnvelope()`.
+metadata via `$this->getEnvelope()`. Buses without such a handler are not
+decorated.
 
 ## Choosing synchronous or asynchronous dispatch
 
@@ -372,7 +375,10 @@ somework_cqrs:
 Map keys must be existing classes or interfaces; a typo makes the container
 compilation fail. Asynchronous dispatch modes require the matching async bus
 (`buses.command_async` or `buses.event_async`); without it the configuration is
-rejected at compile time.
+rejected at compile time. The same holds for `#[Asynchronous]` on a message that
+has a handler in the application: the bundle knows messages through their
+handlers. An `#[Asynchronous]` event without any handler is not checked, and its
+dispatch throws `AsyncBusNotConfiguredException` at runtime.
 
 At runtime you can still make an explicit choice:
 
@@ -425,7 +431,8 @@ With the override above `ShipOrder` commands are sent to the async bus
 immediately, even if they are dispatched from inside another handler. The
 configuration only controls the automatic stamp: a `DispatchAfterCurrentBusStamp`
 you pass yourself is always kept by `dispatch()`. `dispatchSync()` and `ask()`
-drop the stamp because they need the result immediately.
+drop a `DispatchAfterCurrentBusStamp` you pass because they need the result
+immediately (the bundle adds it only to asynchronous dispatches).
 
 ## Dispatching commands
 
@@ -499,7 +506,7 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 | `MultipleHandlersException` | More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry. |
 | `MessageSentToTransportException` | The message was sent to a transport instead of being handled, for example because of `framework.messenger.routing` or a `transports.command` / `transports.query` entry. It is queued and a worker will handle it: do not dispatch it again. |
 | `DuplicateMessageException` | Idempotency deduplication dropped the message as a duplicate. |
-| `DeferredDispatchFailedException` | The handler succeeded (`$result` holds its result), but a message it dispatched with `DispatchAfterCurrentBusStamp` (by default: an asynchronous event) failed once the handler had returned: sending it failed, or a synchronous handler of it threw. What the handler did stays done, so do not retry the whole command; the failed message is lost unless dispatched again (Messenger's `DelayedMessageHandlingException` is the previous exception). |
+| `DeferredDispatchFailedException` | The handler succeeded (`$result` holds its result), but a message it dispatched with `DispatchAfterCurrentBusStamp` (by default: an asynchronous command or event) failed once the handler had returned: sending it failed, or a synchronous handler of it threw. What the handler did stays done, so do not retry the whole command; the failed message is lost unless dispatched again (Messenger's `DelayedMessageHandlingException` is the previous exception). |
 | `RateLimitExceededException` | A rate limiter mapped to the message has no tokens left (thrown by every dispatch method). |
 
 `AsyncBusNotConfiguredException` is thrown by asynchronous dispatches
@@ -560,8 +567,9 @@ final class InvoiceApiController
 }
 ```
 
-Declare the result type on the query, and static analysis (PHPStan, Psalm)
-knows what `ask()` returns; without it the result is `mixed`:
+Declare the result type on the query, and PHPStan knows what `ask()` returns
+(the bundle's CI checks it); without it the result is `mixed`. Psalm reads the
+same `@template` annotations, but the bundle is not tested with Psalm:
 
 ```php
 <?php

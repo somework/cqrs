@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Contract\QueryHandler;
 
 /**
  * Returns all tasks from the store.
+ *
+ * @implements QueryHandler<ListTasks, list<array{id: string, title: string, completed: bool}>>
  */
 #[AsQueryHandler(query: ListTasks::class)]
 final class ListTasksHandler implements QueryHandler

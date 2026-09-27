@@ -18,7 +18,8 @@ use function is_subclass_of;
 use function sprintf;
 
 /**
- * Decorates the handlers locator of every CQRS bus so EnvelopeAware handlers receive the envelope.
+ * Decorates the handlers locator of every Messenger bus (CQRS or not) that has an EnvelopeAware
+ * handler, so these handlers receive the envelope.
  *
  * Runs after Symfony's MessengerPass (which registers "<bus>.messenger.handlers_locator") and on the
  * fully merged container, so bus aliases such as "messenger.default_bus" resolve to the real bus id.
