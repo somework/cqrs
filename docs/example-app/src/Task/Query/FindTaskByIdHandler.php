@@ -4,7 +4,8 @@ declare(strict_types=1);
 
 namespace App\Task\Query;
 
-use App\Task\InMemoryTaskStore;
+use App\Task\Task;
+use Doctrine\ORM\EntityManagerInterface;
 use SomeWork\CqrsBundle\Attribute\AsQueryHandler;
 use SomeWork\CqrsBundle\Contract\QueryHandler;
 
@@ -15,7 +16,7 @@ use SomeWork\CqrsBundle\Contract\QueryHandler;
 final class FindTaskByIdHandler implements QueryHandler
 {
     public function __construct(
-        private readonly InMemoryTaskStore $store,
+        private readonly EntityManagerInterface $entityManager,
     ) {
     }
 
@@ -24,6 +25,8 @@ final class FindTaskByIdHandler implements QueryHandler
      */
     public function __invoke(FindTaskById $query): mixed
     {
-        return $this->store->findById($query->id);
+        $task = $this->entityManager->find(Task::class, $query->id);
+
+        return null === $task ? null : ['id' => $task->id(), 'title' => $task->title(), 'completed' => $task->isCompleted()];
     }
 }

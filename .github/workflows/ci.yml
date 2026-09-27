@@ -109,6 +109,10 @@ jobs:
             coverage: true
           - php: '8.2'
             dependency-versions: 'lowest'
+          # PHP 8.2 and 8.3 get DoctrineBundle 2.x (Symfony 7), 8.4 and 8.5 DoctrineBundle 3.x: this job
+          # runs DoctrineBundle 2.x with the native lazy objects of PHP 8.4 (Symfony 7.4).
+          - php: '8.4'
+            dependency-versions: 'doctrine-bundle-2'
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -125,11 +129,15 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [ "${{ matrix.dependency-versions }}" = "lowest" ]; then
-            composer update --prefer-lowest --prefer-stable --no-progress
-          else
-            composer install --prefer-dist --no-progress
-          fi
+          case "${{ matrix.dependency-versions }}" in
+            lowest) composer update --prefer-lowest --prefer-stable --no-progress ;;
+            doctrine-bundle-2)
+              composer require --dev --no-update 'doctrine/doctrine-bundle:^2.18'
+              composer update --prefer-dist --no-progress
+              composer show doctrine/doctrine-bundle symfony/framework-bundle
+              ;;
+            *) composer install --prefer-dist --no-progress ;;
+          esac
 
       - name: Prepare log directory
         run: mkdir -p build/logs
@@ -188,6 +196,38 @@ jobs:
 
       - name: PHPUnit
         run: vendor/bin/phpunit
+
+  orm-next:
+    name: PHP 8.4 Tests (Doctrine ORM 4.0.x-dev, allowed to fail)
+    runs-on: ubuntu-latest
+    # The development branch of the ORM can break at any commit. DoctrineBundle conflicts with ORM 4,
+    # so the tests that need it are left out: the flush listener is tested on the ORM alone.
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.4'
+          coverage: none
+          extensions: mbstring
+          tools: composer
+
+      - name: Install dependencies with doctrine/orm 4.0.x-dev
+        run: |
+          composer config minimum-stability dev
+          composer config prefer-stable true
+          composer remove --dev --no-update dama/doctrine-test-bundle doctrine/doctrine-bundle
+          composer require --dev --no-update 'doctrine/orm:4.0.x-dev'
+          composer update --prefer-dist --no-progress
+          composer show doctrine/orm
+
+      - name: PHPUnit
+        run: vendor/bin/phpunit --exclude-group doctrine-bundle
 
   quality-report:
     name: Quality Report
@@ -251,7 +291,7 @@ jobs:
 
       - name: Install dependencies without optional packages
         run: |
-          composer remove --dev --no-update doctrine/dbal doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
+          composer remove --dev --no-update dama/doctrine-test-bundle doctrine/dbal doctrine/doctrine-bundle doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
           composer update --prefer-dist --no-progress
 
       - name: PHPUnit (kernels that must work without optional packages)

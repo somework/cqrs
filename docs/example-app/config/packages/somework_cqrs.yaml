@@ -6,29 +6,33 @@ somework_cqrs:
         command: command.bus
         query: query.bus
         event: event.bus
-        # Enable asynchronous dispatch (also uncomment the buses and the transport in messenger.yaml):
-        # command_async: command.async_bus
-        # event_async: event.async_bus
 
     # Mode used by dispatch() when no explicit DispatchMode is passed. Queries are always sync.
+    # Events recorded by entities always go through the outbox, whatever the mode says.
     dispatch_modes:
         command:
             default: sync
         event:
             default: sync
-            # Needs buses.event_async:
-            # map:
-            #     App\Task\Event\TaskCreated: async
 
-    # Transports used for asynchronous dispatches (Messenger transport names):
-    # transports:
-    #     command_async:
-    #         default: [async]
-    #     event_async:
-    #         default: [async]
+    # Where the relay sends the events stored in the outbox (Messenger transport names).
+    transports:
+        event_async:
+            default: [events]
+
+    # The transactional outbox, on the connection of the entity manager. "doctrine:schema:create"
+    # creates its table with the others (or run "somework:cqrs:outbox:setup").
+    outbox:
+        enabled: true
+        # For development: relay right after each command instead of running the relay yourself.
+        # relay_on_terminate: true
+
+    # The events the Task entity records are stored in the outbox when the entity manager flushes.
+    doctrine_events:
+        enabled: true
 
     # Per-message retry policies (the service is defined in services.yaml) and the transport-level
-    # retry strategy that applies them when a message consumed from "async" fails:
+    # retry strategy that applies them when a message consumed from a transport fails:
     # retry_policies:
     #     command:
     #         map:

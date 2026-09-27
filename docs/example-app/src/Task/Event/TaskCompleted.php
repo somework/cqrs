@@ -7,17 +7,14 @@ namespace App\Task\Event;
 use SomeWork\CqrsBundle\Contract\Event;
 
 /**
- * Recorded by the Task entity when it is created.
- *
- * Events represent facts that already happened. Zero to many handlers may react.
+ * Recorded by the Task entity when it is completed.
  *
  * @psalm-immutable
  */
-final class TaskCreated implements Event
+final class TaskCompleted implements Event
 {
     public function __construct(
         public readonly string $id,
-        public readonly string $title,
     ) {
     }
 }

@@ -63,7 +63,8 @@ final class DoctrineEventsTestKernel extends Kernel
             ],
         ]);
 
-        $container->parameters()->set('cqrs_test.sqlite_url', 'sqlite:///:memory:');
+        // Resolved at runtime, so the cached container follows the variable.
+        $container->parameters()->set('env('.TestDatabase::URL_VARIABLE.')', 'sqlite:///:memory:');
         $orm = [
             'mappings' => [
                 'Fixture' => [
@@ -79,7 +80,7 @@ final class DoctrineEventsTestKernel extends Kernel
             $orm['enable_native_lazy_objects'] = true;
         }
         $container->extension('doctrine', [
-            'dbal' => ['url' => '%env(default:cqrs_test.sqlite_url:'.TestDatabase::URL_VARIABLE.')%'],
+            'dbal' => ['url' => '%env('.TestDatabase::URL_VARIABLE.')%'],
             'orm' => $orm,
         ]);
 

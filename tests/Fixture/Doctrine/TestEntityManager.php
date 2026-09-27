@@ -14,6 +14,7 @@ use Doctrine\ORM\Proxy\ProxyFactory;
 use Doctrine\ORM\Tools\SchemaTool;
 
 use function dirname;
+use function method_exists;
 
 use const PHP_VERSION_ID;
 
@@ -38,13 +39,13 @@ final class TestEntityManager
     public static function configuration(): Configuration
     {
         $configuration = ORMSetup::createAttributeMetadataConfig([dirname(__DIR__).'/Entity'], true);
-        // symfony/var-exporter 8 (PHP 8.4+) has no lazy ghosts left: the ORM needs native lazy objects there.
-        if (PHP_VERSION_ID >= 80400) {
-            $configuration->enableNativeLazyObjects(true);
-        } else {
+        if (PHP_VERSION_ID < 80400) {
             $configuration->setProxyDir(dirname(__DIR__, 3).'/var/cache/doctrine-proxies');
             $configuration->setProxyNamespace('SomeWork\CqrsBundle\Tests\Proxies');
             $configuration->setAutoGenerateProxyClasses(ProxyFactory::AUTOGENERATE_EVAL);
+        } elseif (method_exists($configuration, 'enableNativeLazyObjects')) { // @phpstan-ignore function.alreadyNarrowedType
+            // symfony/var-exporter 8 (PHP 8.4+) has no lazy ghosts left; ORM 4 always uses native lazy objects.
+            $configuration->enableNativeLazyObjects(true);
         }
 
         return $configuration;

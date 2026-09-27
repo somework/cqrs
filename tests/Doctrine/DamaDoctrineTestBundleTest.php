@@ -12,6 +12,7 @@ use Doctrine\DBAL\DriverManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Events;
 use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Doctrine\RecordedEventsListener;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
@@ -24,6 +25,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Entity\Article;
  * DAMA\DoctrineTestBundle wraps each test in a transaction below DBAL (its static driver): the
  * connection does not see it, so a plain flush of recording entities is still refused in tests.
  */
+#[Group('doctrine-bundle')]
 #[CoversClass(RecordedEventsListener::class)]
 final class DamaDoctrineTestBundleTest extends TestCase
 {

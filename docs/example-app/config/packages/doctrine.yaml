@@ -1,0 +1,10 @@
+doctrine:
+    dbal:
+        url: '%env(resolve:DATABASE_URL)%'
+    orm:
+        mappings:
+            App:
+                type: attribute
+                dir: '%kernel.project_dir%/src/Task'
+                prefix: 'App\Task'
+                is_bundle: false

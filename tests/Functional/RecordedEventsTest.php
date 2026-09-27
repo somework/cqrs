@@ -40,6 +40,7 @@ use function is_string;
  * Entities of a real DoctrineBundle setup record events, which reach the outbox when the entity
  * manager flushes in the transaction of the "doctrine_transaction" middleware, and are relayed.
  */
+#[Group('doctrine-bundle')]
 #[Group('database')]
 #[CoversNothing]
 final class RecordedEventsTest extends KernelTestCase

@@ -1,6 +1,6 @@
 # CQRS Bundle Example App
 
-A minimal Symfony console application demonstrating [somework/cqrs-bundle](https://github.com/somework/cqrs) with a task-management domain.
+A minimal Symfony console application demonstrating [somework/cqrs-bundle](https://github.com/somework/cqrs) with a task-management domain on Doctrine ORM.
 
 > This is an in-repo example for exploration. It installs the bundle from this repository
 > through a Composer path repository (`../..`). For a real project, start with
@@ -8,19 +8,22 @@ A minimal Symfony console application demonstrating [somework/cqrs-bundle](https
 
 ## What is this?
 
-A small Symfony app that uses all three bus types provided by the CQRS bundle:
+A small Symfony app that uses all three bus types provided by the CQRS bundle, with its tasks in a
+SQLite database:
 
 - **Commands**: create and complete tasks (`CreateTask`, `CompleteTask`)
-- **Queries**: retrieve tasks (`FindTaskById`, `ListTasks`)
-- **Events**: react to side effects (`TaskCreated`, dispatched by the `CreateTask` handler)
+- **Queries**: retrieve tasks and what the event handlers did (`FindTaskById`, `ListTasks`, `ListActivity`)
+- **Events**: the `Task` entity records `TaskCreated` and `TaskCompleted`. They are stored in the
+  transactional outbox when the entity manager flushes, in the transaction of the change, and the
+  relay hands them to their handlers afterwards ([domain events](../domain-events.md)).
 
-Everything runs synchronously in one process and is stored in memory, so no database,
-message broker or web server is needed.
+No message broker or web server is needed: the relay sends the events to a `sync://` transport
+(`events`), so their handlers run in the relay's process.
 
 ## Requirements
 
-- PHP 8.2 or newer and Composer
-- Symfony 7.2 or newer, including 8.x (installed by Composer)
+- PHP 8.2 or newer with `pdo_sqlite`, and Composer
+- Symfony 7.2 or newer, including 8.x, Doctrine ORM 3 and DoctrineBundle (installed by Composer)
 
 ## Quick start
 
@@ -32,8 +35,15 @@ cd cqrs/docs/example-app
 # Install dependencies (the bundle is symlinked from the repository root)
 composer install
 
+# Create the database (var/data.db): the task tables and the outbox table
+php bin/console doctrine:schema:create
+
 # Run the demo: two CreateTask commands, one CompleteTask, then the ListTasks and FindTaskById queries
 php bin/console app:demo
+
+# Hand the events the demo stored in the outbox to their handlers, then see what they did
+php bin/console somework:cqrs:outbox:relay
+php bin/console app:activity
 ```
 
 The demo prints something like this (the correlation id is random):
@@ -49,8 +59,9 @@ CompleteTask(task-1) handled
 Events
 ------
 
- * TaskCreated handled: "Write the documentation" (task-1)
- * TaskCreated handled: "Release version 0.5.0" (task-2)
+The Task entity recorded 3 event(s); they were stored in the outbox with the changes, and wait for the relay:
+  php bin/console somework:cqrs:outbox:relay   # hands them to their handlers
+  php bin/console app:activity                 # shows what the handlers did
 
 Queries
 -------
@@ -60,13 +71,30 @@ ListTasks:
   ID       Title                     Status
  -------- ------------------------- --------
   task-1   Write the documentation   done
-  task-2   Release version 0.5.0     open
+  task-2   Release version 0.6.0     open
  -------- ------------------------- --------
 
-FindTaskById(task-2): "Release version 0.5.0" (open)
+FindTaskById(task-2): "Release version 0.6.0" (open)
 
- [OK] Created 2 tasks, completed 1, handled 2 event(s).
+ [OK] Created 2 tasks, completed 1; 3 event(s) wait in the outbox.
 ```
+
+Then the relay and the activity:
+
+```text
+$ php bin/console somework:cqrs:outbox:relay
+
+ [OK] Relayed 3 message(s).
+
+$ php bin/console app:activity
+ * TaskCreated handled: "Write the documentation" (task-1)
+ * TaskCreated handled: "Release version 0.6.0" (task-2)
+ * TaskCompleted handled: task-1
+
+ [OK] The relay handed 3 event(s) to their handlers.
+```
+
+To run the demo again, start from a fresh database: `rm -f var/data.db && php bin/console doctrine:schema:create`.
 
 ## Inspect the bundle setup
 
@@ -75,7 +103,8 @@ FindTaskById(task-2): "Release version 0.5.0" (open)
 php bin/console somework:cqrs:list
 php bin/console somework:cqrs:list --type=command --details
 
-# Instantiates every CQRS handler and Messenger transport; exit code 0 means healthy
+# Instantiates every CQRS handler and Messenger transport, and reports the outbox backlog;
+# exit code 0 means healthy
 php bin/console somework:cqrs:health
 
 # Transport routing of CQRS messages
@@ -102,8 +131,10 @@ This creates `src/Task/Command/ArchiveTask.php` and `src/Task/Command/ArchiveTas
 ## Smoke test
 
 `bin/smoke-test.sh` runs `composer install` (with `--prefer-dist` unless you pass another
-`--prefer-*` option), `app:demo`, `somework:cqrs:list` and `somework:cqrs:health`, and stops at the
-first failing step. Extra arguments are passed to `composer install`:
+`--prefer-*` option), creates a fresh database, runs `somework:cqrs:outbox:setup`, `app:demo`, the
+relay (which must relay the 3 events), `app:activity` (which must list what their handlers did), a
+second relay (with nothing left to relay), `somework:cqrs:list` and `somework:cqrs:health`, and stops
+at the first failing step. Extra arguments are passed to `composer install`:
 
 ```bash
 bin/smoke-test.sh
@@ -114,17 +145,18 @@ bin/smoke-test.sh --prefer-source
 
 | File | What it shows |
 |------|---------------|
-| `src/Command/DemoCommand.php` | Console command using `CommandBusInterface::dispatch()` / `dispatchSync()` and `QueryBusInterface::ask()` |
+| `src/Command/DemoCommand.php` | Console command using `CommandBusInterface::dispatch()` / `dispatchSync()` and `QueryBusInterface::ask()`, and the outbox backlog (`OutboxMonitoring`) |
+| `src/Task/Task.php` | Entity recording its events with `RecordsEventsTrait::recordThat()` |
 | `src/Task/Command/CreateTask.php` | Immutable command DTO with `readonly` properties |
-| `src/Task/Command/CreateTaskHandler.php` | Handler registered with `#[AsCommandHandler]`, dispatching `TaskCreated` through `EventBusInterface` |
+| `src/Task/Command/CreateTaskHandler.php` | Handler registered with `#[AsCommandHandler]`: it persists the entity and dispatches nothing |
+| `src/Task/Event/TaskCreated.php` | Event recorded by the entity, stored in the outbox with the change |
+| `src/Task/Event/TaskCreatedHandler.php` | Event handler run by the relay, writing the activity read model |
 | `src/Task/Query/ListTasks.php` | Zero-property query (valid pattern for "list all" queries) |
 | `src/Task/Query/FindTaskByIdHandler.php` | Query handler returning the result to `QueryBus::ask()` |
-| `src/Task/Event/TaskCreated.php` | Event dispatched as a side effect of command handling |
-| `src/Task/Event/TaskCreatedHandler.php` | Event handler recording what happened in `TaskActivityLog` |
-| `src/Task/InMemoryTaskStore.php` | Simple storage service injected into handlers |
 | `config/services.yaml` | Autowired and autoconfigured `App\` services; no manual handler wiring |
-| `config/packages/messenger.yaml` | One Messenger bus per message type; async buses and transport commented out |
-| `config/packages/somework_cqrs.yaml` | Bundle configuration, with commented async, transport and retry examples |
+| `config/packages/doctrine.yaml` | SQLite connection and the attribute mapping of `src/Task` |
+| `config/packages/messenger.yaml` | One Messenger bus per message type, `doctrine_transaction` on the command and event buses, and the `events` transport (`sync://`) the relay sends the events to |
+| `config/packages/somework_cqrs.yaml` | Bundle configuration: the outbox, `doctrine_events`, the transport of the relayed events, and commented retry examples |
 
 ## Key concepts demonstrated
 
@@ -143,28 +175,38 @@ registered through a marker interface alone gets its message from the type of th
 and `event.bus` in `messenger.yaml`, mapped under `somework_cqrs.buses`). Commands and events support
 sync and async dispatch; queries are always synchronous and must have exactly one handler.
 
+**Domain events recorded by entities**: `Task::create()` and `Task::complete()` record events; no
+handler dispatches them. The command bus runs each handler in a transaction (`doctrine_transaction`)
+and flushes the entity manager when it returns: with `somework_cqrs.doctrine_events` enabled, that
+flush stores the recorded events in the outbox in the same transaction, so they exist if and only if
+the change committed. A flush outside a transaction is refused. See [Domain events](../domain-events.md).
+
+**Transactional outbox and relay**: `somework:cqrs:outbox:relay` sends the stored events to the
+transport of `transports.event_async` (`events`, a `sync://` transport here), whose handlers run right away in the relay's
+process, each in its own transaction. The events continue the flow of the command that caused them:
+same correlation id, the command as cause. See [Transactional outbox](../outbox.md).
+
 **Stamp pipeline**: every dispatch goes through the bundle's stamp deciders. The correlation id the
 demo prints comes from the `MessageMetadataStamp` added by the default metadata provider. Retry
 policies, transports, serializers and metadata providers can be configured per message; see the
 commented examples in `somework_cqrs.yaml` and `php bin/console somework:cqrs:list --details`.
 
-## Trying asynchronous events
+## Trying other setups
 
-1. In `config/packages/messenger.yaml`, uncomment the `command.async_bus` and `event.async_bus`
-   buses and the `transports` block (`async: 'in-memory://'`).
-2. In `config/packages/somework_cqrs.yaml`, uncomment `command_async` and `event_async` under
-   `buses`, the `map` under `dispatch_modes.event` and the `transports` block.
-3. Run `php bin/console app:demo` again. `TaskCreated` is now sent to the `async` transport instead
-   of being handled in the process, so the demo reports 0 handled events, and
-   `php bin/console somework:cqrs:list --type=event --details` shows the `async` dispatch mode and transport.
-
-The `in-memory://` transport keeps messages inside the PHP process, which is enough to see the
-routing. To process messages with a worker (`php bin/console messenger:consume async`), use a
-persistent transport DSN; see the [Production guide](../production.md) for worker setup.
+- **Relay automatically in development**: uncomment `relay_on_terminate: true` under `outbox` in
+  `somework_cqrs.yaml`. The relay then runs right after each command that stored events, so
+  `app:activity` shows them without running the relay yourself. Leave it off in production and run
+  the relay on a schedule or with `--watch`.
+- **Handle the events in a worker**: point the `events` transport of `messenger.yaml` at a
+  persistent transport (for example `'doctrine://default'` with `symfony/doctrine-messenger`), then
+  run `php bin/console messenger:consume events` after the relay. The relay only sends the events;
+  the worker handles them, with Messenger's retries. See the [Production guide](../production.md)
+  for worker setup.
 
 ## Learn more
 
 - [Getting Started Guide](../getting-started.md)
+- [Domain events](../domain-events.md)
 - [Usage Guide](../usage.md)
 - [Configuration Reference](../reference.md)
 - [Bundle README](https://github.com/somework/cqrs#readme)

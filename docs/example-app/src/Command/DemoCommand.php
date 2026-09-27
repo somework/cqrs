@@ -8,8 +8,8 @@ use App\Task\Command\CompleteTask;
 use App\Task\Command\CreateTask;
 use App\Task\Query\FindTaskById;
 use App\Task\Query\ListTasks;
-use App\Task\TaskActivityLog;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
 use SomeWork\CqrsBundle\Stamp\MessageMetadataStamp;
 use Symfony\Component\Console\Attribute\AsCommand;
@@ -18,20 +18,21 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
 
+use function array_map;
 use function count;
 use function sprintf;
 
 /**
- * Walks through the task domain: dispatches commands, shows the events they raised
- * and reads the result back through queries.
+ * Walks through the task domain: dispatches commands, whose entities record events that wait in
+ * the outbox, and reads the result back through queries.
  */
-#[AsCommand(name: 'app:demo', description: 'Dispatch commands, handle events and ask queries through the CQRS buses.')]
+#[AsCommand(name: 'app:demo', description: 'Dispatch commands, store their events in the outbox and ask queries through the CQRS buses.')]
 final class DemoCommand extends Command
 {
     public function __construct(
         private readonly CommandBusInterface $commandBus,
         private readonly QueryBusInterface $queryBus,
-        private readonly TaskActivityLog $activityLog,
+        private readonly OutboxMonitoring $outbox,
     ) {
         parent::__construct();
     }
@@ -40,6 +41,12 @@ final class DemoCommand extends Command
     {
         $io = new SymfonyStyle($input, $output);
         $io->title('somework/cqrs-bundle demo');
+
+        if (null !== $this->queryBus->ask(new FindTaskById('task-1'))) {
+            $io->error('The demo already ran on this database. Start over with: rm -f var/data.db && php bin/console doctrine:schema:create');
+
+            return Command::FAILURE;
+        }
 
         $io->section('Commands');
 
@@ -52,23 +59,22 @@ final class DemoCommand extends Command
         ));
 
         // dispatchSync() handles the command right away and returns the handler result.
-        $this->commandBus->dispatchSync(new CreateTask('task-2', 'Release version 0.5.0'));
+        $this->commandBus->dispatchSync(new CreateTask('task-2', 'Release version 0.6.0'));
         $io->writeln('CreateTask(task-2) handled');
 
         $this->commandBus->dispatchSync(new CompleteTask('task-1'));
         $io->writeln('CompleteTask(task-1) handled');
 
         $io->section('Events');
-        if ([] === $this->activityLog->entries()) {
-            // Happens when TaskCreated is routed to an async transport (see somework_cqrs.yaml).
-            $io->writeln('No events handled in this process; they were sent to a transport for a worker.');
-        } else {
-            $io->listing($this->activityLog->entries());
-        }
+        // Each command ran in a transaction ("doctrine_transaction"): the flush wrote the task and
+        // stored the events it recorded in the outbox; nothing handled them yet.
+        $waiting = $this->outbox->status()->due;
+        $io->writeln(sprintf('The Task entity recorded %d event(s); they were stored in the outbox with the changes, and wait for the relay:', $waiting));
+        $io->writeln('  php bin/console somework:cqrs:outbox:relay   # hands them to their handlers');
+        $io->writeln('  php bin/console app:activity                 # shows what the handlers did');
 
         $io->section('Queries');
 
-        /** @var list<array{id: string, title: string, completed: bool}> $tasks */
         $tasks = $this->queryBus->ask(new ListTasks());
         $io->writeln('ListTasks:');
         $io->table(
@@ -79,13 +85,12 @@ final class DemoCommand extends Command
             ),
         );
 
-        /** @var array{id: string, title: string, completed: bool}|null $task */
         $task = $this->queryBus->ask(new FindTaskById('task-2'));
         $io->writeln(null === $task
             ? 'FindTaskById(task-2): not found'
             : sprintf('FindTaskById(task-2): "%s" (%s)', $task['title'], $task['completed'] ? 'done' : 'open'));
 
-        $io->success(sprintf('Created %d tasks, completed 1, handled %d event(s).', count($tasks), count($this->activityLog->entries())));
+        $io->success(sprintf('Created %d tasks, completed 1; %d event(s) wait in the outbox.', count($tasks), $waiting));
 
         return Command::SUCCESS;
     }

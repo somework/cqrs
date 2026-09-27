@@ -3,16 +3,17 @@ framework:
         # One Messenger bus per message type. somework_cqrs.yaml points the CQRS buses at them.
         default_bus: command.bus
         buses:
-            command.bus: ~
+            # Each handler runs in a transaction, and the entity manager is flushed when it returns:
+            # the events its entities recorded are stored in the outbox in that transaction.
+            command.bus:
+                middleware: [doctrine_transaction]
             query.bus: ~
-            event.bus: ~
-            # Asynchronous buses (see the async example in somework_cqrs.yaml):
-            # command.async_bus: ~
-            # event.async_bus: ~
+            # The event handlers the relay runs write the activity read model in their own transaction.
+            event.bus:
+                middleware: [doctrine_transaction]
 
-        # Asynchronous delivery. The demo runs everything synchronously, so no transport is
-        # needed. "in-memory://" keeps messages in the PHP process (handy for tests); use a real
-        # DSN such as 'doctrine://default' or '%env(MESSENGER_TRANSPORT_DSN)%' in production and
-        # run a worker with "php bin/console messenger:consume async".
-        # transports:
-        #     async: 'in-memory://'
+        transports:
+            # The relay sends the stored events here: their handlers run in the relay's process.
+            # Use a real transport (e.g. 'doctrine://default' or '%env(MESSENGER_TRANSPORT_DSN)%')
+            # and "php bin/console messenger:consume" to handle them in a worker instead.
+            events: 'sync://'

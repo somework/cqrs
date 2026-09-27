@@ -10,6 +10,8 @@ use SomeWork\CqrsBundle\Contract\Command;
  * Command to create a new task.
  *
  * Immutable DTO carrying the intent to create a task with a given ID and title.
+ *
+ * @psalm-immutable
  */
 final class CreateTask implements Command
 {

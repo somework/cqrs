@@ -10,6 +10,10 @@ use SomeWork\CqrsBundle\Contract\Query;
  * Query to retrieve all tasks.
  *
  * A zero-property query is a valid pattern for "list all" operations.
+ *
+ * @implements Query<list<array{id: string, title: string, completed: bool}>>
+ *
+ * @psalm-immutable
  */
 final class ListTasks implements Query
 {
