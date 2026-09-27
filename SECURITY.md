@@ -6,7 +6,7 @@ Security fixes are released for the latest 0.x minor version only.
 
 | Version                                   | Supported          |
 |-------------------------------------------|--------------------|
-| Latest minor release (0.4.x until 0.5.0)  | :white_check_mark: |
+| Latest minor release (0.5.x until 0.6.0)  | :white_check_mark: |
 | Older releases                            | :x:                |
 
 ## Reporting a Vulnerability
