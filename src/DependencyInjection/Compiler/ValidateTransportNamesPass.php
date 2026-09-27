@@ -8,17 +8,17 @@ use SomeWork\CqrsBundle\Attribute\Asynchronous;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Support\AsMessageRouting;
 use SomeWork\CqrsBundle\Support\MessageTransportStampDecider;
+use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 
-use function array_keys;
+use function array_key_exists;
 use function array_values;
 use function class_exists;
 use function class_implements;
 use function class_parents;
 use function in_array;
-use function is_a;
 use function is_array;
 use function is_string;
 use function sprintf;
@@ -119,17 +119,16 @@ final class ValidateTransportNamesPass implements CompilerPassInterface
             return false;
         }
 
-        if ([] !== ($section['default'] ?? [])) {
-            return true;
-        }
-
-        foreach (array_keys(is_array($section['map'] ?? null) ? $section['map'] : []) as $configuredType) {
-            if (is_a($messageClass, (string) $configuredType, true)) {
-                return true;
+        // Like MessageTransportResolver: the first entry in lookup order wins, even an empty one
+        // (the decider then falls back to "async"); the default applies only without an entry.
+        $map = is_array($section['map'] ?? null) ? $section['map'] : [];
+        foreach (class_exists($messageClass) ? MessageTypeLocator::typesOf($messageClass) : [] as $configuredType) {
+            if (array_key_exists($configuredType, $map)) {
+                return [] !== $map[$configuredType];
             }
         }
 
-        return false;
+        return [] !== ($section['default'] ?? []);
     }
 
     /**

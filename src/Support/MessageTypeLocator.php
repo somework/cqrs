@@ -119,6 +119,19 @@ final class MessageTypeLocator
     }
 
     /**
+     * The types a per-message configuration can name for a class, in the order match() looks them
+     * up: the class, its parent classes, then its interfaces, most specific first.
+     *
+     * @param class-string $class
+     *
+     * @return list<class-string>
+     */
+    public static function typesOf(string $class): array
+    {
+        return [...iterator_to_array(self::classHierarchy($class), false), ...self::interfacesByDepth($class)];
+    }
+
+    /**
      * @param class-string $class
      *
      * @return iterable<class-string>
