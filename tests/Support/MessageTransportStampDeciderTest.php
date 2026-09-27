@@ -252,6 +252,7 @@ final class MessageTransportStampDeciderTest extends TestCase
 
         self::assertCount(1, $warnings);
         self::assertStringContainsString('is stored in the outbox without a transport, so the relay will handle it synchronously in its own process', $warnings[0][0]);
+        self::assertStringContainsString('Set "somework_cqrs.transports.{type}_async" (the outbox needs no async bus for it)', $warnings[0][0]);
         self::assertSame(['message' => TaskCreatedEvent::class, 'type' => 'event'], $warnings[0][1]);
     }
 

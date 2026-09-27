@@ -12,6 +12,10 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\ArchiveTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Reference;
+
+use function sprintf;
 
 #[CoversClass(CqrsExtension::class)]
 final class CqrsExtensionAsyncValidationTest extends TestCase
@@ -109,5 +113,27 @@ final class CqrsExtensionAsyncValidationTest extends TestCase
         (new CqrsExtension())->load([['transports' => $transports, 'dispatch_modes' => ['event' => ['default' => 'outbox']], 'outbox' => ['enabled' => true]]], $container);
 
         self::assertTrue($container->hasDefinition('somework_cqrs.outbox.writer'));
+        // The rows go to those transports: the transport decider resolves them without an async bus.
+        foreach (['$commandResolvers' => 'command_async', '$eventResolvers' => 'event_async'] as $argument => $type) {
+            self::assertSame(sprintf('somework_cqrs.transports.%s_resolver', $type), $this->asyncTransportResolver($container, $argument));
+        }
+
+        $container = new ContainerBuilder();
+        (new CqrsExtension())->load([[]], $container);
+        self::assertNull($this->asyncTransportResolver($container, '$eventResolvers'), 'Without the outbox, only the async bus uses them.');
+    }
+
+    private function asyncTransportResolver(ContainerBuilder $container, string $argument): ?string
+    {
+        $resolvers = $container->getDefinition('somework_cqrs.stamp_decider.message_transport')->getArgument($argument);
+        self::assertInstanceOf(Definition::class, $resolvers);
+
+        $async = $resolvers->getArgument('$async');
+        if (null === $async) {
+            return null;
+        }
+        self::assertInstanceOf(Reference::class, $async);
+
+        return (string) $async;
     }
 }

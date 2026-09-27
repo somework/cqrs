@@ -7,6 +7,9 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+### Fixed
+- With the outbox enabled and no async bus, messages stored in the outbox (through the buses or `OutboxWriter::store()`) ignored `transports.command_async` and `transports.event_async`: their rows had no transport, so the relay handled them synchronously in its own process and ignored a `DelayStamp` (a bare `#[Outbox]` or `#[Asynchronous]` went to the `async` transport instead). They now go to those transports ([UPGRADE.md](UPGRADE.md#upgrading-from-050-to-060)), and the warning for a message stored without a transport says that `transports.<type>_async` needs no async bus.
+
 ## [0.5.0] - 2026-09-27
 
 Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.md#upgrading-from-040-to-050) explains each of them.

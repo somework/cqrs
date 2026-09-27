@@ -167,7 +167,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
         $rateLimitConfig = $config['rate_limiting'];
         $rateLimitConfig['enabled'] = $rateLimitingActive;
 
-        (new StampsDeciderRegistrar($helper))->register($container, $config['buses'], $idempotencyConfig, $config['causation_id'], $config['sequence'], $rateLimitConfig);
+        (new StampsDeciderRegistrar($helper))->register($container, $config['buses'], $idempotencyConfig, $config['causation_id'], $config['sequence'], $rateLimitConfig, true === $config['outbox']['enabled']);
         (new AllowNoHandlerMiddlewareRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusWiringRegistrar())->register($container, $config['buses'], $defaultBusId);
         (new BusInterfaceRegistrar())->register($container);

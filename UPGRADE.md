@@ -53,6 +53,24 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
 
+## Upgrading from 0.5.0 to 0.6.0
+
+### Outbox transports without an async bus
+
+You may notice this fix in an outbox-only application: the outbox enabled, `transports.command_async` or
+`transports.event_async` set, and no `buses.command_async`/`buses.event_async`.
+
+- In 0.5, messages stored in the outbox (`DispatchMode::OUTBOX`, `#[Outbox]`, the `outbox` value of
+  `dispatch_modes`, `OutboxWriter::store()`) ignored those transports: their rows were stored without a transport
+  (`transport_name` NULL), and `somework:cqrs:outbox:relay` handled them synchronously in its own process,
+  ignoring a `DelayStamp`. A message with a bare `#[Outbox]` or `#[Asynchronous]` was stored for the `async`
+  transport instead (refused with `UnknownOutboxTransportException` without one). Now the rows carry the
+  configured transport and the relay sends them there.
+- Their handlers run in the worker consuming that transport (`messenger:consume <transport>`), with Messenger's
+  retries and failure transport, instead of in the relay: run a worker for it. To keep handling them in the relay
+  process, point the transport at `sync://`.
+- Rows stored by 0.5 keep their empty transport: the relay still handles them in its own process.
+
 ## Upgrading from 0.4.0 to 0.5.0
 
 ### Checklist
