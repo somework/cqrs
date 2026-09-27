@@ -53,6 +53,17 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
 
+## Upgrading from 0.5.2 to 0.5.3
+
+Neither the configuration nor the API changes. You may notice:
+
+- **Compilation log.** When the class of the outbox storage service is not known when the container is built
+  (a service created by a factory without a class), the container compilation log now warns that
+  `outbox.require_transaction` is not enforced (it never was: the bundle cannot tell whether the storage implements
+  `Contract\Outbox\TransactionalOutbox`). Declare the class of the service; if it implements `TransactionalOutbox`,
+  stores outside a transaction are then refused, as `require_transaction` asks. Or set
+  `outbox.require_transaction: false`.
+
 ## Upgrading from 0.5.1 to 0.5.2
 
 0.5.2 fixes bugs and corrects the documentation. Neither the configuration nor the API changes. You may notice:
