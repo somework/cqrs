@@ -29,6 +29,8 @@ final class EnvelopeAwareHandlersLocatorPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
     {
+        MessengerMiddlewareInjector::assertMessengerPassHasRun($container);
+
         // Every Messenger bus: handler attributes may name any bus, not only the CQRS ones.
         $busIds = array_unique([...CqrsBusIds::resolve($container), ...array_keys($container->findTaggedServiceIds('messenger.bus'))]);
         // The decorator costs time on every dispatch: only buses with an EnvelopeAware handler get it.

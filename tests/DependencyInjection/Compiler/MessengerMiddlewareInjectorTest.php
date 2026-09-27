@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\MessengerMiddlewareInjector
 use Symfony\Component\DependencyInjection\Argument\IteratorArgument;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
+use Symfony\Component\DependencyInjection\Exception\LogicException;
 use Symfony\Component\DependencyInjection\Reference;
 
 use function array_map;
@@ -90,6 +91,38 @@ final class MessengerMiddlewareInjectorTest extends TestCase
 
         self::assertTrue(MessengerMiddlewareInjector::inject($container, 'messenger.default_bus', 'app.middleware'));
         self::assertSame(['messenger.middleware.dispatch_after_current_bus', 'app.middleware'], $this->middlewareIds($container, 'debug.traced.messenger.bus.default.inner'));
+    }
+
+    public function test_fails_until_messenger_pass_built_the_buses(): void
+    {
+        // Symfony 8.2 registers MessengerPass at -16: before it, the bus has no middleware list yet.
+        $container = new ContainerBuilder();
+        $container->register('messenger.bus.default')->addArgument([])->addTag('messenger.bus');
+        $container->setParameter('messenger.bus.default.middleware', [['id' => 'dispatch_after_current_bus'], ['id' => 'handle_message']]);
+
+        $calls = [
+            'inject' => static fn () => MessengerMiddlewareInjector::inject($container, 'messenger.bus.default', 'app.middleware'),
+            'injectBefore' => static fn () => MessengerMiddlewareInjector::injectBefore($container, 'messenger.bus.default', 'app.middleware'),
+            'prepend' => static fn () => MessengerMiddlewareInjector::prepend($container, 'messenger.bus.default', 'app.middleware'),
+            // Another bus than the one that is not built yet.
+            'findBusDefinition' => static fn () => MessengerMiddlewareInjector::findBusDefinition($container, 'other.bus'),
+        ];
+        foreach ($calls as $method => $call) {
+            try {
+                $call();
+                self::fail($method.'() should fail before MessengerPass.');
+            } catch (LogicException $exception) {
+                self::assertStringContainsString('The Messenger bus "messenger.bus.default" still has its "messenger.bus.default.middleware" parameter: Symfony\'s MessengerPass has not built the buses yet.', $exception->getMessage());
+                self::assertStringContainsString('at priority -24 of the "beforeOptimization" phase', $exception->getMessage());
+            }
+        }
+
+        // What MessengerPass does.
+        $container->getParameterBag()->remove('messenger.bus.default.middleware');
+        $container->getDefinition('messenger.bus.default')->replaceArgument(0, new IteratorArgument([new Reference('messenger.middleware.dispatch_after_current_bus')]));
+
+        self::assertTrue(MessengerMiddlewareInjector::inject($container, 'messenger.bus.default', 'app.middleware'));
+        self::assertSame(['messenger.middleware.dispatch_after_current_bus', 'app.middleware'], $this->middlewareIds($container, 'messenger.bus.default'));
     }
 
     public function test_unknown_or_non_bus_services_are_ignored(): void

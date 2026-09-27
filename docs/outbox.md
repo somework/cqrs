@@ -191,9 +191,11 @@ the outbox are stored in it without an explicit `transactional()`.
   it, a stamp that middleware adds again for a class the stored message already carries (the
   request context of `router_context`, a tenant) is dropped: the caller's context wins. Middleware
   with side effects runs twice too; Doctrine's `doctrine_transaction` and
-  `doctrine_open_transaction_logger` are skipped when the message is stored, wherever they are
-  listed, and run in the relay (they would flush the caller's entity manager, or report its open
-  transaction). Middleware must pass an outbox dispatch (an envelope carrying
+  `doctrine_open_transaction_logger` (and DoctrineBridge 8.2's `DoctrineDbalTransactionMiddleware`
+  and `DoctrineDbalOpenTransactionLoggerMiddleware`, under any service id) are skipped when the
+  message is stored, wherever they are listed, and run in the relay (they would flush the caller's
+  entity manager, open a transaction around the store, or report the caller's open transaction).
+  Middleware must pass an outbox dispatch (an envelope carrying
   `StoreInOutboxStamp`) on to the next one: one that returns early makes `dispatch()` throw a
   `LogicException`.
 - **The relay's run has no caller context.** It happens in the relay's process, without the

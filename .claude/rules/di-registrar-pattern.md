@@ -32,20 +32,23 @@ Registered in `SomeWorkCqrsBundle::build()`. The phase is chosen by the containe
 | Pass | Phase / priority | Why |
 |------|------------------|-----|
 | `ValidateBusIdsPass` | BEFORE_OPTIMIZATION, 2 | Rejects `buses.*` ids that are not Messenger buses before handlers are registered on them |
-| `CqrsHandlerPass` | BEFORE_OPTIMIZATION, 1 | Normalises handler tags (message, buses) before Messenger's `MessengerPass` (priority 0) consumes them |
+| `CqrsHandlerPass` | BEFORE_OPTIMIZATION, 1 | Normalises handler tags (message, buses) before Messenger's `MessengerPass` (priority 0 up to Symfony 8.1, -16 in 8.2's `MessengerBundle`) consumes them |
 | `CqrsRetryStrategyPass` | BEFORE_OPTIMIZATION, 0 | Validates `retry_strategy.transports` and wires `CqrsRetryStrategy` into `messenger.retry_strategy_locator` (wrapping the transport's own strategy as fallback) |
 | `OutboxRelayLockPass` | BEFORE_OPTIMIZATION, 0 | Prefixes the relay lock name with `%cache.prefix.seed%` (FrameworkBundle's parameter, unknown while the extension loads) |
 | `OutboxSigningSecretPass` | BEFORE_OPTIMIZATION, 0 | Binds `%kernel.secret%` (FrameworkBundle's parameter, unknown while the extension loads) to the outbox signer unless `outbox.signing.secret` is set; fails clearly without it |
-| `TransportRoutingPass` | BEFORE_OPTIMIZATION, 0 | Passes the message types routed by `framework.messenger.routing` (keys of `messenger.senders_locator`) to `MessageTransportStampDecider` |
 | `ValidateConfiguredServicesPass` | BEFORE_OPTIMIZATION, 10 | Reports a missing service or rate limiter, or a service that does not implement the interface its option needs, with the config path that names it (recorded by `ContainerHelper::configuredService()`), before other passes fail on the dangling reference |
 | `ValidateIdempotencyDependenciesPass` | BEFORE_OPTIMIZATION, -1 | Logs why idempotency cannot deduplicate |
-| `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass` | BEFORE_OPTIMIZATION, -8 | Run after `MessengerPass` built the handler locators and bus middleware lists, and before optimization so references to aliases still resolve |
+| `EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass`, `AllowNoHandlerMiddlewarePass`, `CausationIdMiddlewarePass`, `OpenTelemetryMiddlewarePass`, `DeduplicationLockReleasePass`, `OutboxStoreMiddlewarePass` | BEFORE_OPTIMIZATION, -24 (`MessengerMiddlewareInjector::AFTER_MESSENGER_PASS`) | Run after `MessengerPass` built the handler locators and bus middleware lists on every supported Symfony version, and before optimization so references to aliases still resolve (Symfony's `ResettableServicePass` and `LoggerPass` run at -32) |
+| `TransportRoutingPass` | BEFORE_OPTIMIZATION, -24 | Passes the message types routed by `framework.messenger.routing` and, on Symfony 8.2, `#[AsMessageHandler(transport: ...)]` (keys of `messenger.senders_locator`, completed by `MessengerPass`) to `MessageTransportStampDecider` |
 | `OutboxStoragePass` | BEFORE_OPTIMIZATION, 0 | Keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage` (decorators are applied during optimization); checks that a custom storage implements `OutboxStorage` |
-| `LoggerChannelPass` | BEFORE_OPTIMIZATION, -9 | Moves the bundle's services to the `cqrs` Monolog channel, after every pass that adds a service with a logger |
-| `ValidateTransportNamesPass`, `ValidateHandlerCountPass` | BEFORE_OPTIMIZATION, 0 (default) | Validation of the collected metadata (configured transports, `#[Asynchronous(transport: ...)]` of handled messages, `#[AsEventHandler(fromTransport: ...)]`, handler counts) |
+| `LoggerChannelPass` | BEFORE_OPTIMIZATION, -25 | Moves the bundle's services to the `cqrs` Monolog channel, after every pass that adds a service with a logger |
+| `ValidateTransportNamesPass` | BEFORE_OPTIMIZATION, -24 | Validates configured transports, `#[Asynchronous(transport: ...)]` of handled messages and `#[AsEventHandler(fromTransport: ...)]` against the complete routing |
+| `ValidateHandlerCountPass` | BEFORE_OPTIMIZATION, 0 (default) | Validates the handler counts collected by `CqrsHandlerPass` |
 | `RemoveHandlerMetadataParameterPass` | AFTER_REMOVING | Drops `somework_cqrs.handler_metadata` once `HandlerRegistry` received it, so it is not dumped into the main container class |
 
 Middleware is inserted with `MessengerMiddlewareInjector`, right after Messenger's `dispatch_after_current_bus` middleware (deferred messages continue with the stack after it). Resolve bus ids with `CqrsBusIds` (aliases such as `messenger.default_bus` are only known in compiler passes).
+
+A pass that reads what `MessengerPass` builds (bus middleware lists, `<bus>.messenger.handlers_locator`, the routing handlers add) runs at `MessengerMiddlewareInjector::AFTER_MESSENGER_PASS` and calls `MessengerMiddlewareInjector::assertMessengerPassHasRun()` (the injector and `findBusDefinition()` already do): before `MessengerPass`, a bus still has its `<bus>.middleware` parameter and argument 0 is `[]`, and a silent `false`/skip would leave the buses without the bundle's middleware. `tests/Functional/BusMiddlewareOrderTest.php` snapshots the resulting middleware of every CQRS bus.
 
 Never register passes at TYPE_OPTIMIZE or later when they add references to aliases: alias resolution has already run and the references would dangle.
 

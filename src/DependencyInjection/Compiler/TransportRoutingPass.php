@@ -17,6 +17,8 @@ use function is_string;
  * Tells the transport stamp decider which messages framework.messenger.routing routes, so a bare
  * #[Asynchronous] does not override Messenger's routing with the default "async" transport.
  *
+ * Runs after MessengerPass, which adds the routes of #[AsMessageHandler(transport: ...)] (Symfony 8.2).
+ *
  * @internal
  */
 final class TransportRoutingPass implements CompilerPassInterface
@@ -28,6 +30,8 @@ final class TransportRoutingPass implements CompilerPassInterface
         if (!$container->hasDefinition(self::DECIDER_ID) || !$container->hasDefinition('messenger.senders_locator')) {
             return;
         }
+
+        MessengerMiddlewareInjector::assertMessengerPassHasRun($container);
 
         $routing = $container->getDefinition('messenger.senders_locator')->getArguments()[0] ?? null;
         if (!is_array($routing)) {
