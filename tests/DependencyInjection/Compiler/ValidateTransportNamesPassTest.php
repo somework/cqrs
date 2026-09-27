@@ -24,6 +24,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskArchivedEvent;
 use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\Exception\LogicException;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 use Symfony\Component\Messenger\Attribute\AsMessage;
 use Symfony\Component\Messenger\MessageBus;
@@ -54,6 +55,19 @@ final class ValidateTransportNamesPassTest extends TestCase
         $this->expectExceptionMessage('Messenger transport "missing" configured for SomeWork CQRS is not defined.');
 
         $container->compile();
+    }
+
+    public function test_it_fails_before_messenger_pass_added_the_routes_of_the_handlers(): void
+    {
+        // Without it, a message routed by #[AsMessageHandler(transport: ...)] (Symfony 8.2) would look unrouted.
+        $container = new ContainerBuilder();
+        $container->register('messenger.bus.default')->addArgument([])->addTag('messenger.bus');
+        $container->setParameter('messenger.bus.default.middleware', [['id' => 'send_message'], ['id' => 'handle_message']]);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('Symfony\'s MessengerPass has not built the buses yet');
+
+        (new ValidateTransportNamesPass())->process($container);
     }
 
     public function test_an_event_handler_bound_to_an_unknown_transport_fails(): void

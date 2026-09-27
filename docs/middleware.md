@@ -84,7 +84,7 @@ dispatch_after_current_bus
 failed_message_processing_middleware
 deduplicate_middleware                 Messenger 7.3+ with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
-... your own middleware ...                (doctrine_transaction is skipped by outbox stores)
+... your own middleware ...            (Doctrine's transaction middleware is skipped by outbox stores)
 [OutboxStoreMiddleware]                when the outbox is enabled
 send_message
 handle_message
@@ -95,6 +95,12 @@ On a bus without `dispatch_after_current_bus` (for example with
 `OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
 last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
+
+The bundle inserts its middleware in compiler passes that run after Messenger's
+`MessengerPass` has built the middleware lists of the buses (priority -24 of the
+`beforeOptimization` phase; `MessengerPass` runs at 0 up to Symfony 8.1 and at -16
+from Symfony 8.2 on). A compiler pass of your own that must see the bundle's
+middleware, or reorder it, needs a priority below -25.
 
 The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
 configured `buses.*` entry, with aliases resolved.
@@ -191,10 +197,12 @@ For a message dispatched through the [outbox](outbox.md#through-the-buses):
   relay dispatches the stored message on the bus, it drops the stamps that middleware
   adds again for a class the stored message already carries, so the caller's context
   (e.g. `router_context`) wins over the relay's.
-* Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger`, wherever
-  they are listed on a CQRS bus (also more than once), are wrapped so that a message
-  being stored skips them (they would flush the caller's entity manager, or report its
-  open transaction); they run when the relay dispatches it.
+* Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger` (and
+  DoctrineBridge 8.2's `DoctrineDbalTransactionMiddleware` and
+  `DoctrineDbalOpenTransactionLoggerMiddleware`, whatever service id you register them
+  under), wherever they are listed on a CQRS bus (also more than once), are wrapped so that a message being stored skips them (they would
+  flush the caller's entity manager, open a transaction around the store, or report the
+  caller's open transaction); they run when the relay dispatches it.
 
 The relay's dispatch carries `RelayedFromOutboxStamp` and runs without the caller's
 context and without a `ReceivedStamp`: middleware that checks the dispatching context

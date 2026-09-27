@@ -53,23 +53,37 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
 
-## Upgrading from 0.5.0 to 0.6.0
+## Upgrading from 0.5.0 to 0.5.1
 
-### Outbox transports without an async bus
+0.5.1 supports Symfony 8.2, which runs Messenger's `MessengerPass` at priority -16 of the `beforeOptimization`
+phase (in the new `MessengerBundle`) instead of 0, and fixes the outbox transports of applications without an async
+bus. Neither the configuration nor the API changes.
 
-You may notice this fix in an outbox-only application: the outbox enabled, `transports.command_async` or
-`transports.event_async` set, and no `buses.command_async`/`buses.event_async`.
-
-- In 0.5, messages stored in the outbox (`DispatchMode::OUTBOX`, `#[Outbox]`, the `outbox` value of
-  `dispatch_modes`, `OutboxWriter::store()`) ignored those transports: their rows were stored without a transport
-  (`transport_name` NULL), and `somework:cqrs:outbox:relay` handled them synchronously in its own process,
-  ignoring a `DelayStamp`. A message with a bare `#[Outbox]` or `#[Asynchronous]` was stored for the `async`
-  transport instead (refused with `UnknownOutboxTransportException` without one). Now the rows carry the
-  configured transport and the relay sends them there.
-- Their handlers run in the worker consuming that transport (`messenger:consume <transport>`), with Messenger's
-  retries and failure transport, instead of in the relay: run a worker for it. To keep handling them in the relay
-  process, point the transport at `sync://`.
-- Rows stored by 0.5 keep their empty transport: the relay still handles them in its own process.
+- **Compiler pass priorities.** The passes of the bundle that use what `MessengerPass` builds (the bus middleware
+  lists, the handlers locators and the routing added by handlers) run at priority -24 instead of -8
+  (`EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass` and the middleware passes) and 0
+  (`TransportRoutingPass`, `ValidateTransportNamesPass`); `LoggerChannelPass` runs at -25 instead of -9. A compiler
+  pass of your application that must see the bundle's middleware on a bus, or change the list after it, needs a
+  priority below -25. On Symfony 8.2, a pass that reads the middleware lists or the handlers locators must run
+  below -16 anyway.
+- **Messenger's pass must have run.** When a bus still has its `<bus>.middleware` parameter (`MessengerPass` has
+  not built it yet) as these passes run, the build fails with a `LogicException` instead of leaving the buses
+  without the bundle's middleware.
+- **DoctrineBridge 8.2.** With the outbox, a message stored through a bus skips `DoctrineDbalTransactionMiddleware`
+  and `DoctrineDbalOpenTransactionLoggerMiddleware` too, whatever service id they are registered under; they run
+  when the relay dispatches it.
+- **Outbox transports without an async bus.** You may notice this fix in an outbox-only application: the outbox
+  enabled, `transports.command_async` or `transports.event_async` set, and no `buses.command_async`/`buses.event_async`.
+  - In 0.5.0, messages stored in the outbox (`DispatchMode::OUTBOX`, `#[Outbox]`, the `outbox` value of
+    `dispatch_modes`, `OutboxWriter::store()`) ignored those transports: their rows were stored without a transport
+    (`transport_name` NULL), and `somework:cqrs:outbox:relay` handled them synchronously in its own process,
+    ignoring a `DelayStamp`. A message with a bare `#[Outbox]` or `#[Asynchronous]` was stored for the `async`
+    transport instead (refused with `UnknownOutboxTransportException` without one). Now the rows carry the
+    configured transport and the relay sends them there.
+  - Their handlers run in the worker consuming that transport (`messenger:consume <transport>`), with Messenger's
+    retries and failure transport, instead of in the relay: run a worker for it. To keep handling them in the relay
+    process, point the transport at `sync://`.
+  - Rows stored by 0.5.0 keep their empty transport: the relay still handles them in its own process.
 
 ## Upgrading from 0.4.0 to 0.5.0
 
