@@ -4,13 +4,13 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Doctrine;
 
-use Doctrine\DBAL\Connection;
 use Doctrine\ORM\UnitOfWork;
 use SomeWork\CqrsBundle\Contract\RecordsEvents;
 
 /**
- * The entities with recorded events that a flush of one entity manager collected in onFlush, until
- * its postFlush stores their events. Nested flushes of the entity manager add theirs.
+ * The entities of a flush of one entity manager that postFlush looks at: those with recorded events
+ * that onFlush collected, and those of recording classes about to be deleted. Also the state of the
+ * store in postFlush.
  *
  * @internal
  */
@@ -29,22 +29,11 @@ final class PendingFlush
     public ?\Throwable $failure = null;
 
     /**
-     * @param UnitOfWork $unitOfWork       The unit of work of the entities: a reset entity manager gets another one
-     * @param int        $transactionLevel The transaction nesting level of the connection the flush ran in, before its own BEGIN
+     * @param UnitOfWork $unitOfWork The unit of work of the entities: a reset entity manager gets another one
      */
     public function __construct(
         public readonly UnitOfWork $unitOfWork,
-        public readonly int $transactionLevel,
     ) {
-    }
-
-    /**
-     * Whether the transaction the flush ran in has ended: the flush failed and was rolled back (a
-     * flush that stores its events ends before that transaction), so its entities are stale.
-     */
-    public function isAbandoned(Connection $connection): bool
-    {
-        return $connection->getTransactionNestingLevel() < $this->transactionLevel;
     }
 
     public function hasEvents(): bool

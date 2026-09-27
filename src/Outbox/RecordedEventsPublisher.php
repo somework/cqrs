@@ -90,12 +90,15 @@ final class RecordedEventsPublisher
                 }
             }
 
-            // Released once all are stored: after a failure, every aggregate keeps its events.
+            // Checked before any is released: after a failure, every aggregate keeps its events.
             foreach ($recorded as [$aggregate, $events]) {
-                $released = $aggregate->releaseEvents();
-                if (count($released) !== count($events)) {
-                    throw new \LogicException(sprintf('%s released %d event(s) after %d were stored in the outbox: it recorded or released events while they were stored (in event-bus middleware or a stamp decider). Record events only in the methods that change it, and let the bundle release them.', $aggregate::class, count($released), count($events)));
+                $now = $aggregate->recordedEvents();
+                if ($now !== $events) {
+                    throw new \LogicException(sprintf('%s has %d recorded event(s) after %d were stored in the outbox: it recorded or released events while they were stored (in event-bus middleware or a stamp decider). Record events only in the methods that change it, and let the bundle release them.', $aggregate::class, count($now), count($events)));
                 }
+            }
+            foreach ($recorded as [$aggregate]) {
+                $aggregate->releaseEvents();
             }
         } catch (\Throwable $exception) {
             // The rows already stored would otherwise commit without the rest, also when the caller

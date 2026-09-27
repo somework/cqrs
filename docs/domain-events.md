@@ -164,20 +164,23 @@ class Article implements RecordsEvents
 
 ## How it works
 
-The listener runs at priority -1024 of `onFlush` and `postFlush`, after the other listeners of the
-entity manager:
+The listener runs in `preFlush` and `onFlush` after the other listeners of the entity manager
+(priority -1024), and in `postFlush` before them (the highest priority):
 
 ```
 command bus: CausationIdMiddleware (the command is the cause) → doctrine_transaction: BEGIN
   → handler: $article->rename() records ArticleRenamed
   ← $entityManager->flush()
-      onFlush: collects the entities with events (new, changed, removed or unchanged),
-               refuses a flush outside a transaction, before anything is written
+      preFlush:  refuses a flush of entities with events outside a transaction, before Doctrine
+                 computes the changes (the unit of work is left as it was)
+      onFlush:   collects the entities with events (new, changed, removed or unchanged), and the
+                 entities of recording classes about to be deleted
       SAVEPOINT → UPDATE article → RELEASE SAVEPOINT
       postFlush: adds the entities that recorded events during the flush,
                  EventBusInterface::dispatch($event, DispatchMode::OUTBOX) for each event:
                  the stamp pipeline and the middleware of the event bus run, the row is
-                 INSERTed in the open transaction (OutboxStoredStamp), then the events are released
+                 INSERTed in the open transaction (OutboxStoredStamp), then the events are released;
+                 the other postFlush listeners run after it
   ← COMMIT: the UPDATE and the outbox rows commit together
 relay (later): dispatches ArticleRenamed on buses.event_async (else buses.event)
 ```
@@ -211,13 +214,14 @@ relay (later): dispatches ArticleRenamed on buses.event_async (else buses.event)
 | Handler on a bus with `doctrine_transaction` (or DoctrineBridge 8.2's `DoctrineDbalTransactionMiddleware` and a flush in the handler) | Rows stored before the `COMMIT`; a later failure of the handler rolls back the changes and the rows. |
 | Asynchronous command in a worker | Same. When the message is retried, every handler runs again ([delivery guarantees](outbox.md#delivery-guarantees)). |
 | `wrapInTransaction()`, `Connection::transactional()` outside handlers | Stored; fresh correlation per event. |
-| Plain `flush()` of entities that recorded events before it | `OutboxRequiresTransactionException` from `onFlush`, before `BEGIN`: nothing is written, the entity manager stays open, the entities keep their events. |
-| Plain `flush()`, events recorded during it (lifecycle callbacks, listeners) | The changes are already committed: `OutboxRequiresTransactionException` with `afterCommit: true`; the events are kept for the next flush in a transaction. Record events in callbacks only inside a transaction. |
+| Plain `flush()` of entities that recorded events before it | `OutboxRequiresTransactionException` from `preFlush`, before Doctrine computes the changes: nothing is written, the entity manager stays open, the entities keep their events, and the next flush in a transaction writes and stores everything. |
+| Plain `flush()`, and an entity with events that only `onFlush` sees (a new entity reached by cascade, or persisted by another `preFlush` listener) | Refused as above, but Doctrine computed the changes already: the entity manager is closed, since the flush could not be retried on it. |
+| Plain `flush()`, events recorded during it (lifecycle callbacks) | The changes are already committed: `OutboxRequiresTransactionException` with `afterCommit: true`, and the entity manager is closed (Doctrine skips its cleanup after an exception in `postFlush`); the events are not stored. Record events in callbacks only inside a transaction. |
 | The flush fails (a constraint, an optimistic lock) | `postFlush` never runs: no rows, also when the caller catches the exception and commits. |
 | The store fails after the flush wrote (missing table, a rate limiter, a middleware rejecting the event) | The transaction is marked rollback-only, the entity manager is closed, the exception is rethrown. A caller that catches it and commits gets DBAL's `CommitFailedRollbackOnly`. The unreleased events are lost with the detached entities: run the operation again. |
 | The caller's `COMMIT` fails after the flush (a deferred constraint) | The rows roll back with the changes; the events were already released. Run the operation again. |
-| Another listener flushes again in `postFlush` | Its entities are merged and their events stored. |
-| The entity manager is cleared, closed or reset during the flush, or an event-bus middleware flushes, persists or removes entities, or records events, while the events are stored | `LogicException` naming the fix; the transaction is rollback-only and the entity manager closed. |
+| Another `postFlush` listener fails, clears the entity manager or flushes again | It runs after the store: the rows are in the transaction (a caller that catches the failure and commits commits them with the changes), and the events of its own flush are stored by that flush. |
+| The entity manager is cleared, closed or reset during the flush (an `onFlush` listener, a lifecycle callback), or an event-bus middleware flushes, persists or removes entities, or records events, while the events are stored | `LogicException` naming the fix; the transaction is rollback-only and the entity manager closed. |
 | Relay | Dispatched on `buses.event_async` (else `buses.event`) to the transport of the event; events their handlers record get the relayed event as cause. Duplicates are possible after a failure ([delivery guarantees](outbox.md#delivery-guarantees)). |
 | `FakeEventBus` in tests | Receives the events with `DispatchMode::OUTBOX` and returns an `OutboxStoredStamp`; the transaction rule still applies. |
 
@@ -229,20 +233,22 @@ and closes the entity manager before rethrowing. Code that catches the exception
 at `COMMIT`. This also ends a batch that flushes item by item in savepoints: a failure of one item
 dooms the whole transaction. Do not map rate limiters to recorded events.
 
-A refused flush (no transaction, another connection) happens before `BEGIN`: nothing is written,
-the entity manager stays open and the entities keep their events.
+A refused flush (no transaction, another connection) happens before `BEGIN`: nothing is written
+and the entities keep their events. Refused in `preFlush` (the usual case), the entity manager stays
+open and the flush can be retried in a transaction; refused in `onFlush` (an entity with events that
+only Doctrine's computation of the changes found), it is closed.
 
 ## What is covered, and what is not
 
 The listener collects, in `onFlush`, the scheduled insertions and every managed entity with
-events (also the unchanged ones, which the flush does not schedule, and the ones about to be
-deleted, which leave the identity map), then rescans the identity map in `postFlush`. Only the
-classes that can record events are looked at; uninitialized proxies are skipped (they recorded
-nothing, and loading them would query, or fail for a deleted row).
+events (also the unchanged ones, which the flush does not schedule), and the entities of recording
+classes about to be deleted (they leave the identity map), then rescans the identity map in
+`postFlush`. Only the classes that can record events are looked at; uninitialized proxies are
+skipped (they recorded nothing, and loading them would query, or fail for a deleted row).
 
-- **Record before `remove()`.** The `DELETE` sets a generated id to `null`; record the event (with
-  the id) before removing the entity. An entity persisted and removed before a flush is never
-  written, and its events are dropped with it.
+- **Deletions.** An entity may record its event before `remove()` or during the flush
+  (`#[ORM\PostRemove]`); the `DELETE` sets a generated id to `null`, so record the id before. An
+  entity persisted and removed before a flush is never written, and its events are dropped with it.
 - **Ids.** Prefer ids the application generates (UUIDs). With database-generated ids (`IDENTITY`),
   record the event in `#[ORM\PostPersist]`, which runs during the flush once the id is known, and
   flush inside a transaction.
@@ -251,7 +257,9 @@ nothing, and loading them would query, or fail for a deleted row).
   [`SequenceAware`](#numbering-the-events-of-an-aggregate) when consumers need an order.
 - **Other listeners.** Entities an `onFlush` listener persists after the bundle's listener (below
   -1024) are covered. Not covered: removals scheduled by such listeners (the entity leaves the
-  identity map before `postFlush`) and events recorded by `postFlush` listeners below -1024.
+  identity map before `postFlush`). Events recorded by `postFlush` listeners, which run after the
+  store, are stored by the next flush. Doctrine does not support `flush()` inside `onFlush`
+  listeners and lifecycle callbacks, and neither does the listener.
 - **Managed entities changed by event-bus middleware** while the events are stored are written by
   the next flush; new or removed entities make the flush fail (Doctrine would drop them).
 - **Nothing produces events** that the unit of work does not see: DQL `UPDATE`/`DELETE`, raw DBAL
@@ -388,23 +396,24 @@ tests of such a repository, build the publisher with a `FakeEventBus` and a conn
   `$recordedEvents` property clash with the trait.
 - Event-bus middleware must not write through the entity manager, and `EventBusInterface`
   decorators must keep the mode.
-- The listener scans the identity map twice per flush (see [Cost](#cost)).
+- The listener scans the identity map three times per flush (see [Cost](#cost)).
 
 ## Cost
 
-Each flush scans the identity map twice (in `onFlush` and `postFlush`), only for the entity classes
-that can record events. Measured with `php tests/Benchmark/recorded-events.php` (10 000 managed
-entities, 1% of them changed and recording an event, flush in a transaction, median of 5 runs):
+Each flush scans the identity map three times (in `preFlush`, `onFlush` and `postFlush`), only for
+the entity classes that can record events. Measured with `php tests/Benchmark/recorded-events.php`
+(10 000 managed entities, 1% of them changed and recording an event, flush in a transaction, median
+of 9 runs):
 
 | Flush of 10 000 managed entities | SQLite, PHP 8.4 | PostgreSQL 16, PHP 8.4 | SQLite, PHP 8.2 |
 |---|---|---|---|
-| Recording class, without the listener | 22.9 ms | 34.5 ms | 16.1 ms |
-| Recording class, listener time (scans, `FakeEventBus`) | 3.0 ms | 3.7 ms | 2.0 ms |
-| Recording class, listener time (scans and 100 outbox rows) | 6.7 ms | 20.7 ms | 5.1 ms |
+| Recording class, without the listener | 25.7 ms | 40.5 ms | 18.5 ms |
+| Recording class, listener time (scans, `FakeEventBus`) | 4.2 ms | 4.4 ms | 2.9 ms |
+| Recording class, listener time (scans and 100 outbox rows) | 7.4 ms | 20.9 ms | 5.9 ms |
 | Class that records nothing, listener time | 0.0 ms | 0.0 ms | 0.0 ms |
 
-The scans cost about 0.15 µs per managed entity of a recording class; storing the rows costs what
-any outbox dispatch costs.
+The scans cost about 0.15 µs per managed entity of a recording class and scan; storing the rows
+costs what any outbox dispatch costs.
 
 See also [Transactional outbox](outbox.md), [Event ordering](event-ordering.md) and
 [Troubleshooting](troubleshooting.md#events-recorded-by-entities).

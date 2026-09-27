@@ -73,6 +73,8 @@ Before enabling it:
 - **Plain flushes of recording entities are refused.** A flush of entities that recorded events
   outside a transaction on the outbox connection throws `OutboxRequiresTransactionException`,
   whatever `outbox.require_transaction` says (nothing is written, the entities keep their events).
+  Events recorded during such a flush (lifecycle callbacks) are refused once it committed, and the
+  entity manager is closed.
   Check the flushes outside handlers on a bus with `doctrine_transaction`: console commands,
   fixtures, and test suites; a transaction opened below DBAL (`dama/doctrine-test-bundle`) does not
   count. Flush inside `EntityManagerInterface::wrapInTransaction()`.
@@ -90,6 +92,9 @@ Before enabling it:
 - **Names of the trait.** Entities that already have `recordThat()`, `recordedEvents()`,
   `releaseEvents()` or a `$recordedEvents` property clash with `RecordsEventsTrait`: rename them, or
   implement `RecordsEvents` yourself.
+- **Listener order.** The bundle's `postFlush` hook runs before every other `postFlush` listener
+  (the highest priority), so the events are stored even when another listener fails; events such
+  listeners record are stored by the next flush. Its `preFlush` and `onFlush` hooks run at -1024.
 - **Always the outbox.** Recorded events are stored with `DispatchMode::OUTBOX` through
   `EventBusInterface`, whatever `dispatch_modes.event`, `#[Outbox]` or `#[Asynchronous]` say. A
   decorator of `EventBusInterface` must keep the mode and return the envelope of the bus, and

@@ -44,6 +44,6 @@ final class OutboxRequiresTransactionExceptionTest extends TestCase
         self::assertTrue($exception->afterCommit);
         self::assertStringContainsString('during a flush', $exception->getMessage());
         self::assertStringContainsString('already committed without them', $exception->getMessage());
-        self::assertStringContainsString('the next flush inside a transaction stores them', $exception->getMessage());
+        self::assertStringContainsString('the entity manager was closed', $exception->getMessage());
     }
 }

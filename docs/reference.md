@@ -746,7 +746,8 @@ Requires doctrine/orm, DoctrineBundle with `doctrine.orm` configured, and the ou
 storage (`outbox.enabled: true`, no `outbox.storage`) on the connection of the entity managers:
 compilation fails otherwise. The events are always stored with `DispatchMode::OUTBOX`
 (`dispatch_modes.event` does not apply), and a flush of entities with events outside a transaction
-on the outbox connection is refused whatever `outbox.require_transaction` says. See
+on the outbox connection is refused whatever `outbox.require_transaction` says. The listener runs in
+`preFlush` and `onFlush` after the other listeners (priority -1024), and in `postFlush` before them. See
 [Domain events](domain-events.md).
 
 ```yaml

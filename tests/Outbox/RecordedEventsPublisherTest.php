@@ -155,27 +155,30 @@ final class RecordedEventsPublisherTest extends TestCase
         self::assertCount(1, $second->recordedEvents());
     }
 
-    public function test_an_aggregate_recording_while_its_events_are_stored_makes_the_transaction_rollback_only(): void
+    public function test_an_aggregate_recording_while_its_events_are_stored_makes_the_transaction_rollback_only_and_releases_nothing(): void
     {
         $fake = new FakeEventBus();
-        $article = new Article('a1', 'One');
+        $first = new Article('a1', 'One');
+        $second = new Article('b1', 'Other');
         $this->connection->beginTransaction();
-        $bus = $this->bus(static function (Event $event) use ($fake, $article): Envelope {
-            if (!$event instanceof ArticleFeaturedEvent) {
-                $article->record(new ArticleFeaturedEvent('a1'));
+        $bus = $this->bus(static function (Event $event) use ($fake, $second): Envelope {
+            if ($event instanceof ArticlePublishedEvent && 'b1' === $event->articleId) {
+                $second->record(new ArticleFeaturedEvent('b1'));
             }
 
             return $fake->dispatch($event, DispatchMode::OUTBOX);
         });
 
         try {
-            (new RecordedEventsPublisher($bus, $this->connection))->publish($article);
+            (new RecordedEventsPublisher($bus, $this->connection))->publish($first, $second);
             self::fail('The publisher should have refused an event recorded while storing.');
         } catch (\LogicException $exception) {
-            self::assertStringContainsString(Article::class.' released 2 event(s) after 1 were stored', $exception->getMessage());
+            self::assertStringContainsString(Article::class.' has 2 recorded event(s) after 1 were stored', $exception->getMessage());
         }
 
         self::assertTrue($this->connection->isRollbackOnly());
+        self::assertCount(1, $first->recordedEvents(), 'Nothing is released before every aggregate is checked.');
+        self::assertCount(2, $second->recordedEvents());
     }
 
     public function test_a_decorator_of_the_event_bus_that_keeps_the_outbox_mode_is_accepted(): void

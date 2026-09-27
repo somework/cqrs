@@ -22,6 +22,8 @@ use Symfony\Component\DependencyInjection\Reference;
 
 use function class_exists;
 
+use const PHP_INT_MAX;
+
 #[CoversClass(CqrsExtension::class)]
 #[CoversClass(Configuration::class)]
 #[CoversClass(DoctrineEventsRegistrar::class)]
@@ -43,10 +45,11 @@ final class CqrsExtensionDoctrineEventsTest extends TestCase
         self::assertSame(RecordedEventsListener::class, $listener->getClass());
         self::assertFalse($listener->isPublic());
         self::assertSame([
+            ['event' => 'preFlush', 'priority' => -1024],
             ['event' => 'onFlush', 'priority' => -1024],
-            ['event' => 'postFlush', 'priority' => -1024],
+            ['event' => 'postFlush', 'priority' => PHP_INT_MAX],
             ['event' => 'onClear'],
-        ], $listener->getTag('doctrine.event_listener'), 'No "connection" attribute: every connection.');
+        ], $listener->getTag('doctrine.event_listener'), 'No "connection" attribute: every connection. The store runs before the other postFlush listeners.');
         self::assertSame([['method' => 'reset']], $listener->getTag('kernel.reset'));
 
         $connection = $listener->getArgument('$outboxConnection');

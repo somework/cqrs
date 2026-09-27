@@ -48,7 +48,7 @@ final class DamaDoctrineTestBundleTest extends TestCase
         $connection = DriverManager::getConnection(['driver' => 'pdo_sqlite', 'memory' => true, 'dama.connection_key' => 'default'], $configuration);
         $bus = new FakeEventBus();
         $events = new EventManager();
-        $events->addEventListener([Events::onFlush, Events::postFlush, Events::onClear], new RecordedEventsListener(static fn (): RecordedEventsPublisher => new RecordedEventsPublisher($bus, $connection), $connection));
+        $events->addEventListener([Events::preFlush, Events::onFlush, Events::postFlush, Events::onClear], new RecordedEventsListener(static fn (): RecordedEventsPublisher => new RecordedEventsPublisher($bus, $connection), $connection));
         $entityManager = TestEntityManager::create($connection, $events);
         TestEntityManager::createSchema($entityManager);
         $entityManager->persist(new Article('a1', 'Draft'));

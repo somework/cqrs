@@ -605,7 +605,9 @@ These concern `somework_cqrs.doctrine_events` and `RecordedEventsPublisher` (see
 **Cause.** Entities with recorded events were flushed outside a transaction on the outbox
 connection: a flush in a console command, a fixture, a test, or a handler on a bus without
 `doctrine_transaction`. `outbox.require_transaction: false` does not apply to recorded events.
-The flush was refused before it wrote anything; the entities keep their events.
+The flush was refused before it wrote anything; the entities keep their events. The entity manager
+stays open, unless the entity with events was only found once Doctrine computed the changes (a new
+entity reached by cascade): then it is closed, and the operation must run again.
 
 **Fix.** Flush inside `EntityManagerInterface::wrapInTransaction()` (or
 `$connection->transactional()`), or dispatch the command through a bus with the
@@ -617,8 +619,9 @@ count: it is invisible to the connection.
 **Symptom.** `OutboxRequiresTransactionException` with `afterCommit: true`.
 
 **Cause.** A lifecycle callback or a flush listener recorded events during a flush that ran
-without a transaction: the changes are committed, the events are not stored (they are kept, and
-the next flush in a transaction stores them).
+without a transaction: the changes are committed, the events are not stored, and the entity manager
+was closed (Doctrine skips the cleanup of its unit of work when `postFlush` throws, and a next flush
+would repeat part of this one).
 
 **Fix.** Flush inside a transaction, as above, when entities record events in callbacks
 (`#[ORM\PostPersist]` for database-generated ids).
@@ -633,12 +636,12 @@ recorded events: they cannot be stored in the transaction of their changes. Noth
 
 ### "The entity manager was cleared, closed or reset during a flush"
 
-**Cause.** A flush listener cleared, closed or reset the entity manager (or a nested flush in a
-listener failed, which closes it) before the recorded events were stored. The events of the flush
-cannot be complete anymore; the transaction was marked rollback-only.
+**Cause.** An `onFlush` listener or a lifecycle callback cleared, closed or reset the entity manager
+(or flushed it, which Doctrine does not support there, and the flush failed) before the recorded
+events were stored. The events of the flush cannot be complete anymore; the transaction was marked
+rollback-only. `postFlush` listeners run after the store and cannot cause it.
 
-**Fix.** Do not clear or reset the entity manager in flush listeners, and do not swallow the
-failure of a flush there. Run the operation again.
+**Fix.** Do not clear, reset or flush the entity manager during a flush. Run the operation again.
 
 ### "… while the recorded events were stored in the outbox"
 

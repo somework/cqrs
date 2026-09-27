@@ -30,6 +30,9 @@ class Article implements RecordsEvents
     #[ORM\Column(type: Types::STRING, length: 255)]
     private string $title;
 
+    #[ORM\Column(type: Types::TEXT, nullable: true)]
+    private ?string $body = null;
+
     public function __construct(string $id, string $title)
     {
         $this->id = $id;
@@ -51,6 +54,19 @@ class Article implements RecordsEvents
     {
         $this->title = $title;
         $this->recordThat(new ArticleRenamedEvent($this->id, $title));
+    }
+
+    /**
+     * Changes a mapped field without recording an event.
+     */
+    public function edit(string $body): void
+    {
+        $this->body = $body;
+    }
+
+    public function body(): ?string
+    {
+        return $this->body;
     }
 
     /**

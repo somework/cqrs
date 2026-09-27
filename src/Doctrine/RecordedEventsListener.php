@@ -9,6 +9,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnClearEventArgs;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
+use Doctrine\ORM\Event\PreFlushEventArgs;
 use Doctrine\ORM\UnitOfWork;
 use Doctrine\Persistence\Proxy;
 use SomeWork\CqrsBundle\Contract\RecordsEvents;
@@ -31,17 +32,20 @@ use const PHP_VERSION_ID;
  * entity manager flushes, in the caller's transaction, so they commit or roll back with the
  * changes ("somework_cqrs.doctrine_events").
  *
- * - onFlush (before the flush's BEGIN) collects the entities with events: the scheduled insertions
- *   and the managed entities, including the ones about to be deleted, which leave the identity map.
- *   It refuses a flush outside a transaction on the outbox connection: nothing is written, and the
- *   entities keep their events.
- * - postFlush (after the flush's SQL, before the caller's COMMIT) adds the entities that recorded
- *   events during the flush, stores every event through RecordedEventsPublisher (EventBusInterface,
+ * - preFlush (priority -1024, before Doctrine computes the changes) refuses a flush of entities with
+ *   events outside a transaction on the outbox connection: the unit of work is left as it was, and
+ *   the entities keep their events for the next flush.
+ * - onFlush (priority -1024, before the flush's BEGIN) checks the new entities Doctrine found since
+ *   (cascades, other listeners), and keeps the entities with events, and those of recording classes
+ *   about to be deleted (they leave the identity map, and may record during the flush).
+ * - postFlush (the highest priority: after the flush's SQL, before the caller's COMMIT and before the
+ *   other postFlush listeners, which cannot skip it by failing, clearing or flushing again) adds the entities that recorded events
+ *   during the flush, stores every event through RecordedEventsPublisher (EventBusInterface,
  *   DispatchMode::OUTBOX), then releases them.
  *
  * A failure after the flush wrote makes the transaction rollback-only and closes the entity manager,
- * so neither a partial set of events nor changes without their events can commit. Both hooks run at
- * priority -1024, after the other listeners.
+ * so neither a partial set of events nor changes without their events can commit. A refusal after
+ * Doctrine computed the changes also closes it: the flush could not be retried on it.
  *
  * @internal
  */
@@ -67,28 +71,67 @@ final class RecordedEventsListener implements ResetInterface
         $this->pending = new \WeakMap();
     }
 
+    public function preFlush(PreFlushEventArgs $args): void
+    {
+        $entityManager = $args->getObjectManager();
+        $unitOfWork = $entityManager->getUnitOfWork();
+
+        $pending = $this->pending[$entityManager] ?? null;
+        if (null !== $pending && $pending->storing) {
+            $exception = new \LogicException('The entity manager was flushed while the recorded events of its last flush were stored in the outbox (by a middleware or stamp decider of the event bus, such as "doctrine_transaction" on another bus): its writes would be missed. The transaction was marked rollback-only: do not flush in event-bus middleware.');
+            // Kept for postFlush when a middleware swallows the exception.
+            $pending->failure ??= $exception;
+            $connection = $entityManager->getConnection();
+            if ($connection->isTransactionActive()) {
+                $connection->setRollbackOnly();
+            }
+
+            throw $exception;
+        }
+        // Left by a flush that never reached postFlush: it failed before its BEGIN (the entities are
+        // still in the unit of work and are collected again), or its SQL failed and closed the
+        // entity manager (they are gone with its changes).
+        unset($this->pending[$entityManager]);
+
+        $entities = $this->collect($entityManager, $unitOfWork, $unitOfWork->getScheduledEntityInsertions());
+        if ([] !== $entities) {
+            // Before Doctrine computes the changes: a refused flush leaves the unit of work as it was.
+            $this->assertCanStore($entityManager, $entities);
+        }
+    }
+
     public function onFlush(OnFlushEventArgs $args): void
     {
         $entityManager = $args->getObjectManager();
         $unitOfWork = $entityManager->getUnitOfWork();
-        $pending = $this->pendingBeforeFlush($entityManager, $unitOfWork);
 
+        // With the new entities Doctrine found since preFlush: cascades, other listeners.
         $entities = $this->collect($entityManager, $unitOfWork, $unitOfWork->getScheduledEntityInsertions());
-        if ([] === $entities) {
-            return;
+        if ([] !== $entities) {
+            try {
+                $this->assertCanStore($entityManager, $entities);
+            } catch (\Throwable $exception) {
+                // Nothing was written, but Doctrine computed the changes of the flush already: a retry
+                // on this entity manager would write only part of them.
+                $entityManager->close();
+
+                throw $exception;
+            }
         }
 
-        // Before the flush's BEGIN: a refused flush writes nothing, and the entities keep their events.
-        $connection = $entityManager->getConnection();
-        if ($connection !== $this->outboxConnection) {
-            throw new \LogicException(sprintf('The entity manager flushing %s, which recorded events, is not on the outbox connection ("somework_cqrs.outbox.connection"), so their events cannot be stored in the transaction of their changes. Map these entities on an entity manager of the outbox connection, or point "somework_cqrs.outbox.connection" at theirs. Nothing was written, and they are still recorded.', self::classes($entities)));
-        }
-        if (!self::inTransaction($connection)) {
-            throw new OutboxRequiresTransactionException(self::firstEventClass($entities), array_keys(self::classMap($entities)));
+        // They leave the identity map before postFlush, and may record events while they are
+        // deleted (#[ORM\PostRemove]).
+        $deletions = [];
+        foreach ($unitOfWork->getScheduledEntityDeletions() as $entity) {
+            if ($entity instanceof RecordsEvents) {
+                $deletions[spl_object_id($entity)] = $entity;
+            }
         }
 
-        $pending ??= $this->pending[$entityManager] = new PendingFlush($unitOfWork, $connection->getTransactionNestingLevel());
-        $pending->entities += $entities;
+        if ([] !== $entities || [] !== $deletions) {
+            $pending = $this->pending[$entityManager] = new PendingFlush($unitOfWork);
+            $pending->entities = $entities + $deletions;
+        }
     }
 
     public function postFlush(PostFlushEventArgs $args): void
@@ -96,59 +139,59 @@ final class RecordedEventsListener implements ResetInterface
         $entityManager = $args->getObjectManager();
         $unitOfWork = $entityManager->getUnitOfWork();
         $pending = $this->pending[$entityManager] ?? null;
+        unset($this->pending[$entityManager]);
 
         if (null !== $pending && ($pending->cleared || $pending->unitOfWork !== $unitOfWork)) {
-            unset($this->pending[$entityManager]);
             if ($pending->hasEvents()) {
                 // The identity map no longer shows what the flush wrote, so its events cannot be complete.
-                $this->failAfterWrite($entityManager, new \LogicException(sprintf('The entity manager was cleared, closed or reset during a flush (in a postFlush listener, or by a nested flush that failed), before the events recorded by %s were stored in the outbox. The transaction was marked rollback-only so the changes do not commit without their events: re-run the operation, and do not clear the entity manager in flush listeners.', self::classes($pending->entities))));
+                $this->failAfterWrite($entityManager, new \LogicException(sprintf('The entity manager was cleared, closed or reset during a flush (in an onFlush listener or a lifecycle callback), before the events recorded by %s were stored in the outbox. The transaction was marked rollback-only so the changes do not commit without their events: re-run the operation, and do not clear the entity manager during a flush.', self::classes($pending->entities))));
             }
             $pending = null;
         }
 
-        // The entities of onFlush that still have events (a nested flush may have stored them), and
-        // those that recorded events during the flush or were persisted by later onFlush listeners.
+        // The entities of onFlush that have events, and those that recorded events during the flush
+        // or were persisted by later onFlush listeners.
         $entities = $this->collect($entityManager, $unitOfWork, $pending->entities ?? []);
         if ([] === $entities) {
-            unset($this->pending[$entityManager]);
-
             return;
         }
 
-        // Events recorded during the flush, which onFlush did not see.
+        // Events recorded during the flush, which preFlush and onFlush did not see.
         $connection = $entityManager->getConnection();
         if ($connection !== $this->outboxConnection) {
             $this->failAfterWrite($entityManager, new \LogicException(sprintf('%s recorded events during a flush of an entity manager that is not on the outbox connection ("somework_cqrs.outbox.connection"), so they cannot be stored in the transaction of the changes. Map these entities on an entity manager of the outbox connection, or point "somework_cqrs.outbox.connection" at theirs.', self::classes($entities))));
         }
         if (!self::inTransaction($connection)) {
-            unset($this->pending[$entityManager]);
+            $exception = new OutboxRequiresTransactionException(self::firstEventClass($entities), array_keys(self::classMap($entities)), true);
+            // Doctrine skips the cleanup of its unit of work when postFlush throws: a next flush on this
+            // entity manager would repeat part of this one.
+            $entityManager->close();
 
-            throw new OutboxRequiresTransactionException(self::firstEventClass($entities), array_keys(self::classMap($entities)), true);
+            throw $exception;
         }
 
-        $pending ??= new PendingFlush($unitOfWork, $connection->getTransactionNestingLevel());
-        $pending->entities = $entities;
-        $this->pending[$entityManager] = $pending;
+        $storing = $this->pending[$entityManager] = new PendingFlush($unitOfWork);
+        $storing->entities = $entities;
         // Compared after the store: the scheduled writes of the flush are gone already, so any change
-        // was made while storing, and postCommitCleanup() would drop it right after this listener.
+        // was made while storing, and postCommitCleanup() would drop it right after the listeners.
         $insertions = count($unitOfWork->getScheduledEntityInsertions());
         $deletions = count($unitOfWork->getScheduledEntityDeletions());
 
-        $pending->storing = true;
+        $storing->storing = true;
         try {
             ($this->publisher)()->publish(...array_values($entities));
         } catch (\Throwable $exception) {
             $this->failAfterWrite($entityManager, $exception);
         } finally {
-            $pending->storing = false;
+            $storing->storing = false;
         }
         unset($this->pending[$entityManager]);
 
-        if (null !== $pending->failure) {
+        if (null !== $storing->failure) {
             // A flush during the store, whose exception a middleware swallowed.
-            $this->failAfterWrite($entityManager, $pending->failure);
+            $this->failAfterWrite($entityManager, $storing->failure);
         }
-        if ($pending->cleared || $entityManager->getUnitOfWork() !== $unitOfWork) {
+        if ($storing->cleared || $entityManager->getUnitOfWork() !== $unitOfWork) {
             $this->failAfterWrite($entityManager, new \LogicException('The entity manager was cleared, closed or reset while the recorded events were stored in the outbox (by a middleware or stamp decider of the event bus). The transaction was marked rollback-only: do not use the entity manager in event-bus middleware.'));
         }
         if (count($unitOfWork->getScheduledEntityInsertions()) !== $insertions || count($unitOfWork->getScheduledEntityDeletions()) !== $deletions) {
@@ -158,19 +201,11 @@ final class RecordedEventsListener implements ResetInterface
 
     public function onClear(OnClearEventArgs $args): void
     {
-        $entityManager = $args->getObjectManager();
-        $pending = $this->pending[$entityManager] ?? null;
-        if (null === $pending) {
-            return;
+        $pending = $this->pending[$args->getObjectManager()] ?? null;
+        if (null !== $pending) {
+            // During a flush (or a failed flush closing the entity manager): its entities are detached.
+            $pending->cleared = true;
         }
-
-        if ($pending->isAbandoned($entityManager->getConnection())) {
-            unset($this->pending[$entityManager]);
-
-            return;
-        }
-        // A clear during the flush (or a failed flush closing the entity manager): its entities are detached.
-        $pending->cleared = true;
     }
 
     /**
@@ -182,46 +217,22 @@ final class RecordedEventsListener implements ResetInterface
     }
 
     /**
-     * The entities an outer flush collected, which a nested flush adds its own to; null when no
-     * flush of the entity manager is in progress.
+     * Refuses to store the events of $entities outside a transaction on the outbox connection.
+     *
+     * @param non-empty-array<int, RecordsEvents> $entities
+     *
+     * @throws OutboxRequiresTransactionException
+     * @throws \LogicException                    for an entity manager of another connection
      */
-    private function pendingBeforeFlush(EntityManagerInterface $entityManager, UnitOfWork $unitOfWork): ?PendingFlush
+    private function assertCanStore(EntityManagerInterface $entityManager, array $entities): void
     {
-        $pending = $this->pending[$entityManager] ?? null;
-        if (null === $pending) {
-            return null;
+        $connection = $entityManager->getConnection();
+        if ($connection !== $this->outboxConnection) {
+            throw new \LogicException(sprintf('The entity manager flushing %s, which recorded events, is not on the outbox connection ("somework_cqrs.outbox.connection"), so their events cannot be stored in the transaction of their changes. Map these entities on an entity manager of the outbox connection, or point "somework_cqrs.outbox.connection" at theirs. Nothing was written, and they are still recorded.', self::classes($entities)));
         }
-
-        if ($pending->storing) {
-            $exception = new \LogicException('The entity manager was flushed while the recorded events of its last flush were stored in the outbox (by a middleware or stamp decider of the event bus, such as "doctrine_transaction" on another bus): its writes would be missed. The transaction was marked rollback-only: do not flush in event-bus middleware.');
-            // Kept for postFlush when a middleware swallows the exception.
-            $pending->failure ??= $exception;
-            $connection = $entityManager->getConnection();
-            if ($connection->isTransactionActive()) {
-                $connection->setRollbackOnly();
-            }
-
-            throw $exception;
+        if (!self::inTransaction($connection)) {
+            throw new OutboxRequiresTransactionException(self::firstEventClass($entities), array_keys(self::classMap($entities)));
         }
-
-        // The flush failed: the transaction it ran in ended, or it closed the entity manager (clearing
-        // it), which was reset since. Entities still managed are collected again.
-        if ($pending->isAbandoned($entityManager->getConnection()) || ($pending->cleared && $pending->unitOfWork !== $unitOfWork)) {
-            unset($this->pending[$entityManager]);
-
-            return null;
-        }
-
-        if ($pending->cleared || $pending->unitOfWork !== $unitOfWork) {
-            unset($this->pending[$entityManager]);
-            if ($pending->hasEvents()) {
-                $this->failAfterWrite($entityManager, new \LogicException(sprintf('The entity manager was cleared or reset during a flush (in a flush listener) and flushed again, before the events recorded by %s were stored in the outbox. The transaction was marked rollback-only so the changes do not commit without their events: re-run the operation, and do not clear or reset the entity manager in flush listeners.', self::classes($pending->entities))));
-            }
-
-            return null;
-        }
-
-        return $pending;
     }
 
     /**

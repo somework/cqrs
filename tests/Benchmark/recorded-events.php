@@ -3,7 +3,7 @@
 declare(strict_types=1);
 
 /*
- * The cost of the listener of "somework_cqrs.doctrine_events" (two scans of the identity map per
+ * The cost of the listener of "somework_cqrs.doctrine_events" (three scans of the identity map per
  * flush): a flush of 10 000 managed entities of which 1% recorded an event (and changed), with and
  * without the listener.
  *
@@ -17,6 +17,7 @@ use Doctrine\DBAL\Connection;
 use Doctrine\ORM\Event\OnClearEventArgs;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
+use Doctrine\ORM\Event\PreFlushEventArgs;
 use Doctrine\ORM\Events;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Doctrine\RecordedEventsListener;
@@ -72,9 +73,16 @@ $flush = static function (string $listener, bool $recording) use ($entities, $ch
         })();
         $recorded = new RecordedEventsListener(static fn (): RecordedEventsPublisher => new RecordedEventsPublisher($bus, $connection), $connection);
         // Times the hooks of the bundle's listener alone.
-        $events->addEventListener([Events::onFlush, Events::postFlush, Events::onClear], new class($recorded, $hooks) {
+        $events->addEventListener([Events::preFlush, Events::onFlush, Events::postFlush, Events::onClear], new class($recorded, $hooks) {
             public function __construct(private readonly RecordedEventsListener $listener, private float &$time)
             {
+            }
+
+            public function preFlush(PreFlushEventArgs $args): void
+            {
+                $start = hrtime(true);
+                $this->listener->preFlush($args);
+                $this->time += (hrtime(true) - $start) / 1e6;
             }
 
             public function onFlush(OnFlushEventArgs $args): void

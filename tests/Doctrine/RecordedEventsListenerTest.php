@@ -13,6 +13,7 @@ use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
+use Doctrine\ORM\Event\PreFlushEventArgs;
 use Doctrine\ORM\Events;
 use Doctrine\ORM\OptimisticLockException;
 use Doctrine\ORM\UnitOfWork;
@@ -40,6 +41,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Entity\Comment;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Document;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Report;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Tag;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AccountClosedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AccountCreditedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArticleDeletedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArticleFeaturedEvent;
@@ -58,6 +60,7 @@ use Symfony\Component\Messenger\Transport\Serialization\PhpSerializer;
 
 use function array_map;
 use function class_exists;
+use function gc_collect_cycles;
 use function is_string;
 
 /**
@@ -91,6 +94,14 @@ final class RecordedEventsListenerTest extends TestCase
         $this->events = new EventManager();
         $this->entityManager = TestEntityManager::create($this->connection, $this->events);
         TestEntityManager::createSchema($this->entityManager);
+    }
+
+    protected function tearDown(): void
+    {
+        // Ends a transaction a test left open (a connection without auto-commit always has one),
+        // whose locks would block the next test from dropping the tables of a real database.
+        $this->connection->close();
+        $this->outboxConnection?->close();
     }
 
     public function test_the_events_recorded_before_a_flush_are_stored_in_its_transaction_then_released(): void
@@ -143,14 +154,56 @@ final class RecordedEventsListenerTest extends TestCase
         self::assertTrue($this->entityManager->isOpen());
         self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft')], $article->recordedEvents());
 
+        // Refused before Doctrine computed the changes: a later change and a flush write both.
+        $article->edit('Body');
         $this->entityManager->wrapInTransaction(static function (): void {
         });
 
-        self::assertSame(1, $this->rowCount('cqrs_test_article'));
+        self::assertSame(['id' => 'a1', 'title' => 'Draft', 'body' => 'Body'], $this->connection->fetchAssociative('SELECT id, title, body FROM cqrs_test_article'));
         self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft')], $this->storedEvents());
     }
 
-    public function test_the_events_recorded_during_a_flush_without_a_transaction_are_refused_after_its_commit_and_kept(): void
+    public function test_a_refused_change_of_a_managed_entity_is_written_whole_by_the_next_flush(): void
+    {
+        $this->connection->insert('cqrs_test_article', ['id' => 'a1', 'title' => 'Old']);
+        $this->listen();
+        $article = $this->entityManager->find(Article::class, 'a1');
+        self::assertInstanceOf(Article::class, $article);
+        $article->rename('New');
+
+        self::assertInstanceOf(OutboxRequiresTransactionException::class, self::thrown(function (): void {
+            $this->entityManager->flush();
+        }));
+        $article->edit('Body');
+        $this->entityManager->wrapInTransaction(static function (): void {
+        });
+
+        self::assertSame(['title' => 'New', 'body' => 'Body'], $this->connection->fetchAssociative('SELECT title, body FROM cqrs_test_article'));
+        self::assertSameMessages([new ArticleRenamedEvent('a1', 'New')], $this->storedEvents());
+    }
+
+    public function test_an_entity_with_events_found_once_doctrine_computed_the_changes_is_refused_and_the_entity_manager_closed(): void
+    {
+        $this->listen();
+        // A preFlush listener after the bundle's: its entity is only found in onFlush.
+        $this->events->addEventListener([Events::preFlush], new class {
+            public function preFlush(PreFlushEventArgs $args): void
+            {
+                $args->getObjectManager()->persist(new Article('late', 'Late'));
+            }
+        });
+        $this->entityManager->persist(new Tag('t1', 'News'));
+
+        self::assertInstanceOf(OutboxRequiresTransactionException::class, self::thrown(function (): void {
+            $this->entityManager->flush();
+        }));
+
+        self::assertFalse($this->entityManager->isOpen(), 'Doctrine computed the changes: the flush cannot be retried on it.');
+        self::assertSame(0, $this->rowCount('cqrs_test_article'));
+        self::assertSame(0, $this->rowCount('cqrs_test_tag'));
+    }
+
+    public function test_the_events_recorded_during_a_flush_without_a_transaction_are_refused_after_its_commit(): void
     {
         $this->listen();
         $comment = new Comment('a1');
@@ -168,11 +221,25 @@ final class RecordedEventsListenerTest extends TestCase
         self::assertSame(1, $this->rowCount('cqrs_test_comment'), 'The flush committed the comment.');
         self::assertSame(0, $this->rowCount('somework_cqrs_outbox'));
         self::assertCount(1, $comment->recordedEvents());
+        // Doctrine skipped the cleanup of the unit of work: a next flush would repeat part of this one.
+        self::assertFalse($this->entityManager->isOpen());
+    }
 
-        $this->entityManager->wrapInTransaction(static function (): void {
+    public function test_an_entity_recording_while_it_is_deleted_has_its_events_stored(): void
+    {
+        $this->listen();
+        $account = new Account('acc');
+        $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager) use ($account): void {
+            $entityManager->persist($account);
         });
 
-        self::assertSameMessages([new CommentPostedEvent((int) $comment->id(), 'a1')], $this->storedEvents());
+        $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager) use ($account): void {
+            $entityManager->remove($account);
+        });
+
+        self::assertSame(0, $this->rowCount('cqrs_test_account'));
+        self::assertSameMessages([new AccountClosedEvent('acc')], $this->storedEvents());
+        self::assertSame([], $account->recordedEvents());
     }
 
     public function test_the_id_the_database_generates_is_known_to_the_events_recorded_after_the_insert(): void
@@ -326,14 +393,14 @@ final class RecordedEventsListenerTest extends TestCase
         self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft'), new ArticlePublishedEvent('late', 'Late')], $this->storedEvents());
     }
 
-    public function test_a_flush_of_an_earlier_postflush_listener_is_merged(): void
+    public function test_a_postflush_listener_flushing_again_stores_the_events_of_its_flush_too(): void
     {
         $article = new Article('a1', 'Draft');
+        $this->listen();
         $this->onPostFlush(static function (EntityManagerInterface $entityManager) use ($article): void {
             $article->rename('Renamed');
             $entityManager->flush();
         });
-        $this->listen();
 
         $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager) use ($article): void {
             $entityManager->persist($article);
@@ -343,9 +410,70 @@ final class RecordedEventsListenerTest extends TestCase
         self::assertSame('Renamed', $this->connection->fetchOne('SELECT title FROM cqrs_test_article'));
     }
 
-    public function test_a_failed_nested_flush_that_a_listener_swallows_makes_the_transaction_rollback_only(): void
+    public function test_a_failing_postflush_listener_cannot_skip_the_store(): void
+    {
+        $this->listen();
+        $this->onPostFlush(static function (): void {
+            throw new \RuntimeException('A postFlush listener failed.');
+        });
+        $this->connection->beginTransaction();
+        $this->entityManager->persist(new Article('a1', 'Draft'));
+
+        self::assertInstanceOf(\RuntimeException::class, self::thrown(function (): void {
+            $this->entityManager->flush();
+        }));
+        // The caller swallows the failure and commits: the change keeps its event.
+        $this->connection->commit();
+
+        self::assertSame(1, $this->rowCount('cqrs_test_article'));
+        self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft')], $this->storedEvents());
+    }
+
+    public function test_a_failing_postflush_listener_leaves_nothing_for_the_next_flush(): void
+    {
+        $this->connection->insert('cqrs_test_article', ['id' => 'a1', 'title' => 'Existing']);
+        $this->listen();
+        $this->onPostFlush(static function (): void {
+            throw new \RuntimeException('A postFlush listener failed.');
+        });
+        $article = $this->entityManager->find(Article::class, 'a1');
+        self::assertInstanceOf(Article::class, $article);
+        $this->connection->beginTransaction();
+        $article->delete();
+        $this->entityManager->remove($article);
+        self::assertInstanceOf(\RuntimeException::class, self::thrown(function (): void {
+            $this->entityManager->flush();
+        }));
+        $this->connection->rollBack();
+
+        $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager): void {
+            $entityManager->persist(new Tag('t1', 'News'));
+        });
+
+        self::assertSame(1, $this->rowCount('cqrs_test_article'), 'The deletion was rolled back...');
+        self::assertSame([], $this->storedEvents(), '...with its event.');
+    }
+
+    public function test_a_postflush_listener_clearing_the_entity_manager_after_the_store_changes_nothing(): void
+    {
+        $this->listen();
+        $this->onPostFlush(static function (EntityManagerInterface $entityManager): void {
+            $entityManager->clear();
+            $entityManager->persist(new Article('b1', 'Other'));
+            $entityManager->flush();
+        });
+
+        $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager): void {
+            $entityManager->persist(new Article('a1', 'Draft'));
+        });
+
+        self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft'), new ArticlePublishedEvent('b1', 'Other')], $this->storedEvents());
+    }
+
+    public function test_a_failed_nested_flush_that_a_postflush_listener_swallows_keeps_the_stored_events_with_their_changes(): void
     {
         $this->connection->insert('cqrs_test_article', ['id' => 'taken', 'title' => 'Existing']);
+        $this->listen();
         $this->onPostFlush(static function (EntityManagerInterface $entityManager): void {
             $entityManager->persist(new Article('taken', 'Duplicate'));
             try {
@@ -353,18 +481,21 @@ final class RecordedEventsListenerTest extends TestCase
             } catch (UniqueConstraintViolationException) {
             }
         });
-        $this->listen();
         $this->connection->beginTransaction();
-        $article = new Article('a1', 'Draft');
-        $this->entityManager->persist($article);
+        $this->entityManager->persist(new Article('a1', 'Draft'));
 
-        $this->assertFailsAfterWrite('cleared, closed or reset during a flush', function (): void {
-            $this->entityManager->flush();
-        }, 1);
+        $this->entityManager->flush();
+        $this->connection->commit();
+
+        // The nested flush rolled back its savepoint: neither its change nor its event.
+        self::assertSame(2, $this->rowCount('cqrs_test_article'));
+        self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft')], $this->storedEvents());
     }
 
-    public function test_a_clear_in_an_earlier_postflush_listener_makes_the_transaction_rollback_only(): void
+    public function test_a_clear_during_the_flush_before_the_store_makes_the_transaction_rollback_only(): void
     {
+        // Registered before the bundle's listener: it runs before the store (Doctrine allows no
+        // listener above the bundle's priority).
         $this->onPostFlush(static function (EntityManagerInterface $entityManager): void {
             $entityManager->clear();
         });
@@ -377,23 +508,7 @@ final class RecordedEventsListenerTest extends TestCase
         });
     }
 
-    public function test_a_flush_after_a_clear_in_an_earlier_postflush_listener_makes_the_transaction_rollback_only(): void
-    {
-        $this->onPostFlush(static function (EntityManagerInterface $entityManager): void {
-            $entityManager->clear();
-            $entityManager->persist(new Article('b1', 'Other'));
-            $entityManager->flush();
-        });
-        $this->listen();
-        $this->connection->beginTransaction();
-        $this->entityManager->persist(new Article('a1', 'Draft'));
-
-        $this->assertFailsAfterWrite('cleared or reset during a flush (in a flush listener) and flushed again', function (): void {
-            $this->entityManager->flush();
-        });
-    }
-
-    public function test_a_reset_of_the_entity_manager_in_an_earlier_postflush_listener_makes_the_transaction_rollback_only(): void
+    public function test_a_reset_of_the_entity_manager_during_the_flush_before_the_store_makes_the_transaction_rollback_only(): void
     {
         $this->onPostFlush(static function (EntityManagerInterface $entityManager): void {
             self::resetInPlace($entityManager);
@@ -472,27 +587,50 @@ final class RecordedEventsListenerTest extends TestCase
         self::assertSameMessages([new ArticlePublishedEvent('b1', 'Other')], $this->storedEvents());
     }
 
-    public function test_reset_forgets_the_entities_of_unfinished_flushes(): void
+    public function test_a_clear_after_a_flush_that_failed_before_writing_starts_afresh_without_auto_commit(): void
     {
+        // As DBAL does when it connects without auto-commit: a transaction is always open.
+        $this->connection->setAutoCommit(false);
+        $this->connection->beginTransaction();
         $this->listen();
         $failing = $this->failingOnFlush();
-        $this->connection->beginTransaction();
         $this->entityManager->persist(new Article('a1', 'Draft'));
-        try {
+        self::assertInstanceOf(\RuntimeException::class, self::thrown(function (): void {
             $this->entityManager->flush();
-            self::fail('The flush should have failed.');
-        } catch (\RuntimeException) {
-        }
+        }));
+        // DBAL opens the next transaction right away: the nesting level stays at 1.
+        $this->connection->rollBack();
         $this->entityManager->clear();
         $failing->fail = false;
 
-        // Between the messages of a worker, or requests.
-        $this->listener->reset();
         $this->entityManager->persist(new Article('b1', 'Other'));
         $this->entityManager->flush();
         $this->connection->commit();
 
         self::assertSameMessages([new ArticlePublishedEvent('b1', 'Other')], $this->storedEvents());
+    }
+
+    public function test_reset_forgets_the_entities_of_unfinished_flushes(): void
+    {
+        $this->listen();
+        $failing = $this->failingOnFlush();
+        $this->connection->beginTransaction();
+        $article = new Article('a1', 'Draft');
+        $this->entityManager->persist($article);
+        self::assertInstanceOf(\RuntimeException::class, self::thrown(function (): void {
+            $this->entityManager->flush();
+        }));
+        $this->entityManager->clear();
+        $reference = \WeakReference::create($article);
+        unset($article);
+
+        // Between the messages of a worker, or requests.
+        $this->listener->reset();
+        gc_collect_cycles();
+
+        self::assertNull($reference->get(), 'The listener no longer holds the entity.');
+        $failing->fail = false;
+        $this->connection->rollBack();
     }
 
     public function test_a_middleware_persisting_an_entity_while_the_events_are_stored_makes_the_transaction_rollback_only(): void
@@ -774,7 +912,7 @@ final class RecordedEventsListenerTest extends TestCase
             fn (): RecordedEventsPublisher => new RecordedEventsPublisher($this->eventBus ?? $this->eventBus(), $this->connection),
             $this->outboxConnection ?? $this->connection,
         );
-        $this->events->addEventListener([Events::onFlush, Events::postFlush, Events::onClear], $this->listener);
+        $this->events->addEventListener([Events::preFlush, Events::onFlush, Events::postFlush, Events::onClear], $this->listener);
     }
 
     /**
@@ -816,7 +954,8 @@ final class RecordedEventsListenerTest extends TestCase
     }
 
     /**
-     * Registers a postFlush listener that runs before the bundle's one, once.
+     * Registers a postFlush listener that runs once: after the bundle's one when registered after
+     * listen(), as its priority makes it in an application; before it otherwise.
      *
      * @param \Closure(EntityManagerInterface): void $callback
      */
