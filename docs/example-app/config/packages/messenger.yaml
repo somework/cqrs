@@ -1,14 +1,18 @@
 framework:
     messenger:
-        # Uncomment the following to enable async transport:
-        # transports:
-        #     async:
-        #         dsn: 'doctrine://default'
-        #         retry_strategy:
-        #             max_retries: 3
-        #             delay: 1000
-        #             multiplier: 2
+        # One Messenger bus per message type. somework_cqrs.yaml points the CQRS buses at them.
+        default_bus: command.bus
+        buses:
+            command.bus: ~
+            query.bus: ~
+            event.bus: ~
+            # Asynchronous buses (see the async example in somework_cqrs.yaml):
+            # command.async_bus: ~
+            # event.async_bus: ~
 
-        # Route messages to transports:
-        # routing:
-        #     'App\Task\Event\TaskCreated': async
+        # Asynchronous delivery. The demo runs everything synchronously, so no transport is
+        # needed. "in-memory://" keeps messages in the PHP process (handy for tests); use a real
+        # DSN such as 'doctrine://default' or '%env(MESSENGER_TRANSPORT_DSN)%' in production and
+        # run a worker with "php bin/console messenger:consume async".
+        # transports:
+        #     async: 'in-memory://'

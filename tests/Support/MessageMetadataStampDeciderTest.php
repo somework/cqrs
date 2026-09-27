@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
@@ -15,6 +16,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\DummyStamp;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\CreateTaskCommand;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\TaskCreatedEvent;
 
+#[CoversClass(MessageMetadataStampDecider::class)]
 final class MessageMetadataStampDeciderTest extends TestCase
 {
     public function test_appends_metadata_stamp_for_supported_messages(): void
@@ -71,5 +73,16 @@ final class MessageMetadataStampDeciderTest extends TestCase
         $stamps = $decider->decide($event, DispatchMode::ASYNC, [$existing]);
 
         self::assertSame([$existing], $stamps);
+    }
+
+    public function test_keeps_metadata_supplied_by_the_caller(): void
+    {
+        $provider = $this->createMock(MessageMetadataProvider::class);
+        $provider->expects(self::never())->method('getStamp');
+        $decider = new MessageMetadataStampDecider(MessageMetadataProviderResolver::withoutOverrides($provider), Command::class);
+
+        $callerStamp = new MessageMetadataStamp('propagated-correlation-id');
+
+        self::assertSame([$callerStamp], $decider->decide(new CreateTaskCommand('1', 'x'), DispatchMode::SYNC, [$callerStamp]));
     }
 }

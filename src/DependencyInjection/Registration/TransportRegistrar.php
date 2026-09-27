@@ -7,7 +7,6 @@ namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 use ArrayObject;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use SomeWork\CqrsBundle\Support\TransportMappingProvider;
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\ContainerInterface;
@@ -48,7 +47,7 @@ final class TransportRegistrar
 
                 $container->setDefinition($defaultServiceId, $defaultDefinition);
 
-                $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new ServiceClosureArgument(new Reference($defaultServiceId));
+                $serviceMap[MessageTransportResolver::DEFAULT_KEY] = new Reference($defaultServiceId);
 
                 foreach ($typeConfig['default'] as $transportName) {
                     $configuredTransportNames[] = $transportName;
@@ -64,7 +63,7 @@ final class TransportRegistrar
 
                 $container->setDefinition($serviceId, $definition);
 
-                $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+                $serviceMap[$messageClass] = new Reference($serviceId);
 
                 foreach ($transports as $transportName) {
                     $configuredTransportNames[] = $transportName;

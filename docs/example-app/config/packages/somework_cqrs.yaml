@@ -1,14 +1,45 @@
+# somework/cqrs-bundle configuration.
+# Full reference: php bin/console config:dump-reference somework_cqrs
 somework_cqrs:
-    command:
-        # Per-message overrides:
-        # map:
-        #     App\Task\Command\CreateTask:
-        #         retry_policy: App\Retry\TaskRetryPolicy
-        default: ~
+    # Messenger buses behind CommandBus, QueryBus and EventBus (defined in messenger.yaml).
+    buses:
+        command: command.bus
+        query: query.bus
+        event: event.bus
+        # Enable asynchronous dispatch (also uncomment the buses and the transport in messenger.yaml):
+        # command_async: command.async_bus
+        # event_async: event.async_bus
 
-    query:
-        default: ~
+    # Mode used by dispatch() when no explicit DispatchMode is passed. Queries are always sync.
+    dispatch_modes:
+        command:
+            default: sync
+        event:
+            default: sync
+            # Needs buses.event_async:
+            # map:
+            #     App\Task\Event\TaskCreated: async
 
-    event:
-        # dispatch_mode: async  # Default dispatch mode for all events
-        default: ~
+    # Transports used for asynchronous dispatches (Messenger transport names):
+    # transports:
+    #     command_async:
+    #         default: [async]
+    #     event_async:
+    #         default: [async]
+
+    # Per-message retry policies (the service is defined in services.yaml) and the transport-level
+    # retry strategy that applies them when a message consumed from "async" fails:
+    # retry_policies:
+    #     command:
+    #         map:
+    #             App\Task\Command\CreateTask: app.retry.exponential
+    # retry_strategy:
+    #     transports:
+    #         async: command
+    #     jitter: 0.1
+    #     max_delay: 60000
+
+    # IdempotencyStamp deduplication is enabled by default but only takes effect with
+    # symfony/messenger 7.3+, symfony/lock and framework.lock; without them the stamp is ignored.
+    # idempotency:
+    #     ttl: 300

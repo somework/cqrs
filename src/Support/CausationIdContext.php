@@ -26,12 +26,13 @@ final class CausationIdContext
         $this->stack[] = $correlationId;
     }
 
+    /**
+     * Removes the most recent correlation ID. Popping an empty stack is a no-op: the stack may
+     * have been reset (kernel.reset) while a handler was running, and the middleware pops in a
+     * "finally" block where an exception would hide the handler's own exception.
+     */
     public function pop(): void
     {
-        if ([] === $this->stack) {
-            throw new \LogicException('Cannot pop from empty causation ID stack.');
-        }
-
         array_pop($this->stack);
     }
 

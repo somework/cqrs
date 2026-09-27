@@ -8,7 +8,16 @@ use SomeWork\CqrsBundle\Bus\DispatchMode;
 use Symfony\Component\Messenger\Stamp\DispatchAfterCurrentBusStamp;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
-/** @internal */
+/**
+ * Adds DispatchAfterCurrentBusStamp to asynchronous dispatches according to the
+ * "async.dispatch_after_current_bus" configuration.
+ *
+ * The configuration only controls the automatic stamp: a DispatchAfterCurrentBusStamp
+ * passed by the caller (e.g. to handle an event only once the current command succeeded)
+ * is always kept.
+ *
+ * @internal
+ */
 final class DispatchAfterCurrentBusStampDecider implements StampDecider
 {
     public function __construct(private readonly DispatchAfterCurrentBusDecider $decider)
@@ -22,14 +31,17 @@ final class DispatchAfterCurrentBusStampDecider implements StampDecider
      */
     public function decide(object $message, DispatchMode $mode, array $stamps): array
     {
-        $stamps = array_values(array_filter(
-            $stamps,
-            static fn (StampInterface $stamp): bool => !$stamp instanceof DispatchAfterCurrentBusStamp,
-        ));
-
-        if (DispatchMode::ASYNC === $mode && $this->decider->shouldDefer($message)) {
-            $stamps[] = new DispatchAfterCurrentBusStamp();
+        if (DispatchMode::ASYNC !== $mode || !$this->decider->shouldDefer($message)) {
+            return $stamps;
         }
+
+        foreach ($stamps as $stamp) {
+            if ($stamp instanceof DispatchAfterCurrentBusStamp) {
+                return $stamps;
+            }
+        }
+
+        $stamps[] = new DispatchAfterCurrentBusStamp();
 
         return $stamps;
     }

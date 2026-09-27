@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\MessageTransportResolver;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageTransportResolver::class)]
 final class MessageTransportResolverTest extends TestCase
 {
     public function test_resolves_transports_from_class_hierarchy(): void

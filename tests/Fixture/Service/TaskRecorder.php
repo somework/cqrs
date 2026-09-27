@@ -32,6 +32,9 @@ final class TaskRecorder
     /** @var array<string, list<MessageMetadataStamp>> */
     private array $metadataStamps = [];
 
+    /** @var array<string, int> */
+    private array $attempts = [];
+
     public function reset(): void
     {
         $this->tasks = [];
@@ -40,6 +43,15 @@ final class TaskRecorder
         $this->asyncEvents = [];
         $this->handledMessages = [];
         $this->metadataStamps = [];
+        $this->attempts = [];
+    }
+
+    /**
+     * Counts handling attempts per key and returns the current attempt number (1-based).
+     */
+    public function attempt(string $key): int
+    {
+        return $this->attempts[$key] = ($this->attempts[$key] ?? 0) + 1;
     }
 
     public function recordTask(string $id, string $name): void

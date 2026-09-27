@@ -7,21 +7,30 @@ namespace SomeWork\CqrsBundle\Support;
 use Psr\Container\ContainerInterface;
 use WeakMap;
 
+use function array_key_exists;
 use function array_unique;
 use function array_values;
 use function class_implements;
 use function get_parent_class;
 use function implode;
 use function iterator_to_array;
+use function max;
 use function sort;
+use function usort;
 
 /** @internal */
 final class MessageTypeLocator
 {
     /**
-     * @var WeakMap<ContainerInterface, array<class-string, array<string, class-string>>>
+     * Matched type per locator, message class and ignored keys; null records "no match".
+     * Service locators are immutable, so entries never go stale; they are released with the locator.
+     *
+     * @var WeakMap<ContainerInterface, array<class-string, array<string, class-string|null>>>
      */
     private static WeakMap $matchCache;
+
+    /** @var array<string, int> */
+    private static array $interfaceDepths = [];
 
     /**
      * @param list<string> $ignoredKeys
@@ -39,10 +48,10 @@ final class MessageTypeLocator
         sort($sortedSignature);
         $ignoredSignature = implode("\0", $sortedSignature);
 
-        if (isset(self::$matchCache[$services][$messageClass][$ignoredSignature])) {
+        if (isset(self::$matchCache[$services][$messageClass]) && array_key_exists($ignoredSignature, self::$matchCache[$services][$messageClass])) {
             $type = self::$matchCache[$services][$messageClass][$ignoredSignature];
 
-            return new MessageTypeMatch($type, $services->get($type));
+            return null === $type ? null : new MessageTypeMatch($type, $services->get($type));
         }
 
         $ignored = [];
@@ -65,33 +74,27 @@ final class MessageTypeLocator
             }
         }
 
-        $seenInterfaces = [];
-
-        foreach ($classHierarchy as $type) {
-            $typeInterfaces = class_implements($type, false);
-            if (false === $typeInterfaces) {
+        // Most specific interface first (same order as DispatchModeDecider), independent of the
+        // order in which the class happens to declare its interfaces.
+        foreach (self::interfacesByDepth($messageClass) as $interface) {
+            if (isset($ignored[$interface])) {
                 continue;
             }
-            foreach ($typeInterfaces as $interface) {
-                foreach (self::interfaceHierarchy($interface, $seenInterfaces) as $candidate) {
-                    if (isset($ignored[$candidate])) {
-                        continue;
-                    }
 
-                    if ($services->has($candidate)) {
-                        self::storeMatch($services, $messageClass, $ignoredSignature, $candidate);
+            if ($services->has($interface)) {
+                self::storeMatch($services, $messageClass, $ignoredSignature, $interface);
 
-                        return new MessageTypeMatch($candidate, $services->get($candidate));
-                    }
-                }
+                return new MessageTypeMatch($interface, $services->get($interface));
             }
         }
+
+        self::storeMatch($services, $messageClass, $ignoredSignature, null);
 
         return null;
     }
 
     /**
-     * @internal Intended for test isolation and container reset lifecycle
+     * @internal Intended for test isolation
      */
     public static function reset(): void
     {
@@ -102,7 +105,7 @@ final class MessageTypeLocator
         ContainerInterface $services,
         string $messageClass,
         string $ignoredSignature,
-        string $type
+        ?string $type,
     ): void {
         if (!isset(self::$matchCache[$services])) {
             self::$matchCache[$services] = [];
@@ -113,6 +116,19 @@ final class MessageTypeLocator
         }
 
         self::$matchCache[$services][$messageClass][$ignoredSignature] = $type;
+    }
+
+    /**
+     * The types a per-message configuration can name for a class, in the order match() looks them
+     * up: the class, its parent classes, then its interfaces, most specific first.
+     *
+     * @param class-string $class
+     *
+     * @return list<class-string>
+     */
+    public static function typesOf(string $class): array
+    {
+        return [...iterator_to_array(self::classHierarchy($class), false), ...self::interfacesByDepth($class)];
     }
 
     /**
@@ -128,28 +144,40 @@ final class MessageTypeLocator
     }
 
     /**
-     * @param class-string        $interface
-     * @param array<string, bool> $seen
+     * @param class-string $class
      *
-     * @return iterable<class-string>
+     * @return list<class-string>
      */
-    private static function interfaceHierarchy(string $interface, array &$seen): iterable
+    private static function interfacesByDepth(string $class): array
     {
-        if (isset($seen[$interface])) {
-            return;
+        $interfaces = array_values(self::interfacesOf($class));
+        // usort() is stable: interfaces of equal depth keep their declaration order.
+        usort($interfaces, static fn (string $a, string $b): int => self::interfaceDepth($b) <=> self::interfaceDepth($a));
+
+        return $interfaces;
+    }
+
+    private static function interfaceDepth(string $interface): int
+    {
+        if (isset(self::$interfaceDepths[$interface])) {
+            return self::$interfaceDepths[$interface];
         }
 
-        $seen[$interface] = true;
-
-        yield $interface;
-
-        $parents = class_implements($interface, false);
-        if (false === $parents) {
-            return;
+        $depth = 0;
+        foreach (self::interfacesOf($interface) as $parent) {
+            $depth = max($depth, 1 + self::interfaceDepth($parent));
         }
 
-        foreach ($parents as $parent) {
-            yield from self::interfaceHierarchy($parent, $seen);
-        }
+        return self::$interfaceDepths[$interface] = $depth;
+    }
+
+    /**
+     * @return array<string, class-string>
+     */
+    private static function interfacesOf(string $type): array
+    {
+        $interfaces = class_implements($type);
+
+        return false === $interfaces ? [] : $interfaces;
     }
 }

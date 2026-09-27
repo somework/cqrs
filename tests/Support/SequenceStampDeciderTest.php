@@ -204,4 +204,22 @@ final class SequenceStampDeciderTest extends TestCase
         /* @phpstan-ignore staticMethod.alreadyNarrowedType */
         self::assertCount($originalCount, $original);
     }
+
+    public function test_keeps_a_sequence_stamp_supplied_by_the_caller(): void
+    {
+        $event = new class implements Event, SequenceAware {
+            public function getAggregateId(): string
+            {
+                return 'order-1';
+            }
+
+            public function getSequenceNumber(): int
+            {
+                return 7;
+            }
+        };
+        $callerStamp = new AggregateSequenceStamp('order-1', 3, 'Order');
+
+        self::assertSame([$callerStamp], $this->decider->decide($event, DispatchMode::ASYNC, [$callerStamp]));
+    }
 }

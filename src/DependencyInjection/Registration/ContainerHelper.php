@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\DependencyInjection\Registration;
 
-use Symfony\Component\DependencyInjection\Argument\ServiceClosureArgument;
 use Symfony\Component\DependencyInjection\Compiler\ServiceLocatorTagPass;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
@@ -17,9 +16,14 @@ use function sprintf;
 /** @internal */
 final class ContainerHelper
 {
+    /**
+     * Registers a service for a class name used as service id, unless it is already defined.
+     * Abstract classes are left alone: they cannot be instantiated, and the missing service is
+     * reported by the container instead.
+     */
     public function ensureServiceExists(ContainerBuilder $container, string $serviceId): string
     {
-        if (!$container->has($serviceId) && class_exists($serviceId)) {
+        if (!$container->has($serviceId) && class_exists($serviceId) && !(new \ReflectionClass($serviceId))->isAbstract()) {
             $definition = new Definition($serviceId);
             $definition->setAutowired(true);
             $definition->setAutoconfigured(true);
@@ -54,7 +58,7 @@ final class ContainerHelper
             $definition->setPublic(false);
 
             $container->setDefinition($serviceId, $definition);
-            $serviceMap[$messageClass] = new ServiceClosureArgument(new Reference($serviceId));
+            $serviceMap[$messageClass] = new Reference($serviceId);
         }
 
         $locatorReference = ServiceLocatorTagPass::register($container, $serviceMap);

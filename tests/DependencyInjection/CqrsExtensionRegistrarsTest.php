@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\DependencyInjection;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
@@ -18,6 +19,7 @@ use Symfony\Component\DependencyInjection\ContainerInterface;
 use Symfony\Component\DependencyInjection\Reference;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(CqrsExtension::class)]
 final class CqrsExtensionRegistrarsTest extends TestCase
 {
     public function test_helper_registrations_produce_expected_container_configuration(): void
@@ -252,7 +254,7 @@ final class CqrsExtensionRegistrarsTest extends TestCase
         $asyncReference = $commandBusDefinition->getArgument('$asyncBus');
         self::assertInstanceOf(Reference::class, $asyncReference);
         self::assertSame('messenger.bus.command_async', (string) $asyncReference);
-        self::assertSame(ContainerInterface::NULL_ON_INVALID_REFERENCE, $asyncReference->getInvalidBehavior());
+        self::assertSame(ContainerInterface::EXCEPTION_ON_INVALID_REFERENCE, $asyncReference->getInvalidBehavior(), 'A typo in the async bus id fails the build.');
         $stampsDeciderReference = $commandBusDefinition->getArgument('$stampsDecider');
         self::assertInstanceOf(Reference::class, $stampsDeciderReference);
         self::assertSame('somework_cqrs.stamps_decider', (string) $stampsDeciderReference);

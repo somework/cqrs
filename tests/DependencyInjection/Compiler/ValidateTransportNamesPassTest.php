@@ -1,0 +1,229 @@
+<?php
+
+declare(strict_types=1);
+
+namespace SomeWork\CqrsBundle\Tests\DependencyInjection\Compiler;
+
+use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\DataProvider;
+use PHPUnit\Framework\Attributes\RequiresMethod;
+use PHPUnit\Framework\TestCase;
+use SomeWork\CqrsBundle\Bus\DispatchMode;
+use SomeWork\CqrsBundle\Contract\Command;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\ValidateTransportNamesPass;
+use SomeWork\CqrsBundle\DependencyInjection\CqrsExtension;
+use SomeWork\CqrsBundle\SomeWorkCqrsBundle;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AsyncTaskCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\AttributeRoutedCommand;
+use SomeWork\CqrsBundle\Tests\Fixture\Message\SendNotificationCommand;
+use Symfony\Component\Config\Definition\Exception\InvalidConfigurationException;
+use Symfony\Component\DependencyInjection\ContainerBuilder;
+use Symfony\Component\DependencyInjection\ServiceLocator;
+use Symfony\Component\Messenger\Attribute\AsMessage;
+
+use function array_map;
+use function sprintf;
+
+#[CoversClass(ValidateTransportNamesPass::class)]
+final class ValidateTransportNamesPassTest extends TestCase
+{
+    public function test_it_throws_when_transport_is_missing(): void
+    {
+        $extension = new CqrsExtension();
+        $container = $this->createContainer();
+
+        $extension->load([
+            [
+                'transports' => [
+                    'command' => [
+                        'default' => ['missing'],
+                        'map' => [],
+                    ],
+                ],
+            ],
+        ], $container);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage('Messenger transport "missing" configured for SomeWork CQRS is not defined.');
+
+        $container->compile();
+    }
+
+    public function test_it_allows_known_transports(): void
+    {
+        $extension = new CqrsExtension();
+        $container = $this->createContainer();
+
+        $container->register('messenger.transport.known', \stdClass::class);
+
+        $extension->load([
+            [
+                'transports' => [
+                    'command' => [
+                        'default' => ['known'],
+                        'map' => [],
+                    ],
+                ],
+            ],
+        ], $container);
+
+        $container->compile();
+
+        $this->addToAssertionCount(1);
+    }
+
+    public function test_it_rejects_an_unknown_transport_of_an_asynchronous_attribute(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['command' => [['message' => SendNotificationCommand::class]]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[Asynchronous(transport: "notifications")] on "%s" names a Messenger transport that is not defined.', SendNotificationCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    public function test_it_accepts_a_known_transport_of_an_asynchronous_attribute(): void
+    {
+        $container = $this->asyncContainer([SendNotificationCommand::class, AsyncTaskCommand::class]);
+        $container->register('messenger.transport.notifications', \stdClass::class);
+        $container->register('messenger.transport.async', \stdClass::class);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    public function test_a_bare_asynchronous_attribute_needs_a_transport(): void
+    {
+        $container = $this->asyncContainer([AsyncTaskCommand::class]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries #[Asynchronous] without a transport, but there is no "async" transport, no "somework_cqrs.transports.command_async" entry and no framework.messenger.routing route for it.', AsyncTaskCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
+     * @return iterable<string, array{array<string, list<string>>, list<string>}>
+     */
+    public static function emptyTransportEntries(): iterable
+    {
+        yield 'empty class entry' => [[AsyncTaskCommand::class => []], ['jobs']];
+        yield 'empty interface entry' => [[Command::class => []], ['jobs']];
+    }
+
+    /**
+     * An empty entry resolves to no transport, and the decider falls back to "async": it shadows
+     * the default and less specific entries.
+     *
+     * @param array<string, list<string>> $map
+     * @param list<string>                $default
+     */
+    #[DataProvider('emptyTransportEntries')]
+    public function test_an_empty_transport_entry_does_not_give_a_bare_attribute_a_transport(array $map, array $default): void
+    {
+        $container = $this->asyncContainer([AsyncTaskCommand::class]);
+        $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => $default, 'map' => $map]]);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('"%s" carries #[Asynchronous]', AsyncTaskCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
+     * @return iterable<string, array{\Closure(ContainerBuilder): mixed}>
+     */
+    public static function waysToGiveABareAttributeATransport(): iterable
+    {
+        yield 'section default' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => ['jobs'], 'map' => []]])];
+        yield 'class entry before an empty interface entry' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => [], 'map' => [Command::class => [], AsyncTaskCommand::class => ['jobs']]]])];
+        yield 'map entry for an interface' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.transport_mapping', ['command_async' => ['default' => [], 'map' => [Command::class => ['jobs']]]])];
+        yield 'namespace wildcard route' => [static fn (ContainerBuilder $container) => $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['SomeWork\\CqrsBundle\\Tests\\*' => ['jobs']]])];
+        yield 'catch-all route' => [static fn (ContainerBuilder $container) => $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['*' => ['jobs']]])];
+        yield 'exact sync dispatch mode' => [static fn (ContainerBuilder $container) => $container->register('somework_cqrs.dispatch_mode_decider', \stdClass::class)->setArgument('$commandMap', [AsyncTaskCommand::class => DispatchMode::SYNC])];
+        yield 'no async bus' => [static fn (ContainerBuilder $container) => $container->setParameter('somework_cqrs.bus.command_async', null)];
+    }
+
+    /**
+     * @param \Closure(ContainerBuilder): mixed $configure
+     */
+    #[DataProvider('waysToGiveABareAttributeATransport')]
+    public function test_a_bare_asynchronous_attribute_is_satisfied_by(\Closure $configure): void
+    {
+        $container = $this->asyncContainer([AsyncTaskCommand::class]);
+        $configure($container);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_accepts_a_bare_asynchronous_attribute_routed_by_as_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.transport.other', \stdClass::class);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    /**
+     * Also with an "async" transport: Messenger sends the message to the attribute's transport.
+     */
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_rejects_an_unknown_transport_of_as_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.transport.async', \stdClass::class);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[AsMessage(transport: "other")] routes "%s" to a Messenger transport that is not defined.', AttributeRoutedCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
+     * framework.messenger.routing wins over the attribute, which Messenger then ignores.
+     */
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_ignores_as_message_when_the_messenger_routing_routes_the_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['*' => ['jobs']]]);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    /**
+     * @param list<class-string> $messages
+     */
+    private function asyncContainer(array $messages): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.handler_metadata', ['command' => array_map(static fn (string $message): array => ['message' => $message], $messages)]);
+        $container->setParameter('somework_cqrs.bus.command_async', 'command.async_bus');
+
+        return $container;
+    }
+
+    private function createContainer(): ContainerBuilder
+    {
+        $container = new ContainerBuilder();
+
+        $container->register('messenger.default_bus', \stdClass::class)->setPublic(true);
+        $container->register('messenger.default_bus.messenger.handlers_locator', ServiceLocator::class)
+            ->setArguments([[]])
+            ->setPublic(true);
+
+        $bundle = new SomeWorkCqrsBundle();
+        $bundle->build($container);
+
+        return $container;
+    }
+}

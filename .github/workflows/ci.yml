@@ -1,10 +1,8 @@
 name: CI
 
+# Least privilege: only the quality report writes (check run and PR comment).
 permissions:
   contents: read
-  checks: write
-  issues: write
-  pull-requests: write
 
 on:
   push:
@@ -32,6 +30,9 @@ jobs:
 
       - name: Validate composer.json
         run: composer validate --strict
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-progress
 
       - name: Check for security advisories
         run: composer audit
@@ -77,6 +78,8 @@ jobs:
         run: mkdir -p build/logs
 
       - name: PHPStan
+        # An explicit "bash" shell runs with pipefail, so errors are not masked by tee.
+        shell: bash
         run: |
           vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --memory-limit=512M --error-format=table \
             | tee build/logs/phpstan.log
@@ -87,15 +90,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php: ['8.2', '8.3', '8.4']
-        coverage: [false]
+        php: ['8.2', '8.3', '8.4', '8.5']
         dependency-versions: ['highest']
         include:
+          # Adds coverage to the existing 8.4/highest combination (no extra job).
           - php: '8.4'
             coverage: true
-            dependency-versions: 'highest'
           - php: '8.2'
-            coverage: false
             dependency-versions: 'lowest'
     steps:
       - name: Checkout
@@ -123,7 +124,7 @@ jobs:
       - name: PHPUnit
         run: >
           vendor/bin/phpunit
-          --log-junit build/logs/phpunit-${{ matrix.php }}.xml
+          --log-junit build/logs/phpunit-${{ matrix.php }}-${{ matrix.dependency-versions }}.xml
           ${{ matrix.coverage && '--coverage-clover build/logs/clover.xml' || '' }}
 
       - name: Upload coverage to Codecov
@@ -146,6 +147,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate, cs-fixer, phpstan, phpunit]
     if: always()
+    permissions:
+      contents: read
+      issues: read
+      checks: write
+      pull-requests: write
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
@@ -175,6 +181,63 @@ jobs:
         if: steps.reporting.outputs.should_run == 'true'
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
-          files: artifacts/**/*.xml
+          # JUnit reports only (the coverage job also uploads clover.xml).
+          files: artifacts/**/phpunit-*.xml
           check_run: ${{ steps.reporting.outputs.check_run }}
           comment_mode: ${{ steps.reporting.outputs.comment_mode }}
+
+  minimal-install:
+    name: Minimal install (no optional packages)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          coverage: none
+          tools: composer
+
+      - name: Install dependencies without optional packages
+        run: |
+          composer remove --dev --no-update doctrine/dbal doctrine/orm open-telemetry/api symfony/lock symfony/rate-limiter
+          composer update --prefer-dist --no-progress
+
+      - name: PHPUnit (kernels that must work without optional packages)
+        run: vendor/bin/phpunit tests/Functional/MinimalInstallTest.php tests/Functional/AsyncTransportRoundTripTest.php
+
+  example-app:
+    name: Example application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          coverage: none
+          tools: composer
+
+      - name: Smoke test
+        working-directory: docs/example-app
+        run: bin/smoke-test.sh --no-progress
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.x
+
+      - run: pip install 'mkdocs>=1.6,<2' 'mkdocs-material>=9.5,<10'
+
+      - name: Build (strict)
+        run: mkdocs build --strict

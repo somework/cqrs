@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyCommandHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyQueryHandler;
@@ -21,6 +22,7 @@ use Symfony\Component\Console\Tester\CommandTester;
 use function assert;
 use function is_array;
 
+#[CoversNothing]
 final class AttributeOnlyHandlerTest extends KernelTestCase
 {
     protected function setUp(): void

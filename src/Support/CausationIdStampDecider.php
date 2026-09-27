@@ -41,11 +41,11 @@ final class CausationIdStampDecider implements StampDecider
             return $stamps;
         }
 
+        // Messenger reads the last stamp of a type, so that is the one to enrich.
         $foundIndex = null;
         foreach ($stamps as $index => $stamp) {
             if ($stamp instanceof MessageMetadataStamp) {
                 $foundIndex = $index;
-                break;
             }
         }
 
@@ -55,8 +55,13 @@ final class CausationIdStampDecider implements StampDecider
 
         /** @var MessageMetadataStamp $existingStamp */
         $existingStamp = $stamps[$foundIndex];
-        unset($stamps[$foundIndex]);
-        $stamps[] = $existingStamp->withCausationId($parentCorrelationId);
+
+        // An explicit causation id set by the caller is kept.
+        if (null !== $existingStamp->getCausationId()) {
+            return $stamps;
+        }
+
+        $stamps[$foundIndex] = $existingStamp->withCausationId($parentCorrelationId);
 
         $this->logger?->debug('CausationIdStampDecider: injected causationId', [
             'message' => $message::class,

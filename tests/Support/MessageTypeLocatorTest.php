@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Support;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Support\MessageTypeLocator;
+use SomeWork\CqrsBundle\Tests\Fixture\Service\SpyServiceLocator;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
+#[CoversClass(MessageTypeLocator::class)]
 final class MessageTypeLocatorTest extends TestCase
 {
     protected function setUp(): void
@@ -45,6 +48,20 @@ final class MessageTypeLocatorTest extends TestCase
         self::assertNotNull($match);
         self::assertSame(MessageTypeLocatorParent::class, $match->type);
         self::assertSame($expected, $match->service);
+    }
+
+    public function test_the_more_specific_interface_wins_whatever_the_declaration_order(): void
+    {
+        $locator = new ServiceLocator([
+            MessageTypeLocatorInterface::class => static fn (): string => 'base',
+            MessageTypeLocatorExtendedInterface::class => static fn (): string => 'specific',
+        ]);
+
+        // Declares the base interface before the one extending it.
+        $match = MessageTypeLocator::match($locator, new MessageTypeLocatorDeclaresBaseFirst());
+
+        self::assertNotNull($match);
+        self::assertSame(MessageTypeLocatorExtendedInterface::class, $match->type);
     }
 
     public function test_prefers_more_specific_interface(): void
@@ -119,6 +136,19 @@ final class MessageTypeLocatorTest extends TestCase
         self::assertSame([MessageTypeLocatorChild::class, MessageTypeLocatorChild::class], $locator->getCalls);
     }
 
+    public function test_a_miss_is_cached_too(): void
+    {
+        $locator = new SpyServiceLocator([]);
+        $message = new MessageTypeLocatorChild();
+
+        self::assertNull(MessageTypeLocator::match($locator, $message));
+        $lookups = $locator->hasCalls;
+        self::assertNotSame([], $lookups);
+
+        self::assertNull(MessageTypeLocator::match($locator, $message));
+        self::assertSame($lookups, $locator->hasCalls, 'The hierarchy is not walked again for a known miss.');
+    }
+
     public function test_reset_clears_cache(): void
     {
         $service = new \stdClass();
@@ -191,28 +221,6 @@ class MessageTypeLocatorImplementsInterface implements MessageTypeLocatorExtende
 {
 }
 
-/**
- * @extends ServiceLocator<object>
- */
-final class SpyServiceLocator extends ServiceLocator
+class MessageTypeLocatorDeclaresBaseFirst implements MessageTypeLocatorInterface, MessageTypeLocatorExtendedInterface
 {
-    /** @var list<string> */
-    public array $hasCalls = [];
-
-    /** @var list<string> */
-    public array $getCalls = [];
-
-    public function has(string $id): bool
-    {
-        $this->hasCalls[] = $id;
-
-        return parent::has($id);
-    }
-
-    public function get(string $id): mixed
-    {
-        $this->getCalls[] = $id;
-
-        return parent::get($id);
-    }
 }

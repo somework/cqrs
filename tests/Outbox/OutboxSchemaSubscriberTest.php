@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Outbox;
 
+use Doctrine\DBAL\Platforms\SQLitePlatform;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\ORM\EntityManagerInterface;
 use Doctrine\ORM\Tools\Event\GenerateSchemaEventArgs;
@@ -84,10 +85,8 @@ final class OutboxSchemaSubscriberTest extends TestCase
 
         $subscriber->postGenerateSchema($this->createEventArgs($schema));
 
-        $table = $schema->getTable('somework_cqrs_outbox');
-        $pk = $table->getPrimaryKeyConstraint();
-        self::assertNotNull($pk);
-        self::assertSame('id', $pk->getColumnNames()[0]->toString());
+        $sql = implode(";\n", (new SQLitePlatform())->getCreateTableSQL($schema->getTable('somework_cqrs_outbox')));
+        self::assertMatchesRegularExpression('/PRIMARY KEY\s*\(\s*id\s*\)/i', $sql);
     }
 
     public function test_multiple_calls_are_idempotent(): void

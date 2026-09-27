@@ -26,7 +26,7 @@ somework_cqrs:
     #     command:
     #         default: SomeWork\CqrsBundle\Support\NullRetryPolicy
     #         map:
-    #             App\Message\MyCommand: app.my_retry_policy
+    #             App\Message\MyCommand: app.my_retry_policy   # keys must be existing classes or interfaces
     #     query:
     #         default: SomeWork\CqrsBundle\Support\NullRetryPolicy
     #         map: {}
@@ -122,7 +122,7 @@ somework_cqrs:
     # sequence:
     #     enabled: true
 
-    # Rate limiting (requires symfony/rate-limiter)
+    # Rate limiting (inactive until a limiter is mapped; mapping one requires symfony/rate-limiter)
     # rate_limiting:
     #     enabled: true
     #     command:
@@ -132,7 +132,10 @@ somework_cqrs:
     #     event:
     #         map: {}
 
-    # Transactional outbox (requires doctrine/dbal)
+    # Transactional outbox (requires doctrine/dbal and doctrine/doctrine-bundle)
     # outbox:
     #     enabled: false
     #     table_name: somework_cqrs_outbox
+    #     connection: default         # Doctrine DBAL connection name
+    #     serializer: messenger.default_serializer
+    #     auto_setup: true            # Create the table on first use (never inside a transaction)

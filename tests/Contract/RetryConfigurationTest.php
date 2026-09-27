@@ -4,14 +4,14 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Contract;
 
-use PHPUnit\Framework\Attributes\CoversClass;
+use PHPUnit\Framework\Attributes\CoversNothing;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\RetryConfiguration;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
 
 use function sprintf;
 
-#[CoversClass(RetryConfiguration::class)]
+#[CoversNothing]
 final class RetryConfigurationTest extends TestCase
 {
     public function test_interface_declares_get_max_retries_method(): void

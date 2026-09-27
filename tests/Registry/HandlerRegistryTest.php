@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Registry;
 
+use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Contract\MessageNamingStrategy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
@@ -12,6 +13,7 @@ use Symfony\Component\DependencyInjection\ServiceLocator;
 
 use function sprintf;
 
+#[CoversClass(HandlerRegistry::class)]
 final class HandlerRegistryTest extends TestCase
 {
     public function test_all_returns_descriptors_for_each_entry(): void

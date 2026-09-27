@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Tests\Functional;
 
+use PHPUnit\Framework\Attributes\CoversNothing;
 use SomeWork\CqrsBundle\Bus\CommandBus;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\EventBus;
@@ -22,6 +23,11 @@ use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 
 use function assert;
 
+/**
+ * The test kernel has no transports: the async buses handle messages inline, which keeps these
+ * tests focused on bus selection and wiring. AsyncTransportRoundTripTest covers real transports.
+ */
+#[CoversNothing]
 final class MessengerIntegrationTest extends KernelTestCase
 {
     protected function setUp(): void
@@ -51,7 +57,7 @@ final class MessengerIntegrationTest extends KernelTestCase
         self::assertSame('Write docs', $recorder->task('task-1'));
     }
 
-    public function test_command_bus_dispatches_async_command(): void
+    public function test_async_mode_dispatches_commands_on_the_async_bus(): void
     {
         $commandBus = static::getContainer()->get(CommandBus::class);
         assert($commandBus instanceof CommandBus);
@@ -63,7 +69,7 @@ final class MessengerIntegrationTest extends KernelTestCase
         self::assertTrue($recorder->hasReport('report-1'));
     }
 
-    public function test_event_bus_supports_sync_and_async_dispatch(): void
+    public function test_event_bus_dispatches_on_the_sync_and_async_buses(): void
     {
         $eventBus = static::getContainer()->get(EventBus::class);
         assert($eventBus instanceof EventBus);

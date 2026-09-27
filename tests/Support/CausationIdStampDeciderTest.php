@@ -131,16 +131,30 @@ final class CausationIdStampDeciderTest extends TestCase
         self::assertSame([], $result);
     }
 
-    public function test_replaces_existing_causation_id_with_current_context(): void
+    public function test_keeps_an_explicit_causation_id(): void
     {
         $this->context->push('new-parent');
         $message = new class implements Command {};
-        $metadataStamp = new MessageMetadataStamp('child-corr', [], 'old-parent');
-        $stamps = [$metadataStamp];
+        $metadataStamp = new MessageMetadataStamp('child-corr', [], 'explicit-parent');
 
-        $result = $this->decider->decide($message, DispatchMode::DEFAULT, $stamps);
+        $result = $this->decider->decide($message, DispatchMode::DEFAULT, [$metadataStamp]);
 
-        self::assertInstanceOf(MessageMetadataStamp::class, $result[0]);
-        self::assertSame('new-parent', $result[0]->getCausationId());
+        self::assertSame([$metadataStamp], $result);
+    }
+
+    public function test_enriches_the_last_metadata_stamp(): void
+    {
+        $this->context->push('parent-corr');
+        $message = new class implements Command {};
+        $first = new MessageMetadataStamp('first');
+        $last = new MessageMetadataStamp('last');
+
+        $result = $this->decider->decide($message, DispatchMode::DEFAULT, [$first, $last]);
+
+        self::assertCount(2, $result);
+        self::assertSame($first, $result[0]);
+        self::assertInstanceOf(MessageMetadataStamp::class, $result[1]);
+        self::assertSame('last', $result[1]->getCorrelationId());
+        self::assertSame('parent-corr', $result[1]->getCausationId());
     }
 }
