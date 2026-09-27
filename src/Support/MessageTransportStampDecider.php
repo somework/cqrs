@@ -84,7 +84,7 @@ final class MessageTransportStampDecider implements MessageTypeAwareStampDecider
             // here, before the dispatch: inside a handler it is deferred until the handler finished.)
             if (DispatchMode::ASYNC === $mode && ($message instanceof Command || $message instanceof Event) && !$this->isRouted($message)) {
                 if (self::storesInOutbox($stamps)) {
-                    $this->logger?->warning('{message} is stored in the outbox without a transport, so the relay will handle it synchronously in its own process. Set "somework_cqrs.transports.{type}_async", #[Outbox(transport: ...)] or framework.messenger.routing.', [
+                    $this->logger?->warning('{message} is stored in the outbox without a transport, so the relay will handle it synchronously in its own process. Set "somework_cqrs.transports.{type}_async" (the outbox needs no async bus for it), #[Outbox(transport: ...)] or framework.messenger.routing.', [
                         'message' => $message::class,
                         'type' => $message instanceof Event ? 'event' : 'command',
                     ]);

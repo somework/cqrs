@@ -237,7 +237,9 @@ somework_cqrs:
   async dispatch then throws `AsyncBusNotConfiguredException`. When the
   configuration itself asks for async delivery (an `async` dispatch mode, or
   entries under `transports.command_async` / `transports.event_async`), the
-  container compilation fails instead:
+  container compilation fails instead. With the outbox enabled, the
+  `transports.*_async` entries need no async bus: messages stored in the outbox
+  use them. An `async` dispatch mode still needs the bus:
 
   ```
   Asynchronous dispatch is configured for commands (the default dispatch mode is "async"), but "somework_cqrs.buses.command_async" is null. Define the Messenger bus id used for async commands before the container is compiled.
@@ -503,9 +505,10 @@ message: Messenger sends it to exactly these transports.
 * Every transport name must be defined under `framework.messenger.transports`;
   otherwise compilation fails with
   `Messenger transport "..." configured for SomeWork CQRS is not defined.`
-* The `*_async` sections are only used when the matching async bus is
-  configured, and any entry in them without that bus fails the compilation (see
-  [`buses`](#buses)).
+* The `*_async` sections are used for asynchronous dispatches through the
+  matching async bus and, with the outbox enabled, for messages stored in the
+  outbox, which need no async bus. Without the async bus and the outbox, any
+  entry in them fails the compilation (see [`buses`](#buses)).
 * A `TransportNamesStamp` passed by the caller wins. On asynchronous dispatches,
   `#[Asynchronous(transport: '...')]` beats parent/interface entries and the
   `default`, but not an entry for exactly the message class; a bare

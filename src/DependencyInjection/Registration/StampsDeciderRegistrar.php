@@ -45,8 +45,9 @@ final class StampsDeciderRegistrar
      * @param array{enabled: bool, buses?: list<string>} $causationIdConfig
      * @param array{enabled: bool}                       $sequenceConfig
      * @param array{enabled: bool}                       $rateLimitConfig
+     * @param bool                                       $outbox            Whether the outbox is enabled: it stores its rows for the async transports, also without an async bus
      */
-    public function register(ContainerBuilder $container, array $buses, array $idempotencyConfig = ['enabled' => false, 'ttl' => 300], array $causationIdConfig = ['enabled' => true], array $sequenceConfig = ['enabled' => true], array $rateLimitConfig = ['enabled' => false]): void
+    public function register(ContainerBuilder $container, array $buses, array $idempotencyConfig = ['enabled' => false, 'ttl' => 300], array $causationIdConfig = ['enabled' => true], array $sequenceConfig = ['enabled' => true], array $rateLimitConfig = ['enabled' => false], bool $outbox = false): void
     {
         // Child messages inherit the correlation id of the handled message.
         $causationContext = true === $causationIdConfig['enabled'] ? new Reference('somework_cqrs.causation_id_context') : null;
@@ -142,7 +143,7 @@ final class StampsDeciderRegistrar
                 'arguments' => [
                     '$commandResolvers' => $this->createTransportResolverMapDefinition(
                         $this->helper->createResolverReference('transports', 'command'),
-                        $this->helper->createOptionalTransportResolverReference('command_async', $buses),
+                        $this->helper->createOptionalTransportResolverReference('command_async', $buses, $outbox),
                     ),
                     '$queryResolvers' => $this->createTransportResolverMapDefinition(
                         $this->helper->createResolverReference('transports', 'query'),
@@ -150,7 +151,7 @@ final class StampsDeciderRegistrar
                     ),
                     '$eventResolvers' => $this->createTransportResolverMapDefinition(
                         $this->helper->createResolverReference('transports', 'event'),
-                        $this->helper->createOptionalTransportResolverReference('event_async', $buses),
+                        $this->helper->createOptionalTransportResolverReference('event_async', $buses, $outbox),
                     ),
                     '$logger' => new Reference('logger', ContainerInterface::NULL_ON_INVALID_REFERENCE),
                 ],

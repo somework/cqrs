@@ -102,11 +102,14 @@ final class ContainerHelper
     }
 
     /**
+     * The async transport resolver ("command_async", "event_async") when the async bus is configured,
+     * or when the outbox is enabled: it stores its rows for the async transports without an async bus.
+     *
      * @param array{command?: string|null, command_async?: string|null, query?: string|null, event?: string|null, event_async?: string|null} $buses
      */
-    public function createOptionalTransportResolverReference(string $messageType, array $buses): ?Reference
+    public function createOptionalTransportResolverReference(string $messageType, array $buses, bool $outbox = false): ?Reference
     {
-        return isset($buses[$messageType])
+        return isset($buses[$messageType]) || $outbox
             ? $this->createResolverReference('transports', $messageType)
             : null;
     }
