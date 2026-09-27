@@ -82,7 +82,7 @@ dispatch_after_current_bus
 [CausationIdMiddleware]                when causation_id.enabled is true
 [AllowNoHandlerMiddleware]             event buses only
 failed_message_processing_middleware
-deduplicate_middleware                 Messenger 7.3+ with framework.lock
+deduplicate_middleware                 with framework.lock
 [DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
 ... your own middleware ...            (Doctrine's transaction middleware is skipped by outbox stores)
 [OutboxStoreMiddleware]                when the outbox is enabled
@@ -226,7 +226,7 @@ events.
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
 | 100 | `CausationIdStampDecider` | all messages | `causation_id.enabled` (default `true`) | an explicit causation id |
-| 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`), symfony/messenger 7.3+ and symfony/lock installed | an existing `DeduplicateStamp` |
+| 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`) and symfony/lock installed | an existing `DeduplicateStamp` |
 | -10 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
 
 ### RateLimitStampDecider (225)

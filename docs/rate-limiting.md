@@ -85,10 +85,9 @@ controller, with a key you choose.
 
 ## Supported limiters
 
-The resolver accepts any `Symfony\Component\RateLimiter\RateLimiterFactory`, which covers
-the `fixed_window`, `sliding_window`, `token_bucket` and `no_limit` policies. On
-symfony/rate-limiter 7.3 or newer, it also accepts any `RateLimiterFactoryInterface`,
-including the `compound` policy that combines several limiters:
+The resolver accepts any `Symfony\Component\RateLimiter\RateLimiterFactoryInterface`: the
+`fixed_window`, `sliding_window`, `token_bucket` and `no_limit` policies, and the `compound`
+policy that combines several limiters:
 
 ```yaml
 framework:

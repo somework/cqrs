@@ -3,7 +3,7 @@
 ## Backward Compatibility Promise
 
 This bundle follows [Semantic Versioning](https://semver.org/). While the major version is 0,
-a minor release (0.4 → 0.5) may contain breaking changes; patch releases never do. Every
+a minor release (0.5 → 0.6) may contain breaking changes; patch releases never do. Every
 breaking change is listed in this guide and in the [changelog](CHANGELOG.md).
 
 The promise covers:
@@ -48,10 +48,58 @@ The promise covers:
 
 ### Deprecations
 
-From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and a
-`trigger_deprecation('somework/cqrs-bundle', …)` notice, listed in this guide) and kept for at
-least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
-releases.
+Until 1.0, a minor release may remove or change API without deprecating it first; every such
+change is listed in this guide (with what to do instead) and in the changelog. Patch releases only
+fix bugs. From 1.0, what a minor release would remove is deprecated first (`@deprecated` and a
+`trigger_deprecation('somework/cqrs-bundle', …)` notice, listed in this guide) and kept for at least
+one more minor release, and removals only happen in major releases.
+
+## Upgrading from 0.5 to 0.6
+
+0.6 raises the supported versions. Neither the configuration tree nor the `@api` types change; the
+steps below are about Composer, and a few messages.
+
+### Checklist
+
+1. Update Symfony to 7.4 (7.4.9 or newer) or 8.1, and doctrine/dbal to 4.3 or newer if you use the
+   transactional outbox, before or with `composer update somework/cqrs-bundle`.
+2. With the testing helpers (`CqrsTestCase`, `CqrsAssertionsTrait`), use PHPUnit 11.5, 12.5 or 13.
+3. If you match the messages of the build errors or of the compilation log below, update them.
+
+### Requirements
+
+- **Symfony `^7.4.9 || ^8.1`.** Symfony 7.2, 7.3 and 8.0 are no longer maintained. The first 7.4 release
+  the bundle supports is 7.4.9: before it, Messenger's deduplicate middleware released the idempotency key
+  when a worker's handler failed (so a new dispatch went through while the message was retried), and a
+  `min` constraint of the configuration rejected an `%env()%` value. Composer refuses the update on an
+  older Symfony.
+- **doctrine/dbal 4.3** for the transactional outbox (the conflict was `<4.0`); symfony/doctrine-messenger 8
+  needs it too. DBAL 5 stays a conflict until it is released and supported by Doctrine ORM and DoctrineBundle.
+- **symfony/lock and symfony/rate-limiter** conflict below 7.4 and with 8.0, like the required components.
+- **PHP 8.2** is still supported in 0.6. **0.7 will require PHP 8.3**: plan the PHP upgrade before it.
+- **PHPUnit 11.5, 12.5 or 13** for the testing helpers (they needed PHPUnit 10 before). PHPUnit stays optional:
+  the bundle does not require it, and the fake buses do not use it.
+
+### Idempotency
+
+Idempotency no longer depends on the Messenger version: `DeduplicateStamp` always exists. When symfony/lock is
+missing, the compilation log (and the first `IdempotencyStamp`) reports
+`Idempotency is enabled but needs symfony/lock; IdempotencyStamp is ignored until it is installed.` instead of
+`… needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; …`.
+
+### Configuration validation
+
+`idempotency.ttl` and `outbox.max_attempts` below 1 fail with Symfony's message,
+`The value 0 is too small for path "somework_cqrs.idempotency.ttl". Should be greater than or equal to 1`,
+instead of `"somework_cqrs.idempotency.ttl" must be at least 1 second, 0 given.` (still an
+`InvalidConfigurationException`). Both options still accept `%env()%` values, whose value is not checked,
+as before.
+
+### Rate limiting
+
+The first dispatch through a rate limiter service that is not a rate limiter factory fails with a message that
+names `RateLimiterFactoryInterface` instead of `RateLimiterFactory`. The limiters accepted do not change: every
+limiter of `framework.rate_limiter`, compound ones included, implements the interface.
 
 ## Upgrading from 0.5.0 to 0.5.1
 

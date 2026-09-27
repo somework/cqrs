@@ -20,7 +20,7 @@ message broker or web server is needed.
 ## Requirements
 
 - PHP 8.2 or newer and Composer
-- Symfony 7.2 or newer, including 8.x (installed by Composer)
+- Symfony 7.4 (7.4.9 or newer) or 8.1 and newer (installed by Composer)
 
 ## Quick start
 

@@ -1125,9 +1125,8 @@ table is trusted.
   PHP-serialized. Messages made of primitives, as the bundle recommends, encode without extra
   normalizers. Rows written with another serializer
   cannot be decoded after the switch: relay them first.
-- **Symfony 7.4 or later** refuses unsigned `RunProcessMessage` and `RunCommandMessage`; on
-  7.2 and 7.3 a forged row can start a process or a console command through Messenger's own
-  handlers when `symfony/process` or `symfony/console` is installed.
+- Symfony refuses unsigned `RunProcessMessage` and `RunCommandMessage`, so a forged row cannot
+  start a process or a console command through Messenger's own handlers.
 - The relay drops the stamps that only describe a dispatch in progress (`ReceivedStamp`,
   `SentStamp`, `HandledStamp` and the other non-sendable stamps). Serializers never write them,
   so only a forged row holds them; a `ReceivedStamp` would make the relay handle the message

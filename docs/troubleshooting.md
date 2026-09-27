@@ -398,7 +398,7 @@ depends on a non-existent service.
 compilation log (`var/cache/<env>/*Compiler.log`) contains one of:
 
 ```
-Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.
+Idempotency is enabled but needs symfony/lock; IdempotencyStamp is ignored until it is installed.
 ```
 
 ```

@@ -6,7 +6,7 @@ Thank you for considering contributing to the CQRS Bundle! This guide will help 
 
 - **PHP 8.2+**
 - **Composer 2.x**
-- **Symfony 7.2+ or 8.x** (installed as a dependency via Composer)
+- **Symfony 7.4.9+ or 8.1+** (installed as a dependency via Composer)
 
 ## Setup
 
@@ -39,15 +39,23 @@ composer phpunit
 
 All three checks must pass before submitting a pull request.
 
-The outbox tests (`--group database`) use in-memory SQLite. To run them on PostgreSQL or MySQL, as CI does,
-point `CQRS_TEST_DATABASE_URL` at an empty database (the tests drop and create their tables):
+The outbox tests (`--group database`) use in-memory SQLite. To run them on PostgreSQL, MySQL or MariaDB, as CI
+does, point `CQRS_TEST_DATABASE_URL` at an empty database (the tests drop and create their tables):
 
 ```bash
 CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
 ```
 
-On MySQL, the test of a `database.table` name also needs a database `cqrs_test_other` that the same user can
-change; it is skipped otherwise.
+On MySQL and MariaDB, the test of a `database.table` name also needs a database `cqrs_test_other` that the same
+user can change; it is skipped otherwise.
+
+The tests of the message brokers (`--group transport`) are skipped unless `CQRS_TEST_TRANSPORT_DSN` names a broker
+whose Messenger bridge is installed, e.g. with Redis:
+
+```bash
+composer require --dev symfony/redis-messenger
+CQRS_TEST_TRANSPORT_DSN='redis://127.0.0.1:6379/cqrs_test' vendor/bin/phpunit --group transport
+```
 
 ## Coding Standards
 

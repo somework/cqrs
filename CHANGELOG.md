@@ -7,6 +7,23 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.md#upgrading-from-05-to-06) explains each of them.
+
+### Changed
+
+**Breaking**
+- Symfony `^7.4.9 || ^8.1` is required: Symfony 7.2, 7.3 and 8.0 are no longer supported, nor are 7.4.0 to 7.4.8, whose deduplicate middleware released the idempotency key when a worker's handler failed.
+- The transactional outbox needs doctrine/dbal 4.3 or newer (the conflict is `<4.3 || >=5.0`); symfony/lock and symfony/rate-limiter conflict below 7.4 and with 8.0.
+- The testing helpers support PHPUnit 11.5, 12.5 and 13 (PHPUnit 10 before).
+- `idempotency.ttl` and `outbox.max_attempts` below 1 are rejected by the configuration tree, with Symfony's message ("The value 0 is too small for path …"); `%env()%` values are still accepted.
+- The compilation log says that idempotency "needs symfony/lock" when the Lock component is missing (it named symfony/messenger ^7.3 too).
+- Until 1.0, a minor release may remove or change API without a deprecation cycle, always with an entry in [UPGRADE.md](UPGRADE.md#deprecations); from 1.0, deprecations come first.
+
+**Other**
+- A rate limiter service that is not a rate limiter factory fails with a message that names `RateLimiterFactoryInterface`.
+- The outbox table is built and changed with DBAL's table, column and index editors on DBAL 4.3 and 4.4 too (the same table as before), and its name is no longer parsed with the name parser that DBAL 5 removes.
+- PHP 8.2 remains supported in 0.6; 0.7 will require PHP 8.3.
+
 ## [0.5.1] - 2026-09-27
 
 ### Fixed

@@ -8,8 +8,6 @@ with a lock from the Lock component.
 
 ## Requirements
 
-- **symfony/messenger 7.3 or newer.** `DeduplicateStamp` and the deduplicate middleware
-  were added in 7.3.
 - **symfony/lock**.
 - **`framework.lock` enabled.** FrameworkBundle adds Messenger's `deduplicate_middleware`
   to buses that use the default middleware only when the lock component is enabled. It is
@@ -48,7 +46,7 @@ grep Idempotency var/cache/dev/*Compiler.log
 
 It reports one of the following:
 
-- `Idempotency is enabled but needs symfony/messenger ^7.3 (DeduplicateStamp) and symfony/lock; IdempotencyStamp is ignored until both are installed.`
+- `Idempotency is enabled but needs symfony/lock; IdempotencyStamp is ignored until it is installed.`
 - `Idempotency is enabled but Messenger's deduplicate middleware is not registered, so DeduplicateStamp is not enforced. Enable the lock component ("framework.lock").`
 - `Idempotency is enabled but the lock store "in-memory" only deduplicates within one process. …`
 - `Idempotency is enabled but the lock store "flock" releases a key as soon as the dispatch returns and only lives on one host: …`
@@ -196,7 +194,7 @@ somework_cqrs:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `enabled` | `true` | Registers `IdempotencyStampDecider`. The decider is also skipped when symfony/messenger 7.3+ or symfony/lock is missing. The value decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
+| `enabled` | `true` | Registers `IdempotencyStampDecider`. The decider is also skipped when symfony/lock is missing. The value decides which services exist, so it must be a plain boolean, not an `%env()%` value. |
 | `ttl` | `300` | Lock TTL in seconds (integer, at least 1) for every `DeduplicateStamp` the bundle creates. |
 
 ## Limitations
