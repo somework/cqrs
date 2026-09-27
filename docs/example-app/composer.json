@@ -15,11 +15,11 @@
     "require": {
         "php": "^8.2",
         "somework/cqrs-bundle": "*@dev",
-        "symfony/console": "^7.2 || ^8.0",
-        "symfony/dotenv": "^7.2 || ^8.0",
-        "symfony/framework-bundle": "^7.2 || ^8.0",
-        "symfony/messenger": "^7.2 || ^8.0",
-        "symfony/yaml": "^7.2 || ^8.0"
+        "symfony/console": "^7.4.9 || ^8.1",
+        "symfony/dotenv": "^7.4.9 || ^8.1",
+        "symfony/framework-bundle": "^7.4.9 || ^8.1",
+        "symfony/messenger": "^7.4.9 || ^8.1",
+        "symfony/yaml": "^7.4.9 || ^8.1"
     },
     "autoload": {
         "psr-4": {

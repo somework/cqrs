@@ -24,9 +24,11 @@ protected function setUp(): void
 
 Test kernels live in `tests/Fixture/Kernel/`, register a `NullLogger` as `logger` (keeps the output clean) and cache in `var/cache/<kernel>/` inside the project. `AsyncTransportTestKernel` uses a serializing `in-memory://` transport and `messenger:consume` for real async round trips; prefer it over asserting on the async bus handling messages inline.
 
+`DoctrineBundleTestKernel` runs the outbox with the real DoctrineBundle (`#[Group('doctrine-bundle')]`): it checks that the outbox store skips every transaction middleware DoctrineBundle defines, whatever its id. `BrokerTransportTestKernel` sends to the message broker of `CQRS_TEST_TRANSPORT_DSN` (`#[Group('transport')]`, skipped without it); CI runs that group once per Messenger bridge (RabbitMQ, Redis, SQS on LocalStack), with the bridge installed as a dev package. Give each message of such a test an id of its own, so messages a failed run left in the queue do not fail the next one.
+
 ## Database Tests
 
-Tests that touch the outbox database get their connection from `TestDatabase::connect()` (in-memory SQLite, or the database of `CQRS_TEST_DATABASE_URL`, whose tables it drops first) and carry `#[Group('database')]`, which CI runs on PostgreSQL and MySQL. Use UUIDs as outbox ids (PostgreSQL stores them in a `uuid` column) and build legacy tables with the schema API (`TestDatabase::createTableOfVersion04()`), not with SQLite-only DDL.
+Tests that touch the outbox database get their connection from `TestDatabase::connect()` (in-memory SQLite, or the database of `CQRS_TEST_DATABASE_URL`, whose tables it drops first) and carry `#[Group('database')]`, which CI runs on PostgreSQL, MySQL and MariaDB. Use UUIDs as outbox ids (PostgreSQL stores them in a `uuid` column) and build legacy tables with the schema API (`TestDatabase::createTableOfVersion04()`), not with SQLite-only DDL.
 
 ## File Organization
 
