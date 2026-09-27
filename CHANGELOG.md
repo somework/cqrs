@@ -100,7 +100,7 @@ Planned as 0.5.0. Entries marked **Breaking** need changes in applications; [UPG
 - New compile errors:
   - a handler attribute whose message the handler method does not accept, or whose type contradicts the message;
   - a query handler declared `: void`;
-  - `#[Asynchronous]` without an async bus or transport, or on a query;
+  - `#[Asynchronous]` without an async bus or transport, or on a query, and an unknown `#[AsMessage]` transport of such a message;
   - a per-message map key of another message type (e.g. a query under `dispatch_modes.command.map`);
   - a non-bus id under `buses.*`, `causation_id.buses`, or `default_bus` when a facade falls back to it;
   - an unknown transport under `retry_strategy.transports`.

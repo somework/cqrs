@@ -105,6 +105,36 @@ final class ValidateTransportNamesPassTest extends TestCase
     public function test_it_accepts_a_bare_asynchronous_attribute_routed_by_as_message(): void
     {
         $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.transport.other', \stdClass::class);
+
+        (new ValidateTransportNamesPass())->process($container);
+
+        $this->expectNotToPerformAssertions();
+    }
+
+    /**
+     * Also with an "async" transport: Messenger sends the message to the attribute's transport.
+     */
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_rejects_an_unknown_transport_of_as_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.transport.async', \stdClass::class);
+
+        $this->expectException(InvalidConfigurationException::class);
+        $this->expectExceptionMessage(sprintf('#[AsMessage(transport: "other")] routes "%s" to a Messenger transport that is not defined.', AttributeRoutedCommand::class));
+
+        (new ValidateTransportNamesPass())->process($container);
+    }
+
+    /**
+     * framework.messenger.routing wins over the attribute, which Messenger then ignores.
+     */
+    #[RequiresMethod(AsMessage::class, '__construct')]
+    public function test_it_ignores_as_message_when_the_messenger_routing_routes_the_message(): void
+    {
+        $container = $this->asyncContainer([AttributeRoutedCommand::class]);
+        $container->register('messenger.senders_locator', \stdClass::class)->setArguments([['*' => ['jobs']]]);
 
         (new ValidateTransportNamesPass())->process($container);
 
