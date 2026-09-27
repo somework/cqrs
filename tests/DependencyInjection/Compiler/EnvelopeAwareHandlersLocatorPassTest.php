@@ -13,6 +13,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Handler\AttributeOnlyEventHandler;
 use SomeWork\CqrsBundle\Tests\Fixture\Handler\CreateTaskHandler;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Exception\InvalidArgumentException;
+use Symfony\Component\DependencyInjection\Exception\LogicException;
 use Symfony\Component\Messenger\Handler\HandlersLocator;
 
 #[CoversClass(EnvelopeAwareHandlersLocatorPass::class)]
@@ -110,6 +111,20 @@ final class EnvelopeAwareHandlersLocatorPassTest extends TestCase
         (new EnvelopeAwareHandlersLocatorPass())->process($container);
 
         self::assertFalse($container->hasDefinition('somework_cqrs.envelope_aware_handlers_locator.app.custom_bus'));
+    }
+
+    public function test_fails_before_messenger_pass_registered_the_handlers_locators(): void
+    {
+        $container = new ContainerBuilder();
+        $container->setParameter('somework_cqrs.default_bus', 'messenger.bus.default');
+        // Symfony 8.2 registers the bus like this; MessengerPass (priority -16) registers its handlers locator.
+        $container->register('messenger.bus.default')->addArgument([])->addTag('messenger.bus');
+        $container->setParameter('messenger.bus.default.middleware', [['id' => 'handle_message']]);
+
+        $this->expectException(LogicException::class);
+        $this->expectExceptionMessage('The Messenger bus "messenger.bus.default" still has its "messenger.bus.default.middleware" parameter');
+
+        (new EnvelopeAwareHandlersLocatorPass())->process($container);
     }
 
     public function test_does_nothing_without_bundle_parameters(): void

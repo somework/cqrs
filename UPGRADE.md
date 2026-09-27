@@ -53,6 +53,24 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
 
+## Upgrading from 0.5.0 to 0.5.1
+
+0.5.1 supports Symfony 8.2, which runs Messenger's `MessengerPass` at priority -16 of the `beforeOptimization`
+phase (in the new `MessengerBundle`) instead of 0. Neither the configuration nor the API changes.
+
+- **Compiler pass priorities.** The passes of the bundle that use what `MessengerPass` builds (the bus middleware
+  lists, the handlers locators and the routing added by handlers) run at priority -24 instead of -8
+  (`EnvelopeAwareHandlersLocatorPass`, `HealthCheckerLocatorPass` and the middleware passes) and 0
+  (`TransportRoutingPass`, `ValidateTransportNamesPass`); `LoggerChannelPass` runs at -25 instead of -9. A compiler
+  pass of your application that must see the bundle's middleware on a bus, or change the list after it, needs a
+  priority below -25. On Symfony 8.2, a pass that reads the middleware lists or the handlers locators must run
+  below -16 anyway.
+- **Messenger's pass must have run.** When a bus still has its `<bus>.middleware` parameter (`MessengerPass` has
+  not built it yet) as these passes run, the build fails with a `LogicException` instead of leaving the buses
+  without the bundle's middleware.
+- **DoctrineBridge 8.2.** With the outbox, a message stored through a bus skips `doctrine_dbal_transaction` and
+  `doctrine_dbal_open_transaction_logger` too; they run when the relay dispatches it.
+
 ## Upgrading from 0.4.0 to 0.5.0
 
 ### Checklist

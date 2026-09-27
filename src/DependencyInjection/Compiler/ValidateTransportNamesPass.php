@@ -31,12 +31,16 @@ use function substr_replace;
  * Fails the build when a transport named in the configuration, or by #[Asynchronous(transport: ...)]
  * on a handled message, is not a Messenger transport.
  *
+ * Runs after MessengerPass, which adds the routes of #[AsMessageHandler(transport: ...)] (Symfony 8.2).
+ *
  * @internal
  */
 final class ValidateTransportNamesPass implements CompilerPassInterface
 {
     public function process(ContainerBuilder $container): void
     {
+        MessengerMiddlewareInjector::assertMessengerPassHasRun($container);
+
         $configuredTransportNames = $container->hasParameter('somework_cqrs.transport_names')
             ? $container->getParameter('somework_cqrs.transport_names')
             : [];

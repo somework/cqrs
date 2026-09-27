@@ -27,9 +27,10 @@ use function str_starts_with;
  * With the outbox enabled, inserts the outbox middleware on the CQRS buses (DispatchMode::OUTBOX
  * stores through them): OutboxPrepareMiddleware right after Messenger's
  * "add_default_stamps_middleware" (or first), and OutboxStoreMiddleware after the application's
- * middleware, right before "send_message". Doctrine's transaction middleware is wrapped so that a
- * message stored in the outbox skips it. It also gives the outbox writer the Messenger transport
- * names, so a row for an unknown transport is refused before it is stored.
+ * middleware, right before "send_message". Doctrine's transaction middleware (ORM and, from
+ * DoctrineBridge 8.2, DBAL) is wrapped so that a message stored in the outbox skips it. It also
+ * gives the outbox writer the Messenger transport names, so a row for an unknown transport is
+ * refused before it is stored.
  *
  * @internal
  */
@@ -41,13 +42,19 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
 
     /**
      * Middleware that belongs to handling: at store time it would flush the caller's entity manager,
-     * or report its open transaction. Messenger uses these services, or child definitions of them
-     * ("<bus>.middleware.<name>", with a hash suffix when a bus lists it more than once).
+     * open a transaction around the store, or report the caller's open transaction. Messenger uses
+     * these services, or child definitions of them ("<bus>.middleware.<name>", with a hash suffix
+     * when a bus lists it more than once). The "doctrine_dbal_" ones come with DoctrineBridge 8.2.
      */
-    private const BYPASSED = ['messenger.middleware.doctrine_transaction', 'messenger.middleware.doctrine_open_transaction_logger'];
+    private const BYPASSED = [
+        'messenger.middleware.doctrine_transaction',
+        'messenger.middleware.doctrine_open_transaction_logger',
+        'messenger.middleware.doctrine_dbal_transaction',
+        'messenger.middleware.doctrine_dbal_open_transaction_logger',
+    ];
 
     /** The same, by id, for definitions whose parent is not visible (e.g. already resolved). */
-    private const BYPASSED_IDS = '/(?:^|\.)(?:doctrine_transaction|doctrine_open_transaction_logger)(?:\.[A-Za-z0-9_.]+)?$/';
+    private const BYPASSED_IDS = '/(?:^|\.)(?:doctrine_transaction|doctrine_open_transaction_logger|doctrine_dbal_transaction|doctrine_dbal_open_transaction_logger)(?:\.[A-Za-z0-9_.]+)?$/';
 
     private const WRITER_ID = 'somework_cqrs.outbox.writer';
 
