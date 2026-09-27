@@ -34,9 +34,14 @@ vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.dist.php --allow-risky=yes --
 CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverVersion=16' vendor/bin/phpunit --group database
 ```
 
-CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
+CI runs all three checks (php-cs-fixer, phpstan, phpunit) across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 and DoctrineBundle 3 on PHP 8.4+, Symfony 7.4 and DoctrineBundle 2 below), plus a lowest-dependency job (PHP 8.2, Symfony 7.2, DBAL 4.0, ORM 3.6, DoctrineBundle 2.18), a PHP 8.4 job with DoctrineBundle 2 (Symfony 7.4), non-blocking jobs on `symfony/*: 8.2.x-dev` and on `doctrine/orm: 4.0.x-dev` (without DoctrineBundle: `--exclude-group doctrine-bundle`), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test (Doctrine ORM on SQLite, with the relay) and `mkdocs build --strict`.
 
-Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.1, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
+```bash
+# Cost of the doctrine_events listener (10 000 managed entities, 1% recording; CQRS_TEST_DATABASE_URL works too)
+php tests/Benchmark/recorded-events.php
+```
+
+Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`, Doctrine ORM 3 (4 tested). Versions follow the 0.x line (latest tag v0.5.1, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
 
 ### Console Commands
 
@@ -71,7 +76,7 @@ reports messages that were sent to a transport or deduplicated).
 
 ### Key Layers
 
-**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `Contract\Outbox\OutboxStorage` (claim-token contract: `claim`/`renew`/`release`/`markPublished`/`recordFailure`; plus the optional capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
+**Contracts** (`src/Contract/`) — Marker interfaces for message types (`Command`, `Query`, `Event`) and their handlers (`CommandHandler`, `QueryHandler`, `EventHandler`; no methods, handlers type-hint the concrete message in `__invoke()`). `RecordsEvents` (`recordedEvents()` peek, `releaseEvents()` drain) and `RecordsEventsTrait` (protected `recordThat()`) for entities and aggregates that record domain events. Bus interfaces (`CommandBusInterface`, `QueryBusInterface`, `EventBusInterface`). Policy contracts: `MessageNamingStrategy`, `RetryPolicy`, `RetryConfiguration`, `MessageSerializer`, `MessageMetadataProvider`, `Contract\Outbox\OutboxStorage` (claim-token contract: `claim`/`renew`/`release`/`markPublished`/`recordFailure`; plus the optional capabilities `Contract\Outbox\{OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox}`), `StampDecider`. Handlers may implement `EnvelopeAware` to receive the Messenger envelope.
 
 **Buses** (`src/Bus/`) — `CommandBus` and `EventBus` extend `AbstractMessengerBus` and support sync/async/outbox dispatch via the `DispatchMode` enum. `QueryBus` is standalone, sync-only and validates exactly one handler result.
 
@@ -89,6 +94,7 @@ reports messages that were sent to a transport or deduplicated).
 - `CqrsRetryStrategyPass` — per-transport `CqrsRetryStrategy`
 - `OutboxRelayLockPass` — scopes the relay lock with `framework.cache.prefix_seed`
 - `OutboxSigningSecretPass` — signs outbox rows with `kernel.secret` unless `outbox.signing.secret` is set (fails clearly without a secret)
+- `DoctrineEventsPass` — with `doctrine_events`, fails the build without DoctrineBundle's ORM (the `doctrine.event_listener` tag would be ignored)
 - `OutboxStoragePass` — keeps setup, failed, health and the relay's schema report on the configured storage (`somework_cqrs.outbox.base_storage`) when the application decorates `somework_cqrs.outbox.storage`, and checks that a custom storage implements `OutboxStorage`
 - `TransportRoutingPass` — tells `MessageTransportStampDecider` which messages `framework.messenger.routing` (or, on Symfony 8.2, `#[AsMessageHandler(transport:)]`) routes (a bare `#[Asynchronous]` defers to that routing)
 - `LoggerChannelPass` — moves the bundle's services to the `cqrs` Monolog channel (declared in `CqrsExtension::prepend()`)
@@ -102,16 +108,18 @@ reports messages that were sent to a transport or deduplicated).
 
 **Messenger Integration** (`src/Messenger/`) — `EnvelopeAwareHandlersLocator` decorates Messenger's locator to inject envelopes into `EnvelopeAware` handlers. Middleware: `AllowNoHandlerMiddleware` (events), `CausationIdMiddleware`, `OpenTelemetryMiddleware`, `DeduplicationLockReleaseMiddleware`, `TraceContextCaptureMiddleware` (records the dispatching trace context before a message is deferred), `OutboxPrepareMiddleware`, `OutboxStoreMiddleware`, `OutboxBypassMiddleware` (wraps `doctrine_transaction` and `DoctrineDbalTransactionMiddleware` so a message stored in the outbox skips them).
 
+**Domain events** (`src/Doctrine/`) — `RecordedEventsListener` (`somework_cqrs.doctrine_events`, registered by `DoctrineEventsRegistrar` on every connection at `onFlush`/`postFlush` -1024 and `onClear`): collects the entities with recorded events in `onFlush` (before `BEGIN`; refuses a flush outside a transaction on the outbox connection, whatever `require_transaction` says), stores them in `postFlush` through `Outbox\RecordedEventsPublisher` (`@api`, also for DBAL aggregates: `EventBusInterface::dispatch()` with `DispatchMode::OUTBOX`, `OutboxStoredStamp` checked, released once all are stored), and after a failure once the flush wrote marks the transaction rollback-only and closes the entity manager. `PendingFlush` holds the collected entities per entity manager (see `.claude/rules/doctrine-events.md`).
+
 **Outbox / Health / Retry / Testing** — `src/Outbox/` (`OutboxWriter`, `DbalOutboxStorage` with its table in `Dbal\DbalOutboxSchema`, `OutboxMessage::fromEnvelope()`, and `Relay\OutboxRelay`, the relay loop the console command runs through a `RelayReporter`; `Signing\OutboxSigner` + `SigningOutboxStorage` sign stored rows and the relay verifies them before decoding), `src/Health/` (`HealthChecker` extension point), `src/Retry/CqrsRetryStrategy`, `src/Testing/` (fake buses and assertions for applications).
 
 ### Configuration
 
-All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Every per-message section has one shape: an optional global `default` (retry policies, serialization, metadata, naming, rate limiting) and per type (`command`, `query`, `event`) a `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, dispatch modes, dispatch-after-current-bus and rate limiters. Options moved since 0.4 fail with a "moved to …" message. Map keys must be existing classes/interfaces and service ids non-empty strings (validated in the tree); `enabled` flags that decide which services exist reject env placeholders.
+All options live under `somework_cqrs` key. The tree-builder is in `Configuration.php`. Every per-message section has one shape: an optional global `default` (retry policies, serialization, metadata, naming, rate limiting) and per type (`command`, `query`, `event`) a `default` + `map` for message-specific overrides of retry policies, serializers, metadata providers, transport names, dispatch modes, dispatch-after-current-bus and rate limiters. `doctrine_events.enabled` needs doctrine/orm, the outbox and its DBAL storage (no `outbox.storage`). Options moved since 0.4 fail with a "moved to …" message. Map keys must be existing classes/interfaces and service ids non-empty strings (validated in the tree); `enabled` flags that decide which services exist reject env placeholders.
 
 ### Test Structure
 
-Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, and kernel setups for functional tests. `tests/Functional/` tests the full container compilation and dispatch flow, including a real async round trip (`AsyncTransportRoundTripTest`) and the minimal install without bundle configuration (`MinimalInstallTest`).
+Tests mirror `src/` structure. `tests/Fixture/` contains stub messages, handlers, Doctrine entities (`Entity/`, built with `Doctrine/TestEntityManager`) and kernel setups for functional tests (`DoctrineEventsTestKernel` runs a real DoctrineBundle). `tests/Functional/` tests the full container compilation and dispatch flow, including a real async round trip (`AsyncTransportRoundTripTest`) and the minimal install without bundle configuration (`MinimalInstallTest`).
 
 ### Detailed Rules
 
-`.claude/rules/` contains 7 architecture-specific rule files covering: DI registrar/compiler pass patterns, resolver hierarchy walk, stamp decider pipeline, message design, handler contract, bus dispatch semantics, and test conventions. Each rule is path-scoped to its relevant source directory.
+`.claude/rules/` contains 8 architecture-specific rule files covering: DI registrar/compiler pass patterns, resolver hierarchy walk, stamp decider pipeline, message design, handler contract, bus dispatch semantics, domain events recorded by entities, and test conventions. Each rule is path-scoped to its relevant source directory.

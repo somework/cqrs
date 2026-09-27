@@ -55,7 +55,7 @@
     "suggest": {
         "doctrine/dbal": "Required for DBAL-backed transactional outbox storage (DbalOutboxStorage)",
         "doctrine/doctrine-bundle": "Provides the \"doctrine.dbal.<name>_connection\" services used by the transactional outbox",
-        "doctrine/orm": "Adds the outbox table to schema generation and Doctrine migrations (OutboxSchemaSubscriber)",
+        "doctrine/orm": "Stores the events recorded by entities in the outbox when the entity manager flushes (doctrine_events), and adds the outbox table to schema generation and Doctrine migrations (OutboxSchemaSubscriber)",
         "open-telemetry/api": "Required for OpenTelemetry tracing bridge (^1.8)",
         "phpunit/phpunit": "Required by the testing helpers in SomeWork\\CqrsBundle\\Testing (CqrsTestCase, CqrsAssertionsTrait)",
         "symfony/lock": "Required for idempotency deduplication bridge (IdempotencyStamp to DeduplicateStamp)",

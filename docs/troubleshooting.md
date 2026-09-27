@@ -592,6 +592,98 @@ commit a lost message.
   order the rows were stored, without turns between transports. Run the setup
   command (over a direct database connection).
 
+## Events recorded by entities
+
+These concern `somework_cqrs.doctrine_events` and `RecordedEventsPublisher` (see
+[Domain events](domain-events.md)).
+
+### "The events recorded by … were not stored in the outbox: no transaction is open"
+
+**Symptom.** `OutboxRequiresTransactionException` from `EntityManagerInterface::flush()` (or
+`RecordedEventsPublisher::publish()`), with `entityClasses` naming the entities.
+
+**Cause.** Entities with recorded events were flushed outside a transaction on the outbox
+connection: a flush in a console command, a fixture, a test, or a handler on a bus without
+`doctrine_transaction`. `outbox.require_transaction: false` does not apply to recorded events.
+The flush was refused before it wrote anything; the entities keep their events.
+
+**Fix.** Flush inside `EntityManagerInterface::wrapInTransaction()` (or
+`$connection->transactional()`), or dispatch the command through a bus with the
+`doctrine_transaction` middleware. In tests, `dama/doctrine-test-bundle`'s transaction does not
+count: it is invisible to the connection.
+
+### "… recorded events during a flush … already committed without them"
+
+**Symptom.** `OutboxRequiresTransactionException` with `afterCommit: true`.
+
+**Cause.** A lifecycle callback or a flush listener recorded events during a flush that ran
+without a transaction: the changes are committed, the events are not stored (they are kept, and
+the next flush in a transaction stores them).
+
+**Fix.** Flush inside a transaction, as above, when entities record events in callbacks
+(`#[ORM\PostPersist]` for database-generated ids).
+
+### "… is not on the outbox connection"
+
+**Cause.** An entity manager of another connection than `outbox.connection` flushed entities with
+recorded events: they cannot be stored in the transaction of their changes. Nothing was written.
+
+**Fix.** Map these entities on an entity manager of the outbox connection, or point
+`outbox.connection` at theirs.
+
+### "The entity manager was cleared, closed or reset during a flush"
+
+**Cause.** A flush listener cleared, closed or reset the entity manager (or a nested flush in a
+listener failed, which closes it) before the recorded events were stored. The events of the flush
+cannot be complete anymore; the transaction was marked rollback-only.
+
+**Fix.** Do not clear or reset the entity manager in flush listeners, and do not swallow the
+failure of a flush there. Run the operation again.
+
+### "… while the recorded events were stored in the outbox"
+
+**Symptom.** A `LogicException` saying that the entity manager was flushed, cleared, or that an
+entity was persisted or removed, while the events were stored; or that an entity "released N
+event(s) after M were stored".
+
+**Cause.** Middleware or a stamp decider of the event bus used the entity manager, or recorded
+events, while the listener stored the events of a flush (from its `postFlush`). Doctrine would drop
+new or removed entities right after the flush, and a nested flush would be missed. The transaction
+was marked rollback-only and the entity manager closed.
+
+**Fix.** Keep event-bus middleware away from the entity manager (an audit trail writes with DBAL,
+or from a handler of the event). A bus with `doctrine_transaction` is fine: the store skips it.
+
+### "The event bus … did not store … in the outbox"
+
+**Cause.** `EventBusInterface` is decorated (or replaced) by a class that changed the dispatch mode
+or returned another envelope: the recorded events must be stored, and the envelope must carry the
+`OutboxStoredStamp` of the bus. The transaction was marked rollback-only.
+
+**Fix.** Let the decorator pass `DispatchMode::OUTBOX` on and return the envelope of the inner bus.
+`FakeEventBus` behaves correctly.
+
+### `CommitFailedRollbackOnly` after a failed flush
+
+**Cause.** A failure after the flush wrote its changes (a missing outbox table, a rate limiter, a
+middleware rejecting a recorded event, the guards above) marked the transaction rollback-only, and
+the code caught the exception and committed anyway. The changes must not commit without their
+events.
+
+**Fix.** Let the exception roll the transaction back, fix its cause, and run the operation again.
+Create the outbox table before the first flush (`somework:cqrs:outbox:setup` or a migration). Do
+not map rate limiters to recorded events.
+
+### The container does not compile with `doctrine_events`
+
+- `"somework_cqrs.doctrine_events" … but doctrine/orm is not installed`: run
+  `composer require doctrine/orm doctrine/doctrine-bundle`.
+- `… but the outbox is disabled`: enable `somework_cqrs.outbox`.
+- `… names another storage`: remove `outbox.storage`; decorate `somework_cqrs.outbox.storage`
+  instead.
+- `… needs DoctrineBundle with the ORM configured`: register DoctrineBundle and configure
+  `doctrine.orm`.
+
 ## Health check failures
 
 `somework:cqrs:health` exits with `2` when a result is `CRITICAL`:

@@ -10,6 +10,7 @@ use Doctrine\ORM\Event\OnClearEventArgs;
 use Doctrine\ORM\Event\OnFlushEventArgs;
 use Doctrine\ORM\Event\PostFlushEventArgs;
 use Doctrine\ORM\UnitOfWork;
+use Doctrine\Persistence\Proxy;
 use SomeWork\CqrsBundle\Contract\RecordsEvents;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Outbox\RecordedEventsPublisher;
@@ -22,6 +23,8 @@ use function implode;
 use function is_a;
 use function spl_object_id;
 use function sprintf;
+
+use const PHP_VERSION_ID;
 
 /**
  * Stores the events recorded by entities (RecordsEvents) in the transactional outbox when their
@@ -49,6 +52,9 @@ final class RecordedEventsListener implements ResetInterface
 
     /** @var array<string, bool> Whether the entities of an identity-map root class can record events */
     private array $recordingRoots = [];
+
+    /** @var array<class-string, \ReflectionClass<object>> */
+    private array $reflections = [];
 
     /**
      * @param \Closure(): RecordedEventsPublisher $publisher        Lazy: the event bus depends on the entity manager ("doctrine_transaction")
@@ -241,13 +247,32 @@ final class RecordedEventsListener implements ResetInterface
                 continue;
             }
             foreach ($managed as $entity) {
-                if ($entity instanceof RecordsEvents && !isset($entities[spl_object_id($entity)]) && !$unitOfWork->isUninitializedObject($entity) && [] !== $entity->recordedEvents()) {
+                if ($entity instanceof RecordsEvents && !isset($entities[spl_object_id($entity)]) && !$this->isUninitialized($entity) && [] !== $entity->recordedEvents()) {
                     $entities[spl_object_id($entity)] = $entity;
                 }
             }
         }
 
         return $entities;
+    }
+
+    /**
+     * Whether the entity is a proxy that was never loaded: a native lazy object (PHP 8.4), or a proxy
+     * the ORM generated. The same answer as UnitOfWork::isUninitializedObject(), at a third of its
+     * cost (it looks up the metadata of the class for each entity).
+     */
+    private function isUninitialized(object $entity): bool
+    {
+        if ($entity instanceof Proxy) {
+            return !$entity->__isInitialized();
+        }
+
+        if (PHP_VERSION_ID < 80400) {
+            return false;
+        }
+        $reflection = $this->reflections[$entity::class] ??= new \ReflectionClass($entity::class);
+
+        return $reflection->isUninitializedLazyObject($entity);
     }
 
     /**

@@ -29,6 +29,7 @@ nav:
   - Advanced:
     - Retry Policies: retry.md
     - Transactional Outbox: outbox.md
+    - Domain Events: domain-events.md
     - Event Ordering: event-ordering.md
     - Idempotency: idempotency.md
     - Rate Limiting: rate-limiting.md

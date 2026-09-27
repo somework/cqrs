@@ -11,6 +11,7 @@ The bundle auto-discovers handlers via PHP attributes, provides a composable sta
 - **Sync or async per message** -- Choose per call (`DispatchMode`), per class (`#[Asynchronous]`), or in configuration.
 - **Stamp pipeline** -- Composable `StampDecider` system with priority ordering. Attach retry policies, transport routing, serializer stamps, and metadata per message class or per message type.
 - **Testing utilities** -- `FakeCommandBus`, `FakeQueryBus`, and `FakeEventBus`, plus `assertDispatched()` and `assertNotDispatched()` with callback-based property assertions.
+- **Domain events recorded by entities** -- Doctrine entities record events that are stored in the transactional outbox when the entity manager flushes, in the transaction of the change.
 - **Optional patterns** -- Transactional outbox, event ordering, idempotency, rate limiting, causation ID propagation, and OpenTelemetry tracing.
 
 ## Quick links
@@ -29,7 +30,7 @@ The bundle auto-discovers handlers via PHP attributes, provides a composable sta
 - PHP 8.2 or newer
 - Symfony 7.2 or newer, including 8.x
 
-Some features need optional packages: `symfony/messenger` 7.3+ and `symfony/lock` for idempotency, `symfony/rate-limiter` for rate limiting, `doctrine/dbal` 4 and `doctrine/doctrine-bundle` for the transactional outbox, and `open-telemetry/api` 1.8+ for tracing.
+Some features need optional packages: `symfony/messenger` 7.3+ and `symfony/lock` for idempotency, `symfony/rate-limiter` for rate limiting, `doctrine/dbal` 4 and `doctrine/doctrine-bundle` for the transactional outbox, `doctrine/orm` 3 for domain events recorded by entities, and `open-telemetry/api` 1.8+ for tracing.
 
 ## License
 

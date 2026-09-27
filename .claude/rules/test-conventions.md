@@ -28,6 +28,12 @@ Test kernels live in `tests/Fixture/Kernel/`, register a `NullLogger` as `logger
 
 Tests that touch the outbox database get their connection from `TestDatabase::connect()` (in-memory SQLite, or the database of `CQRS_TEST_DATABASE_URL`, whose tables it drops first) and carry `#[Group('database')]`, which CI runs on PostgreSQL and MySQL. Use UUIDs as outbox ids (PostgreSQL stores them in a `uuid` column) and build legacy tables with the schema API (`TestDatabase::createTableOfVersion04()`), not with SQLite-only DDL.
 
+Doctrine ORM tests build an `EntityManager` with `TestEntityManager::create()` on that connection (entities in `tests/Fixture/Entity`, tables listed in `TestDatabase::TABLES`); kernels with a real DoctrineBundle (`DoctrineEventsTestKernel`) and DAMA tests also carry `#[Group('doctrine-bundle')]`, which the ORM 4 job excludes.
+
+## Comparing Objects
+
+The code style (`php_unit_strict`) turns `assertEquals()` into `assertSame()`, which compares objects by identity: compare messages and stamps with `AssertsMessages::assertSameMessages()` (class and public properties), and references by their string id.
+
 ## File Organization
 
 Test files mirror `src/` structure: `tests/Bus/CommandBusTest.php` tests `src/Bus/CommandBus.php`. Fixtures (stub messages, handlers, kernels, services) live in `tests/Fixture/` with sub-directories by type — reuse these rather than creating new stubs per test.

@@ -84,6 +84,8 @@ somework_cqrs:
             secret: null
             previous_secrets: []
             accept_unsigned: false
+    doctrine_events:
+        enabled: false
 ```
 
 ## Rules that apply to every section
@@ -733,6 +735,30 @@ somework_cqrs:
         connection: default
         auto_setup: false
 ```
+
+## doctrine_events
+
+| Key | Default | Allowed values |
+|-----|---------|----------------|
+| `enabled` | `false` | boolean (no environment variables): store the events recorded by entities (`RecordsEvents`) in the outbox when their entity manager flushes |
+
+Requires doctrine/orm, DoctrineBundle with `doctrine.orm` configured, and the outbox on its DBAL
+storage (`outbox.enabled: true`, no `outbox.storage`) on the connection of the entity managers:
+compilation fails otherwise. The events are always stored with `DispatchMode::OUTBOX`
+(`dispatch_modes.event` does not apply), and a flush of entities with events outside a transaction
+on the outbox connection is refused whatever `outbox.require_transaction` says. See
+[Domain events](domain-events.md).
+
+```yaml
+somework_cqrs:
+    outbox:
+        enabled: true
+    doctrine_events:
+        enabled: true
+```
+
+`RecordedEventsPublisher` (the same for aggregates on DBAL) is registered with the outbox on its
+DBAL storage, whether `doctrine_events` is enabled or not.
 
 ## Console commands
 

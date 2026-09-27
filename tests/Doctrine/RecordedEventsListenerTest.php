@@ -39,6 +39,7 @@ use SomeWork\CqrsBundle\Tests\Fixture\Entity\Article;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Comment;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Document;
 use SomeWork\CqrsBundle\Tests\Fixture\Entity\Report;
+use SomeWork\CqrsBundle\Tests\Fixture\Entity\Tag;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\AccountCreditedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArticleDeletedEvent;
 use SomeWork\CqrsBundle\Tests\Fixture\Message\ArticleFeaturedEvent;
@@ -267,6 +268,19 @@ final class RecordedEventsListenerTest extends TestCase
         });
 
         self::assertSameMessages([new ReportFiledEvent('r1')], $this->storedEvents());
+    }
+
+    public function test_entities_of_classes_that_record_nothing_are_flushed_as_usual(): void
+    {
+        $this->listen();
+
+        $this->entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager): void {
+            $entityManager->persist(new Tag('t1', 'News'));
+            $entityManager->persist(new Article('a1', 'Draft'));
+        });
+
+        self::assertSame(1, $this->rowCount('cqrs_test_tag'));
+        self::assertSameMessages([new ArticlePublishedEvent('a1', 'Draft')], $this->storedEvents());
     }
 
     public function test_an_uninitialized_proxy_is_not_loaded(): void

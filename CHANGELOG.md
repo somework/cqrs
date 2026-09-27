@@ -7,6 +7,18 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+### Added
+
+**Domain events recorded by entities**
+- `Contract\RecordsEvents` (`recordedEvents()` peeks at the events recorded since the last release, `releaseEvents()` removes and returns them) and `Contract\RecordsEventsTrait` with a protected `recordThat()`: entities and aggregates record immutable `Event` DTOs in the methods that change them ([UPGRADE.md](UPGRADE.md#domain-events-recorded-by-entities-opt-in)).
+- `somework_cqrs.doctrine_events.enabled` (a plain boolean, off by default): the events recorded by Doctrine entities are stored in the transactional outbox when their entity manager flushes, in the caller's transaction, so they commit or roll back with the changes. Each event goes through `EventBusInterface::dispatch()` with `DispatchMode::OUTBOX` (stamp pipeline and event-bus middleware included; `dispatch_modes` does not apply), continues the flow of the command being handled (same correlation id, the command as cause), and is released once every event is stored. The entities are collected in `onFlush` (new, changed, removed and unchanged ones; only the classes that record events, without loading proxies) and in `postFlush` (events recorded during the flush). A flush of entities with events outside a transaction on the outbox connection is refused before it writes anything, whatever `outbox.require_transaction` says, and the entities keep their events; events recorded during a flush without a transaction are refused after its commit and kept for the next flush. A failure after the flush wrote (a missing table, a rate limiter, a middleware rejecting an event) marks the transaction rollback-only and closes the entity manager. A flush that clears, closes or resets the entity manager in a listener, an event-bus middleware that flushes, persists, removes or clears while the events are stored, an event recorded meanwhile, an `EventBusInterface` that does not store the event, and an entity manager of another connection than the outbox's fail with a `LogicException` naming the fix. The build fails without doctrine/orm, the outbox, DoctrineBundle's `doctrine.orm`, or with `outbox.storage`. See [Domain events](docs/domain-events.md).
+- `Outbox\RecordedEventsPublisher` (`@api`, autowired with the outbox on its DBAL storage) stores the recorded events of aggregates that the ORM does not manage (a repository on DBAL) with the same guards: the transaction check on the outbox connection, `DispatchMode::OUTBOX`, the `OutboxStoredStamp` check, the release once all are stored, and a rollback-only transaction after a failure.
+- `OutboxRequiresTransactionException::$entityClasses` and `$afterCommit` (optional constructor parameters) name the entities whose recorded events were refused, and whether their changes were already committed.
+- The [domain events](docs/domain-events.md) page separates domain events (recorded by the aggregate) from integration events (a published contract) and shows how to map one to the other; the outbox, event ordering (numbering the events of an entity), testing, troubleshooting and configuration pages cover recorded events.
+
+### Changed
+- The example application stores its tasks with Doctrine ORM in SQLite: the `Task` entity records its events, which the relay hands to their handlers (`sync://`), and its smoke test runs the relay.
+
 ## [0.5.1] - 2026-09-27
 
 ### Fixed

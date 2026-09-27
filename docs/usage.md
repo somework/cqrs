@@ -653,6 +653,33 @@ Events dispatched without any registered handler do not throw an exception
     `dispatch_after_current_bus` for those events also makes the send part of the transaction
     (see [When do I need the outbox?](outbox.md#when-do-i-need-the-outbox)).
 
+### Events recorded by entities
+
+With Doctrine ORM, the entity can record the event itself instead of the handler dispatching it:
+the handler only changes the entity, and the flush stores the recorded events in the outbox in the
+transaction of the change (`somework_cqrs.doctrine_events`):
+
+```php
+#[AsCommandHandler(command: ApproveInvoice::class)]
+final class ApproveInvoiceHandler
+{
+    public function __construct(private readonly InvoiceRepository $invoices)
+    {
+    }
+
+    public function __invoke(ApproveInvoice $command): mixed
+    {
+        // Invoice::approve() records InvoiceApproved; "doctrine_transaction" flushes.
+        $this->invoices->get($command->invoiceId)->approve();
+
+        return null;
+    }
+}
+```
+
+See [Domain events](domain-events.md) for the setup, what happens on failure, and the difference
+between domain events and the integration events other services consume.
+
 Multiple handlers can subscribe to the same event; each is a class of its own:
 
 ```php

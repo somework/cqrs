@@ -33,10 +33,10 @@ The promise covers:
 - Adding required constructor parameters
 - Changing a return type to an incompatible type
 - Adding or removing methods of interfaces meant to be implemented (the message and handler
-  markers, the policy contracts, `StampDecider` and `MessageTypeAwareStampDecider`, the outbox
-  contracts in `Contract\Outbox`, `HealthChecker`, and the bus interfaces)
-- Adding methods to the classes and traits you extend or use (`CqrsTestCase`,
-  `CqrsAssertionsTrait`, `EnvelopeAwareTrait`): they can clash with yours
+  markers, `RecordsEvents`, the policy contracts, `StampDecider` and `MessageTypeAwareStampDecider`,
+  the outbox contracts in `Contract\Outbox`, `HealthChecker`, and the bus interfaces)
+- Adding methods or properties to the classes and traits you extend or use (`CqrsTestCase`,
+  `CqrsAssertionsTrait`, `EnvelopeAwareTrait`, `RecordsEventsTrait`): they can clash with yours
 
 ### What is not a breaking change
 
@@ -52,6 +52,59 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 `trigger_deprecation('somework/cqrs-bundle', …)` notice, listed in this guide) and kept for at
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
+
+## Upgrading from 0.5 to 0.6
+
+### Domain events recorded by entities (opt-in)
+
+0.6 stores the events that Doctrine entities record in the transactional outbox when the entity
+manager flushes ([Domain events](docs/domain-events.md)). Nothing changes until you enable it:
+
+```yaml
+somework_cqrs:
+    outbox:
+        enabled: true
+    doctrine_events:
+        enabled: true
+```
+
+Before enabling it:
+
+- **Plain flushes of recording entities are refused.** A flush of entities that recorded events
+  outside a transaction on the outbox connection throws `OutboxRequiresTransactionException`,
+  whatever `outbox.require_transaction` says (nothing is written, the entities keep their events).
+  Check the flushes outside handlers on a bus with `doctrine_transaction`: console commands,
+  fixtures, and test suites; a transaction opened below DBAL (`dama/doctrine-test-bundle`) does not
+  count. Flush inside `EntityManagerInterface::wrapInTransaction()`.
+- **The outbox table must exist** before the first such flush: the automatic setup never runs inside
+  a transaction. Run `somework:cqrs:outbox:setup` or add it to a migration.
+- **The outbox must use its DBAL storage** on the connection of the entity managers: a custom
+  `outbox.storage` fails the build (decorating `somework_cqrs.outbox.storage` is fine), and so do a
+  missing doctrine/orm, a disabled outbox and a missing DoctrineBundle. An entity manager of another
+  connection whose entities record events is refused when it flushes.
+- **Failures after the flush roll back.** When storing the events fails after the flush wrote its
+  changes (a missing table, a rate limiter, a middleware rejecting an event), the transaction is
+  marked rollback-only and the entity manager is closed: code that catches the exception and
+  commits anyway gets DBAL's `CommitFailedRollbackOnly`. This also ends a batch that flushes item by
+  item in savepoints. Do not map rate limiters to recorded events.
+- **Names of the trait.** Entities that already have `recordThat()`, `recordedEvents()`,
+  `releaseEvents()` or a `$recordedEvents` property clash with `RecordsEventsTrait`: rename them, or
+  implement `RecordsEvents` yourself.
+- **Always the outbox.** Recorded events are stored with `DispatchMode::OUTBOX` through
+  `EventBusInterface`, whatever `dispatch_modes.event`, `#[Outbox]` or `#[Asynchronous]` say. A
+  decorator of `EventBusInterface` must keep the mode and return the envelope of the bus, and
+  event-bus middleware must not flush, persist or remove entities, or clear the entity manager,
+  while an event is stored: the flush fails otherwise.
+
+Events that handlers dispatch from entity state can move into the entities one by one; both ways
+store them in the same outbox.
+
+### Other changes
+
+- `OutboxRequiresTransactionException` gains the optional constructor parameters `$entityClasses`
+  and `$afterCommit` (for recorded events); code that builds it with the message class keeps working.
+- With the outbox on its DBAL storage, the container has a `RecordedEventsPublisher` service
+  (autowire the class) for aggregates written with DBAL.
 
 ## Upgrading from 0.5.0 to 0.5.1
 

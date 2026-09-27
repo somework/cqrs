@@ -43,7 +43,7 @@ final class TestEntityManager
             $configuration->setProxyDir(dirname(__DIR__, 3).'/var/cache/doctrine-proxies');
             $configuration->setProxyNamespace('SomeWork\CqrsBundle\Tests\Proxies');
             $configuration->setAutoGenerateProxyClasses(ProxyFactory::AUTOGENERATE_EVAL);
-        } elseif (method_exists($configuration, 'enableNativeLazyObjects')) { // @phpstan-ignore function.alreadyNarrowedType
+        } elseif (method_exists($configuration, 'enableNativeLazyObjects')) {
             // symfony/var-exporter 8 (PHP 8.4+) has no lazy ghosts left; ORM 4 always uses native lazy objects.
             $configuration->enableNativeLazyObjects(true);
         }

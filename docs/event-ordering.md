@@ -24,8 +24,8 @@ Commands and queries are not processed by this decider.
 ## Usage
 
 Implement both `Event` and `SequenceAware` on your event class. The sequence
-number comes from your domain model, typically the aggregate's version after the
-change:
+number comes from your domain model, typically a counter of the aggregate that each
+recorded event increments ([recipe for entities](domain-events.md#numbering-the-events-of-an-aggregate)):
 
 ```php
 <?php
@@ -139,4 +139,6 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
   out-of-order events until gaps are filled).
 
 - **No sequence generation.** The bundle does not assign sequence numbers; the
-  event must provide them.
+  event must provide them. For events recorded by entities, keep the counter on the entity and guard
+  it with a version column or a pessimistic lock (see
+  [Domain events](domain-events.md#numbering-the-events-of-an-aggregate)).

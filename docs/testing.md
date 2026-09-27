@@ -603,6 +603,40 @@ test relays such rows and then asserts on `getSent()`.
 To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
 `new Envelope($message, [new RelayedFromOutboxStamp()])`.
 
+## Recorded events
+
+Entities that record events ([Domain events](domain-events.md)) are tested without the bundle:
+call the method and read `recordedEvents()`, which keeps the events.
+
+```php
+$article = Article::publish('a1', 'Draft');
+$article->rename('Final');
+
+self::assertEquals([new ArticlePublished('a1', 'Draft'), new ArticleRenamed('a1', 'Final')], $article->recordedEvents());
+```
+
+In kernel tests with `somework_cqrs.doctrine_events`, the flush hands the events to
+`EventBusInterface`: with `FakeEventBus` swapped in ([as above](#swapping-the-buses-for-fakes-in-the-test-container)),
+it records them with `DispatchMode::OUTBOX`, returns an `OutboxStoredStamp`, and the entities
+release them, so `assertStoredInOutbox()` checks them:
+
+```php
+$entityManager->wrapInTransaction(static function (EntityManagerInterface $entityManager): void {
+    $entityManager->persist(Article::publish('a1', 'Draft'));
+});
+
+self::assertStoredInOutbox($eventBus, ArticlePublished::class);
+```
+
+The transaction rule applies in tests too: a plain `flush()` of entities with events throws
+`OutboxRequiresTransactionException`, also with the fake bus. Flush inside `wrapInTransaction()`,
+or dispatch the command through a bus with the `doctrine_transaction` middleware.
+`dama/doctrine-test-bundle` wraps each test in a transaction below DBAL, which the connection does
+not see: its tests need the same explicit transaction. Code that publishes the events of DBAL
+aggregates with `RecordedEventsPublisher` is unit-tested with a fake bus:
+`new RecordedEventsPublisher(new FakeEventBus(), $connection)`, inside a transaction of
+`$connection`.
+
 ## Tips
 
 - **Type-hint the interfaces** (`CommandBusInterface`, `QueryBusInterface`,

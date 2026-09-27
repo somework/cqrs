@@ -47,6 +47,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 | **Testing** | `InMemoryTransport` or mocks | Fake buses plus `assertDispatched()` / `assertNotDispatched()` |
 | **Event ordering** | Not built-in | `SequenceAware` interface + `AggregateSequenceStamp` |
 | **Transactional outbox** | Only with a Doctrine transport on the business connection | `#[Outbox]` / `dispatch_modes` / `DispatchMode::OUTBOX` on the buses (or `OutboxWriter`), DBAL storage and relay command, for any transport (AMQP, Redis, SQS, …) |
+| **Domain events of entities** | Not built-in | Entities record events (`RecordsEvents`); the flush stores them in the outbox in the same transaction |
 | **OpenTelemetry** | Not built-in | Middleware producing dispatch and consume spans |
 
 > **Choose plain Messenger** when your app has simple dispatch needs and you want no additional dependency.
@@ -76,6 +77,7 @@ The stamp pipeline runs the built-in deciders for rate limiting, retry policies,
 - Event ordering metadata with `SequenceAware` and `AggregateSequenceStamp`
 - Rate limiting via Symfony Rate Limiter
 - Transactional outbox with DBAL storage and relay (retries with backoff), setup, failed-message and purge commands; messages reach it through the buses (`DispatchMode::OUTBOX`, `#[Outbox]`, `dispatch_modes`) or `OutboxWriter`
+- Domain events recorded by Doctrine entities (`RecordsEvents`, `RecordsEventsTrait`), stored in the outbox when the entity manager flushes, in the transaction of the change (`doctrine_events`); `RecordedEventsPublisher` for aggregates on DBAL
 
 **Developer experience**
 - `FakeCommandBus`, `FakeQueryBus`, `FakeEventBus` for unit testing
@@ -105,6 +107,7 @@ Optional packages enable additional features:
 * `symfony/messenger` 7.3+ and `symfony/lock` -- idempotency (`IdempotencyStamp`).
 * `symfony/rate-limiter` -- rate limiting.
 * `doctrine/dbal` 4 and `doctrine/doctrine-bundle` -- transactional outbox.
+* `doctrine/orm` 3 -- domain events recorded by entities (with the outbox).
 * `open-telemetry/api` 1.8+ -- tracing.
 
 ### Install the package
@@ -195,7 +198,9 @@ transaction committed; if the broker is down then, the event is lost and `dispat
 [transactional outbox](docs/outbox.md#through-the-buses), mark the event class `#[Outbox]` (or map
 it to `outbox` in `dispatch_modes`) and run the handler's database work in a transaction on the
 outbox connection (`$connection->transactional()`, or Messenger's `doctrine_transaction`
-middleware): the same `dispatch()` then stores the event in that transaction.
+middleware): the same `dispatch()` then stores the event in that transaction. With Doctrine ORM,
+entities can also record their events themselves, and the flush stores them
+([domain events](docs/domain-events.md)).
 
 ### Step 3 -- Define a query and its handler
 
@@ -379,7 +384,7 @@ Full documentation is available at **[somework.github.io/cqrs](https://somework.
 * [Testing Guide](docs/testing.md) -- fake buses, assertions, integration testing
 * [Production Guide](docs/production.md) -- deployment, workers, monitoring
 * [Troubleshooting](docs/troubleshooting.md) -- common issues and solutions
-* [Example application](docs/example-app/) -- a runnable Symfony application with commands, queries, events and an async transport
+* [Example application](docs/example-app/) -- a runnable Symfony application on Doctrine ORM (SQLite) with commands, queries, events recorded by entities and the outbox relay
 * [Upgrade Guide](UPGRADE.md) -- upgrading between versions of the bundle
 * [Changelog](CHANGELOG.md)
 
@@ -387,6 +392,7 @@ Full documentation is available at **[somework.github.io/cqrs](https://somework.
 
 * [Retry Policies](docs/retry.md)
 * [Transactional Outbox](docs/outbox.md)
+* [Domain Events](docs/domain-events.md)
 * [Event Ordering](docs/event-ordering.md)
 * [Idempotency](docs/idempotency.md)
 * [Rate Limiting](docs/rate-limiting.md)

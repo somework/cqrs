@@ -31,6 +31,10 @@ Messages can implement additional marker interfaces beyond the base type for hie
 
 Messages generally trust their callers and have empty constructor bodies. Structural validation (non-empty IDs, format constraints) is acceptable when a structurally invalid message would cause cryptic failures downstream — see `MessageMetadataStamp` for this pattern. Business validation belongs in handlers or Symfony's validation middleware, not in the message constructor.
 
+## Events Recorded by Entities
+
+Entities and aggregates may record events (`RecordsEvents` + `RecordsEventsTrait::recordThat()`); the events themselves stay DTOs as above, built with the values they need at the time they are recorded. Entities never attach stamps: per-event policies come from the configuration and stamp deciders. Recorded events are **domain events** (the model's own facts); **integration events** (a published, versioned contract) are dispatched by a handler of the domain event, never recorded by entities. See `docs/domain-events.md`.
+
 ## Semantics
 
 - **Commands** — imperative intent ("CreateTask", "ShipOrder"). Exactly one handler. May return a result via `CommandBus`.

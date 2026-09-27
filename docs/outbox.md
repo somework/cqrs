@@ -16,7 +16,9 @@ database table **in the same transaction** as the business change. The
 
 1. Inside your database transaction, you write the business data and store the message: through
    the buses (`DispatchMode::OUTBOX`, `#[Outbox]` or `dispatch_modes`, see
-   [Through the buses](#through-the-buses)), or with `OutboxWriter::store()`.
+   [Through the buses](#through-the-buses)), with `OutboxWriter::store()`, or by letting your
+   entities record their events, which are stored when the entity manager flushes (see
+   [Domain events](domain-events.md)).
 2. The transaction commits. The message row is saved only if the business change is.
 3. `somework:cqrs:outbox:relay` reads due rows, transport by transport, decodes each one, and
    dispatches it through the Messenger bus of its type (see [Relaying](#relaying)). The message
@@ -26,8 +28,9 @@ database table **in the same transaction** as the business change. The
    [Failures](#failures)).
 
 A message reaches the outbox only when you ask for it: with `DispatchMode::OUTBOX`, with the
-`#[Outbox]` attribute or an `outbox` entry of `dispatch_modes` (then `dispatch()` stores it), or
-with `OutboxWriter`. Everything else the buses dispatch is sent as usual.
+`#[Outbox]` attribute or an `outbox` entry of `dispatch_modes` (then `dispatch()` stores it), with
+`OutboxWriter`, or as an event an entity recorded (`somework_cqrs.doctrine_events`,
+`RecordedEventsPublisher`). Everything else the buses dispatch is sent as usual.
 
 ## When do I need the outbox?
 
@@ -100,7 +103,7 @@ somework_cqrs:
 | `connection` | `default` | DBAL connection name. The storage uses the service `doctrine.dbal.<name>_connection`. Use the connection that holds your business data, otherwise `store()` is not part of the business transaction. |
 | `serializer` | `messenger.default_serializer` | Messenger serializer service id. It is exposed as the alias `somework_cqrs.outbox.serializer` for code that writes to the outbox, and the relay uses it to decode rows. |
 | `relay_on_terminate` | `false` | For development: runs the relay right after a request, a console command or a message a worker handled that stored messages in the outbox. See [Development](#development). A plain boolean (it decides which services exist). |
-| `require_transaction` | `true` | Refuses to store a message outside a transaction on the outbox connection (`OutboxRequiresTransactionException`): the message would not be part of the business change. Checked by storages that implement `TransactionalOutbox` (`DbalOutboxStorage` does). |
+| `require_transaction` | `true` | Refuses to store a message outside a transaction on the outbox connection (`OutboxRequiresTransactionException`): the message would not be part of the business change. Checked by storages that implement `TransactionalOutbox` (`DbalOutboxStorage` does). Events recorded by entities are always refused outside a transaction, whatever this option says. |
 | `auto_setup` | `true` | Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to `somework:cqrs:outbox:setup`. Set it to `false` when migrations manage the table. |
 | `max_attempts` | `10` | Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See [Failures](#failures). |
 
@@ -178,6 +181,12 @@ final class PlaceOrderHandler
 With Messenger's `doctrine_transaction` middleware on the command bus, every handler already
 runs in a transaction of the entity manager's connection, and the events it dispatches through
 the outbox are stored in it without an explicit `transactional()`.
+
+!!! tip "Events of entities"
+    A handler that changes an entity and then builds the event from its state duplicates domain
+    knowledge, and each handler must remember to dispatch it. Let the entity record the event
+    instead: with `somework_cqrs.doctrine_events`, the flush stores it in the outbox in the same
+    transaction (see [Domain events](domain-events.md)).
 
 - **The transaction is checked** before the stamp pipeline and the middleware run. With
   `require_transaction: true` (the default), a message dispatched outside a transaction on

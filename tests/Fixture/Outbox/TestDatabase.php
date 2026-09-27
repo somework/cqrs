@@ -32,7 +32,7 @@ final class TestDatabase
     public const URL_VARIABLE = 'CQRS_TEST_DATABASE_URL';
 
     /** Tables the tests create; they are dropped before each test on a real database. */
-    private const TABLES = ['somework_cqrs_outbox', 'app_outbox', 'outbox', 'order', self::LONG_TABLE_NAME, 'cqrs_test_article', 'cqrs_test_comment', 'cqrs_test_account', 'cqrs_test_document', 'cqrs_test_deferred'];
+    private const TABLES = ['somework_cqrs_outbox', 'app_outbox', 'outbox', 'order', self::LONG_TABLE_NAME, 'cqrs_test_article', 'cqrs_test_comment', 'cqrs_test_account', 'cqrs_test_document', 'cqrs_test_tag', 'cqrs_test_deferred'];
 
     /** Long enough for PostgreSQL to have cut the name of its 0.4 index to 63 characters. */
     public const LONG_TABLE_NAME = 'app_messaging_transactional_outbox_messages_x';
