@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxMonitoring;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxStatus;
@@ -20,8 +21,10 @@ use function in_array;
 /**
  * A storage of an application (not the DBAL one) that implements every capability.
  */
-final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring
+final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedOutboxMessages, OutboxMonitoring, TransactionalOutbox
 {
+    public bool $inTransaction = true;
+
     public int $setups = 0;
 
     /** @var list<string> */
@@ -126,5 +129,10 @@ final class CapableOutboxStorage implements OutboxStorage, OutboxSchema, FailedO
     public function status(): OutboxStatus
     {
         return $this->status;
+    }
+
+    public function isInTransaction(): bool
+    {
+        return $this->inTransaction;
     }
 }

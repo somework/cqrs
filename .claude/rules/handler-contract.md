@@ -32,7 +32,7 @@ Implement `EnvelopeAware` and use `EnvelopeAwareTrait`; `$this->getEnvelope()` g
 
 ## Template Generics
 
-Handler interfaces carry `@template` annotations that document the handled message (and result). When creating concrete handlers, annotate the class with `@implements CommandHandler<ConcreteCommand>` for readers and tools; PHPStan cannot check it against `__invoke()`, which the interface does not declare.
+Handler interfaces carry `@template` annotations that document the handled message, and for `QueryHandler` its result (`@template TResult`; `CommandHandler` and `EventHandler` have no result template). When creating concrete handlers, annotate the class with `@implements CommandHandler<ConcreteCommand>` (or `QueryHandler<ConcreteQuery, ResultType>`) for readers and tools; PHPStan cannot check it against `__invoke()`, which the interface does not declare.
 
 ## Creating New Attribute Classes
 

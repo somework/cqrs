@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Stamp;
 
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -22,15 +23,15 @@ final class AggregateSequenceStamp implements StampInterface
         public readonly string $aggregateType,
     ) {
         if ('' === $this->aggregateId) {
-            throw new \InvalidArgumentException('Aggregate ID cannot be empty.');
+            throw new InvalidArgumentException('Aggregate ID cannot be empty.');
         }
 
         if ('' === $this->aggregateType) {
-            throw new \InvalidArgumentException('Aggregate type cannot be empty: events of different aggregates with the same id would share one sequence.');
+            throw new InvalidArgumentException('Aggregate type cannot be empty: events of different aggregates with the same id would share one sequence.');
         }
 
         if ($this->sequenceNumber < 0) {
-            throw new \InvalidArgumentException('Sequence number must be non-negative.');
+            throw new InvalidArgumentException('Sequence number must be non-negative.');
         }
     }
 }

@@ -30,6 +30,10 @@ use function sprintf;
  * An application that replaces the storage (another service under "somework_cqrs.outbox.storage")
  * keeps its storage everywhere; the features its storage does not implement then refuse to run.
  *
+ * When OutboxWriter cannot tell whether a transaction is open (the configured storage does not
+ * implement TransactionalOutbox, or the application replaced the storage), "outbox.require_transaction"
+ * is not enforced: the compilation log says so.
+ *
  * Runs before the optimization passes: decorators are only applied by DecoratorServicePass.
  *
  * @internal
@@ -42,6 +46,10 @@ final class OutboxStoragePass implements CompilerPassInterface
     public const BASE_STORAGE_ID = 'somework_cqrs.outbox.base_storage';
 
     public const DBAL_STORAGE_ID = 'somework_cqrs.outbox.dbal_storage';
+
+    private const WRITER_ID = 'somework_cqrs.outbox.writer';
+
+    private const RELAY_ON_TERMINATE_ID = 'somework_cqrs.outbox.relay_on_terminate';
 
     /** Interfaces autowired to the configured storage when it implements them. */
     public const CAPABILITIES = [OutboxSchema::class, FailedOutboxMessages::class, OutboxMonitoring::class, TransactionalOutbox::class];
@@ -72,7 +80,13 @@ final class OutboxStoragePass implements CompilerPassInterface
         }
 
         if (!$container->hasAlias(self::STORAGE_ID) || $base !== (string) $container->getAlias(self::STORAGE_ID)) {
+            $this->reportUncheckedTransactions($container, sprintf('the service "%s" is replaced', self::STORAGE_ID));
+
             return;
+        }
+
+        if (null !== $class && !is_a($class, TransactionalOutbox::class, true)) {
+            $this->reportUncheckedTransactions($container, sprintf('the outbox storage "%s" (%s) does not implement %s', $base, $class, TransactionalOutbox::class));
         }
 
         foreach (self::CAPABILITY_CONSUMERS as [$id, $argument, $required]) {
@@ -84,6 +98,32 @@ final class OutboxStoragePass implements CompilerPassInterface
             // the consumer then does without it.
             $container->getDefinition($id)->setArgument($argument, null === $required || (null !== $class && is_a($class, $required, true)) ? new Reference($base) : null);
         }
+    }
+
+    /**
+     * Stores outside a transaction are refused only through a storage that implements
+     * TransactionalOutbox, behind the decorators: without it, messages the application stores
+     * outside a transaction are silently not part of its business change. Not an error in 0.5.x.
+     */
+    private function reportUncheckedTransactions(ContainerBuilder $container, string $reason): void
+    {
+        if (!$container->hasDefinition(self::WRITER_ID)) {
+            return;
+        }
+
+        $arguments = $container->getDefinition(self::WRITER_ID)->getArguments();
+        // Anything but a literal false (an environment variable included) asks for the check.
+        if (false === ($arguments['$requireTransaction'] ?? true)) {
+            return;
+        }
+
+        $container->log($this, sprintf(
+            '"somework_cqrs.outbox.require_transaction" is not enforced: %s, so OutboxWriter and DispatchMode::OUTBOX cannot tell whether a transaction is open and store messages outside one too%s. Configure a storage that implements %s under "somework_cqrs.outbox.storage" (decorate "%s" instead of replacing it), or set "somework_cqrs.outbox.require_transaction: false" to acknowledge it.',
+            $reason,
+            $container->hasDefinition(self::RELAY_ON_TERMINATE_ID) ? ', and "somework_cqrs.outbox.relay_on_terminate" relays without waiting for the transaction to be committed' : '',
+            TransactionalOutbox::class,
+            self::STORAGE_ID,
+        ));
     }
 
     /**

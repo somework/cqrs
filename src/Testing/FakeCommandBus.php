@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Testing;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Command;
 use SomeWork\CqrsBundle\Contract\CommandBusInterface;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
@@ -134,7 +135,7 @@ final class FakeCommandBus implements CommandBusInterface, RecordsBusDispatches
     private static function assertConcrete(string $class): void
     {
         if (!class_exists($class) || (new \ReflectionClass($class))->isAbstract()) {
-            throw new \InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
+            throw new InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
         }
     }
 }

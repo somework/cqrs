@@ -7,6 +7,21 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-27
+
+### Fixed
+- `outbox:failed --requeue --sign` refused every row whose `type` header is a serialized type name (`#[AsMessage(serializedTypeName: …)]` with Messenger's Symfony serializer, Messenger 8.1) instead of a class: it took the name for an untrusted class. The command now asks the outbox serializer for the class (`MessageTypeAwareSerializerInterface`, Messenger 7.4.11 / 8.0.11+), or reads the type map of Messenger's Symfony serializer when it is the outbox serializer (also behind Messenger's signing serializer), and otherwise takes the header for the class, as before. Every check of the `--sign` review applies to the class found, and `outbox:failed` lists the class followed by the serialized type name (e.g. `App\Message\PlaceOrder (shop.place_order)`).
+- A failed send of a row that another relay claimed in the meantime counted as a failure of the relay run: it made `somework:cqrs:outbox:relay` exit with `1` and could pause the transport. Such a row is now counted among the rows another relay claimed (`Skipped <n> message(s) that another relay claimed first.`), as a row given up in the same situation already was ([UPGRADE.md](UPGRADE.md#upgrading-from-051-to-052)).
+- `outbox.require_transaction` (on by default) is not enforced when the outbox storage does not implement `Contract\Outbox\TransactionalOutbox`, or when the application replaces the `somework_cqrs.outbox.storage` service: the bundle cannot tell whether a transaction is open, so messages are stored outside one too, and `outbox.relay_on_terminate` relays without waiting for the commit. This was silent; the container compilation log now warns about it, and the custom storage documentation lists `TransactionalOutbox` among the capabilities.
+- Some exceptions the bundle throws at runtime did not implement `CqrsException`, so `catch (CqrsException)` missed them, among them during a dispatch: a bus without the outbox middleware, a `DeduplicateStamp` refused by `OutboxWriter` or by `DeduplicationLockReleaseMiddleware`, a missing outbox table, and `EnvelopeAwareTrait::getEnvelope()` without an envelope. Every exception the bundle throws at runtime now implements it, and still extends the SPL class it extended (`\LogicException`, `\InvalidArgumentException`, `\RuntimeException` or `\UnexpectedValueException`), so existing `catch` blocks keep working ([UPGRADE.md](UPGRADE.md#upgrading-from-051-to-052)). Errors in the configuration still fail the container build with Symfony's exceptions.
+- The documentation did not match the code in several places; corrected:
+  - `DispatchMode::SYNC` only selects the sync bus (a transport or Messenger's routing can still send the message), and an `ASYNC` dispatch without a transport runs the handlers in the calling process, so their failures reach the caller;
+  - deferral (`DispatchAfterCurrentBusStamp`) is on by default for asynchronous commands as well as events, and `dispatchSync()`/`ask()` only drop a stamp the caller passed;
+  - a bare `#[Asynchronous]` falls back to the `async` transport only when nothing else routes the message, and `#[Outbox(transport:)]` takes part in the transport resolution;
+  - the bundle's middleware goes on `default_bus` only while a facade falls back to it, `TraceContextCaptureMiddleware` is listed, and an outbox dispatch opens a `cqrs.dispatch` span when it is stored and another when it is relayed;
+  - the outbox: the stamp pipeline runs when a message is stored through the buses (not with `OutboxWriter::store()`), the order of relayed rows (per transport, by `created_at` and id, not by commit), why the idempotency bridge cannot prevent relay duplicates, a `DelayStamp` (the delay starts when the relay sends), renamed message classes in `outbox:failed`, the health check of a table without the new columns (critical at once), and the `@api` types;
+  - the bus interfaces document the Messenger exceptions `dispatch()` lets through, the configuration reference lists `outbox.relay_on_terminate`, the Flex recipe template lists every option, and the example application declares `@psalm-immutable` and the result types of its queries.
+
 ## [0.5.1] - 2026-09-27
 
 ### Fixed
@@ -268,7 +283,8 @@ This release was documented as "1.0.0" to "3.0.0" in earlier revisions of this f
 - Metadata stamps and providers for correlation details.
 - Async bus configuration, handler listing and message/handler generator commands.
 
-[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/somework/cqrs/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/somework/cqrs/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/somework/cqrs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/somework/cqrs/compare/v0.3.0...v0.4.0

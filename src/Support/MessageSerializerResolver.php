@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageSerializer;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Policy\NullMessageSerializer;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -58,7 +59,7 @@ final class MessageSerializerResolver extends AbstractMessageTypeResolver
                 get_debug_type($service),
             );
 
-            throw new \LogicException($message);
+            throw new LogicException($message);
         }
 
         return $service;
@@ -67,7 +68,7 @@ final class MessageSerializerResolver extends AbstractMessageTypeResolver
     protected function resolveFallback(object $message): MessageSerializer
     {
         if (!$this->hasService(self::DEFAULT_KEY)) {
-            throw new \LogicException('Serializer resolver must be initialised with a default serializer.');
+            throw new LogicException('Serializer resolver must be initialised with a default serializer.');
         }
 
         return $this->getService(self::DEFAULT_KEY);

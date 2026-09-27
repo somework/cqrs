@@ -14,6 +14,7 @@ use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
 use SomeWork\CqrsBundle\Bus\EventBus;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Exception\CqrsException;
 use SomeWork\CqrsBundle\Exception\OutboxNotConfiguredException;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Messenger\OutboxPrepareMiddleware;
@@ -204,10 +205,13 @@ final class OutboxDispatchTest extends TestCase
     {
         $bus = new EventBus(new MessageBus([]), outbox: $this->writer());
 
-        $this->expectException(\LogicException::class);
-        $this->expectExceptionMessage('a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware');
-
-        $bus->dispatch(new TaskArchivedEvent('1'), DispatchMode::OUTBOX);
+        try {
+            $bus->dispatch(new TaskArchivedEvent('1'), DispatchMode::OUTBOX);
+            self::fail('Expected the missing outbox middleware to be reported.');
+        } catch (\LogicException $exception) {
+            self::assertStringContainsString('a middleware of its Messenger bus returned before the bundle\'s OutboxStoreMiddleware', $exception->getMessage());
+            self::assertInstanceOf(CqrsException::class, $exception);
+        }
     }
 
     public function test_the_transaction_is_checked_before_the_stamp_pipeline_and_the_bus(): void

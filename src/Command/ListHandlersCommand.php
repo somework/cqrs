@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Command;
 use ReflectionClass;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Bus\DispatchModeDecider;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use SomeWork\CqrsBundle\Policy\NullRetryPolicy;
 use SomeWork\CqrsBundle\Registry\HandlerDescriptor;
 use SomeWork\CqrsBundle\Registry\HandlerRegistry;
@@ -251,7 +252,7 @@ final class ListHandlersCommand extends Command
         foreach ($requested as $type) {
             $type = strtolower($type);
             if (!in_array($type, $available, true)) {
-                throw new \InvalidArgumentException(sprintf('Unknown message type "%s". Expected one of: %s.', $type, implode(', ', $available)));
+                throw new InvalidArgumentException(sprintf('Unknown message type "%s". Expected one of: %s.', $type, implode(', ', $available)));
             }
 
             $types[] = $type;

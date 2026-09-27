@@ -12,7 +12,7 @@ use function sprintf;
 
 /**
  * Thrown by dispatchSync() and ask() when the handler succeeded, but a message it dispatched with
- * DispatchAfterCurrentBusStamp (by default: asynchronous events) failed once the handler had
+ * DispatchAfterCurrentBusStamp (by default: asynchronous commands and events) failed once the handler had
  * returned: sending it failed (e.g. the broker is down), or one of its synchronous handlers threw.
  *
  * What the handler did stays done (a transaction it committed stays committed), and the deferred

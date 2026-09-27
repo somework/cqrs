@@ -53,6 +53,31 @@ From 0.5 on, what a minor release removes is deprecated first (`@deprecated` and
 least one more minor release. Patch releases only fix bugs. From 1.0, removals only happen in major
 releases.
 
+## Upgrading from 0.5.1 to 0.5.2
+
+0.5.2 fixes bugs and corrects the documentation. Neither the configuration nor the API changes. You may notice:
+
+- **Exception classes.** Exceptions the bundle threw as plain SPL exceptions at runtime (a bus without the
+  outbox middleware, a refused `DeduplicateStamp`, a missing outbox table, `EnvelopeAwareTrait::getEnvelope()`
+  without an envelope, an invalid stamp or policy argument, a failing outbox storage, …) are now instances of
+  `SomeWork\CqrsBundle\Exception\LogicException`, `InvalidArgumentException`, `RuntimeException` or
+  `UnexpectedValueException`. Each extends the SPL class of the same name and implements `CqrsException`, so
+  `catch (\LogicException)` and `catch (CqrsException)` both catch them; these classes are `@internal`, so catch
+  them by one of those. Code that compares the exact class (`$exception::class === \LogicException::class`) or
+  matches the class name in logs and error pages sees the new names; the relay still stores and prints the SPL
+  name in its errors (`RuntimeException: …`).
+- **Relay exit code.** `somework:cqrs:outbox:relay` no longer exits with `1` when the only failed sends were of
+  rows that another relay claimed in the meantime (overlapping relays without a shared lock store), and these
+  failures no longer pause the transport. It prints `Skipped <n> message(s) that another relay claimed first.`
+- **Compilation log.** With a custom outbox storage that does not implement `Contract\Outbox\TransactionalOutbox`,
+  or a service that replaces `somework_cqrs.outbox.storage`, the container compilation log warns that
+  `outbox.require_transaction` is not enforced (it never was). Implement `TransactionalOutbox` and configure the
+  storage under `outbox.storage` (decorate the service instead of replacing it), or set
+  `outbox.require_transaction: false`. 0.5.x only warns.
+- **`outbox:failed`.** A row whose `type` header is a serialized type name (`#[AsMessage(serializedTypeName: …)]`)
+  is listed with its class first (`App\Message\PlaceOrder (shop.place_order)`), and `--requeue --sign` checks and
+  signs it like any other row. The `Type header` column of the `--sign` review is now `Message (type header)`.
+
 ## Upgrading from 0.5.0 to 0.5.1
 
 0.5.1 supports Symfony 8.2, which runs Messenger's `MessengerPass` at priority -16 of the `beforeOptimization`
@@ -336,7 +361,7 @@ correlation id and names the handled message as its cause.
 - The async bus is checked before the stamp pipeline runs, so a dispatch failing with
   `AsyncBusNotConfiguredException` no longer consumes a rate-limiter token.
 - `DeferredDispatchFailedException` (new, `@api`) replaces Messenger's `DelayedMessageHandlingException` when the
-  handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous events)
+  handler succeeded but a message it deferred with `DispatchAfterCurrentBusStamp` (by default: asynchronous commands and events)
   failed afterwards. `$result` holds the handler's result; the handler's work stays done, so do not retry the command.
   Update `catch (DelayedMessageHandlingException $e)` blocks around these two methods.
 

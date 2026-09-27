@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Retry;
 
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\RetryConfiguration;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use SomeWork\CqrsBundle\Support\RetryPolicyResolver;
 use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Retry\MultiplierRetryStrategy;
@@ -49,11 +50,11 @@ final class CqrsRetryStrategy implements RetryStrategyInterface
         $this->fallback = $fallback ?? new MultiplierRetryStrategy();
 
         if ($this->jitter < 0.0 || $this->jitter > 1.0) {
-            throw new \InvalidArgumentException(sprintf('Jitter must be between 0.0 and 1.0, got %s.', $this->jitter));
+            throw new InvalidArgumentException(sprintf('Jitter must be between 0.0 and 1.0, got %s.', $this->jitter));
         }
 
         if ($this->maxDelay < 0) {
-            throw new \InvalidArgumentException(sprintf('Max delay must be greater than or equal to 0, got %d.', $this->maxDelay));
+            throw new InvalidArgumentException(sprintf('Max delay must be greater than or equal to 0, got %d.', $this->maxDelay));
         }
     }
 

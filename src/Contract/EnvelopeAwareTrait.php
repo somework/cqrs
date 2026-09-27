@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Contract;
 
+use SomeWork\CqrsBundle\Exception\LogicException;
 use Symfony\Component\Messenger\Envelope;
 
 /**
@@ -26,7 +27,7 @@ trait EnvelopeAwareTrait
     protected function getEnvelope(): Envelope
     {
         if (!$this->envelope instanceof Envelope) {
-            throw new \LogicException('Messenger envelope has not been set.');
+            throw new LogicException('Messenger envelope has not been set.');
         }
 
         return $this->envelope;

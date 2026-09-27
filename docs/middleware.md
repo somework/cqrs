@@ -65,14 +65,19 @@ under `framework.messenger.buses.*.middleware`.
 
 ### Position in the bus
 
-Each bundle middleware is inserted right after Messenger's
+Most bundle middleware is inserted right after Messenger's
 `dispatch_after_current_bus` middleware. Messages deferred with
 `DispatchAfterCurrentBusStamp` are released later from that point of the stack,
-so middleware placed before it would be skipped for them. With FrameworkBundle's
-default middleware, a bus handled by the bundle looks like this (abridged;
-bundle middleware in brackets):
+so middleware placed before it would be skipped for them. The others need
+another place: `TraceContextCaptureMiddleware` goes first, to record the trace
+context before a message is deferred; `OutboxPrepareMiddleware` right after
+`add_default_stamps_middleware`; `DeduplicationLockReleaseMiddleware` right
+after `deduplicate_middleware`; and `OutboxStoreMiddleware` right before
+`send_message`. With FrameworkBundle's default middleware, a bus handled by the
+bundle looks like this (abridged; bundle middleware in brackets):
 
 ```
+[TraceContextCaptureMiddleware]        when a tracer provider is registered
 add_default_stamps_middleware          Symfony 7.4+
 [OutboxPrepareMiddleware]              when the outbox is enabled
 add_bus_name_stamp_middleware
@@ -91,9 +96,9 @@ handle_message
 ```
 
 On a bus without `dispatch_after_current_bus` (for example with
-`default_middleware: false`), the bundle middleware is placed first, except
-`OutboxStoreMiddleware`, which goes before `send_message` or `handle_message`, or
-last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
+`default_middleware: false`), the bundle middleware is placed first (after
+`TraceContextCaptureMiddleware`), except `OutboxStoreMiddleware`, which goes before
+`send_message` or `handle_message`, or last. `DeduplicationLockReleaseMiddleware` is only added to buses that contain
 Messenger's `deduplicate_middleware`.
 
 The bundle inserts its middleware in compiler passes that run after Messenger's
@@ -102,8 +107,11 @@ The bundle inserts its middleware in compiler passes that run after Messenger's
 from Symfony 8.2 on). A compiler pass of your own that must see the bundle's
 middleware, or reorder it, needs a priority below -25.
 
-The "CQRS buses" below are the bus ids the bundle uses: `default_bus` plus every
-configured `buses.*` entry, with aliases resolved.
+The "CQRS buses" below are the bus ids the facades dispatch on, with aliases
+resolved: every configured `buses.*` entry, plus `default_bus` when one of
+`buses.command`, `buses.query` or `buses.event` is not set (the facade then falls
+back to it). With all three set, `default_bus` gets none of the bundle's
+middleware, so an unrelated default bus (mailer, notifier) stays untouched.
 
 ### AllowNoHandlerMiddleware
 
@@ -148,8 +156,15 @@ Creates one span each time a message passes through a CQRS bus:
 
 | Situation | Span name | Span kind |
 |-----------|-----------|-----------|
-| Dispatch (synchronous, or sending to a transport) | `cqrs.dispatch <ShortClassName>` | `PRODUCER` |
+| Dispatch (synchronous, sending to a transport, or storing in the outbox) | `cqrs.dispatch <ShortClassName>` | `PRODUCER` |
+| The outbox relay sends (or handles) a stored message | `cqrs.dispatch <ShortClassName>` | `PRODUCER` |
 | A worker handles a received message | `cqrs.consume <ShortClassName>` | `CONSUMER` |
+
+A message dispatched through the [outbox](outbox.md#through-the-buses) (`DispatchMode::OUTBOX`,
+`#[Outbox]`) therefore has two `cqrs.dispatch` spans: one when it is stored, although
+nothing is sent then, and one when the relay dispatches the row, as a child of the first
+(the stored `TraceContextStamp`). The worker's `cqrs.consume` span is a child of the
+relay's span. `OutboxWriter::store()` opens no span: it stores the current trace context.
 
 * The tracer is named `somework.cqrs`. Spans carry the attributes
   `cqrs.message.class` (the FQCN) and `cqrs.message.type` (`command`, `query`,
@@ -226,7 +241,7 @@ events.
 | 125 | `MessageMetadataStampDecider` | per type | always | an existing `MessageMetadataStamp` |
 | 110 | `SequenceStampDecider` | events | `sequence.enabled` (default `true`) | an existing `AggregateSequenceStamp` |
 | 100 | `CausationIdStampDecider` | all messages | `causation_id.enabled` (default `true`) | an explicit causation id |
-| 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`), symfony/messenger 7.3+ and symfony/lock installed | an existing `DeduplicateStamp` |
+| 50 | `IdempotencyStampDecider` | all messages | `idempotency.enabled` (default `true`); without symfony/messenger 7.3+ and symfony/lock it is a no-op (a warning at the first `IdempotencyStamp`) | an existing `DeduplicateStamp` |
 | -10 | `DispatchAfterCurrentBusStampDecider` | commands and events | always | an existing `DispatchAfterCurrentBusStamp` |
 
 ### RateLimitStampDecider (225)
@@ -250,12 +265,14 @@ A `TransportNamesStamp` passed by the caller wins; otherwise, in this order:
 
 1. the transports configured for exactly the message class under
    `transports.<command|command_async|query|event|event_async>.map`;
-2. on asynchronous dispatches, the transport named by
-   `#[Asynchronous(transport: '...')]`;
+2. on asynchronous and outbox dispatches, the transport named by
+   `#[Outbox(transport: '...')]` or `#[Asynchronous(transport: '...')]` (`#[Outbox]`
+   is read first; a class carrying both fails the build);
 3. the transports configured for a parent class or interface, then the section's
    `default`;
-4. on asynchronous dispatches of a class with a bare `#[Asynchronous]`, the
-   `async` transport, unless `framework.messenger.routing` or `#[AsMessage(transport: ...)]` routes the message.
+4. on asynchronous and outbox dispatches of a class with a bare `#[Asynchronous]` or
+   `#[Outbox]`, the `async` transport, unless `framework.messenger.routing` or
+   `#[AsMessage(transport: ...)]` routes the message.
 
 When nothing applies it adds nothing and Messenger's routing decides. See
 [`transports`](reference.md#transports) and
@@ -301,7 +318,9 @@ Turns an `IdempotencyStamp` into Messenger's `DeduplicateStamp`, with the key
 ### DispatchAfterCurrentBusStampDecider (-10)
 
 For asynchronous dispatches, adds `DispatchAfterCurrentBusStamp` unless
-`dispatch_after_current_bus` disables it for the message. See
+`dispatch_after_current_bus` disables it for the message. A stamp passed by the
+caller is kept by the decider; `dispatchSync()` and `ask()` drop it, and so does
+`OutboxPrepareMiddleware` for an outbox dispatch (the message is stored at once). See
 [`dispatch_after_current_bus`](reference.md#dispatch_after_current_bus).
 
 ## Creating custom stamp deciders
@@ -357,7 +376,9 @@ final class AuditTrailStampDecider implements StampDecider
 `decide()` receives:
 
 * `$message`: the message being dispatched;
-* `$mode`: the resolved mode, `DispatchMode::SYNC` or `DispatchMode::ASYNC`;
+* `$mode`: the resolved mode, `DispatchMode::SYNC` or `DispatchMode::ASYNC`
+  (an outbox dispatch decides its stamps as `ASYNC`, with a `StoreInOutboxStamp`
+  among them);
 * `$stamps`: the current stamps (caller stamps plus those added by
   higher-priority deciders).
 
@@ -454,8 +475,14 @@ Higher priorities run first. Pick a value relative to the built-in deciders:
 * **between 125 and 150**: after serialization, before metadata;
 * **between 100 and 125**: after the metadata stamp exists, before the causation
   id is added;
-* **between 0 and 50**: after almost everything; use a value above `0` so the
-  order relative to `DispatchAfterCurrentBusStampDecider` is defined.
+* **between -10 and 50** (the default `0` is here): after almost everything,
+  before `DispatchAfterCurrentBusStampDecider` (-10), which then sees your
+  `DispatchAfterCurrentBusStamp`. The causation id (100) and the idempotency
+  bridge (50) have already run: an `IdempotencyStamp` you add here is not turned
+  into a `DeduplicateStamp` (use a priority above 50), and a
+  `MessageMetadataStamp` you add or replace here gets no causation id (use a
+  priority above 100, or set it yourself);
+* **below -10**: after every built-in decider, to see the final stamps.
 
 ### 5. Test it
 
