@@ -506,8 +506,13 @@ exceptions live in `SomeWork\CqrsBundle\Exception`:
 (`dispatchAsync()`, `DispatchMode::ASYNC`, or a `DEFAULT` that resolves to
 `async`) when no async bus is configured for the message type.
 
-Every exception of the bundle implements `SomeWork\CqrsBundle\Exception\CqrsException`,
+Every exception the bundle throws at runtime implements `SomeWork\CqrsBundle\Exception\CqrsException`,
 so `catch (CqrsException $exception)` catches them all (and none of your handlers' exceptions).
+Those without a class of their own (a bus without the outbox middleware, a missing outbox table, an
+invalid stamp argument, …) extend `\LogicException`, `\InvalidArgumentException`, `\RuntimeException` or
+`\UnexpectedValueException`. Messenger's own exceptions, which `dispatch()` lets through unchanged
+(`HandlerFailedException`, `NoHandlerForMessageException`, `TransportException`, …), do not implement it, and
+errors in the configuration fail the container build with Symfony's configuration exceptions.
 
 When exactly one handler throws, `dispatchSync()` and `ask()` rethrow that
 exception as is instead of wrapping it in Messenger's

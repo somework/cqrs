@@ -13,10 +13,14 @@ use Symfony\Component\DependencyInjection\Compiler\CompilerPassInterface;
 use Symfony\Component\DependencyInjection\ContainerBuilder;
 use Symfony\Component\DependencyInjection\Definition;
 use Symfony\Component\DependencyInjection\Exception\LogicException;
+use Symfony\Component\DependencyInjection\Exception\ServiceNotFoundException;
 use Symfony\Component\DependencyInjection\Reference;
+use Symfony\Component\Messenger\Transport\Serialization\Serializer;
 
 use function array_keys;
 use function in_array;
+use function is_a;
+use function is_array;
 use function is_string;
 use function ltrim;
 use function preg_match;
@@ -31,7 +35,9 @@ use function str_starts_with;
  * middleware, right before "send_message". Doctrine's transaction middleware (ORM and, from
  * DoctrineBridge 8.2, DBAL) is wrapped so that a message stored in the outbox skips it. It also
  * gives the outbox writer the Messenger transport names, so a row for an unknown transport is
- * refused before it is stored.
+ * refused before it is stored, and "outbox:failed" the type map MessengerPass gives Messenger's
+ * Symfony serializer when that is the outbox serializer, so it tells the class of a serialized type
+ * name also behind a decorator (e.g. Messenger's signing serializer).
  *
  * @internal
  */
@@ -69,6 +75,10 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
 
     private const WRITER_ID = 'somework_cqrs.outbox.writer';
 
+    private const FAILED_COMMAND_ID = 'somework_cqrs.outbox.failed_command';
+
+    private const SERIALIZER_ID = 'somework_cqrs.outbox.serializer';
+
     public function process(ContainerBuilder $container): void
     {
         if (!$container->hasDefinition(self::WRITER_ID)) {
@@ -87,6 +97,9 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
         sort($transports);
         // Without Messenger transports (a kernel that defines them another way), nothing is refused.
         $container->getDefinition(self::WRITER_ID)->setArgument('$transportNames', [] === $transports ? null : $transports);
+        if ($container->hasDefinition(self::FAILED_COMMAND_ID)) {
+            $container->getDefinition(self::FAILED_COMMAND_ID)->setArgument('$serializedTypes', self::serializedTypes($container));
+        }
 
         $container->setDefinition(self::MIDDLEWARE_ID, (new Definition(OutboxStoreMiddleware::class))
             ->setArguments([new Reference(self::WRITER_ID)])
@@ -100,6 +113,43 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
             }
             $this->bypassHandlingMiddleware($container, $busId);
         }
+    }
+
+    /**
+     * The serialized type names (#[AsMessage(serializedTypeName: …)], Messenger 8.1) of the type map
+     * MessengerPass gives Messenger's Symfony serializer, when it is the outbox serializer. Decorators
+     * are not applied yet: behind Messenger's signing serializer, the id still leads to it.
+     *
+     * @return array<string, string>
+     */
+    private static function serializedTypes(ContainerBuilder $container): array
+    {
+        try {
+            $definition = $container->findDefinition(self::SERIALIZER_ID);
+        } catch (ServiceNotFoundException) {
+            // Reported by ValidateConfiguredServicesPass.
+            return [];
+        }
+        $class = $container->getParameterBag()->resolveValue($definition->getClass());
+        if (!is_string($class) || !is_a($class, Serializer::class, true)) {
+            return [];
+        }
+
+        $arguments = $definition->getArguments();
+        // An abstract argument until MessengerPass replaces it, and missing before Messenger 8.1.
+        $map = $arguments[3] ?? $arguments['$typeToClassMap'] ?? [];
+        if (!is_array($map)) {
+            return [];
+        }
+
+        $types = [];
+        foreach ($map as $type => $messageClass) {
+            if (is_string($type) && is_string($messageClass)) {
+                $types[$type] = $messageClass;
+            }
+        }
+
+        return $types;
     }
 
     private function bypassHandlingMiddleware(ContainerBuilder $container, string $busId): void

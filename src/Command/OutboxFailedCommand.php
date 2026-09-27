@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Command;
 
 use SomeWork\CqrsBundle\Contract\Outbox\FailedOutboxMessages;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
+use SomeWork\CqrsBundle\Exception\RuntimeException;
 use SomeWork\CqrsBundle\Outbox\FailedOutboxMessage;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
 use SomeWork\CqrsBundle\Outbox\SerializedBody;
@@ -19,6 +20,8 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 use Symfony\Component\Console\Style\SymfonyStyle;
+use Symfony\Component\Messenger\Transport\Serialization\MessageTypeAwareSerializerInterface;
+use Symfony\Component\Messenger\Transport\Serialization\SerializerInterface;
 
 use function array_filter;
 use function array_key_exists;
@@ -54,12 +57,16 @@ final class OutboxFailedCommand extends Command
     private const UUID = '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/Di';
 
     /**
-     * @param OutboxStorage     $outboxStorage The storage behind any decorator (see OutboxStoragePass)
-     * @param OutboxSigner|null $signer        Signs requeued messages with --sign (outbox.signing)
+     * @param OutboxStorage            $outboxStorage   The storage behind any decorator (see OutboxStoragePass)
+     * @param OutboxSigner|null        $signer          Signs requeued messages with --sign (outbox.signing)
+     * @param SerializerInterface|null $serializer      The outbox serializer ("somework_cqrs.outbox.serializer"), which tells the message class a type header names
+     * @param array<string, string>    $serializedTypes The type map of Messenger's Symfony serializer when it is the outbox serializer (serialized type name => class, see #[AsMessage(serializedTypeName: …)]), for when a decorator hides it (e.g. Messenger's signing serializer)
      */
     public function __construct(
         private readonly OutboxStorage $outboxStorage,
         private readonly ?OutboxSigner $signer = null,
+        private readonly ?SerializerInterface $serializer = null,
+        private readonly array $serializedTypes = [],
     ) {
         parent::__construct();
     }
@@ -204,10 +211,10 @@ final class OutboxFailedCommand extends Command
 
         $io->text('These rows will be signed with the current secret, so the relay decodes them (with the PHP serializer: unserializes them). Only sign rows your application stored:');
         $io->table(
-            ['Id', 'Type header', 'Class in the body', 'Classes the body instantiates', 'Body', 'Transport', 'Last error'],
-            array_map(static fn (FailedOutboxMessage $message): array => [
+            ['Id', 'Message (type header)', 'Class in the body', 'Classes the body instantiates', 'Body', 'Transport', 'Last error'],
+            array_map(fn (FailedOutboxMessage $message): array => [
                 self::cell($message->id),
-                self::cell($message->messageType ?? '-'),
+                self::cell($this->describeType($message->messageType) ?? '-'),
                 self::cell($message->bodyClass ?? '-'),
                 match (true) {
                     null === $message->bodyClasses => '?',
@@ -223,8 +230,9 @@ final class OutboxFailedCommand extends Command
         // A row forged by someone without the secret may name a plausible class: the header must agree
         // with the body, and the body may only instantiate the kind of objects the application stores.
         foreach ($failed as $message) {
-            if (null !== $message->messageType && null !== $message->bodyClass && $message->messageType !== $message->bodyClass) {
-                $io->error(sprintf('The type header of message "%s" (%s) does not match the class in its body (%s): the row was not stored by this application. Nothing was signed.', self::printable($message->id), self::printable($message->messageType), self::printable($message->bodyClass)));
+            $typeClass = null === $message->messageType ? null : $this->messageClass($message->messageType);
+            if (null !== $typeClass && null !== $message->bodyClass && $typeClass !== $message->bodyClass) {
+                $io->error(sprintf('The type header of message "%s" (%s) does not match the class in its body (%s): the row was not stored by this application. Nothing was signed.', self::printable($message->id), self::printable((string) $this->describeType($message->messageType)), self::printable($message->bodyClass)));
 
                 return self::FAILURE;
             }
@@ -243,9 +251,9 @@ final class OutboxFailedCommand extends Command
 
                 return self::FAILURE;
             }
-            $messageClass = $message->bodyClass ?? $message->messageType;
+            $messageClass = $message->bodyClass ?? $typeClass;
             // The serializers that read the type header (the Symfony serializer) instantiate the class it names.
-            $classes = array_values(array_unique([...(null === $message->messageType ? [] : [$message->messageType]), ...$message->bodyClasses]));
+            $classes = array_values(array_unique([...(null === $typeClass ? [] : [$typeClass]), ...$message->bodyClasses]));
             $untrusted = null === $messageClass ? $classes : SignableBody::untrustedClasses($messageClass, $classes, $allowedClasses);
             if ([] !== $untrusted) {
                 $io->error(sprintf('The body of message "%s" instantiates %s, which %s neither the envelope, a stamp, a command, query or event%s nor a type declared by their properties: the row may have been forged to run code when it is unserialized. Nothing was signed. Delete the row if your application did not store it; if it did (e.g. an object in an untyped property), allow the class with --allow-class.', self::printable($message->id), self::printable(implode(', ', $untrusted)), 1 === count($untrusted) ? 'is' : 'are', null === $messageClass ? '' : sprintf(' (%s)', self::printable($messageClass))));
@@ -274,7 +282,7 @@ final class OutboxFailedCommand extends Command
                 if (!array_key_exists($message->id, $reviewed) || (null !== $reviewed[$message->id] && !hash_equals($reviewed[$message->id], FailedOutboxMessage::digest($message->body, $message->headers)))) {
                     $changed = $message->id;
 
-                    throw new \RuntimeException(sprintf('Message "%s" changed after it was listed.', $message->id));
+                    throw new RuntimeException(sprintf('Message "%s" changed after it was listed.', $message->id));
                 }
                 ++$signed;
 
@@ -360,9 +368,9 @@ final class OutboxFailedCommand extends Command
     {
         $io->table(
             ['Id', 'Message', 'Transport', 'Created', 'Given up', 'Attempts', 'Last error'],
-            array_map(static fn (FailedOutboxMessage $message): array => [
+            array_map(fn (FailedOutboxMessage $message): array => [
                 self::cell($message->id),
-                self::cell($message->messageType ?? '?'),
+                self::cell($this->describeType($message->messageType) ?? '?'),
                 self::cell($message->transportName ?? '(routing)'),
                 $message->createdAt->format(DATE_ATOM),
                 $message->failedAt->format(DATE_ATOM),
@@ -370,6 +378,44 @@ final class OutboxFailedCommand extends Command
                 self::cell($message->lastError ?? ''),
             ], $failed),
         );
+    }
+
+    /**
+     * The message class a type header names. Messenger's Symfony serializer writes the serialized
+     * type name of #[AsMessage(serializedTypeName: …)] (Messenger 8.1) instead of the class: the
+     * outbox serializer tells the class from the header (MessageTypeAwareSerializerInterface), or
+     * the type map of Messenger's Symfony serializer does; any other header names the class itself.
+     */
+    private function messageClass(string $type): string
+    {
+        if ($this->serializer instanceof MessageTypeAwareSerializerInterface) {
+            try {
+                // From the header alone: the body is never decoded here.
+                $class = $this->serializer->getMessageType(['body' => '', 'headers' => ['type' => $type]]);
+            } catch (\Throwable) {
+                $class = null;
+            }
+            if (null !== $class && $type !== $class) {
+                return $class;
+            }
+        }
+
+        return $this->serializedTypes[$type] ?? $type;
+    }
+
+    /**
+     * A type header for the operator: the class it names, followed by the header when that is
+     * another name (a serialized type name).
+     */
+    private function describeType(?string $type): ?string
+    {
+        if (null === $type) {
+            return null;
+        }
+
+        $class = $this->messageClass($type);
+
+        return $class === $type ? $type : sprintf('%s (%s)', $class, $type);
     }
 
     /**

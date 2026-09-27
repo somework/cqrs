@@ -162,6 +162,8 @@ final class OutboxRegistrar
         $failedDef = new Definition(OutboxFailedCommand::class);
         $failedDef->setArgument('$outboxStorage', new Reference(OutboxStoragePass::STORAGE_ID));
         $failedDef->setArgument('$signer', $signer);
+        // Tells the message class of a serialized type name (OutboxStoreMiddlewarePass adds Messenger's type map).
+        $failedDef->setArgument('$serializer', $serializer);
         $failedDef->addTag('console.command');
         $failedDef->setPublic(false);
         $container->setDefinition('somework_cqrs.outbox.failed_command', $failedDef);

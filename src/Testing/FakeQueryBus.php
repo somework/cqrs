@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Testing;
 
 use SomeWork\CqrsBundle\Contract\Query;
 use SomeWork\CqrsBundle\Contract\QueryBusInterface;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 use function array_key_exists;
@@ -115,7 +116,7 @@ final class FakeQueryBus implements QueryBusInterface, RecordsBusDispatches
     private static function assertConcrete(string $class): void
     {
         if (!class_exists($class) || (new \ReflectionClass($class))->isAbstract()) {
-            throw new \InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
+            throw new InvalidArgumentException(sprintf('"%s" is not a concrete message class: the fake bus matches messages by their exact class.', $class));
         }
     }
 }

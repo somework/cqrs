@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace SomeWork\CqrsBundle\Messenger;
 
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use Symfony\Component\Lock\Exception\UnserializableKeyException;
 use Symfony\Component\Lock\Key;
 use Symfony\Component\Lock\LockFactory;
@@ -73,7 +74,7 @@ final class DeduplicationLockReleaseMiddleware implements MiddlewareInterface
             }
 
             if (null !== $stamp && self::isUnserializableKey($exception)) {
-                throw new \LogicException(sprintf('The idempotency lock of "%s" cannot be sent to a transport: the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection. Configure a store whose keys can be serialized for async messages, such as Redis, Memcached or a PDO/DBAL database (framework.lock).', $envelope->getMessage()::class), 0, $exception);
+                throw new LogicException(sprintf('The idempotency lock of "%s" cannot be sent to a transport: the lock store (e.g. "flock", "semaphore", "postgresql+advisory" or "zookeeper") ties its keys to the current process or connection. Configure a store whose keys can be serialized for async messages, such as Redis, Memcached or a PDO/DBAL database (framework.lock).', $envelope->getMessage()::class), 0, $exception);
             }
 
             throw $exception;

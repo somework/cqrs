@@ -7,6 +7,7 @@ namespace SomeWork\CqrsBundle\Policy;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\RetryConfiguration;
 use SomeWork\CqrsBundle\Contract\RetryPolicy;
+use SomeWork\CqrsBundle\Exception\InvalidArgumentException;
 use Symfony\Component\Messenger\Stamp\StampInterface;
 
 /**
@@ -27,15 +28,15 @@ final class ExponentialBackoffRetryPolicy implements RetryPolicy, RetryConfigura
         private readonly float $multiplier = 2.0,
     ) {
         if ($this->maxRetries < 0) {
-            throw new \InvalidArgumentException('Max retries must be greater than or equal to 0.');
+            throw new InvalidArgumentException('Max retries must be greater than or equal to 0.');
         }
 
         if ($this->initialDelay < 1) {
-            throw new \InvalidArgumentException('Initial delay must be greater than or equal to 1.');
+            throw new InvalidArgumentException('Initial delay must be greater than or equal to 1.');
         }
 
         if ($this->multiplier <= 0.0) {
-            throw new \InvalidArgumentException('Multiplier must be greater than 0.');
+            throw new InvalidArgumentException('Multiplier must be greater than 0.');
         }
     }
 

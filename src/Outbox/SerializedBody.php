@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace SomeWork\CqrsBundle\Outbox;
 
+use SomeWork\CqrsBundle\Exception\UnexpectedValueException;
 use Symfony\Component\Messenger\Envelope;
 
 use function array_keys;
@@ -91,7 +92,7 @@ final class SerializedBody
     private function value(int $depth): array
     {
         if ($depth > self::MAX_DEPTH) {
-            throw new \UnexpectedValueException('Too deep.');
+            throw new UnexpectedValueException('Too deep.');
         }
 
         $type = $this->data[$this->position] ?? '';
@@ -175,7 +176,7 @@ final class SerializedBody
 
                 return ['class' => $class, 'message' => $message];
             default:
-                throw new \UnexpectedValueException('Not a serialized value.');
+                throw new UnexpectedValueException('Not a serialized value.');
         }
     }
 
@@ -212,7 +213,7 @@ final class SerializedBody
             return null;
         }
         if ('s' !== $type) {
-            throw new \UnexpectedValueException('Invalid key.');
+            throw new UnexpectedValueException('Invalid key.');
         }
         ++$this->position;
         $this->expect(':');
@@ -236,7 +237,7 @@ final class SerializedBody
     private function bytes(int $length): string
     {
         if ($this->position + $length > strlen($this->data)) {
-            throw new \UnexpectedValueException('Truncated.');
+            throw new UnexpectedValueException('Truncated.');
         }
         $bytes = substr($this->data, $this->position, $length);
         $this->position += $length;
@@ -261,10 +262,10 @@ final class SerializedBody
     private function escaped(int $length): void
     {
         for ($i = 0; $i < $length; ++$i) {
-            $character = $this->data[$this->position] ?? throw new \UnexpectedValueException('Truncated.');
+            $character = $this->data[$this->position] ?? throw new UnexpectedValueException('Truncated.');
             if ('\\' === $character) {
                 if (!ctype_xdigit(substr($this->data, $this->position + 1, 2)) || 2 !== strlen(substr($this->data, $this->position + 1, 2))) {
-                    throw new \UnexpectedValueException('Invalid escape.');
+                    throw new UnexpectedValueException('Invalid escape.');
                 }
                 $this->position += 3;
             } else {
@@ -285,7 +286,7 @@ final class SerializedBody
         }
         $digits = substr($this->data, $start, $this->position - $start);
         if ('' === $digits || strlen($digits) > 18) {
-            throw new \UnexpectedValueException('Invalid number.');
+            throw new UnexpectedValueException('Invalid number.');
         }
 
         return (int) $digits;
@@ -295,7 +296,7 @@ final class SerializedBody
     {
         $end = strpos($this->data, $terminator, $this->position);
         if (false === $end) {
-            throw new \UnexpectedValueException('Truncated.');
+            throw new UnexpectedValueException('Truncated.');
         }
         $this->position = $end + 1;
     }
@@ -303,7 +304,7 @@ final class SerializedBody
     private function expect(string $expected): void
     {
         if (substr($this->data, $this->position, strlen($expected)) !== $expected) {
-            throw new \UnexpectedValueException('Unexpected data.');
+            throw new UnexpectedValueException('Unexpected data.');
         }
         $this->position += strlen($expected);
     }

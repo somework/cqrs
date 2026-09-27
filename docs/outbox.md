@@ -1018,6 +1018,7 @@ The other features need more than `OutboxStorage`. Implement the interfaces of
 | `OutboxSchema` | `setup(?\Closure $onWait = null): void`, `pendingChanges(): list<string>` | `somework:cqrs:outbox:setup`; the relay and the health check report what `pendingChanges()` returns |
 | `FailedOutboxMessages` | `fetchFailed(int $limit, array $ids = []): list<FailedOutboxMessage>`, `requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int`, `deleteFailed(array $ids): int` | `somework:cqrs:outbox:failed` |
 | `OutboxMonitoring` | `status(): OutboxStatus` | the outbox check of `somework:cqrs:health` |
+| `TransactionalOutbox` | `isInTransaction(): bool` | `outbox.require_transaction` (`OutboxWriter` and `DispatchMode::OUTBOX` refuse to store outside a transaction); `outbox.relay_on_terminate` waits for the transaction to be committed |
 
 `fetchFailed()` returns only the given ids when there are any. When `requeueFailed()` gets
 `$sign`, it calls `$sign($message)` with each requeued row as stored (id, body, headers) and
@@ -1030,7 +1031,23 @@ checks before it signs a row. Fill them only for messages asked for by id: a lis
 given-up messages should not read every body.
 
 Without them, `setup` and `failed` exit with `1` and say which interface is missing, and the
-health check reports the outbox as not checked. `DbalOutboxStorage` implements all three.
+health check reports the outbox as not checked. `DbalOutboxStorage` implements all four.
+
+> **Without `TransactionalOutbox`, `outbox.require_transaction` is not enforced.** The bundle
+> cannot tell whether a transaction is open, so `OutboxWriter` and `DispatchMode::OUTBOX` also
+> store messages outside one, which are then not part of the business change, and
+> `relay_on_terminate` relays without waiting for the transaction to be committed. The same
+> holds when the application replaces the `somework_cqrs.outbox.storage` service instead of
+> configuring its storage under `outbox.storage` or decorating it. In debug mode, the container
+> compilation log warns about it (`grep require_transaction var/cache/<env>/*Compiler.log`): implement
+> `TransactionalOutbox` (`isInTransaction()` returns whether a store would join an open
+> transaction of your business data), or set `outbox.require_transaction: false` to acknowledge
+> it. 0.5.x only warns; a later minor version may refuse to build.
+
+`DbalOutboxStorage` also runs each message the relay handles in its own process (no transport,
+`sync://`) as a unit of work of its own on a connection with `auto_commit: false`, and rolls
+back a transaction such a handler left open. That interface (`RelayUnitOfWork`) is internal: a
+custom storage relays without it.
 
 To add behaviour to the storage instead (logging, metrics), decorate it:
 `#[AsDecorator('somework_cqrs.outbox.storage')]` on a class that implements `OutboxStorage`
@@ -1091,10 +1108,14 @@ Operating it:
   `outbox.signing.secret`.
 - **A row you checked** (e.g. one stored while signing was disabled) is signed with the current
   secret and handed back to the relay with
-  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the `type`
-  header, the message class of a PHP-serialized body, every class the body would instantiate
-  (read as text, never unserialized) and a SHA-256 prefix of the body. It refuses a row whose
-  `type` header does not match the class in its body; a body that instantiates a class that is
+  `somework:cqrs:outbox:failed --requeue --sign <id> …`. It shows the rows first: the class the
+  `type` header names, the message class of a PHP-serialized body, every class the body would
+  instantiate (read as text, never unserialized) and a SHA-256 prefix of the body. A serialized
+  type name (`#[AsMessage(serializedTypeName: 'shop.place_order')]` with the Symfony serializer)
+  is shown after its class, `App\Message\PlaceOrder (shop.place_order)`: the outbox serializer
+  tells the class (`MessageTypeAwareSerializerInterface`), or the type map of Messenger's
+  Symfony serializer when it is the outbox serializer; any other header names the class itself.
+  It refuses a row whose `type` header does not match the class in its body; a body that instantiates a class that is
   neither the envelope, a stamp, a command, query or event (as the message) nor a type declared by
   the properties of those (recursively); and a body with custom serialization (a class
   implementing only `Serializable`, whose data the review cannot read). A forged row therefore

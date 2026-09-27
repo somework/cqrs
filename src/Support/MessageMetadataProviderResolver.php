@@ -8,6 +8,7 @@ use Closure;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
 use SomeWork\CqrsBundle\Contract\MessageMetadataProvider;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider;
 use Symfony\Component\DependencyInjection\ServiceLocator;
 
@@ -58,7 +59,7 @@ final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
                 get_debug_type($service),
             );
 
-            throw new \LogicException($message);
+            throw new LogicException($message);
         }
 
         return $service;
@@ -67,7 +68,7 @@ final class MessageMetadataProviderResolver extends AbstractMessageTypeResolver
     protected function resolveFallback(object $message): MessageMetadataProvider
     {
         if (!$this->hasService(self::DEFAULT_KEY)) {
-            throw new \LogicException('Metadata provider resolver must be initialised with a default metadata provider.');
+            throw new LogicException('Metadata provider resolver must be initialised with a default metadata provider.');
         }
 
         return $this->getService(self::DEFAULT_KEY);
