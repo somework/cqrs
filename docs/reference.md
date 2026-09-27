@@ -77,6 +77,7 @@ somework_cqrs:
         serializer: messenger.default_serializer
         storage: null
         auto_setup: true
+        relay_on_terminate: false
         require_transaction: true
         max_attempts: 10
         signing:
@@ -191,7 +192,9 @@ synchronous.
 | Default | `null`, which means `messenger.default_bus` |
 
 The Messenger bus used for `buses.command`, `buses.query` and `buses.event`
-when they are not set. The async buses never fall back to it.
+when they are not set. The async buses never fall back to it. It gets the
+bundle's middleware (causation id, OpenTelemetry, outbox, …) only while one of
+these three falls back to it: with all three set, the default bus is left alone.
 
 ## buses
 
@@ -548,9 +551,11 @@ only sent after that handler finished successfully, and dropped when it fails.
 | `command.map`, `event.map` | `{}` | message class or interface => boolean |
 
 * Applies to asynchronous dispatches only.
-* A `DispatchAfterCurrentBusStamp` passed by the caller is kept.
-* `dispatchSync()` and `ask()` remove the stamp, because they need the result
-  immediately.
+* A `DispatchAfterCurrentBusStamp` passed by the caller is kept by `dispatch()` and
+  `dispatchAsync()`, except for a message stored in the [outbox](outbox.md#through-the-buses),
+  which is stored at once (`OutboxPrepareMiddleware` drops the stamp).
+* `dispatchSync()` and `ask()` remove a stamp passed by the caller, because they need
+  the result immediately.
 
 Resolution: exact class, parent classes, interfaces, then the type `default`.
 
@@ -612,7 +617,9 @@ the caller passed its own stamp, its correlation id. With `enabled: false`,
 every message starts its own flow.
 
 `buses` limits the middleware to the listed buses; the empty default means all
-buses used by the bundle (`default_bus` and every configured `buses.*`). The
+buses used by the bundle: every configured `buses.*`, and `default_bus` when a
+facade falls back to it (one of `buses.command`, `buses.query` or `buses.event` is
+not set). The
 other CQRS buses get a variant that only hides the outer message: messages
 dispatched by their handlers start a new flow instead of naming an unrelated
 message as their cause. Each entry must be a Messenger bus:

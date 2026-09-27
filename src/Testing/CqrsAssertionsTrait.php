@@ -11,10 +11,11 @@ use SomeWork\CqrsBundle\Support\MessageTypeLocator;
 use SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage;
 
 /**
- * PHPUnit trait providing CQRS-specific assertions and automatic state reset.
+ * PHPUnit trait providing CQRS-specific assertions.
  *
- * Use in any TestCase class to get assertDispatched/assertNotDispatched helpers
- * and automatic MessageTypeLocator cache cleanup between tests.
+ * Use in any TestCase class to get the assertDispatched/assertNotDispatched and outbox
+ * helpers. Before each test it only clears the bundle's internal MessageTypeLocator cache:
+ * the fake buses keep what they recorded, so create them in each test (or setUp()).
  *
  * @api
  */

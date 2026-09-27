@@ -10,6 +10,7 @@ use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
@@ -150,7 +151,7 @@ final class OutboxWriter implements OutboxWriterInterface
         $deduplicate = self::deduplicateStamp($envelope);
         if (null !== $deduplicate && null !== ($store = $this->localLockStore())) {
             // Messenger's deduplication would take the lock in the relay and fail to send its key, on every attempt.
-            throw new \LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (%s) ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database, or dispatch it without the stamp.', $envelope->getMessage()::class, $store));
+            throw new LogicException(sprintf('Message "%s" was not stored in the outbox: its DeduplicateStamp (from an IdempotencyStamp, the default stamps of the message or the caller) needs a lock store whose keys can be sent with the message, but the lock store of framework.lock (%s) ties its keys to the current process or connection, so the relay could never send it. Configure a store whose keys can be serialized, such as Redis, Memcached or a PDO/DBAL database, or dispatch it without the stamp.', $envelope->getMessage()::class, $store));
         }
 
         if ($this->captureTraceContext && null === $envelope->last(TraceContextStamp::class)) {

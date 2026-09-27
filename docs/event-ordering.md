@@ -119,7 +119,7 @@ The stamp (`SomeWork\CqrsBundle\Stamp\AggregateSequenceStamp`) exposes three
 |----------|------|-------------|
 | `aggregateId` | `string` | The aggregate identifier returned by `SequenceAware::getAggregateId()`. Must be non-empty; an empty string throws `InvalidArgumentException` at construction time. |
 | `sequenceNumber` | `int` | The sequence number returned by `SequenceAware::getSequenceNumber()`. Must be non-negative; a negative value throws `InvalidArgumentException` at construction time. |
-| `aggregateType` | `string` | The aggregate type returned by `SequenceAware::getAggregateType()`, the same for every event of an aggregate. Aggregate ids are unique per type, so consumers keep one sequence per type and id. |
+| `aggregateType` | `string` | The aggregate type returned by `SequenceAware::getAggregateType()`, the same for every event of an aggregate. Aggregate ids are unique per type, so consumers keep one sequence per type and id. Must be non-empty; an empty string throws `InvalidArgumentException` at construction time (events of different aggregates with the same id would share one sequence). |
 
 ## Limitations
 

@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\Support;
 
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
+use SomeWork\CqrsBundle\Exception\LogicException;
 use Symfony\Component\RateLimiter\RateLimiterFactory;
 use Symfony\Component\RateLimiter\RateLimiterFactoryInterface;
 
@@ -47,7 +48,7 @@ final class RateLimitResolver extends AbstractMessageTypeResolver
     protected function assertService(string $key, mixed $service): object
     {
         if (!$service instanceof RateLimiterFactory && !$service instanceof RateLimiterFactoryInterface) {
-            throw new \LogicException(sprintf('Rate limiter for "%s" must be an instance of %s, got %s.', $key, RateLimiterFactory::class, get_debug_type($service)));
+            throw new LogicException(sprintf('Rate limiter for "%s" must be an instance of %s, got %s.', $key, RateLimiterFactory::class, get_debug_type($service)));
         }
 
         return $service;

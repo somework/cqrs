@@ -13,6 +13,7 @@ use PHPUnit\Framework\TestCase;
 use SomeWork\CqrsBundle\Bus\DispatchMode;
 use SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox;
 use SomeWork\CqrsBundle\Contract\StampDecider;
+use SomeWork\CqrsBundle\Exception\CqrsException;
 use SomeWork\CqrsBundle\Exception\OutboxRequiresTransactionException;
 use SomeWork\CqrsBundle\Exception\UnknownOutboxTransportException;
 use SomeWork\CqrsBundle\Outbox\OutboxMessage;
@@ -111,6 +112,7 @@ final class OutboxWriterTest extends TestCase
             } catch (\LogicException $exception) {
                 self::assertStringContainsString('was not stored in the outbox: its DeduplicateStamp', $exception->getMessage());
                 self::assertStringContainsString('('.FlockStore::class.')', $exception->getMessage());
+                self::assertInstanceOf(CqrsException::class, $exception);
             }
         }
 
