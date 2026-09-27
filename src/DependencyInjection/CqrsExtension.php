@@ -6,6 +6,7 @@ namespace SomeWork\CqrsBundle\DependencyInjection;
 
 use Closure;
 use Doctrine\DBAL\Connection;
+use Doctrine\ORM\EntityManager;
 use Doctrine\ORM\Tools\ToolEvents;
 use SomeWork\CqrsBundle\Attribute\AsCommandHandler;
 use SomeWork\CqrsBundle\Attribute\AsEventHandler;
@@ -23,6 +24,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Registration\BusWiringRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\ContainerHelper;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchAfterCurrentBusRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\DispatchModeRegistrar;
+use SomeWork\CqrsBundle\DependencyInjection\Registration\DoctrineEventsRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\MetadataRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\NamingRegistrar;
 use SomeWork\CqrsBundle\DependencyInjection\Registration\OutboxRegistrar;
@@ -152,6 +154,20 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
             (new OutboxRegistrar())->register($container, $config['outbox'], ($this->classExists)(ToolEvents::class), $config['buses'], $defaultBusId, $helper);
         }
 
+        if (true === $config['doctrine_events']['enabled']) {
+            if (!($this->classExists)(EntityManager::class)) {
+                throw new InvalidConfigurationException('"somework_cqrs.doctrine_events" stores the events recorded by Doctrine entities, but doctrine/orm is not installed. Run "composer require doctrine/orm doctrine/doctrine-bundle", or disable "somework_cqrs.doctrine_events" (aggregates on DBAL publish their events with RecordedEventsPublisher).');
+            }
+            if (true !== $config['outbox']['enabled']) {
+                throw new InvalidConfigurationException('"somework_cqrs.doctrine_events" stores the events recorded by entities in the transactional outbox, but the outbox is disabled. Enable "somework_cqrs.outbox" on the connection of the entity manager.');
+            }
+            // A custom storage is tied to no connection, and may not check the transaction.
+            if (null !== $config['outbox']['storage']) {
+                throw new InvalidConfigurationException(sprintf('"somework_cqrs.doctrine_events" needs the DBAL storage of the outbox on the connection of the entity manager, but "somework_cqrs.outbox.storage" names another storage ("%s"). Remove "outbox.storage" (decorate the service "somework_cqrs.outbox.storage" instead), or disable "somework_cqrs.doctrine_events".', $config['outbox']['storage']));
+            }
+            (new DoctrineEventsRegistrar())->register($container, $config['outbox']);
+        }
+
         if (is_int($config['idempotency']['ttl']) && $config['idempotency']['ttl'] < 1) {
             throw new InvalidConfigurationException(sprintf('"somework_cqrs.idempotency.ttl" must be at least 1 second, %d given.', $config['idempotency']['ttl']));
         }
@@ -256,7 +272,7 @@ final class CqrsExtension extends Extension implements PrependExtensionInterface
      */
     private static function assertCompileTimeFlags(array $config): void
     {
-        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting'] as $section) {
+        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting', 'doctrine_events'] as $section) {
             $sectionConfig = $config[$section] ?? null;
             $value = is_array($sectionConfig) ? ($sectionConfig['enabled'] ?? null) : null;
 

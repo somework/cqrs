@@ -28,7 +28,7 @@ final class CqrsExtensionCompileTimeFlagsTest extends TestCase
      */
     public static function sections(): iterable
     {
-        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting'] as $section) {
+        foreach (['outbox', 'idempotency', 'causation_id', 'sequence', 'rate_limiting', 'doctrine_events'] as $section) {
             yield $section => [$section];
         }
     }

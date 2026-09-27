@@ -8,6 +8,7 @@ use SomeWork\CqrsBundle\Command\OutboxFailedCommand;
 use SomeWork\CqrsBundle\Command\OutboxPurgeCommand;
 use SomeWork\CqrsBundle\Command\OutboxRelayCommand;
 use SomeWork\CqrsBundle\Command\OutboxSetupCommand;
+use SomeWork\CqrsBundle\Contract\EventBusInterface;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage;
 use SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\OutboxSigningSecretPass;
@@ -16,6 +17,7 @@ use SomeWork\CqrsBundle\Health\OutboxHealthChecker;
 use SomeWork\CqrsBundle\Outbox\DbalOutboxStorage;
 use SomeWork\CqrsBundle\Outbox\OutboxSchemaSubscriber;
 use SomeWork\CqrsBundle\Outbox\OutboxWriter;
+use SomeWork\CqrsBundle\Outbox\RecordedEventsPublisher;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayOnTerminateSubscriber;
 use SomeWork\CqrsBundle\Outbox\Relay\RelayServicesResetter;
 use SomeWork\CqrsBundle\Outbox\Signing\OutboxSigner;
@@ -35,6 +37,8 @@ use function trim;
 /** @internal */
 final class OutboxRegistrar
 {
+    public const PUBLISHER_ID = 'somework_cqrs.outbox.recorded_events_publisher';
+
     /**
      * @param array{enabled: bool, table_name: string, storage?: string|null, connection?: string, serializer?: string, auto_setup?: bool, relay_on_terminate?: bool, require_transaction?: bool, max_attempts?: int|string, signing?: array{enabled: bool, secret: string|null, previous_secrets: list<string>, accept_unsigned: bool|string}} $config
      * @param bool                                                                                                                                                                                                                                                                                                                              $schemaToolAvailable Whether doctrine/orm (schema tool events) is installed
@@ -56,6 +60,14 @@ final class OutboxRegistrar
             $storageDef->setPublic(false);
             $container->setDefinition(OutboxStoragePass::DBAL_STORAGE_ID, $storageDef);
             $baseStorage = OutboxStoragePass::DBAL_STORAGE_ID;
+
+            // Checks the transaction on the outbox connection: a custom storage is tied to none.
+            $publisherDef = new Definition(RecordedEventsPublisher::class);
+            $publisherDef->setArgument('$eventBus', new Reference(EventBusInterface::class));
+            $publisherDef->setArgument('$connection', new Reference(sprintf('doctrine.dbal.%s_connection', $connection)));
+            $publisherDef->setPublic(false);
+            $container->setDefinition(self::PUBLISHER_ID, $publisherDef);
+            $container->setAlias(RecordedEventsPublisher::class, self::PUBLISHER_ID)->setPublic(false);
         } else {
             $baseStorage = $helper->configuredService($container, 'outbox.storage', $customStorage);
         }

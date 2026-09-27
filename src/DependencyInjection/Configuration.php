@@ -366,6 +366,15 @@ final class Configuration implements ConfigurationInterface
         $outboxChildren->end();
         $outbox->end();
 
+        $doctrineEvents = $children->arrayNode('doctrine_events');
+        $doctrineEvents->addDefaultsIfNotSet()
+            ->info('Domain events recorded by Doctrine entities (RecordsEvents), stored in the transactional outbox when the entity manager flushes.');
+        $doctrineEventsChildren = $doctrineEvents->children();
+        $doctrineEventsChildren->booleanNode('enabled')->defaultFalse()
+            ->info('Store the events recorded by entities in the outbox after each flush, in the caller\'s transaction (a flush of recording entities outside a transaction is refused). Requires doctrine/orm, DoctrineBundle and the outbox on its DBAL storage (no "outbox.storage"); a plain boolean.');
+        $doctrineEventsChildren->end();
+        $doctrineEvents->end();
+
         return $treeBuilder;
     }
 

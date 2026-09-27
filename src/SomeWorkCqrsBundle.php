@@ -9,6 +9,7 @@ use SomeWork\CqrsBundle\DependencyInjection\Compiler\CausationIdMiddlewarePass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsHandlerPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\CqrsRetryStrategyPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\DeduplicationLockReleasePass;
+use SomeWork\CqrsBundle\DependencyInjection\Compiler\DoctrineEventsPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\EnvelopeAwareHandlersLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\HealthCheckerLocatorPass;
 use SomeWork\CqrsBundle\DependencyInjection\Compiler\LoggerChannelPass;
@@ -49,6 +50,8 @@ final class SomeWorkCqrsBundle extends Bundle
         $container->addCompilerPass(new OutboxRelayLockPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new OutboxStoragePass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new OutboxSigningSecretPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
+        // Only reads DoctrineBundle's parameters: the "doctrine.event_listener" tag needs DoctrineBundle.
+        $container->addCompilerPass(new DoctrineEventsPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, 0);
         $container->addCompilerPass(new ValidateIdempotencyDependenciesPass(), PassConfig::TYPE_BEFORE_OPTIMIZATION, -1);
 
         // After MessengerPass, whatever priority the Symfony version gives it, and before the
