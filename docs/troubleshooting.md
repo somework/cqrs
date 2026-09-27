@@ -505,17 +505,19 @@ its own is intended.
 
 **Cause.** The bundle checks the transaction through the storage: a custom storage
 (`outbox.storage`) that does not implement `Contract\Outbox\TransactionalOutbox`,
-or a service that replaces `somework_cqrs.outbox.storage`, cannot tell whether a
-transaction is open, so nothing is refused. In debug mode the container
+a storage service whose class the container does not know (created by a factory
+without a class), or a service that replaces `somework_cqrs.outbox.storage`, cannot
+tell whether a transaction is open, so nothing is refused. In debug mode the container
 compilation log (`var/cache/<env>/*Compiler.log`) says so:
 
 ```
 "somework_cqrs.outbox.require_transaction" is not enforced: the outbox storage "app.outbox" (App\Outbox\MongoOutboxStorage) does not implement SomeWork\CqrsBundle\Contract\Outbox\TransactionalOutbox, …
 ```
 
-**Fix.** Implement `TransactionalOutbox` on the storage, and configure it under
-`outbox.storage` (decorate `somework_cqrs.outbox.storage` to add behaviour instead
-of replacing it); see [Custom storage](outbox.md#custom-storage). Or set
+**Fix.** Implement `TransactionalOutbox` on the storage, declare the class of its
+service (also when a factory creates it), and configure it under `outbox.storage`
+(decorate `somework_cqrs.outbox.storage` to add behaviour instead of replacing it);
+see [Custom storage](outbox.md#custom-storage). Or set
 `outbox.require_transaction: false` to acknowledge that stores are not checked.
 
 ### `OutboxNotConfiguredException`

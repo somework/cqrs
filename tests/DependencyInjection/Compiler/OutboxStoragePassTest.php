@@ -137,6 +137,35 @@ final class OutboxStoragePassTest extends TestCase
         self::assertStringContainsString('"somework_cqrs.outbox.require_transaction" is not enforced: the service "somework_cqrs.outbox.storage" is replaced, so OutboxWriter and DispatchMode::OUTBOX cannot tell whether a transaction is open and store messages outside one too.', self::warnings($replaced)[0]);
     }
 
+    public function test_the_compilation_log_says_so_for_a_storage_whose_class_is_not_known(): void
+    {
+        // Created by a factory, without a class: the bundle cannot tell what it implements.
+        $factory = $this->container(['storage' => 'app.outbox']);
+        $factory->register('app.outbox_factory', \stdClass::class);
+        $factory->register('app.outbox')->setFactory([new Reference('app.outbox_factory'), 'create']);
+        (new OutboxStoragePass())->process($factory);
+
+        self::assertNull($factory->getDefinition('somework_cqrs.outbox.writer')->getArgument('$transaction'));
+        self::assertCount(1, self::warnings($factory));
+        self::assertStringContainsString('"somework_cqrs.outbox.require_transaction" is not enforced: the class of the outbox storage "app.outbox" is not known when the container is built (e.g. a service created by a factory without a class: declare its class), so OutboxWriter and DispatchMode::OUTBOX cannot tell whether a transaction is open and store messages outside one too.', self::warnings($factory)[0]);
+
+        // With its class declared, the writer checks transactions through it.
+        $declared = $this->container(['storage' => 'app.outbox']);
+        $declared->register('app.outbox_factory', \stdClass::class);
+        $declared->register('app.outbox', CapableOutboxStorage::class)->setFactory([new Reference('app.outbox_factory'), 'create']);
+        (new OutboxStoragePass())->process($declared);
+
+        $transaction = $declared->getDefinition('somework_cqrs.outbox.writer')->getArgument('$transaction');
+        self::assertInstanceOf(Reference::class, $transaction);
+        self::assertSame('app.outbox', (string) $transaction);
+        self::assertSame([], self::warnings($declared));
+
+        // A storage that does not exist fails the build elsewhere (ValidateConfiguredServicesPass): no warning.
+        $missing = $this->container(['storage' => 'app.outbox']);
+        (new OutboxStoragePass())->process($missing);
+        self::assertSame([], self::warnings($missing));
+    }
+
     public function test_the_compilation_log_stays_quiet_when_transactions_are_checked_or_not_required(): void
     {
         $dbal = $this->container(['relay_on_terminate' => true]);

@@ -1064,7 +1064,9 @@ health check reports the outbox as not checked. `DbalOutboxStorage` implements a
 > store messages outside one, which are then not part of the business change, and
 > `relay_on_terminate` relays without waiting for the transaction to be committed. The same
 > holds when the application replaces the `somework_cqrs.outbox.storage` service instead of
-> configuring its storage under `outbox.storage` or decorating it. In debug mode, the container
+> configuring its storage under `outbox.storage` or decorating it, and when the class of the
+> storage service is not known when the container is built (a service created by a factory
+> without a class: declare its class). In debug mode, the container
 > compilation log warns about it (`grep require_transaction var/cache/<env>/*Compiler.log`): implement
 > `TransactionalOutbox` (`isInTransaction()` returns whether a store would join an open
 > transaction of your business data), or set `outbox.require_transaction: false` to acknowledge

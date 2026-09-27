@@ -24,6 +24,9 @@ Entries marked **Breaking** need changes in applications; [UPGRADE.md](UPGRADE.m
 - The outbox table is built and changed with DBAL's table, column and index editors on DBAL 4.3 and 4.4 too (the same table as before), and its name is no longer parsed with the name parser that DBAL 5 removes.
 - PHP 8.2 remains supported in 0.6; 0.7 will require PHP 8.3.
 
+### Fixed
+- The compilation log did not say that `outbox.require_transaction` is not enforced when the class of the outbox storage is not known when the container is built (e.g. a service created by a factory without a class): the bundle cannot tell whether it implements `Contract\Outbox\TransactionalOutbox`, so messages were stored outside transactions without a warning. It now warns, as for a storage without `TransactionalOutbox` ([UPGRADE.md](UPGRADE.md#upgrading-from-052-to-053)).
+
 ## [0.5.2] - 2026-09-27
 
 ### Fixed

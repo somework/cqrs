@@ -101,6 +101,17 @@ The first dispatch through a rate limiter service that is not a rate limiter fac
 names `RateLimiterFactoryInterface` instead of `RateLimiterFactory`. The limiters accepted do not change: every
 limiter of `framework.rate_limiter`, compound ones included, implements the interface.
 
+## Upgrading from 0.5.2 to 0.5.3
+
+Neither the configuration nor the API changes. You may notice:
+
+- **Compilation log.** When the class of the outbox storage service is not known when the container is built
+  (a service created by a factory without a class), the container compilation log now warns that
+  `outbox.require_transaction` is not enforced (it never was: the bundle cannot tell whether the storage implements
+  `Contract\Outbox\TransactionalOutbox`). Declare the class of the service; if it implements `TransactionalOutbox`,
+  stores outside a transaction are then refused, as `require_transaction` asks. Or set
+  `outbox.require_transaction: false`.
+
 ## Upgrading from 0.5.1 to 0.5.2
 
 0.5.2 fixes bugs and corrects the documentation. Neither the configuration nor the API changes. You may notice:
