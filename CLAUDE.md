@@ -36,7 +36,7 @@ CQRS_TEST_DATABASE_URL='pdo-pgsql://user:secret@127.0.0.1:5432/cqrs_test?serverV
 
 CI runs php-cs-fixer and PHPStan once (PHP 8.4, highest dependencies) and PHPUnit across PHP 8.2, 8.3, 8.4 and 8.5 with the highest dependencies (Symfony 8 on PHP 8.4+, Symfony 7.4 below), plus a lowest-dependency PHPUnit job (PHP 8.2, Symfony 7.2, DBAL 4.0), a non-blocking job on `symfony/*: 8.2.x-dev` (PHP 8.4), a minimal install without optional packages, the `database` test group on PostgreSQL 16 and MySQL 8.4, an example-app smoke test and `mkdocs build --strict`.
 
-Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.1, next release 0.6.0); record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md`.
+Supported: PHP 8.2+, Symfony `^7.2 || ^8.0`. Versions follow the 0.x line (latest tag v0.5.2). This is `0.5`, the maintenance branch of the 0.5.x line: it only receives patch releases (bug fixes and documentation, no new features or breaking changes), and is merged into `main` (`0.6.x-dev`, next release 0.6.0) with a merge commit after each change. Record every user-visible change in `CHANGELOG.md` ([Unreleased]) and every behaviour change in `UPGRADE.md` (a section "Upgrading from 0.5.x to 0.5.y").
 
 ### Console Commands
 

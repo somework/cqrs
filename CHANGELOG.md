@@ -7,6 +7,8 @@ While the major version is 0, minor releases may contain breaking changes; they 
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-27
+
 ### Fixed
 - `outbox:failed --requeue --sign` refused every row whose `type` header is a serialized type name (`#[AsMessage(serializedTypeName: …)]` with Messenger's Symfony serializer, Messenger 8.1) instead of a class: it took the name for an untrusted class. The command now asks the outbox serializer for the class (`MessageTypeAwareSerializerInterface`, Messenger 7.4.11 / 8.0.11+), or reads the type map of Messenger's Symfony serializer when it is the outbox serializer (also behind Messenger's signing serializer), and otherwise takes the header for the class, as before. Every check of the `--sign` review applies to the class found, and `outbox:failed` lists the class followed by the serialized type name (e.g. `App\Message\PlaceOrder (shop.place_order)`).
 - A failed send of a row that another relay claimed in the meantime counted as a failure of the relay run: it made `somework:cqrs:outbox:relay` exit with `1` and could pause the transport. Such a row is now counted among the rows another relay claimed (`Skipped <n> message(s) that another relay claimed first.`), as a row given up in the same situation already was ([UPGRADE.md](UPGRADE.md#upgrading-from-051-to-052)).
@@ -281,7 +283,8 @@ This release was documented as "1.0.0" to "3.0.0" in earlier revisions of this f
 - Metadata stamps and providers for correlation details.
 - Async bus configuration, handler listing and message/handler generator commands.
 
-[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/somework/cqrs/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/somework/cqrs/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/somework/cqrs/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/somework/cqrs/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/somework/cqrs/compare/v0.3.0...v0.4.0
