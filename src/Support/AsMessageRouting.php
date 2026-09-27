@@ -9,6 +9,8 @@ use Symfony\Component\Messenger\Attribute\AsMessage;
 use function class_exists;
 use function class_implements;
 use function class_parents;
+use function in_array;
+use function is_string;
 
 /**
  * Whether Messenger routes a message by #[AsMessage(transport: ...)] on its class, a parent class
@@ -23,21 +25,36 @@ final class AsMessageRouting
      */
     public static function hasTransport(string $messageClass): bool
     {
+        return [] !== self::transports($messageClass);
+    }
+
+    /**
+     * The transports of every #[AsMessage] on the class, its parent classes and interfaces, merged
+     * the way SendersLocator merges them.
+     *
+     * @param class-string $messageClass
+     *
+     * @return list<string>
+     */
+    public static function transports(string $messageClass): array
+    {
         if (!class_exists(AsMessage::class)) {
-            return false;
+            return [];
         }
 
+        $transports = [];
         $parents = class_parents($messageClass);
         $interfaces = class_implements($messageClass);
         foreach ([$messageClass, ...(false === $parents ? [] : $parents), ...(false === $interfaces ? [] : $interfaces)] as $class) {
             foreach ((new \ReflectionClass($class))->getAttributes(AsMessage::class, \ReflectionAttribute::IS_INSTANCEOF) as $attribute) {
-                $transport = $attribute->newInstance()->transport;
-                if (null !== $transport && [] !== $transport && '' !== $transport) {
-                    return true;
+                foreach ((array) $attribute->newInstance()->transport as $transport) {
+                    if (is_string($transport) && '' !== $transport && !in_array($transport, $transports, true)) {
+                        $transports[] = $transport;
+                    }
                 }
             }
         }
 
-        return false;
+        return $transports;
     }
 }
