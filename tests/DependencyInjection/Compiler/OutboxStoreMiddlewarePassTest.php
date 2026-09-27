@@ -111,6 +111,46 @@ final class OutboxStoreMiddlewarePassTest extends TestCase
         );
     }
 
+    public function test_the_dbal_middleware_of_doctrine_bridge_8_2_is_found_by_its_class(): void
+    {
+        // It has no configuration shortcut: Symfony's documentation registers it under its class name.
+        $transaction = 'Symfony\\Bridge\\Doctrine\\Messenger\\DoctrineDbalTransactionMiddleware';
+        $logger = 'Symfony\\Bridge\\Doctrine\\Messenger\\DoctrineDbalOpenTransactionLoggerMiddleware';
+        $container = $this->createContainer();
+        $container->setParameter('somework_cqrs.bus.command', 'command.bus');
+        $container->register($logger, $logger);
+        // Any other id, even behind an alias.
+        $container->register('app.dbal_transaction', $transaction);
+        $container->setAlias('app.transaction', 'app.dbal_transaction');
+        // Registered as a middleware factory: Messenger makes a child definition of it per bus.
+        $container->register($transaction)->setAbstract(true);
+        $container->setDefinition('command.bus.middleware.'.$transaction, new ChildDefinition($transaction));
+        $container->register('app.dbal_audit', 'App\\Middleware\\DbalAuditMiddleware');
+        $container->setDefinition('command.bus', (new Definition())->setArgument(0, new IteratorArgument([
+            new Reference($logger),
+            new Reference('app.transaction'),
+            new Reference('command.bus.middleware.'.$transaction),
+            new Reference('app.dbal_audit'),
+            new Reference('command.bus.middleware.send_message'),
+        ])));
+
+        (new OutboxStoreMiddlewarePass())->process($container);
+
+        self::assertSame(
+            [
+                OutboxStoreMiddlewarePass::PREPARE_MIDDLEWARE_ID,
+                OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.'.$logger,
+                OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.app.transaction',
+                OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.command.bus.middleware.'.$transaction,
+                'app.dbal_audit',
+                OutboxStoreMiddlewarePass::MIDDLEWARE_ID,
+                'command.bus.middleware.send_message',
+            ],
+            $this->middlewareIds($container, 'command.bus'),
+        );
+        self::assertSame('app.transaction', (string) $container->getDefinition(OutboxStoreMiddlewarePass::MIDDLEWARE_ID.'.bypass.app.transaction')->getArgument(0));
+    }
+
     public function test_fails_before_messenger_pass_built_the_buses(): void
     {
         $container = $this->createContainer();

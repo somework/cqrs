@@ -198,9 +198,9 @@ For a message dispatched through the [outbox](outbox.md#through-the-buses):
   adds again for a class the stored message already carries, so the caller's context
   (e.g. `router_context`) wins over the relay's.
 * Doctrine's `doctrine_transaction` and `doctrine_open_transaction_logger` (and
-  DoctrineBridge 8.2's `doctrine_dbal_transaction` and
-  `doctrine_dbal_open_transaction_logger`), wherever they are listed on a CQRS bus (also
-  more than once), are wrapped so that a message being stored skips them (they would
+  DoctrineBridge 8.2's `DoctrineDbalTransactionMiddleware` and
+  `DoctrineDbalOpenTransactionLoggerMiddleware`, whatever service id you register them
+  under), wherever they are listed on a CQRS bus (also more than once), are wrapped so that a message being stored skips them (they would
   flush the caller's entity manager, open a transaction around the store, or report the
   caller's open transaction); they run when the relay dispatches it.
 

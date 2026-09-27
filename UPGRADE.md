@@ -68,8 +68,9 @@ phase (in the new `MessengerBundle`) instead of 0. Neither the configuration nor
 - **Messenger's pass must have run.** When a bus still has its `<bus>.middleware` parameter (`MessengerPass` has
   not built it yet) as these passes run, the build fails with a `LogicException` instead of leaving the buses
   without the bundle's middleware.
-- **DoctrineBridge 8.2.** With the outbox, a message stored through a bus skips `doctrine_dbal_transaction` and
-  `doctrine_dbal_open_transaction_logger` too; they run when the relay dispatches it.
+- **DoctrineBridge 8.2.** With the outbox, a message stored through a bus skips `DoctrineDbalTransactionMiddleware`
+  and `DoctrineDbalOpenTransactionLoggerMiddleware` too, whatever service id they are registered under; they run
+  when the relay dispatches it.
 
 ## Upgrading from 0.4.0 to 0.5.0
 

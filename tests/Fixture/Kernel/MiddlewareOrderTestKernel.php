@@ -76,7 +76,8 @@ final class MiddlewareOrderTestKernel extends Kernel implements CompilerPassInte
                     'command.async_bus' => null,
                     'query.bus' => null,
                     'event.bus' => null,
-                    // DoctrineBridge 8.2's middleware that needs no ORM.
+                    // The shortcut of DoctrineBridge 8.2's DBAL middleware, should a bundle register it
+                    // (OutboxStoreMiddlewarePassTest covers the class-named services of Symfony's documentation).
                     'event.async_bus' => ['middleware' => ['doctrine_dbal_transaction']],
                 ],
                 'transports' => [
@@ -108,6 +109,7 @@ final class MiddlewareOrderTestKernel extends Kernel implements CompilerPassInte
         $services->set(CallerContextMiddleware::class);
         // What DoctrineBundle registers.
         $services->set('messenger.middleware.doctrine_transaction', FakeDoctrineTransactionMiddleware::class)->abstract();
+        // A shortcut id for DoctrineBridge 8.2's DBAL middleware (DoctrineBundle has none yet).
         $services->set('messenger.middleware.doctrine_dbal_transaction', FakeDoctrineTransactionMiddleware::class)->abstract();
     }
 

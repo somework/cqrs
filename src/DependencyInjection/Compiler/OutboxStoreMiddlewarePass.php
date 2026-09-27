@@ -18,6 +18,7 @@ use Symfony\Component\DependencyInjection\Reference;
 use function array_keys;
 use function in_array;
 use function is_string;
+use function ltrim;
 use function preg_match;
 use function sort;
 use function sprintf;
@@ -44,7 +45,8 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
      * Middleware that belongs to handling: at store time it would flush the caller's entity manager,
      * open a transaction around the store, or report the caller's open transaction. Messenger uses
      * these services, or child definitions of them ("<bus>.middleware.<name>", with a hash suffix
-     * when a bus lists it more than once). The "doctrine_dbal_" ones come with DoctrineBridge 8.2.
+     * when a bus lists it more than once). The "doctrine_dbal_" ids are the shortcuts of
+     * DoctrineBridge 8.2's DBAL middleware, should a bundle register them.
      */
     private const BYPASSED = [
         'messenger.middleware.doctrine_transaction',
@@ -55,6 +57,15 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
 
     /** The same, by id, for definitions whose parent is not visible (e.g. already resolved). */
     private const BYPASSED_IDS = '/(?:^|\.)(?:doctrine_transaction|doctrine_open_transaction_logger|doctrine_dbal_transaction|doctrine_dbal_open_transaction_logger)(?:\.[A-Za-z0-9_.]+)?$/';
+
+    /**
+     * DoctrineBridge 8.2's DBAL middleware has no configuration shortcut: applications register it
+     * under an id of their own (its class name in Symfony's documentation), so it is found by class.
+     */
+    private const BYPASSED_CLASSES = [
+        'Symfony\Bridge\Doctrine\Messenger\DoctrineDbalTransactionMiddleware',
+        'Symfony\Bridge\Doctrine\Messenger\DoctrineDbalOpenTransactionLoggerMiddleware',
+    ];
 
     private const WRITER_ID = 'somework_cqrs.outbox.writer';
 
@@ -119,7 +130,7 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
 
     private static function belongsToHandling(ContainerBuilder $container, string $id): bool
     {
-        if (in_array($id, self::BYPASSED, true)) {
+        if (in_array($id, self::BYPASSED, true) || in_array(self::classOf($container, $id), self::BYPASSED_CLASSES, true)) {
             return true;
         }
 
@@ -129,5 +140,30 @@ final class OutboxStoreMiddlewarePass implements CompilerPassInterface
         }
 
         return 1 === preg_match(self::BYPASSED_IDS, $id);
+    }
+
+    /**
+     * The class of a service, also when it inherits it from a parent definition (a middleware
+     * factory, which Messenger turns into a child definition per bus).
+     */
+    private static function classOf(ContainerBuilder $container, string $id): ?string
+    {
+        $visited = [];
+        while ($container->has($id) && !isset($visited[$id])) {
+            $visited[$id] = true;
+            $definition = $container->findDefinition($id);
+            $class = $definition->getClass();
+            if (null === $class && $definition instanceof ChildDefinition) {
+                $id = $definition->getParent();
+                continue;
+            }
+
+            // Without a class, the id is the class.
+            $class = $container->getParameterBag()->resolveValue($class ?? $id);
+
+            return is_string($class) ? ltrim($class, '\\') : null;
+        }
+
+        return null;
     }
 }
