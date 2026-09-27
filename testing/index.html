@@ -1,0 +1,1714 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CQRS helpers for Symfony Messenger">
+      
+      
+      
+        <link rel="canonical" href="https://somework.github.io/cqrs/testing/">
+      
+      
+        <link rel="prev" href="../middleware/">
+      
+      
+        <link rel="next" href="../retry/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Testing - SomeWork CQRS Bundle</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#testing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-header__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SomeWork CQRS Bundle
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Testing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-nav__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SomeWork CQRS Bundle
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../middleware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Middleware & Stamp Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fake-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fake buses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fake buses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-getdispatched-returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What getDispatched() returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakecommandbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeCommandBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakequerybus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeQueryBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakeeventbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeEventBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assertions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assertions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assertions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cqrstestcase-or-cqrsassertionstrait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CqrsTestCase or CqrsAssertionsTrait
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-the-constraint-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the constraint directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-handlers-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing handlers directly
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#swapping-the-buses-for-fakes-in-the-test-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Swapping the buses for fakes in the test container
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-tests-through-the-real-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel tests through the real buses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-that-stores-messages-in-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code that stores messages in the outbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../retry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retry Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transactional Outbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../event-ordering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Ordering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rate-limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rate Limiting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#fake-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fake buses
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Fake buses">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-getdispatched-returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What getDispatched() returns
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakecommandbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeCommandBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakequerybus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeQueryBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fakeeventbus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FakeEventBus
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assertions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assertions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assertions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cqrstestcase-or-cqrsassertionstrait" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CqrsTestCase or CqrsAssertionsTrait
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#using-the-constraint-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Using the constraint directly
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#testing-handlers-directly" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing handlers directly
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#swapping-the-buses-for-fakes-in-the-test-container" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Swapping the buses for fakes in the test container
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#kernel-tests-through-the-real-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kernel tests through the real buses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#code-that-stores-messages-in-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Code that stores messages in the outbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#tips" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Tips
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="testing">Testing</h1>
+<p>The bundle ships test helpers in the <code>SomeWork\CqrsBundle\Testing</code> namespace:</p>
+<ul>
+<li><strong>Fake buses</strong>: <code>FakeCommandBus</code>, <code>FakeQueryBus</code> and <code>FakeEventBus</code>. They implement
+  <code>CommandBusInterface</code>, <code>QueryBusInterface</code> and <code>EventBusInterface</code> and record every call
+  instead of dispatching through Messenger.</li>
+<li><strong>Assertions</strong>: <code>CqrsAssertionsTrait</code> (or the <code>CqrsTestCase</code> base class) adds
+  <code>assertDispatched()</code> and <code>assertNotDispatched()</code>. The <code>DispatchedMessage</code> PHPUnit
+  constraint does the matching behind them.</li>
+</ul>
+<p>The real <code>CommandBus</code>, <code>QueryBus</code> and <code>EventBus</code> classes are <code>final</code>. Type-hint the
+interfaces in your services so a test can pass in a fake.</p>
+<h2 id="requirements">Requirements</h2>
+<p>The assertion helpers (<code>CqrsAssertionsTrait</code>, <code>CqrsTestCase</code>, <code>Constraint\DispatchedMessage</code>)
+are built on PHPUnit. The bundle does not require PHPUnit itself, so your application must
+install it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>composer<span class="w"> </span>require<span class="w"> </span>--dev<span class="w"> </span>phpunit/phpunit
+</code></pre></div>
+<p>The helpers support PHPUnit 11.5, 12.5 and 13: the bundle's own test suite runs on each of them
+(11.5 on PHP 8.2, 12.5 on PHP 8.3, 13 from PHP 8.4). The fake buses have no PHPUnit dependency.</p>
+<h2 id="fake-buses">Fake buses</h2>
+<table>
+<thead>
+<tr>
+<th>Class</th>
+<th>Methods it records</th>
+<th>Configuring results</th>
+<th>Other methods</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FakeCommandBus</code></td>
+<td><code>dispatch()</code>, <code>dispatchSync()</code>, <code>dispatchAsync()</code></td>
+<td><code>willReturn(mixed $result)</code>: the value <code>dispatchSync()</code> returns (default <code>null</code>); <code>willReturnFor(string $commandClass, mixed $result)</code>: the result for one command class; <code>willThrow(Throwable $exception, ?string $commandClass = null)</code>: <code>dispatchSync()</code> throws it</td>
+<td><code>getDispatched()</code>, <code>reset()</code></td>
+</tr>
+<tr>
+<td><code>FakeQueryBus</code></td>
+<td><code>ask()</code></td>
+<td><code>willReturn(mixed $result)</code>: the default result; <code>willReturnFor(string $queryClass, mixed $result)</code>: the result for one query class; <code>willThrow(Throwable $exception, ?string $queryClass = null)</code>: <code>ask()</code> throws it</td>
+<td><code>getDispatched()</code>, <code>reset()</code></td>
+</tr>
+<tr>
+<td><code>FakeEventBus</code></td>
+<td><code>dispatch()</code>, <code>dispatchSync()</code>, <code>dispatchAsync()</code></td>
+<td>none</td>
+<td><code>getDispatched()</code>, <code>reset()</code></td>
+</tr>
+</tbody>
+</table>
+<p>A fake handles nothing. It does not run the stamp pipeline or resolve dispatch modes, and it
+sends nothing to a transport. The dispatch methods return <code>new Envelope($message, $stamps)</code>,
+built from the stamps you passed.</p>
+<h3 id="what-getdispatched-returns">What <code>getDispatched()</code> returns</h3>
+<p><code>getDispatched()</code> returns one <code>SomeWork\CqrsBundle\Testing\RecordedDispatch</code> per call, in
+call order, with the read-only properties <code>message</code>, <code>mode</code> (a <code>DispatchMode</code>, <code>null</code> for
+queries, which are always synchronous) and <code>stamps</code> (the stamps you passed). A message is
+recorded before a configured exception is thrown.</p>
+<p>The <code>mode</code> records the method that was called:</p>
+<ul>
+<li><code>dispatchSync()</code> records <code>DispatchMode::SYNC</code>.</li>
+<li><code>dispatchAsync()</code> records <code>DispatchMode::ASYNC</code>.</li>
+<li><code>dispatch()</code> records the mode argument you passed, or <code>DispatchMode::DEFAULT</code> when you
+  passed none. The fake does not resolve <code>DEFAULT</code> through <code>dispatch_modes</code> or
+  <code>#[Asynchronous]</code>.</li>
+</ul>
+<p><code>reset()</code> clears the records. On <code>FakeCommandBus</code> and <code>FakeQueryBus</code> it also clears any
+results and exceptions set with <code>willReturn()</code>, <code>willReturnFor()</code> or <code>willThrow()</code>.</p>
+<h3 id="fakecommandbus">FakeCommandBus</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">use</span> <span class="nx">App\Application\TaskService</span><span class="p">;</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">;</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskServiceTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="p">{</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a>    <span class="k">use</span> <span class="nx">CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_creating_a_task_dispatches_create_task</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a>    <span class="p">{</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a>        <span class="nv">$commandBus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeCommandBus</span><span class="p">();</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a>        <span class="nv">$service</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">TaskService</span><span class="p">(</span><span class="nv">$commandBus</span><span class="p">);</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a>        <span class="nv">$service</span><span class="o">-&gt;</span><span class="na">createTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">);</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span><span class="nv">$commandBus</span><span class="p">,</span> <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a>        <span class="nv">$records</span> <span class="o">=</span> <span class="nv">$commandBus</span><span class="o">-&gt;</span><span class="na">getDispatched</span><span class="p">();</span>
+<a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertCount</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">$records</span><span class="p">);</span>
+<a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>        <span class="nv">$message</span> <span class="o">=</span> <span class="nv">$records</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">-&gt;</span><span class="na">message</span><span class="p">;</span>
+<a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertInstanceOf</span><span class="p">(</span><span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nv">$message</span><span class="p">);</span>
+<a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="nv">$message</span><span class="o">-&gt;</span><span class="na">id</span><span class="p">);</span>
+<a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a>    <span class="p">}</span>
+<a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a>
+<a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_dispatch_sync_returns_the_configured_result</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>    <span class="p">{</span>
+<a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a>        <span class="nv">$commandBus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeCommandBus</span><span class="p">();</span>
+<a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a>        <span class="nv">$commandBus</span><span class="o">-&gt;</span><span class="na">willReturn</span><span class="p">(</span><span class="s1">'task-42'</span><span class="p">);</span>
+<a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a>
+<a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a>        <span class="nv">$service</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">TaskService</span><span class="p">(</span><span class="nv">$commandBus</span><span class="p">);</span>
+<a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a>
+<a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a>        <span class="c1">// TaskService calls $commandBus-&gt;dispatchSync(...) and returns the handler result.</span>
+<a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="s1">'task-42'</span><span class="p">,</span> <span class="nv">$service</span><span class="o">-&gt;</span><span class="na">createTaskAndReturnId</span><span class="p">(</span><span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>    <span class="p">}</span>
+<a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="fakequerybus">FakeQueryBus</h3>
+<p><code>willReturnFor()</code> matches the query's exact class; subclasses do not inherit a result. It
+takes precedence over <code>willReturn()</code>. When neither is set, <code>ask()</code> returns <code>null</code>.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">use</span> <span class="nx">App\Application\Query\FindTask</span><span class="p">;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">use</span> <span class="nx">App\Application\Query\ListTasks</span><span class="p">;</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">use</span> <span class="nx">App\Application\TaskDashboard</span><span class="p">;</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeQueryBus</span><span class="p">;</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskDashboardTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="p">{</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="k">use</span> <span class="nx">CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_dashboard_lists_tasks</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="p">{</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a>        <span class="nv">$queryBus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeQueryBus</span><span class="p">();</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a>        <span class="nv">$queryBus</span><span class="o">-&gt;</span><span class="na">willReturn</span><span class="p">([]);</span>                                     <span class="c1">// default for every query</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a>        <span class="nv">$queryBus</span><span class="o">-&gt;</span><span class="na">willReturnFor</span><span class="p">(</span><span class="nx">ListTasks</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="p">[</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'task-2'</span><span class="p">]);</span> <span class="c1">// result for ListTasks only</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>        <span class="nv">$dashboard</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">TaskDashboard</span><span class="p">(</span><span class="nv">$queryBus</span><span class="p">);</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">([</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'task-2'</span><span class="p">],</span> <span class="nv">$dashboard</span><span class="o">-&gt;</span><span class="na">taskIds</span><span class="p">());</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span><span class="nv">$queryBus</span><span class="p">,</span> <span class="nx">ListTasks</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertNotDispatched</span><span class="p">(</span><span class="nv">$queryBus</span><span class="p">,</span> <span class="nx">FindTask</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>    <span class="p">}</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="p">}</span>
+</code></pre></div>
+<h3 id="fakeeventbus">FakeEventBus</h3>
+<p>The records include the stamps passed to the bus, so a test can check them too:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="k">use</span> <span class="nx">App\Application\Event\TaskCreated</span><span class="p">;</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">use</span> <span class="nx">App\Application\TaskService</span><span class="p">;</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\DispatchMode</span><span class="p">;</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Stamp\IdempotencyStamp</span><span class="p">;</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">;</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeEventBus</span><span class="p">;</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskCreatedEventTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a><span class="p">{</span>
+<a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a>    <span class="k">use</span> <span class="nx">CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>
+<a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_task_created_is_published_asynchronously_with_an_idempotency_key</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>    <span class="p">{</span>
+<a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>        <span class="nv">$eventBus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeEventBus</span><span class="p">();</span>
+<a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>        <span class="nv">$service</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">TaskService</span><span class="p">(</span><span class="k">new</span> <span class="nx">FakeCommandBus</span><span class="p">(),</span> <span class="nv">$eventBus</span><span class="p">);</span>
+<a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a>
+<a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>        <span class="nv">$service</span><span class="o">-&gt;</span><span class="na">createTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">);</span>
+<a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>
+<a id="__codelineno-3-27" name="__codelineno-3-27" href="#__codelineno-3-27"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span>
+<a id="__codelineno-3-28" name="__codelineno-3-28" href="#__codelineno-3-28"></a>            <span class="nv">$eventBus</span><span class="p">,</span>
+<a id="__codelineno-3-29" name="__codelineno-3-29" href="#__codelineno-3-29"></a>            <span class="nx">TaskCreated</span><span class="o">::</span><span class="na">class</span><span class="p">,</span>
+<a id="__codelineno-3-30" name="__codelineno-3-30" href="#__codelineno-3-30"></a>            <span class="k">static</span> <span class="nx">fn</span> <span class="p">(</span><span class="nx">TaskCreated</span> <span class="nv">$event</span><span class="p">)</span><span class="o">:</span> <span class="nx">bool</span> <span class="o">=&gt;</span> <span class="s1">'task-1'</span> <span class="o">===</span> <span class="nv">$event</span><span class="o">-&gt;</span><span class="na">taskId</span><span class="p">,</span>
+<a id="__codelineno-3-31" name="__codelineno-3-31" href="#__codelineno-3-31"></a>        <span class="p">);</span>
+<a id="__codelineno-3-32" name="__codelineno-3-32" href="#__codelineno-3-32"></a>
+<a id="__codelineno-3-33" name="__codelineno-3-33" href="#__codelineno-3-33"></a>        <span class="nv">$record</span> <span class="o">=</span> <span class="nv">$eventBus</span><span class="o">-&gt;</span><span class="na">getDispatched</span><span class="p">()[</span><span class="mi">0</span><span class="p">];</span>
+<a id="__codelineno-3-34" name="__codelineno-3-34" href="#__codelineno-3-34"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="nx">DispatchMode</span><span class="o">::</span><span class="na">ASYNC</span><span class="p">,</span> <span class="nv">$record</span><span class="o">-&gt;</span><span class="na">mode</span><span class="p">);</span>
+<a id="__codelineno-3-35" name="__codelineno-3-35" href="#__codelineno-3-35"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertInstanceOf</span><span class="p">(</span><span class="nx">IdempotencyStamp</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nv">$record</span><span class="o">-&gt;</span><span class="na">stamps</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+<a id="__codelineno-3-36" name="__codelineno-3-36" href="#__codelineno-3-36"></a>    <span class="p">}</span>
+<a id="__codelineno-3-37" name="__codelineno-3-37" href="#__codelineno-3-37"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="assertions">Assertions</h2>
+<p><code>CqrsAssertionsTrait</code> provides these <code>protected static</code> assertions:</p>
+<ul>
+<li><code>assertDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void</code></li>
+<li><code>assertNotDispatched(RecordsBusDispatches $bus, string $messageClass, ?callable $callback = null, string $message = ''): void</code></li>
+<li><code>assertStoredInOutbox()</code> and <code>assertNotStoredInOutbox()</code>, with the same parameters: they only
+  match dispatches with <code>DispatchMode::OUTBOX</code>, or with the default mode of a class carrying
+  <code>#[Outbox]</code> (see <a href="#code-that-stores-messages-in-the-outbox">Code that stores messages in the outbox</a>).</li>
+</ul>
+<p>Their parameters work as follows:</p>
+<ul>
+<li><code>$bus</code> is any object that implements <code>RecordsBusDispatches</code>. The three fakes do, and your
+  own test doubles can too.</li>
+<li>A record matches when its message is an <code>instanceof $messageClass</code>, so subclasses and
+  interfaces match as well.</li>
+<li><code>$callback</code> receives the message and returns <code>true</code> for a match. <code>assertDispatched()</code>
+  passes when at least one recorded message matches both the class and the callback.
+  <code>assertNotDispatched()</code> passes when none does.</li>
+<li><code>$message</code> is the custom failure message. It is the <strong>fourth</strong> parameter, so pass it by
+  name when you have no callback. A message string passed third lands in <code>$callback</code> and
+  causes a <code>TypeError</code>.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">use</span> <span class="nx">App\Application\Command\DeleteTask</span><span class="p">;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\CqrsTestCase</span><span class="p">;</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">;</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">AssertionExamplesTest</span> <span class="k">extends</span> <span class="nx">CqrsTestCase</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a><span class="p">{</span>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_examples</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="p">{</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        <span class="nv">$bus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeCommandBus</span><span class="p">();</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>        <span class="nv">$bus</span><span class="o">-&gt;</span><span class="na">dispatch</span><span class="p">(</span><span class="k">new</span> <span class="nx">CreateTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="k">static</span> <span class="nx">fn</span> <span class="p">(</span><span class="nx">CreateTask</span> <span class="nv">$c</span><span class="p">)</span><span class="o">:</span> <span class="nx">bool</span> <span class="o">=&gt;</span> <span class="s1">'Write docs'</span> <span class="o">===</span> <span class="nv">$c</span><span class="o">-&gt;</span><span class="na">name</span><span class="p">);</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nx">message</span><span class="o">:</span> <span class="s1">'CreateTask must be dispatched after the form is submitted'</span><span class="p">);</span>
+<a id="__codelineno-4-22" name="__codelineno-4-22" href="#__codelineno-4-22"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertNotDispatched</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="nx">DeleteTask</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-4-23" name="__codelineno-4-23" href="#__codelineno-4-23"></a>    <span class="p">}</span>
+<a id="__codelineno-4-24" name="__codelineno-4-24" href="#__codelineno-4-24"></a><span class="p">}</span>
+</code></pre></div>
+<p>On failure, the message names the classes that were actually dispatched, with
+the mode each dispatch was recorded with
+(<code>Actually dispatched: App\Application\Command\CreateTask (DispatchMode::DEFAULT)</code>), or says
+<code>No messages were dispatched.</code></p>
+<h3 id="cqrstestcase-or-cqrsassertionstrait">CqrsTestCase or CqrsAssertionsTrait</h3>
+<p><code>CqrsTestCase</code> is an abstract <code>PHPUnit\Framework\TestCase</code> that uses the trait. Extend it
+for plain unit tests. When your test already extends <code>KernelTestCase</code>, <code>WebTestCase</code> or
+another base class, use the trait instead.</p>
+<p>The trait also adds <code>resetCqrsState()</code>, which is marked <code>#[Before]</code>. It clears the bundle's
+internal message-type resolution cache before each test. That cache is keyed by service
+locator, so separate containers do not share entries. The reset is only a safety net, and
+you never need to call it yourself.</p>
+<h3 id="using-the-constraint-directly">Using the constraint directly</h3>
+<p><code>Constraint\DispatchedMessage</code> takes <code>(string $expectedClass, ?callable $callback = null, ?DispatchMode $mode = null)</code>;
+with a mode, it only matches dispatches with that mode (<code>new DispatchedMessage(OrderPlaced::class, null, DispatchMode::OUTBOX)</code>
+is what <code>assertStoredInOutbox()</code> uses). You can combine it with PHPUnit's logical constraints:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="k">use</span> <span class="nx">App\Application\Command\DeleteTask</span><span class="p">;</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\Constraint\LogicalNot</span><span class="p">;</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\Constraint\LogicalOr</span><span class="p">;</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\Constraint\DispatchedMessage</span><span class="p">;</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">;</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">ConstraintExamplesTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="p">{</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_constraint</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="p">{</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>        <span class="nv">$bus</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">FakeCommandBus</span><span class="p">();</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>        <span class="nv">$bus</span><span class="o">-&gt;</span><span class="na">dispatch</span><span class="p">(</span><span class="k">new</span> <span class="nx">CreateTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertThat</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="k">new</span> <span class="nx">DispatchedMessage</span><span class="p">(</span><span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">));</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertThat</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="k">new</span> <span class="nx">LogicalNot</span><span class="p">(</span><span class="k">new</span> <span class="nx">DispatchedMessage</span><span class="p">(</span><span class="nx">DeleteTask</span><span class="o">::</span><span class="na">class</span><span class="p">)));</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertThat</span><span class="p">(</span><span class="nv">$bus</span><span class="p">,</span> <span class="nx">LogicalOr</span><span class="o">::</span><span class="na">fromConstraints</span><span class="p">(</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a>            <span class="k">new</span> <span class="nx">DispatchedMessage</span><span class="p">(</span><span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">),</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a>            <span class="k">new</span> <span class="nx">DispatchedMessage</span><span class="p">(</span><span class="nx">DeleteTask</span><span class="o">::</span><span class="na">class</span><span class="p">),</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>        <span class="p">));</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>    <span class="p">}</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="testing-handlers-directly">Testing handlers directly</h2>
+<p>Handlers are services with a typed <code>__invoke()</code> method. To test one, create it with real or
+in-memory dependencies and call it with a message. No bus is involved:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Unit</span><span class="p">;</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTaskHandler</span><span class="p">;</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="k">use</span> <span class="nx">App\Application\Query\FindTask</span><span class="p">;</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="k">use</span> <span class="nx">App\Application\Query\FindTaskHandler</span><span class="p">;</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">use</span> <span class="nx">App\Tests\Double\InMemoryTaskRepository</span><span class="p">;</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskHandlersTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="p">{</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_create_then_find</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>    <span class="p">{</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>        <span class="nv">$repository</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">InMemoryTaskRepository</span><span class="p">();</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>        <span class="p">(</span><span class="k">new</span> <span class="nx">CreateTaskHandler</span><span class="p">(</span><span class="nv">$repository</span><span class="p">))(</span><span class="k">new</span> <span class="nx">CreateTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>        <span class="nv">$task</span> <span class="o">=</span> <span class="p">(</span><span class="k">new</span> <span class="nx">FindTaskHandler</span><span class="p">(</span><span class="nv">$repository</span><span class="p">))(</span><span class="k">new</span> <span class="nx">FindTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">));</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="s1">'Write docs'</span><span class="p">,</span> <span class="nv">$task</span><span class="o">-&gt;</span><span class="na">name</span><span class="p">);</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a>    <span class="p">}</span>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="p">}</span>
+</code></pre></div>
+<p>When you call an <code>EnvelopeAware</code> handler directly and it reads <code>$this-&gt;getEnvelope()</code>,
+first pass an envelope with <code>$handler-&gt;setEnvelope(new Envelope($message))</code>.</p>
+<h2 id="swapping-the-buses-for-fakes-in-the-test-container">Swapping the buses for fakes in the test container</h2>
+<p>Kernel and web tests use the real services. To make everything that depends on
+<code>CommandBusInterface</code>, <code>QueryBusInterface</code> or <code>EventBusInterface</code> receive a fake, redefine
+the interface aliases for the <code>test</code> environment. Use either <code>config/services_test.yaml</code> or
+a <code>when@test</code> block in <code>config/services.yaml</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># config/services.yaml</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="nt">when@test</span><span class="p">:</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">    </span><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">:</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Testing\FakeQueryBus</span><span class="p">:</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Testing\FakeEventBus</span><span class="p">:</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Contract\CommandBusInterface</span><span class="p">:</span>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="w">            </span><span class="nt">alias</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SomeWork\CqrsBundle\Testing\FakeCommandBus</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Contract\QueryBusInterface</span><span class="p">:</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a><span class="w">            </span><span class="nt">alias</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SomeWork\CqrsBundle\Testing\FakeQueryBus</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="w">        </span><span class="nt">SomeWork\CqrsBundle\Contract\EventBusInterface</span><span class="p">:</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="w">            </span><span class="nt">alias</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">SomeWork\CqrsBundle\Testing\FakeEventBus</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="w">            </span><span class="nt">public</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p>Application configuration overrides the aliases the bundle registers. Every service that
+type-hints an interface then gets the fake. Fetch the same instance from the test container
+to configure it and assert on it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Functional</span><span class="p">;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="k">use</span> <span class="nx">App\Application\Query\FindTask</span><span class="p">;</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeCommandBus</span><span class="p">;</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Testing\FakeQueryBus</span><span class="p">;</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a><span class="k">use</span> <span class="nx">Symfony\Bundle\FrameworkBundle\Test\WebTestCase</span><span class="p">;</span>
+<a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskControllerTest</span> <span class="k">extends</span> <span class="nx">WebTestCase</span>
+<a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="p">{</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a>    <span class="k">use</span> <span class="nx">CqrsAssertionsTrait</span><span class="p">;</span>
+<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a>
+<a id="__codelineno-8-18" name="__codelineno-8-18" href="#__codelineno-8-18"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_post_dispatches_create_task</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-8-19" name="__codelineno-8-19" href="#__codelineno-8-19"></a>    <span class="p">{</span>
+<a id="__codelineno-8-20" name="__codelineno-8-20" href="#__codelineno-8-20"></a>        <span class="nv">$client</span> <span class="o">=</span> <span class="k">static</span><span class="o">::</span><span class="na">createClient</span><span class="p">();</span>
+<a id="__codelineno-8-21" name="__codelineno-8-21" href="#__codelineno-8-21"></a>
+<a id="__codelineno-8-22" name="__codelineno-8-22" href="#__codelineno-8-22"></a>        <span class="nv">$client</span><span class="o">-&gt;</span><span class="na">request</span><span class="p">(</span><span class="s1">'POST'</span><span class="p">,</span> <span class="s1">'/tasks'</span><span class="p">,</span> <span class="nx">server</span><span class="o">:</span> <span class="p">[</span><span class="s1">'CONTENT_TYPE'</span> <span class="o">=&gt;</span> <span class="s1">'application/json'</span><span class="p">],</span> <span class="nx">content</span><span class="o">:</span> <span class="s1">'{"name":"Write docs"}'</span><span class="p">);</span>
+<a id="__codelineno-8-23" name="__codelineno-8-23" href="#__codelineno-8-23"></a>
+<a id="__codelineno-8-24" name="__codelineno-8-24" href="#__codelineno-8-24"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertResponseStatusCodeSame</span><span class="p">(</span><span class="mi">201</span><span class="p">);</span>
+<a id="__codelineno-8-25" name="__codelineno-8-25" href="#__codelineno-8-25"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertDispatched</span><span class="p">(</span>
+<a id="__codelineno-8-26" name="__codelineno-8-26" href="#__codelineno-8-26"></a>            <span class="k">static</span><span class="o">::</span><span class="na">getContainer</span><span class="p">()</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">FakeCommandBus</span><span class="o">::</span><span class="na">class</span><span class="p">),</span>
+<a id="__codelineno-8-27" name="__codelineno-8-27" href="#__codelineno-8-27"></a>            <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">,</span>
+<a id="__codelineno-8-28" name="__codelineno-8-28" href="#__codelineno-8-28"></a>            <span class="k">static</span> <span class="nx">fn</span> <span class="p">(</span><span class="nx">CreateTask</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">bool</span> <span class="o">=&gt;</span> <span class="s1">'Write docs'</span> <span class="o">===</span> <span class="nv">$command</span><span class="o">-&gt;</span><span class="na">name</span><span class="p">,</span>
+<a id="__codelineno-8-29" name="__codelineno-8-29" href="#__codelineno-8-29"></a>        <span class="p">);</span>
+<a id="__codelineno-8-30" name="__codelineno-8-30" href="#__codelineno-8-30"></a>    <span class="p">}</span>
+<a id="__codelineno-8-31" name="__codelineno-8-31" href="#__codelineno-8-31"></a>
+<a id="__codelineno-8-32" name="__codelineno-8-32" href="#__codelineno-8-32"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_get_renders_the_query_result</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-8-33" name="__codelineno-8-33" href="#__codelineno-8-33"></a>    <span class="p">{</span>
+<a id="__codelineno-8-34" name="__codelineno-8-34" href="#__codelineno-8-34"></a>        <span class="nv">$client</span> <span class="o">=</span> <span class="k">static</span><span class="o">::</span><span class="na">createClient</span><span class="p">();</span>
+<a id="__codelineno-8-35" name="__codelineno-8-35" href="#__codelineno-8-35"></a>        <span class="k">static</span><span class="o">::</span><span class="na">getContainer</span><span class="p">()</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">FakeQueryBus</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">willReturnFor</span><span class="p">(</span><span class="nx">FindTask</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="p">[</span><span class="s1">'id'</span> <span class="o">=&gt;</span> <span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'name'</span> <span class="o">=&gt;</span> <span class="s1">'Write docs'</span><span class="p">]);</span>
+<a id="__codelineno-8-36" name="__codelineno-8-36" href="#__codelineno-8-36"></a>
+<a id="__codelineno-8-37" name="__codelineno-8-37" href="#__codelineno-8-37"></a>        <span class="nv">$client</span><span class="o">-&gt;</span><span class="na">request</span><span class="p">(</span><span class="s1">'GET'</span><span class="p">,</span> <span class="s1">'/tasks/task-1'</span><span class="p">);</span>
+<a id="__codelineno-8-38" name="__codelineno-8-38" href="#__codelineno-8-38"></a>
+<a id="__codelineno-8-39" name="__codelineno-8-39" href="#__codelineno-8-39"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertResponseIsSuccessful</span><span class="p">();</span>
+<a id="__codelineno-8-40" name="__codelineno-8-40" href="#__codelineno-8-40"></a>    <span class="p">}</span>
+<a id="__codelineno-8-41" name="__codelineno-8-41" href="#__codelineno-8-41"></a><span class="p">}</span>
+</code></pre></div>
+<p>The fakes are ordinary shared services, so each freshly booted kernel gets new, empty
+instances. The test client reboots the kernel before each request after the first one, so
+a fake configured before the second request would be lost: call <code>$client-&gt;disableReboot()</code>
+when a test sends several requests, and configure the fakes after <code>createClient()</code>. Only the interface aliases change. The concrete <code>SomeWork\CqrsBundle\Bus\CommandBus</code>,
+<code>QueryBus</code> and <code>EventBus</code> services stay registered and public, and services that type-hint
+those classes still get the real buses.</p>
+<h2 id="kernel-tests-through-the-real-buses">Kernel tests through the real buses</h2>
+<p>To test the whole flow (stamp pipeline, Messenger middleware, handlers), boot the kernel and
+fetch the buses from the container:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Integration</span><span class="p">;</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\CreateTask</span><span class="p">;</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="k">use</span> <span class="nx">App\Application\Query\FindTask</span><span class="p">;</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\CommandBus</span><span class="p">;</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\QueryBus</span><span class="p">;</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="k">use</span> <span class="nx">Symfony\Bundle\FrameworkBundle\Test\KernelTestCase</span><span class="p">;</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TaskFlowTest</span> <span class="k">extends</span> <span class="nx">KernelTestCase</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a><span class="p">{</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_a_created_task_can_be_found</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="p">{</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">bootKernel</span><span class="p">();</span>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>        <span class="nv">$container</span> <span class="o">=</span> <span class="k">static</span><span class="o">::</span><span class="na">getContainer</span><span class="p">();</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>        <span class="c1">// The concrete services are the real buses even when the interfaces point to fakes.</span>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>        <span class="nv">$commandBus</span> <span class="o">=</span> <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">CommandBus</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a>        <span class="nv">$queryBus</span> <span class="o">=</span> <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">QueryBus</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-9-23" name="__codelineno-9-23" href="#__codelineno-9-23"></a>
+<a id="__codelineno-9-24" name="__codelineno-9-24" href="#__codelineno-9-24"></a>        <span class="nv">$commandBus</span><span class="o">-&gt;</span><span class="na">dispatchSync</span><span class="p">(</span><span class="k">new</span> <span class="nx">CreateTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-9-25" name="__codelineno-9-25" href="#__codelineno-9-25"></a>        <span class="nv">$task</span> <span class="o">=</span> <span class="nv">$queryBus</span><span class="o">-&gt;</span><span class="na">ask</span><span class="p">(</span><span class="k">new</span> <span class="nx">FindTask</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">));</span>
+<a id="__codelineno-9-26" name="__codelineno-9-26" href="#__codelineno-9-26"></a>
+<a id="__codelineno-9-27" name="__codelineno-9-27" href="#__codelineno-9-27"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="s1">'Write docs'</span><span class="p">,</span> <span class="nv">$task</span><span class="o">-&gt;</span><span class="na">name</span><span class="p">);</span>
+<a id="__codelineno-9-28" name="__codelineno-9-28" href="#__codelineno-9-28"></a>    <span class="p">}</span>
+<a id="__codelineno-9-29" name="__codelineno-9-29" href="#__codelineno-9-29"></a><span class="p">}</span>
+</code></pre></div>
+<p>If you did not swap in fakes, fetching <code>CommandBusInterface::class</code> and <code>QueryBusInterface::class</code>
+works as well, because both aliases are public.</p>
+<p><code>dispatchSync()</code> and <code>ask()</code> return the handler result. When the single handler throws,
+they rethrow its exception unwrapped, so <code>expectException(TaskNotFound::class)</code> works
+directly. Messages that the dispatch mode or routing sends to an asynchronous transport are
+not handled during the test. In the test environment, point those transports at Messenger's
+in-memory transport and assert on what was sent:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1"># config/packages/messenger.yaml</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="nt">when@test</span><span class="p">:</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="nt">framework</span><span class="p">:</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">        </span><span class="nt">messenger</span><span class="p">:</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">            </span><span class="nt">transports</span><span class="p">:</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">                </span><span class="c1"># serialize=true encodes and decodes each message, as a real transport does,</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">                </span><span class="c1"># so a message that cannot be serialized fails the test instead of production.</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">                </span><span class="nt">async</span><span class="p">:</span><span class="w"> </span><span class="s">'in-memory://?serialize=true'</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Integration</span><span class="p">;</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="k">use</span> <span class="nx">App\Application\Event\TaskCreated</span><span class="p">;</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\EventBus</span><span class="p">;</span>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="k">use</span> <span class="nx">Symfony\Bundle\FrameworkBundle\Test\KernelTestCase</span><span class="p">;</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">AsyncEventTest</span> <span class="k">extends</span> <span class="nx">KernelTestCase</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a><span class="p">{</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_task_created_goes_to_the_async_transport</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="p">{</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">bootKernel</span><span class="p">();</span>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>        <span class="nv">$container</span> <span class="o">=</span> <span class="k">static</span><span class="o">::</span><span class="na">getContainer</span><span class="p">();</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>        <span class="c1">// TaskCreated is routed to the "async" transport (Messenger routing or somework_cqrs.transports).</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>        <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">EventBus</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">dispatchAsync</span><span class="p">(</span><span class="k">new</span> <span class="nx">TaskCreated</span><span class="p">(</span><span class="s1">'task-1'</span><span class="p">,</span> <span class="s1">'Write docs'</span><span class="p">));</span>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>        <span class="nv">$sent</span> <span class="o">=</span> <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="s1">'messenger.transport.async'</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">getSent</span><span class="p">();</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertCount</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">$sent</span><span class="p">);</span>
+<a id="__codelineno-11-23" name="__codelineno-11-23" href="#__codelineno-11-23"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertInstanceOf</span><span class="p">(</span><span class="nx">TaskCreated</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nv">$sent</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">-&gt;</span><span class="na">getMessage</span><span class="p">());</span>
+<a id="__codelineno-11-24" name="__codelineno-11-24" href="#__codelineno-11-24"></a>    <span class="p">}</span>
+<a id="__codelineno-11-25" name="__codelineno-11-25" href="#__codelineno-11-25"></a><span class="p">}</span>
+</code></pre></div>
+<p>To assert on what went through the real buses without a transport, use Messenger's
+profiler integration: with the profiler enabled in the <code>test</code> environment
+(<code>framework.profiler.enabled: true</code>) each Messenger bus is decorated by a
+<code>TraceableMessageBus</code>. While collecting (<code>framework.profiler.collect: true</code>, or
+<code>$client-&gt;enableProfiler()</code> before a request), <code>getDispatchedMessages()</code> on the bus service
+(<code>messenger.default_bus</code>, or an id you configured under <code>somework_cqrs.buses</code>, such as
+<code>event.bus</code>) lists each dispatched message with its stamps.</p>
+<p>To handle what was sent to an in-memory transport, run a worker in the test, for example
+the <code>messenger:consume async --limit=1 --time-limit=5</code> command through <code>CommandTester</code>
+(the time limit keeps an empty transport from hanging the test; it does not fail it, so
+assert on what the handler did).</p>
+<p><code>dispatchAsync()</code> requires an async bus (<code>somework_cqrs.buses.event_async</code> for events,
+<code>command_async</code> for commands). Without one, the bus throws
+<code>AsyncBusNotConfiguredException</code>.</p>
+<h2 id="code-that-stores-messages-in-the-outbox">Code that stores messages in the outbox</h2>
+<p>Code that stores messages through the buses is tested with the fake buses. For the
+<code>PlaceOrderHandler</code> of <a href="../outbox/#through-the-buses">Through the buses</a>, which dispatches the
+<code>#[Outbox]</code> event <code>OrderPlaced</code> with the default mode:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="x">$connection = DriverManager::getConnection(['driver' =&gt; 'pdo_sqlite', 'memory' =&gt; true]);</span>
+<a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a><span class="x">$connection-&gt;executeStatement('CREATE TABLE orders (id VARCHAR(36) NOT NULL)');</span>
+<a id="__codelineno-12-3" name="__codelineno-12-3" href="#__codelineno-12-3"></a><span class="x">$eventBus = new FakeEventBus();</span>
+<a id="__codelineno-12-4" name="__codelineno-12-4" href="#__codelineno-12-4"></a>
+<a id="__codelineno-12-5" name="__codelineno-12-5" href="#__codelineno-12-5"></a><span class="x">(new PlaceOrderHandler($connection, $eventBus))(new PlaceOrder('order-1'));</span>
+<a id="__codelineno-12-6" name="__codelineno-12-6" href="#__codelineno-12-6"></a>
+<a id="__codelineno-12-7" name="__codelineno-12-7" href="#__codelineno-12-7"></a><span class="x">self::assertStoredInOutbox($eventBus, OrderPlaced::class, static fn (OrderPlaced $event): bool =&gt; 'order-1' === $event-&gt;orderId);</span>
+</code></pre></div>
+<p>The assertion matches a dispatch with <code>DispatchMode::OUTBOX</code>, or with the default mode of a
+class carrying <code>#[Outbox]</code>, and the fakes return an envelope with an <code>OutboxStoredStamp</code> (with a
+generated id) for it. A fake bus does not know the configuration: a <code>dispatch()</code> with the default
+mode that <code>dispatch_modes</code> sends to the outbox is recorded as <code>DispatchMode::DEFAULT</code>, so check it
+with <code>assertDispatched()</code>, or test the resolution in a kernel test as below. The failure message
+lists each recorded dispatch with its mode.</p>
+<p>Code that calls <code>OutboxWriter::store()</code> itself type-hints <code>Contract\Outbox\OutboxWriterInterface</code>
+(the container autowires it to the writer), and unit tests pass a <code>Testing\FakeOutboxWriter</code>.
+It records each stored message with <code>DispatchMode::OUTBOX</code> (and the transport given to <code>store()</code>
+as a <code>TransportNamesStamp</code>), so the outbox assertions work on it too:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="x">$writer = new FakeOutboxWriter();</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="x">(new ExportOrderHandler($writer))(new ExportOrder('order-1'));</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="x">self::assertStoredInOutbox($writer, OrderExported::class, static fn (OrderExported $event): bool =&gt; 'order-1' === $event-&gt;orderId);</span>
+</code></pre></div>
+<p><code>getStoredRows()</code> returns the rows <code>store()</code> returned (encoded with PHP's serializer), and
+<code>willThrow()</code> makes <code>store()</code> fail, e.g. with <code>OutboxRequiresTransactionException</code>. The fake does
+not resolve the configured transports and checks no transaction.</p>
+<p>To test the outbox itself, run the code against a real outbox table. The outbox stores its rows
+in the transaction of the code under test, so it uses the same connection: in the <code>test</code>
+environment, point that connection at a test database (an SQLite file or in-memory database is
+enough), and create the table before the code under test opens its transaction (the automatic
+setup never runs inside one). An outbox on a connection of its own only works when the code
+under test opens its transaction on that connection. Then read the stored rows through the <code>OutboxStorage</code>
+service, or relay them to an in-memory transport:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Integration</span><span class="p">;</span>
+<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
+<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="k">use</span> <span class="nx">App\Application\Command\PlaceOrder</span><span class="p">;</span>
+<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="k">use</span> <span class="nx">App\Domain\Event\OrderPlaced</span><span class="p">;</span>
+<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\CommandBus</span><span class="p">;</span>
+<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Outbox\OutboxSchema</span><span class="p">;</span>
+<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage</span><span class="p">;</span>
+<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">use</span> <span class="nx">Symfony\Bundle\FrameworkBundle\Console\Application</span><span class="p">;</span>
+<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="k">use</span> <span class="nx">Symfony\Bundle\FrameworkBundle\Test\KernelTestCase</span><span class="p">;</span>
+<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="k">use</span> <span class="nx">Symfony\Component\Console\Tester\CommandTester</span><span class="p">;</span>
+<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a>
+<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">PlaceOrderOutboxTest</span> <span class="k">extends</span> <span class="nx">KernelTestCase</span>
+<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="p">{</span>
+<a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">test_the_order_placed_event_is_stored_then_relayed</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-14-19" name="__codelineno-14-19" href="#__codelineno-14-19"></a>    <span class="p">{</span>
+<a id="__codelineno-14-20" name="__codelineno-14-20" href="#__codelineno-14-20"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">bootKernel</span><span class="p">();</span>
+<a id="__codelineno-14-21" name="__codelineno-14-21" href="#__codelineno-14-21"></a>        <span class="nv">$container</span> <span class="o">=</span> <span class="k">static</span><span class="o">::</span><span class="na">getContainer</span><span class="p">();</span>
+<a id="__codelineno-14-22" name="__codelineno-14-22" href="#__codelineno-14-22"></a>        <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">OutboxSchema</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">setup</span><span class="p">();</span>
+<a id="__codelineno-14-23" name="__codelineno-14-23" href="#__codelineno-14-23"></a>
+<a id="__codelineno-14-24" name="__codelineno-14-24" href="#__codelineno-14-24"></a>        <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">CommandBus</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">dispatchSync</span><span class="p">(</span><span class="k">new</span> <span class="nx">PlaceOrder</span><span class="p">(</span><span class="s1">'order-1'</span><span class="p">));</span>
+<a id="__codelineno-14-25" name="__codelineno-14-25" href="#__codelineno-14-25"></a>
+<a id="__codelineno-14-26" name="__codelineno-14-26" href="#__codelineno-14-26"></a>        <span class="c1">// Each row records the message class in its "type" header.</span>
+<a id="__codelineno-14-27" name="__codelineno-14-27" href="#__codelineno-14-27"></a>        <span class="nv">$rows</span> <span class="o">=</span> <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="nx">OutboxStorage</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">fetchUnpublished</span><span class="p">(</span><span class="mi">10</span><span class="p">);</span>
+<a id="__codelineno-14-28" name="__codelineno-14-28" href="#__codelineno-14-28"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertCount</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">$rows</span><span class="p">);</span>
+<a id="__codelineno-14-29" name="__codelineno-14-29" href="#__codelineno-14-29"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="nx">OrderPlaced</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nb">json_decode</span><span class="p">(</span><span class="nv">$rows</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">-&gt;</span><span class="na">headers</span><span class="p">,</span> <span class="k">true</span><span class="p">)[</span><span class="s1">'type'</span><span class="p">]);</span>
+<a id="__codelineno-14-30" name="__codelineno-14-30" href="#__codelineno-14-30"></a>
+<a id="__codelineno-14-31" name="__codelineno-14-31" href="#__codelineno-14-31"></a>        <span class="nv">$relay</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">CommandTester</span><span class="p">((</span><span class="k">new</span> <span class="nx">Application</span><span class="p">(</span><span class="nx">self</span><span class="o">::</span><span class="nv">$kernel</span><span class="p">))</span><span class="o">-&gt;</span><span class="na">find</span><span class="p">(</span><span class="s1">'somework:cqrs:outbox:relay'</span><span class="p">));</span>
+<a id="__codelineno-14-32" name="__codelineno-14-32" href="#__codelineno-14-32"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertSame</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nv">$relay</span><span class="o">-&gt;</span><span class="na">execute</span><span class="p">([]));</span>
+<a id="__codelineno-14-33" name="__codelineno-14-33" href="#__codelineno-14-33"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertCount</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">$container</span><span class="o">-&gt;</span><span class="na">get</span><span class="p">(</span><span class="s1">'messenger.transport.async'</span><span class="p">)</span><span class="o">-&gt;</span><span class="na">getSent</span><span class="p">());</span>
+<a id="__codelineno-14-34" name="__codelineno-14-34" href="#__codelineno-14-34"></a>    <span class="p">}</span>
+<a id="__codelineno-14-35" name="__codelineno-14-35" href="#__codelineno-14-35"></a><span class="p">}</span>
+</code></pre></div>
+<p>The relay resets the services after each row it handles in the test's process (no transport,
+<code>sync://</code>), which also empties the in-memory transports: pass <code>'--no-reset' =&gt; true</code> when the
+test relays such rows and then asserts on <code>getSent()</code>.</p>
+<p>To test middleware that skips the relay's dispatch, build the envelope as the relay dispatches it:
+<code>new Envelope($message, [new RelayedFromOutboxStamp()])</code>.</p>
+<h2 id="tips">Tips</h2>
+<ul>
+<li><strong>Type-hint the interfaces</strong> (<code>CommandBusInterface</code>, <code>QueryBusInterface</code>,
+  <code>EventBusInterface</code>) in your services. Unit tests can then pass a fake, and the test
+  container can swap the aliases.</li>
+<li><strong>Unit-test handlers without buses.</strong> Call <code>__invoke()</code> directly. Use the fakes to test the
+  code that dispatches.</li>
+<li><strong>Check message properties</strong> with the <code>assertDispatched()</code> callback, or read
+  <code>getDispatched()[n]-&gt;message</code>.</li>
+<li><strong>Check the dispatch mode</strong> through the <code>mode</code> entry of a record, not by relying on
+  <code>dispatch_modes</code> configuration: the fakes record the mode the caller passed.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

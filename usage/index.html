@@ -1,0 +1,2039 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CQRS helpers for Symfony Messenger">
+      
+      
+      
+        <link rel="canonical" href="https://somework.github.io/cqrs/usage/">
+      
+      
+        <link rel="prev" href="../getting-started/">
+      
+      
+        <link rel="next" href="../reference/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Usage Guide - SomeWork CQRS Bundle</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#usage-guide" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-header__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SomeWork CQRS Bundle
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Usage Guide
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-nav__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SomeWork CQRS Bundle
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#registering-handlers-with-attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering handlers with attributes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Registering handlers with attributes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fire-and-forget-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fire-and-forget events
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interface-autoconfiguration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interface autoconfiguration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attribute-only-handlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute-only handlers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receiving-the-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receiving the envelope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#console-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console tooling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Console tooling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listing-handlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing handlers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generating-a-message-and-its-handler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating a message and its handler
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspecting-transports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting transports
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#messenger-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Messenger integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-synchronous-or-asynchronous-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing synchronous or asynchronous dispatch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choosing synchronous or asynchronous dispatch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#toggling-dispatchaftercurrentbusstamp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toggling DispatchAfterCurrentBusStamp
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dispatching-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dispatching commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dispatching commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passing-stamps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passing stamps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exceptions-from-dispatchsync-and-ask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exceptions from dispatchSync() and ask()
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asking-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Asking queries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dispatching-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dispatching events
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-routing-with-the-asynchronous-attribute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Async routing with the #[Asynchronous] attribute
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-providers-and-correlation-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata providers and correlation IDs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../middleware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Middleware & Stamp Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../retry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retry Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transactional Outbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../event-ordering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Ordering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rate-limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rate Limiting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#registering-handlers-with-attributes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Registering handlers with attributes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Registering handlers with attributes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fire-and-forget-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fire-and-forget events
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#interface-autoconfiguration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Interface autoconfiguration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#attribute-only-handlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Attribute-only handlers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#receiving-the-envelope" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Receiving the envelope
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#console-tooling" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Console tooling
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Console tooling">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#listing-handlers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Listing handlers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generating-a-message-and-its-handler" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Generating a message and its handler
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspecting-transports" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inspecting transports
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#health-checks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health checks
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#messenger-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Messenger integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choosing-synchronous-or-asynchronous-dispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing synchronous or asynchronous dispatch
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Choosing synchronous or asynchronous dispatch">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#toggling-dispatchaftercurrentbusstamp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Toggling DispatchAfterCurrentBusStamp
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dispatching-commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dispatching commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Dispatching commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#passing-stamps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passing stamps
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exceptions-from-dispatchsync-and-ask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exceptions from dispatchSync() and ask()
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#asking-queries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Asking queries
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dispatching-events" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dispatching events
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#async-routing-with-the-asynchronous-attribute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Async routing with the #[Asynchronous] attribute
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#metadata-providers-and-correlation-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metadata providers and correlation IDs
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="usage-guide">Usage guide</h1>
+<p>This bundle layers a CQRS-friendly API on top of Symfony Messenger. It provides
+attribute-based autoconfiguration, optional interfaces, and tooling to keep your
+handler catalogue discoverable.</p>
+<p>All examples assume that your handlers are services with <code>autoconfigure</code>
+enabled, which is the default for everything in <code>src/</code> in a Symfony
+application.</p>
+<h2 id="registering-handlers-with-attributes">Registering handlers with attributes</h2>
+<p>Annotate handlers with the provided attributes to register them as Messenger
+handlers. Type the first parameter of <code>__invoke()</code> with the message class; the
+return type is up to you (commands may return a value for <code>dispatchSync()</code>,
+queries return their result, events return <code>void</code>).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Command</span><span class="p">;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">ApproveInvoice</span> <span class="k">implements</span> <span class="nx">Command</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="p">{</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="k">public</span> <span class="k">readonly</span> <span class="nx">string</span> <span class="nv">$invoiceId</span><span class="p">,</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>    <span class="p">}</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsCommandHandler</span><span class="p">;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="p">#[</span><span class="nd">AsCommandHandler</span><span class="p">(</span><span class="nx">command</span><span class="o">:</span> <span class="nx">ApproveInvoice</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">ApproveInvoiceHandler</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="p">{</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">ApproveInvoice</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="p">{</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>        <span class="c1">// Handle the command…</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>    <span class="p">}</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>The same pattern exists for queries (<code>#[AsQueryHandler(query: ...)]</code>) and
+events (<code>#[AsEventHandler(event: ...)]</code>). All three attributes live in
+<code>SomeWork\CqrsBundle\Attribute</code>, are repeatable, and accept an optional <code>bus</code>
+argument:</p>
+<ul>
+<li>Without <code>bus</code>, the handler is registered on the synchronous bus of its type
+  (<code>buses.command</code>, <code>buses.query</code>, or <code>buses.event</code>, falling back to
+  <code>default_bus</code>) and, when one is configured, on the asynchronous bus of its
+  type (<code>buses.command_async</code> or <code>buses.event_async</code>). Workers consuming
+  asynchronous messages therefore find the handler without extra
+  configuration.</li>
+<li>With <code>bus: 'my.bus'</code>, the handler is registered on that Messenger bus only. The
+  facades dispatch on the buses configured under <code>buses</code>: a handler pinned to another
+  bus is not found by them (a command fails with <code>NoHandlerException</code> from
+  <code>dispatchSync()</code> and Messenger's <code>NoHandlerForMessageException</code> from <code>dispatch()</code>,
+  an event is ignored), and a handler pinned to the sync bus is not found by a worker
+  consuming the async bus.</li>
+</ul>
+<p><code>#[AsEventHandler]</code> also accepts <code>priority</code> (handlers of the same event with a
+higher priority run first) and <code>fromTransport</code>: a worker then only runs the
+handler for messages it received from that transport, e.g. to keep a slow
+projection on its own transport. Synchronous dispatches still run the handler,
+because Messenger only restricts handlers of received messages. Both are passed
+to Messenger's handler tag, and a <code>fromTransport</code> that is not a Messenger
+transport fails the compilation.</p>
+<p>Commands and queries must have exactly one handler. Two handlers for the same
+command or query on the same bus make the container compilation fail, and so
+does a handler registered for a parent class or interface of the message next
+to the message's own handler (Messenger would run both). A missing handler is
+reported when the message is dispatched. Events may have
+any number of handlers.</p>
+<h3 id="fire-and-forget-events">Fire-and-forget events</h3>
+<p>Messenger normally throws <code>NoHandlerForMessageException</code> when a message has no
+handler. The bundle adds an internal middleware (<code>AllowNoHandlerMiddleware</code>) to
+every configured event bus (<code>buses.event</code>, <code>buses.event_async</code>, or the
+<code>default_bus</code> fallback). It catches the exception and returns the original
+envelope when the message implements <code>SomeWork\CqrsBundle\Contract\Event</code>, so
+you can publish integration or domain events before any projection subscribes
+to them. Commands and queries keep Messenger's default behaviour so that gaps in
+their handler catalogues still surface.</p>
+<h2 id="interface-autoconfiguration">Interface autoconfiguration</h2>
+<p>If you prefer interfaces over attributes, implement one of the handler marker
+interfaces (<code>CommandHandler</code>, <code>QueryHandler</code>, <code>EventHandler</code> in
+<code>SomeWork\CqrsBundle\Contract</code>) and type-hint the message on <code>__invoke()</code>. The
+interfaces declare no method, because PHP does not allow an implementation to
+narrow a parameter type; the compiler pass reads the type of the first
+parameter of <code>__invoke()</code> to find out which message the handler is responsible
+for. A union type (<code>__invoke(InvoicePaid|InvoiceVoided $event)</code>) registers the
+handler for each member. Every member must match an interface the handler
+implements: a process manager that implements <code>CommandHandler</code> and
+<code>EventHandler</code> can accept <code>ShipOrder|OrderPaid</code>, while a <code>CommandHandler</code> that
+also accepts an event fails the container compilation.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">namespace</span> <span class="nx">App\ReadModel</span><span class="p">;</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">use</span> <span class="nx">App\Domain\Event\InvoicePaid</span><span class="p">;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EventHandler</span><span class="p">;</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">InvoicePaidProjector</span> <span class="k">implements</span> <span class="nx">EventHandler</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="p">{</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">InvoicePaid</span> <span class="nv">$event</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>    <span class="p">{</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="c1">// Persist read model changes here.</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="p">}</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="p">}</span>
+</code></pre></div>
+<p>A handler that implements an interface but has no typed <code>__invoke()</code> parameter
+makes the container compilation fail with a message asking you to add the type
+or the attribute.</p>
+<p>When wiring services manually with the <code>messenger.message_handler</code> tag you can
+set the <code>method</code> attribute to point at a handler method other than <code>__invoke()</code>.
+The compiler pass reflects that method to determine the message type when
+<code>handles</code> is not provided.</p>
+<p>The <code>handles</code> attribute accepts either a single message class string, an array
+of class strings, or an associative array where the keys are the message
+classes. Associative definitions let you pair classes with method names or
+options understood by Messenger (for example <code>['method' =&gt; 'handle']</code> or
+<code>['from_transport' =&gt; 'async']</code>). The bundle records the message classes from
+either format so that its metadata and console tooling match what Messenger
+registers.</p>
+<h2 id="attribute-only-handlers">Attribute-only handlers</h2>
+<p>The marker interfaces are optional. A class annotated with the handler
+attribute alone is discovered and registered:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsCommandHandler</span><span class="p">;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">#[</span><span class="nd">AsCommandHandler</span><span class="p">(</span><span class="nx">command</span><span class="o">:</span> <span class="nx">CreateTask</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">CreateTaskHandler</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">{</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">CreateTask</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="p">{</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>        <span class="c1">// Handle the command</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>    <span class="p">}</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>The attribute's <code>command</code>, <code>query</code>, or <code>event</code> argument declares the handled
+message. The attribute type must match the marker interface the message class
+implements (<code>#[AsCommandHandler]</code> for an event fails the container
+compilation); for a message that implements none of them, the attribute type
+decides. When a class has both the attribute and a handler marker interface,
+the attribute defines the registration.</p>
+<h2 id="receiving-the-envelope">Receiving the envelope</h2>
+<p>A handler that needs the Messenger envelope of the message it handles (stamps, metadata,
+the idempotency key) implements <code>EnvelopeAware</code> and uses <code>EnvelopeAwareTrait</code>. The bundle
+passes the envelope right before it calls the handler; <code>$this-&gt;getEnvelope()</code> returns it.
+Call it only while the handler runs: afterwards the handler service still holds the envelope
+of the last message it handled.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\CommandHandler</span><span class="p">;</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EnvelopeAware</span><span class="p">;</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait</span><span class="p">;</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Stamp\MessageMetadataStamp</span><span class="p">;</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">CancelOrderHandler</span> <span class="k">implements</span> <span class="nx">CommandHandler</span><span class="p">,</span> <span class="nx">EnvelopeAware</span>
+<a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a><span class="p">{</span>
+<a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>    <span class="k">use</span> <span class="nx">EnvelopeAwareTrait</span><span class="p">;</span>
+<a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>
+<a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">CancelOrder</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="p">{</span>
+<a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>        <span class="nv">$correlationId</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">getEnvelope</span><span class="p">()</span><span class="o">-&gt;</span><span class="na">last</span><span class="p">(</span><span class="nx">MessageMetadataStamp</span><span class="o">::</span><span class="na">class</span><span class="p">)</span><span class="o">?-&gt;</span><span class="na">getCorrelationId</span><span class="p">();</span>
+<a id="__codelineno-4-17" name="__codelineno-4-17" href="#__codelineno-4-17"></a>
+<a id="__codelineno-4-18" name="__codelineno-4-18" href="#__codelineno-4-18"></a>        <span class="c1">// Cancel the order…</span>
+<a id="__codelineno-4-19" name="__codelineno-4-19" href="#__codelineno-4-19"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-4-20" name="__codelineno-4-20" href="#__codelineno-4-20"></a>    <span class="p">}</span>
+<a id="__codelineno-4-21" name="__codelineno-4-21" href="#__codelineno-4-21"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="console-tooling">Console tooling</h2>
+<p>The bundle registers these console commands:</p>
+<ul>
+<li><code>somework:cqrs:list</code> -- the handler catalogue.</li>
+<li><code>somework:cqrs:generate</code> -- scaffolds a message class and its handler.</li>
+<li><code>somework:cqrs:debug-transports</code> -- the transport configuration of the bundle.</li>
+<li><code>somework:cqrs:health</code> -- checks that handlers and transports can be built.</li>
+<li><code>somework:cqrs:outbox:relay</code>, <code>somework:cqrs:outbox:setup</code>,
+  <code>somework:cqrs:outbox:failed</code> and <code>somework:cqrs:outbox:purge</code> -- only when
+  the transactional outbox is enabled; see <a href="../outbox/">Transactional Outbox</a>.</li>
+</ul>
+<h3 id="listing-handlers">Listing handlers</h3>
+<p><code>somework:cqrs:list</code> prints one table per handler and bus, grouped into
+commands, queries, and events. A handler registered on both a synchronous and
+an asynchronous bus appears once per bus. Use <code>--type</code> (repeatable) to focus
+the output; an unknown type exits with code 2.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>$ bin/console somework:cqrs:list --type=command --type=query
+</code></pre></div>
+<p>Pass <code>--details</code> to inspect the configuration the bundle resolves for each
+message (the transports shown come from the <code>transports</code> configuration; the
+<code>#[Asynchronous]</code> attribute and <code>framework.messenger.routing</code> also send
+messages to transports, see <code>somework:cqrs:debug-transports</code>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>$ bin/console somework:cqrs:list --type=command --details
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>Commands
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>--------
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>╔═══════════════════╤═══════════════════════════════════════════════════════════════╗
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>║ Field             │ Value                                                         ║
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>╠═══════════════════╪═══════════════════════════════════════════════════════════════╣
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>║ Type              │ Command                                                       ║
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>║ Message           │ CreateTask                                                    ║
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>║ Handler           │ App\Task\CreateTaskHandler                                    ║
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>║ Service Id        │ App\Task\CreateTaskHandler                                    ║
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>║ Bus               │ command.bus                                                   ║
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>║ Dispatch Mode     │ sync                                                          ║
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>║ Async Defers      │ yes                                                           ║
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>║ Sync Transports   │ None                                                          ║
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>║ Async Transports  │ async                                                         ║
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>║ Retry Policy      │ SomeWork\CqrsBundle\Policy\NullRetryPolicy                   ║
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>║ Serializer        │ SomeWork\CqrsBundle\Policy\NullMessageSerializer             ║
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>║ Metadata Provider │ SomeWork\CqrsBundle\Policy\RandomCorrelationMetadataProvider ║
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>╚═══════════════════╧═══════════════════════════════════════════════════════════════╝
+</code></pre></div>
+<p>The detail rows correspond to the configuration resolved for the message:</p>
+<ul>
+<li><strong>Dispatch Mode</strong> -- the mode used when callers dispatch with
+  <code>DispatchMode::DEFAULT</code> (see
+  <a href="#choosing-synchronous-or-asynchronous-dispatch">Choosing synchronous or asynchronous dispatch</a>).</li>
+<li><strong>Async Defers</strong> -- whether <code>DispatchAfterCurrentBusStamp</code> is added when the
+  message is dispatched asynchronously. <code>n/a</code> appears for queries, which are
+  always synchronous.</li>
+<li><strong>Sync Transports</strong> / <strong>Async Transports</strong> -- the transport names from the
+  <code>transports</code> configuration.</li>
+<li><strong>Retry Policy</strong>, <strong>Serializer</strong>, and <strong>Metadata Provider</strong> -- the services
+  the container selected for the message, allowing you to verify overrides at a
+  glance.</li>
+</ul>
+<p>The <strong>Message</strong> column uses the configured naming strategy (<code>naming</code>); the
+default strategy shows the short class name.</p>
+<p><code>SomeWork\CqrsBundle\Registry\HandlerRegistry</code> holds the metadata behind the
+command and offers <code>all()</code>, <code>byType()</code>, and <code>getDisplayName()</code>. It is part of
+the public API; autowire it to inspect the registered handlers.</p>
+<h3 id="generating-a-message-and-its-handler">Generating a message and its handler</h3>
+<p><code>somework:cqrs:generate</code> takes the message type (<code>command</code>, <code>query</code>, or
+<code>event</code>) and the fully-qualified class name of the message as arguments. Quote
+the class name so that the shell keeps the backslashes:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>bin/console<span class="w"> </span>somework:cqrs:generate<span class="w"> </span><span class="nb">command</span><span class="w"> </span><span class="s1">'App\Application\Command\ShipOrder'</span>
+</code></pre></div>
+<p>The files are placed according to the PSR-4 mapping in your <code>composer.json</code>
+(a namespace that no PSR-4 prefix covers is refused unless <code>--dir</code> is given:
+Composer could not load the classes, and the service import of <code>src/</code> would
+fail),
+so <code>App\Application\Command\ShipOrder</code> becomes
+<code>src/Application/Command/ShipOrder.php</code> and
+<code>src/Application/Command/ShipOrderHandler.php</code>. The generated message
+implements the marker interface; the generated handler carries the matching
+attribute and a typed <code>__invoke()</code>. Options:</p>
+<ul>
+<li><code>--handler</code> -- fully-qualified class name of the handler (defaults to the
+  message class name followed by <code>Handler</code>).</li>
+<li><code>--dir</code> -- directory, relative to the project directory, that replaces the
+  directory mapped to the class's PSR-4 prefix. The target must stay inside the
+  project.</li>
+<li><code>--force</code> -- overwrite existing files instead of aborting.</li>
+</ul>
+<h3 id="inspecting-transports">Inspecting transports</h3>
+<p><code>somework:cqrs:debug-transports</code> prints, for each CQRS bus (command, async
+command, query, event, async event), the default transport names and the
+per-message overrides configured under <code>somework_cqrs.transports</code>. It does not
+include <code>framework.messenger.routing</code> or transports chosen by the
+<code>#[Asynchronous]</code> attribute; <code>bin/console debug:config framework messenger</code>
+shows Messenger's own routing.</p>
+<h3 id="health-checks">Health checks</h3>
+<p><code>somework:cqrs:health</code> instantiates every CQRS handler and every Messenger
+transport and reports the findings in a table. The exit code is the highest
+severity found: <code>0</code> (OK), <code>1</code> (warnings), or <code>2</code> (critical), which makes the
+command usable in deployment checks. Add your own checks by implementing
+<code>SomeWork\CqrsBundle\Health\HealthChecker</code>; its <code>check()</code> method returns a list
+of <code>CheckResult(CheckSeverity $severity, string $category, string $message)</code>
+objects, and autoconfigured services are picked up automatically.</p>
+<p>See the <a href="../reference/">configuration reference</a> for the exhaustive list of
+options.</p>
+<h2 id="messenger-integration">Messenger integration</h2>
+<p>The bundle does not replace Messenger configuration. Configure your buses and
+transports under <code>framework.messenger</code> as usual and point the CQRS buses at
+them with <code>somework_cqrs.buses</code>. See the <a href="../reference/">configuration reference</a>
+for the list of options.</p>
+<p>Handlers that implement <code>SomeWork\CqrsBundle\Contract\EnvelopeAware</code> (for
+example by using the bundled <code>EnvelopeAwareTrait</code>) receive the current
+Messenger <code>Envelope</code> before execution. The bundle decorates the handlers locator
+of every Messenger bus that has an <code>EnvelopeAware</code> handler, CQRS bus or not (a
+handler attribute may name any bus), so that <code>setEnvelope()</code> is called for both
+synchronous and asynchronous handling, allowing you to access stamps and
+metadata via <code>$this-&gt;getEnvelope()</code>. Buses without such a handler are not
+decorated.</p>
+<h2 id="choosing-synchronous-or-asynchronous-dispatch">Choosing synchronous or asynchronous dispatch</h2>
+<p><code>CommandBus::dispatch()</code> and <code>EventBus::dispatch()</code> accept an optional
+<code>SomeWork\CqrsBundle\Bus\DispatchMode</code> argument with the cases <code>SYNC</code>, <code>ASYNC</code>,
+<code>OUTBOX</code> and <code>DEFAULT</code> (the default). <code>SYNC</code>, <code>ASYNC</code> and <code>OUTBOX</code> are used as
+given; <code>OUTBOX</code> stores the message in the <a href="../outbox/#through-the-buses">transactional outbox</a>
+instead of sending it. For <code>DEFAULT</code>, the bundle resolves the mode per message
+class, first match wins:</p>
+<ol>
+<li>An entry for the exact message class in <code>dispatch_modes.&lt;type&gt;.map</code>.</li>
+<li>The <code>#[Outbox]</code> or <code>#[Asynchronous]</code> attribute on the message class itself
+   (PHP attributes are not inherited), which selects <code>outbox</code> or <code>async</code>.</li>
+<li>An entry in <code>dispatch_modes.&lt;type&gt;.map</code> for a parent class (nearest first),
+   then for an implemented interface (most specific first).</li>
+<li><code>dispatch_modes.&lt;type&gt;.default</code> (<code>sync</code> unless configured otherwise).</li>
+</ol>
+<p>Queries are always synchronous. The following configuration keeps most commands
+synchronous while routing <code>ShipOrder</code> asynchronously:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># config/packages/somework_cqrs.yaml</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">    </span><span class="nt">buses</span><span class="p">:</span>
+<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="w">        </span><span class="nt">command_async</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">command.async_bus</span>
+<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="w">    </span><span class="nt">dispatch_modes</span><span class="p">:</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="w">        </span><span class="nt">command</span><span class="p">:</span>
+<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a><span class="w">            </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">sync</span>
+<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="w">            </span><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="w">                </span><span class="nt">App\Application\Command\ShipOrder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">async</span>
+</code></pre></div>
+<p>Map keys must be existing classes or interfaces; a typo makes the container
+compilation fail. Asynchronous dispatch modes require the matching async bus
+(<code>buses.command_async</code> or <code>buses.event_async</code>); without it the configuration is
+rejected at compile time. The same holds for <code>#[Asynchronous]</code> on a message that
+has a handler in the application: the bundle knows messages through their
+handlers. An <code>#[Asynchronous]</code> event without any handler is not checked, and its
+dispatch throws <code>AsyncBusNotConfiguredException</code> at runtime.</p>
+<p>At runtime you can still make an explicit choice:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="x">use SomeWork\CqrsBundle\Bus\DispatchMode;</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="x">$commandBus-&gt;dispatch($command);                     // Uses the resolved mode</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="x">$commandBus-&gt;dispatch($command, DispatchMode::ASYNC);</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="x">$commandBus-&gt;dispatch($command, DispatchMode::OUTBOX); // Stored in the outbox, in the current transaction</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="x">$commandBus-&gt;dispatchAsync($command);                // Always on the async bus (sent to a transport when one is configured or routed)</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="x">$result = $commandBus-&gt;dispatchSync($command);       // Always synchronous, returns the handler result</span>
+</code></pre></div>
+<p><code>EventBus</code> has the same <code>dispatch()</code>, <code>dispatchSync()</code>, and <code>dispatchAsync()</code>
+methods; all three return the envelope. Dispatching asynchronously when no
+async bus is configured for the message type throws
+<code>SomeWork\CqrsBundle\Exception\AsyncBusNotConfiguredException</code>.</p>
+<p>The asynchronous bus only decides which Messenger bus handles the message. To
+actually send it to a transport, configure <code>transports.command_async</code> /
+<code>transports.event_async</code> (or use <code>#[Asynchronous]</code>, which names a transport);
+without a transport name or a <code>framework.messenger.routing</code> entry the message
+is handled right away on the asynchronous bus, in the calling process, and the
+bundle logs a warning.</p>
+<h3 id="toggling-dispatchaftercurrentbusstamp">Toggling DispatchAfterCurrentBusStamp</h3>
+<p>Asynchronous commands and events automatically receive Messenger's
+<code>DispatchAfterCurrentBusStamp</code>. When such a message is dispatched while another
+message is being handled (for example from inside a command handler), Messenger
+holds it back until the outer handler has finished successfully and drops it if
+the handler fails. The message is then sent after the handler's database
+transaction committed: when that send fails, the change stays and the message is
+lost (<code>dispatchSync()</code> reports it with <code>DeferredDispatchFailedException</code>). Use the
+<a href="../outbox/">transactional outbox</a> for messages that must not be lost. You can turn
+the stamp off globally or per message:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="w">    </span><span class="nt">dispatch_after_current_bus</span><span class="p">:</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">        </span><span class="nt">command</span><span class="p">:</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="w">            </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="w">            </span><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="w">                </span><span class="nt">App\Application\Command\ShipOrder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="w">        </span><span class="nt">event</span><span class="p">:</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="w">            </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p>With the override above <code>ShipOrder</code> commands are sent to the async bus
+immediately, even if they are dispatched from inside another handler. The
+configuration only controls the automatic stamp: a <code>DispatchAfterCurrentBusStamp</code>
+you pass yourself is always kept by <code>dispatch()</code>. <code>dispatchSync()</code> and <code>ask()</code>
+drop a <code>DispatchAfterCurrentBusStamp</code> you pass because they need the result
+immediately (the bundle adds it only to asynchronous dispatches).</p>
+<h2 id="dispatching-commands">Dispatching commands</h2>
+<p>Inject <code>CommandBusInterface</code> and call <code>dispatch()</code> to send a command to its
+handler. <code>dispatch()</code> returns the Messenger <code>Envelope</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="k">namespace</span> <span class="nx">App\Controller</span><span class="p">;</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="k">use</span> <span class="nx">App\Application\Command\ApproveInvoice</span><span class="p">;</span>
+<a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\CommandBusInterface</span><span class="p">;</span>
+<a id="__codelineno-11-7" name="__codelineno-11-7" href="#__codelineno-11-7"></a><span class="k">use</span> <span class="nx">Symfony\Component\HttpFoundation\Response</span><span class="p">;</span>
+<a id="__codelineno-11-8" name="__codelineno-11-8" href="#__codelineno-11-8"></a>
+<a id="__codelineno-11-9" name="__codelineno-11-9" href="#__codelineno-11-9"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">InvoiceController</span>
+<a id="__codelineno-11-10" name="__codelineno-11-10" href="#__codelineno-11-10"></a><span class="p">{</span>
+<a id="__codelineno-11-11" name="__codelineno-11-11" href="#__codelineno-11-11"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-11-12" name="__codelineno-11-12" href="#__codelineno-11-12"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">CommandBusInterface</span> <span class="nv">$commandBus</span><span class="p">,</span>
+<a id="__codelineno-11-13" name="__codelineno-11-13" href="#__codelineno-11-13"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-11-14" name="__codelineno-11-14" href="#__codelineno-11-14"></a>    <span class="p">}</span>
+<a id="__codelineno-11-15" name="__codelineno-11-15" href="#__codelineno-11-15"></a>
+<a id="__codelineno-11-16" name="__codelineno-11-16" href="#__codelineno-11-16"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">approve</span><span class="p">(</span><span class="nx">string</span> <span class="nv">$invoiceId</span><span class="p">)</span><span class="o">:</span> <span class="nx">Response</span>
+<a id="__codelineno-11-17" name="__codelineno-11-17" href="#__codelineno-11-17"></a>    <span class="p">{</span>
+<a id="__codelineno-11-18" name="__codelineno-11-18" href="#__codelineno-11-18"></a>        <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">commandBus</span><span class="o">-&gt;</span><span class="na">dispatch</span><span class="p">(</span><span class="k">new</span> <span class="nx">ApproveInvoice</span><span class="p">(</span><span class="nv">$invoiceId</span><span class="p">));</span>
+<a id="__codelineno-11-19" name="__codelineno-11-19" href="#__codelineno-11-19"></a>
+<a id="__codelineno-11-20" name="__codelineno-11-20" href="#__codelineno-11-20"></a>        <span class="k">return</span> <span class="k">new</span> <span class="nx">Response</span><span class="p">(</span><span class="s1">''</span><span class="p">,</span> <span class="nx">Response</span><span class="o">::</span><span class="na">HTTP_ACCEPTED</span><span class="p">);</span>
+<a id="__codelineno-11-21" name="__codelineno-11-21" href="#__codelineno-11-21"></a>    <span class="p">}</span>
+<a id="__codelineno-11-22" name="__codelineno-11-22" href="#__codelineno-11-22"></a><span class="p">}</span>
+</code></pre></div>
+<p>When you need the handler's return value (for example a server-generated ID),
+use <code>dispatchSync()</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="x">$orderId = $this-&gt;commandBus-&gt;dispatchSync(new CreateOrder($items));</span>
+</code></pre></div>
+<p><code>dispatchSync()</code> forces synchronous handling and returns the handler result
+directly. <code>dispatchAsync()</code> dispatches the command on the asynchronous command
+bus (<code>buses.command_async</code>) and returns the envelope.</p>
+<h3 id="passing-stamps">Passing stamps</h3>
+<p>Every dispatch method accepts additional Messenger stamps as trailing
+arguments:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="x">use SomeWork\CqrsBundle\Bus\DispatchMode;</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="x">use Symfony\Component\Messenger\Stamp\DelayStamp;</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="x">$commandBus-&gt;dispatch($command, DispatchMode::DEFAULT, new DelayStamp(5000));</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="x">$commandBus-&gt;dispatchAsync($command, new DelayStamp(5000));</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="x">$result = $queryBus-&gt;ask($query, new MyStamp());</span>
+</code></pre></div>
+<p>Stamps you pass win over the stamp pipeline: an explicit
+<code>MessageMetadataStamp</code>, <code>SerializerStamp</code>, <code>TransportNamesStamp</code>,
+<code>AggregateSequenceStamp</code>, <code>DeduplicateStamp</code>, or <code>DispatchAfterCurrentBusStamp</code>
+is kept instead of the configured one.</p>
+<h2 id="exceptions-from-dispatchsync-and-ask">Exceptions from dispatchSync() and ask()</h2>
+<p><code>CommandBusInterface::dispatchSync()</code> and <code>QueryBusInterface::ask()</code> need a
+handler result, so they report every situation in which there is none. The
+exceptions live in <code>SomeWork\CqrsBundle\Exception</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Exception</th>
+<th>Thrown when</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>NoHandlerException</code></td>
+<td>No handler handled the message on the bus (Messenger's <code>NoHandlerForMessageException</code> is converted and kept as the previous exception). A missing handler of a message dispatched <em>inside</em> a handler is not converted.</td>
+</tr>
+<tr>
+<td><code>MultipleHandlersException</code></td>
+<td>More than one handler handled the message, so the result is ambiguous (for example a catch-all handler of an interface next to the message's own handler). The handlers have already run, so do not simply retry.</td>
+</tr>
+<tr>
+<td><code>MessageSentToTransportException</code></td>
+<td>The message was sent to a transport instead of being handled, for example because of <code>framework.messenger.routing</code> or a <code>transports.command</code> / <code>transports.query</code> entry. It is queued and a worker will handle it: do not dispatch it again.</td>
+</tr>
+<tr>
+<td><code>DuplicateMessageException</code></td>
+<td>Idempotency deduplication dropped the message as a duplicate.</td>
+</tr>
+<tr>
+<td><code>DeferredDispatchFailedException</code></td>
+<td>The handler succeeded (<code>$result</code> holds its result), but a message it dispatched with <code>DispatchAfterCurrentBusStamp</code> (by default: an asynchronous command or event) failed once the handler had returned: sending it failed, or a synchronous handler of it threw. What the handler did stays done, so do not retry the whole command; the failed message is lost unless dispatched again (Messenger's <code>DelayedMessageHandlingException</code> is the previous exception).</td>
+</tr>
+<tr>
+<td><code>RateLimitExceededException</code></td>
+<td>A rate limiter mapped to the message has no tokens left (thrown by every dispatch method).</td>
+</tr>
+</tbody>
+</table>
+<p><code>AsyncBusNotConfiguredException</code> is thrown by asynchronous dispatches
+(<code>dispatchAsync()</code>, <code>DispatchMode::ASYNC</code>, or a <code>DEFAULT</code> that resolves to
+<code>async</code>) when no async bus is configured for the message type.</p>
+<p>Every exception the bundle throws at runtime implements <code>SomeWork\CqrsBundle\Exception\CqrsException</code>,
+so <code>catch (CqrsException $exception)</code> catches them all (and none of your handlers' exceptions).
+Those without a class of their own (a bus without the outbox middleware, a missing outbox table, an
+invalid stamp argument, …) extend <code>\LogicException</code>, <code>\InvalidArgumentException</code>, <code>\RuntimeException</code> or
+<code>\UnexpectedValueException</code>. Messenger's own exceptions, which <code>dispatch()</code> lets through unchanged
+(<code>HandlerFailedException</code>, <code>NoHandlerForMessageException</code>, <code>TransportException</code>, …), do not implement it, and
+errors in the configuration fail the container build with Symfony's configuration exceptions.</p>
+<p>When exactly one handler throws, <code>dispatchSync()</code> and <code>ask()</code> rethrow that
+exception as is instead of wrapping it in Messenger's
+<code>HandlerFailedException</code>, so you can catch your domain exceptions directly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="x">try {</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="x">    $orderId = $commandBus-&gt;dispatchSync(new CreateOrder($items));</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="x">} catch (OutOfStockException $exception) {</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="x">    // Thrown by the handler</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="x">}</span>
+</code></pre></div>
+<p><code>dispatch()</code> and the event bus methods keep Messenger's behaviour: exceptions
+thrown by synchronously handled messages arrive wrapped in
+<code>HandlerFailedException</code>.</p>
+<h2 id="asking-queries">Asking queries</h2>
+<p><code>QueryBusInterface</code> exposes a single <code>ask()</code> method that is always synchronous
+and returns the handler result:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="k">namespace</span> <span class="nx">App\Controller</span><span class="p">;</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="k">use</span> <span class="nx">App\ReadModel\Query\FindInvoice</span><span class="p">;</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\QueryBusInterface</span><span class="p">;</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="k">use</span> <span class="nx">Symfony\Component\HttpFoundation\JsonResponse</span><span class="p">;</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">InvoiceApiController</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="p">{</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">QueryBusInterface</span> <span class="nv">$queryBus</span><span class="p">,</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a>    <span class="p">}</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">show</span><span class="p">(</span><span class="nx">string</span> <span class="nv">$invoiceId</span><span class="p">)</span><span class="o">:</span> <span class="nx">JsonResponse</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a>    <span class="p">{</span>
+<a id="__codelineno-15-18" name="__codelineno-15-18" href="#__codelineno-15-18"></a>        <span class="nv">$invoice</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">queryBus</span><span class="o">-&gt;</span><span class="na">ask</span><span class="p">(</span><span class="k">new</span> <span class="nx">FindInvoice</span><span class="p">(</span><span class="nv">$invoiceId</span><span class="p">));</span>
+<a id="__codelineno-15-19" name="__codelineno-15-19" href="#__codelineno-15-19"></a>
+<a id="__codelineno-15-20" name="__codelineno-15-20" href="#__codelineno-15-20"></a>        <span class="k">return</span> <span class="k">new</span> <span class="nx">JsonResponse</span><span class="p">(</span><span class="nv">$invoice</span><span class="p">);</span>
+<a id="__codelineno-15-21" name="__codelineno-15-21" href="#__codelineno-15-21"></a>    <span class="p">}</span>
+<a id="__codelineno-15-22" name="__codelineno-15-22" href="#__codelineno-15-22"></a><span class="p">}</span>
+</code></pre></div>
+<p>Declare the result type on the query, and PHPStan knows what <code>ask()</code> returns
+(the bundle's CI checks it); without it the result is <code>mixed</code>. Psalm reads the
+same <code>@template</code> annotations, but the bundle is not tested with Psalm:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="k">namespace</span> <span class="nx">App\ReadModel\Query</span><span class="p">;</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="k">use</span> <span class="nx">App\ReadModel\InvoiceView</span><span class="p">;</span>
+<a id="__codelineno-16-6" name="__codelineno-16-6" href="#__codelineno-16-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Query</span><span class="p">;</span>
+<a id="__codelineno-16-7" name="__codelineno-16-7" href="#__codelineno-16-7"></a>
+<a id="__codelineno-16-8" name="__codelineno-16-8" href="#__codelineno-16-8"></a><span class="sd">/**</span>
+<a id="__codelineno-16-9" name="__codelineno-16-9" href="#__codelineno-16-9"></a><span class="sd"> * @implements Query&lt;InvoiceView|null&gt;</span>
+<a id="__codelineno-16-10" name="__codelineno-16-10" href="#__codelineno-16-10"></a><span class="sd"> */</span>
+<a id="__codelineno-16-11" name="__codelineno-16-11" href="#__codelineno-16-11"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">FindInvoice</span> <span class="k">implements</span> <span class="nx">Query</span>
+<a id="__codelineno-16-12" name="__codelineno-16-12" href="#__codelineno-16-12"></a><span class="p">{</span>
+<a id="__codelineno-16-13" name="__codelineno-16-13" href="#__codelineno-16-13"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-16-14" name="__codelineno-16-14" href="#__codelineno-16-14"></a>        <span class="k">public</span> <span class="k">readonly</span> <span class="nx">string</span> <span class="nv">$invoiceId</span><span class="p">,</span>
+<a id="__codelineno-16-15" name="__codelineno-16-15" href="#__codelineno-16-15"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-16-16" name="__codelineno-16-16" href="#__codelineno-16-16"></a>    <span class="p">}</span>
+<a id="__codelineno-16-17" name="__codelineno-16-17" href="#__codelineno-16-17"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>$this-&gt;queryBus-&gt;ask(new FindInvoice($id))</code> is then <code>InvoiceView|null</code>.
+<code>FakeQueryBus::willReturnFor(FindInvoice::class, $result)</code> does not check the type
+of <code>$result</code>.</p>
+<p>PHPStan uses the defaults of the templates (<code>Query&lt;mixed&gt;</code>, <code>CommandHandler&lt;Command&gt;</code>,
+…) when a class declares none. Psalm does not support template defaults: it reports
+<code>MissingTemplateParam</code> for a query or handler without them, so with Psalm declare them
+everywhere (<code>@implements Query&lt;mixed&gt;</code> when the result is untyped, and
+<code>@implements CommandHandler&lt;CreateTask&gt;</code> on handlers). The message interfaces are also
+<code>@psalm-immutable</code>, so Psalm asks for that annotation on every message class
+(<code>somework:cqrs:generate</code> adds it).</p>
+<p>The query bus enforces exactly one handler per query: a second handler on the
+same bus is rejected at compile time, and <code>ask()</code> throws the exceptions listed
+in <a href="#exceptions-from-dispatchsync-and-ask">Exceptions from dispatchSync() and ask()</a>
+when there is no single result.</p>
+<h2 id="dispatching-events">Dispatching events</h2>
+<p>Events support zero to many handlers and are fire-and-forget. Use
+<code>EventBusInterface</code> to dispatch domain events, for example from a command
+handler:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="k">use</span> <span class="nx">App\Domain\Event\InvoiceApproved</span><span class="p">;</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsCommandHandler</span><span class="p">;</span>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EventBusInterface</span><span class="p">;</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="p">#[</span><span class="nd">AsCommandHandler</span><span class="p">(</span><span class="nx">command</span><span class="o">:</span> <span class="nx">ApproveInvoice</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">ApproveInvoiceHandler</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="p">{</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">EventBusInterface</span> <span class="nv">$eventBus</span><span class="p">,</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a>    <span class="p">}</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">ApproveInvoice</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a>    <span class="p">{</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a>        <span class="c1">// ... approve the invoice ...</span>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a>        <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">eventBus</span><span class="o">-&gt;</span><span class="na">dispatch</span><span class="p">(</span><span class="k">new</span> <span class="nx">InvoiceApproved</span><span class="p">(</span><span class="nv">$command</span><span class="o">-&gt;</span><span class="na">invoiceId</span><span class="p">));</span>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>    <span class="p">}</span>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="p">}</span>
+</code></pre></div>
+<p>Events dispatched without any registered handler do not throw an exception
+(see <a href="#fire-and-forget-events">Fire-and-forget events</a>).</p>
+<div class="admonition warning">
+<p class="admonition-title">An event dispatched this way can be lost</p>
+<p>An asynchronous event dispatched inside a handler is held back until the handler has
+returned (<a href="#toggling-dispatchaftercurrentbusstamp"><code>DispatchAfterCurrentBusStamp</code></a>), so
+it is only sent after the handler's transaction committed. When sending it fails then (the
+broker is down), the change stays committed and the event is lost:
+<code>dispatchSync()</code> throws <code>DeferredDispatchFailedException</code>, whose <code>$result</code> is the result
+of the handler, which succeeded. Do not retry the whole command then. In a worker, Messenger
+retries the command, skips the handler because it already ran, and acknowledges it: the
+event is lost with only a warning in the Messenger log.</p>
+<p>For events that must not be lost, store them in the
+<a href="../outbox/#through-the-buses">transactional outbox</a> in the same transaction instead:
+enable the outbox, mark the event class <code>#[Outbox]</code> (or map it to <code>outbox</code> in
+<code>dispatch_modes</code>), and run the handler's database work in a transaction on the outbox
+connection (<code>$connection-&gt;transactional()</code>, or Messenger's <code>doctrine_transaction</code>
+middleware): the <code>dispatch()</code> above then stores the event in that transaction (outside
+one, it throws <code>OutboxRequiresTransactionException</code>). With a
+Doctrine transport on the connection of your business data, disabling
+<code>dispatch_after_current_bus</code> for those events also makes the send part of the transaction
+(see <a href="../outbox/#when-do-i-need-the-outbox">When do I need the outbox?</a>).</p>
+</div>
+<p>Multiple handlers can subscribe to the same event; each is a class of its own:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Event</span><span class="p">;</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="k">use</span> <span class="nx">App\Domain\Event\InvoiceApproved</span><span class="p">;</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsEventHandler</span><span class="p">;</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="p">#[</span><span class="nd">AsEventHandler</span><span class="p">(</span><span class="nx">event</span><span class="o">:</span> <span class="nx">InvoiceApproved</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">SendApprovalNotification</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="p">{</span>
+<a id="__codelineno-18-11" name="__codelineno-18-11" href="#__codelineno-18-11"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">InvoiceApproved</span> <span class="nv">$event</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-18-12" name="__codelineno-18-12" href="#__codelineno-18-12"></a>    <span class="p">{</span>
+<a id="__codelineno-18-13" name="__codelineno-18-13" href="#__codelineno-18-13"></a>        <span class="c1">// Notify the customer…</span>
+<a id="__codelineno-18-14" name="__codelineno-18-14" href="#__codelineno-18-14"></a>    <span class="p">}</span>
+<a id="__codelineno-18-15" name="__codelineno-18-15" href="#__codelineno-18-15"></a><span class="p">}</span>
+<a id="__codelineno-18-16" name="__codelineno-18-16" href="#__codelineno-18-16"></a>
+<a id="__codelineno-18-17" name="__codelineno-18-17" href="#__codelineno-18-17"></a><span class="p">#[</span><span class="nd">AsEventHandler</span><span class="p">(</span><span class="nx">event</span><span class="o">:</span> <span class="nx">InvoiceApproved</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-18-18" name="__codelineno-18-18" href="#__codelineno-18-18"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">UpdateApprovalDashboard</span>
+<a id="__codelineno-18-19" name="__codelineno-18-19" href="#__codelineno-18-19"></a><span class="p">{</span>
+<a id="__codelineno-18-20" name="__codelineno-18-20" href="#__codelineno-18-20"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">InvoiceApproved</span> <span class="nv">$event</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-18-21" name="__codelineno-18-21" href="#__codelineno-18-21"></a>    <span class="p">{</span>
+<a id="__codelineno-18-22" name="__codelineno-18-22" href="#__codelineno-18-22"></a>        <span class="c1">// Refresh the dashboard…</span>
+<a id="__codelineno-18-23" name="__codelineno-18-23" href="#__codelineno-18-23"></a>    <span class="p">}</span>
+<a id="__codelineno-18-24" name="__codelineno-18-24" href="#__codelineno-18-24"></a><span class="p">}</span>
+</code></pre></div>
+<h2 id="async-routing-with-the-asynchronous-attribute">Async routing with the #[Asynchronous] attribute</h2>
+<p>Instead of configuring the dispatch mode in YAML, you can annotate a message
+class with <code>#[Asynchronous]</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-19-4" name="__codelineno-19-4" href="#__codelineno-19-4"></a>
+<a id="__codelineno-19-5" name="__codelineno-19-5" href="#__codelineno-19-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\Asynchronous</span><span class="p">;</span>
+<a id="__codelineno-19-6" name="__codelineno-19-6" href="#__codelineno-19-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Command</span><span class="p">;</span>
+<a id="__codelineno-19-7" name="__codelineno-19-7" href="#__codelineno-19-7"></a>
+<a id="__codelineno-19-8" name="__codelineno-19-8" href="#__codelineno-19-8"></a><span class="p">#[</span><span class="nd">Asynchronous</span><span class="p">]</span>
+<a id="__codelineno-19-9" name="__codelineno-19-9" href="#__codelineno-19-9"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">SendWelcomeEmail</span> <span class="k">implements</span> <span class="nx">Command</span>
+<a id="__codelineno-19-10" name="__codelineno-19-10" href="#__codelineno-19-10"></a><span class="p">{</span>
+<a id="__codelineno-19-11" name="__codelineno-19-11" href="#__codelineno-19-11"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-19-12" name="__codelineno-19-12" href="#__codelineno-19-12"></a>        <span class="k">public</span> <span class="k">readonly</span> <span class="nx">string</span> <span class="nv">$userId</span><span class="p">,</span>
+<a id="__codelineno-19-13" name="__codelineno-19-13" href="#__codelineno-19-13"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-19-14" name="__codelineno-19-14" href="#__codelineno-19-14"></a>    <span class="p">}</span>
+<a id="__codelineno-19-15" name="__codelineno-19-15" href="#__codelineno-19-15"></a><span class="p">}</span>
+</code></pre></div>
+<p>The attribute has two effects when the message is dispatched with
+<code>DispatchMode::DEFAULT</code>:</p>
+<ul>
+<li>The dispatch mode resolves to <code>async</code> (unless <code>dispatch_modes.&lt;type&gt;.map</code>
+  has an entry for this exact class), so the message goes to the asynchronous
+  bus. An async bus must be configured (<code>buses.command_async</code> or
+  <code>buses.event_async</code>).</li>
+<li>On asynchronous dispatches it chooses the transport. A <code>TransportNamesStamp</code>
+  passed by the caller and an entry for exactly this class in
+  <code>transports.command_async.map</code> / <code>transports.event_async.map</code> win; next comes
+  the attribute's <code>transport</code>, then entries for parent classes or interfaces and
+  the section's <code>default</code>. A bare <code>#[Asynchronous]</code> (no <code>transport</code>) falls back
+  to the <code>async</code> transport only when nothing is configured and
+  neither <code>framework.messenger.routing</code> nor <code>#[AsMessage(transport: ...)]</code> routes the message.</li>
+</ul>
+<p>The default transport name is <code>async</code>. Pass a custom transport name when your
+infrastructure uses a different name:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-20-1" name="__codelineno-20-1" href="#__codelineno-20-1"></a><span class="x">#[Asynchronous(transport: 'notifications')]</span>
+<a id="__codelineno-20-2" name="__codelineno-20-2" href="#__codelineno-20-2"></a><span class="x">final class SendWelcomeEmail implements Command { /* ... */ }</span>
+</code></pre></div>
+<p>When the message has a handler in the application, the container compilation
+checks that the transport exists. A route in <code>framework.messenger.routing</code>
+counts as routing the message when it names the class, a parent class, an
+interface, a namespace wildcard (<code>App\Message\*</code>) or <code>*</code>.</p>
+<p><code>dispatchSync()</code> still handles an <code>#[Asynchronous]</code> message synchronously.</p>
+<h2 id="metadata-providers-and-correlation-ids">Metadata providers and correlation IDs</h2>
+<p>Each dispatch can attach a <code>MessageMetadataStamp</code> carrying a message ID, a
+correlation ID, an optional causation ID, and arbitrary key/value extras. The
+default <code>RandomCorrelationMetadataProvider</code> generates a random message ID, which
+is also the correlation ID of the first message of a flow. You can read them
+inside a handler:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-21-1" name="__codelineno-21-1" href="#__codelineno-21-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-21-2" name="__codelineno-21-2" href="#__codelineno-21-2"></a>
+<a id="__codelineno-21-3" name="__codelineno-21-3" href="#__codelineno-21-3"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a>
+<a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsCommandHandler</span><span class="p">;</span>
+<a id="__codelineno-21-6" name="__codelineno-21-6" href="#__codelineno-21-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EnvelopeAware</span><span class="p">;</span>
+<a id="__codelineno-21-7" name="__codelineno-21-7" href="#__codelineno-21-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\EnvelopeAwareTrait</span><span class="p">;</span>
+<a id="__codelineno-21-8" name="__codelineno-21-8" href="#__codelineno-21-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Stamp\MessageMetadataStamp</span><span class="p">;</span>
+<a id="__codelineno-21-9" name="__codelineno-21-9" href="#__codelineno-21-9"></a>
+<a id="__codelineno-21-10" name="__codelineno-21-10" href="#__codelineno-21-10"></a><span class="p">#[</span><span class="nd">AsCommandHandler</span><span class="p">(</span><span class="nx">command</span><span class="o">:</span> <span class="nx">ShipOrder</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-21-11" name="__codelineno-21-11" href="#__codelineno-21-11"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">ShipOrderHandler</span> <span class="k">implements</span> <span class="nx">EnvelopeAware</span>
+<a id="__codelineno-21-12" name="__codelineno-21-12" href="#__codelineno-21-12"></a><span class="p">{</span>
+<a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a>    <span class="k">use</span> <span class="nx">EnvelopeAwareTrait</span><span class="p">;</span>
+<a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a>
+<a id="__codelineno-21-15" name="__codelineno-21-15" href="#__codelineno-21-15"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">ShipOrder</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-21-16" name="__codelineno-21-16" href="#__codelineno-21-16"></a>    <span class="p">{</span>
+<a id="__codelineno-21-17" name="__codelineno-21-17" href="#__codelineno-21-17"></a>        <span class="nv">$metadataStamp</span> <span class="o">=</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">getEnvelope</span><span class="p">()</span><span class="o">-&gt;</span><span class="na">last</span><span class="p">(</span><span class="nx">MessageMetadataStamp</span><span class="o">::</span><span class="na">class</span><span class="p">);</span>
+<a id="__codelineno-21-18" name="__codelineno-21-18" href="#__codelineno-21-18"></a>
+<a id="__codelineno-21-19" name="__codelineno-21-19" href="#__codelineno-21-19"></a>        <span class="k">if</span> <span class="p">(</span><span class="nv">$metadataStamp</span> <span class="nx">instanceof</span> <span class="nx">MessageMetadataStamp</span><span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-21-20" name="__codelineno-21-20" href="#__codelineno-21-20"></a>            <span class="nv">$correlationId</span> <span class="o">=</span> <span class="nv">$metadataStamp</span><span class="o">-&gt;</span><span class="na">getCorrelationId</span><span class="p">();</span>
+<a id="__codelineno-21-21" name="__codelineno-21-21" href="#__codelineno-21-21"></a>            <span class="nv">$causationId</span> <span class="o">=</span> <span class="nv">$metadataStamp</span><span class="o">-&gt;</span><span class="na">getCausationId</span><span class="p">();</span> <span class="c1">// message ID of the parent message, if any</span>
+<a id="__codelineno-21-22" name="__codelineno-21-22" href="#__codelineno-21-22"></a>            <span class="c1">// Pass the IDs to your logger or tracing system…</span>
+<a id="__codelineno-21-23" name="__codelineno-21-23" href="#__codelineno-21-23"></a>        <span class="p">}</span>
+<a id="__codelineno-21-24" name="__codelineno-21-24" href="#__codelineno-21-24"></a>
+<a id="__codelineno-21-25" name="__codelineno-21-25" href="#__codelineno-21-25"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-21-26" name="__codelineno-21-26" href="#__codelineno-21-26"></a>    <span class="p">}</span>
+<a id="__codelineno-21-27" name="__codelineno-21-27" href="#__codelineno-21-27"></a><span class="p">}</span>
+</code></pre></div>
+<p>When a message is dispatched while another one is being handled, the new
+message inherits the correlation ID of the message being handled, and its
+causation ID is the message ID of that message (<code>causation_id</code> configuration).</p>
+<p>To change the metadata for a specific message, implement
+<code>MessageMetadataProvider</code> and register it in the configuration. The example
+assumes a <code>ShipOrder</code> command with a <code>tenantId</code> property:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="k">namespace</span> <span class="nx">App\Support</span><span class="p">;</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="k">use</span> <span class="nx">App\Application\Command\ShipOrder</span><span class="p">;</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\DispatchMode</span><span class="p">;</span>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\MessageMetadataProvider</span><span class="p">;</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Stamp\MessageMetadataStamp</span><span class="p">;</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">TenantMetadataProvider</span> <span class="k">implements</span> <span class="nx">MessageMetadataProvider</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="p">{</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">getStamp</span><span class="p">(</span><span class="nx">object</span> <span class="nv">$message</span><span class="p">,</span> <span class="nx">DispatchMode</span> <span class="nv">$mode</span><span class="p">)</span><span class="o">:</span> <span class="o">?</span><span class="nx">MessageMetadataStamp</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>    <span class="p">{</span>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a>        <span class="nv">$stamp</span> <span class="o">=</span> <span class="nx">MessageMetadataStamp</span><span class="o">::</span><span class="na">createWithRandomCorrelationId</span><span class="p">([</span><span class="s1">'mode'</span> <span class="o">=&gt;</span> <span class="nv">$mode</span><span class="o">-&gt;</span><span class="na">value</span><span class="p">]);</span>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>        <span class="k">if</span> <span class="p">(</span><span class="nv">$message</span> <span class="nx">instanceof</span> <span class="nx">ShipOrder</span><span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a>            <span class="nv">$stamp</span> <span class="o">=</span> <span class="nv">$stamp</span><span class="o">-&gt;</span><span class="na">withExtra</span><span class="p">(</span><span class="s1">'tenant'</span><span class="p">,</span> <span class="nv">$message</span><span class="o">-&gt;</span><span class="na">tenantId</span><span class="p">);</span>
+<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a>        <span class="p">}</span>
+<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a>
+<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a>        <span class="k">return</span> <span class="nv">$stamp</span><span class="p">;</span>
+<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a>    <span class="p">}</span>
+<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="p">}</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">    </span><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="w">        </span><span class="nt">command</span><span class="p">:</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="w">            </span><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a><span class="w">                </span><span class="nt">App\Application\Command\ShipOrder</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">App\Support\TenantMetadataProvider</span>
+</code></pre></div>
+<p>The value is a service id; with the default service configuration the class
+name is the id. Returning <code>null</code> from <code>getStamp()</code> dispatches the message
+without metadata, and a <code>MessageMetadataStamp</code> passed by the caller is kept
+instead of the provider's. Per-type defaults (<code>metadata.command.default</code>) and
+the global fallback (<code>metadata.default</code>) are covered in the
+<a href="../reference/">configuration reference</a>.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

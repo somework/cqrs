@@ -1,0 +1,1903 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CQRS helpers for Symfony Messenger">
+      
+      
+      
+        <link rel="canonical" href="https://somework.github.io/cqrs/middleware/">
+      
+      
+        <link rel="prev" href="../migration/">
+      
+      
+        <link rel="next" href="../testing/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Middleware & Stamp Pipeline - SomeWork CQRS Bundle</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#middleware-stamp-pipeline" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-header__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SomeWork CQRS Bundle
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Middleware & Stamp Pipeline
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-nav__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SomeWork CQRS Bundle
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Middleware & Stamp Pipeline
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Middleware & Stamp Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-stamp-pipeline-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the stamp pipeline works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#middleware-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Middleware classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Middleware classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#position-in-the-bus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Position in the bus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#allownohandlermiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AllowNoHandlerMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#causationidmiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CausationIdMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opentelemetrymiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetryMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deduplicationlockreleasemiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeduplicationLockReleaseMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outboxpreparemiddleware-and-outboxstoremiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OutboxPrepareMiddleware and OutboxStoreMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-stamp-deciders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in stamp deciders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in stamp deciders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ratelimitstampdecider-225" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RateLimitStampDecider (225)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retrypolicystampdecider-200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RetryPolicyStampDecider (200)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messagetransportstampdecider-175" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageTransportStampDecider (175)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messageserializerstampdecider-150" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageSerializerStampDecider (150)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messagemetadatastampdecider-125" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageMetadataStampDecider (125)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sequencestampdecider-110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SequenceStampDecider (110)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#causationidstampdecider-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CausationIdStampDecider (100)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idempotencystampdecider-50" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IdempotencyStampDecider (50)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dispatchaftercurrentbusstampdecider-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DispatchAfterCurrentBusStampDecider (-10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-custom-stamp-deciders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating custom stamp deciders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating custom stamp deciders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-implement-the-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Implement the interface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-register-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Register it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-restrict-it-to-message-types-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Restrict it to message types (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-choose-a-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Choose a priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-test-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Test it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_8" >
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../retry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retry Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../outbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transactional Outbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../event-ordering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Ordering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rate-limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rate Limiting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-stamp-pipeline-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the stamp pipeline works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#middleware-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Middleware classes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Middleware classes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#position-in-the-bus" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Position in the bus
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#allownohandlermiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AllowNoHandlerMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#causationidmiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CausationIdMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#opentelemetrymiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OpenTelemetryMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#deduplicationlockreleasemiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DeduplicationLockReleaseMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#outboxpreparemiddleware-and-outboxstoremiddleware" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OutboxPrepareMiddleware and OutboxStoreMiddleware
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-stamp-deciders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Built-in stamp deciders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in stamp deciders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#ratelimitstampdecider-225" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RateLimitStampDecider (225)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#retrypolicystampdecider-200" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        RetryPolicyStampDecider (200)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messagetransportstampdecider-175" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageTransportStampDecider (175)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messageserializerstampdecider-150" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageSerializerStampDecider (150)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#messagemetadatastampdecider-125" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MessageMetadataStampDecider (125)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sequencestampdecider-110" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SequenceStampDecider (110)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#causationidstampdecider-100" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CausationIdStampDecider (100)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#idempotencystampdecider-50" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        IdempotencyStampDecider (50)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dispatchaftercurrentbusstampdecider-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DispatchAfterCurrentBusStampDecider (-10)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-custom-stamp-deciders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating custom stamp deciders
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating custom stamp deciders">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-implement-the-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Implement the interface
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-register-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Register it
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-restrict-it-to-message-types-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Restrict it to message types (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-choose-a-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Choose a priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-test-it" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Test it
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="middleware-stamp-pipeline">Middleware &amp; Stamp Pipeline</h1>
+<p>The bundle extends Symfony Messenger in two places:</p>
+<ul>
+<li><strong>Messenger middleware</strong> that runs inside the Messenger buses, both when a
+  message is dispatched and when a worker handles a received message.</li>
+<li>A <strong>stamp decider pipeline</strong> that runs in the CQRS facades (<code>CommandBus</code>,
+  <code>QueryBus</code>, <code>EventBus</code>) before the message is handed to Messenger, and adds
+  stamps to the envelope.</li>
+</ul>
+<h2 id="how-the-stamp-pipeline-works">How the stamp pipeline works</h2>
+<p>When a facade dispatches a message, it first resolves the dispatch mode, then
+runs the <code>StampsDecider</code> aggregator. The aggregator calls every registered
+<code>StampDecider</code> in priority order (highest first). Each decider receives the
+message, the resolved <code>DispatchMode</code> and the current stamp array, and returns
+the (possibly modified) array. The result is passed to Messenger's
+<code>MessageBusInterface::dispatch()</code> on the sync or async bus. A message dispatched through the
+<a href="../outbox/#through-the-buses">outbox</a> gets the stamps of an asynchronous dispatch and goes
+through the async bus (or the sync bus without one), which stores it instead of sending it.</p>
+<pre class="mermaid"><code>sequenceDiagram
+    participant C as Caller
+    participant B as CommandBus
+    participant D as DispatchModeDecider
+    participant S as StampsDecider
+    participant SD as Stamp deciders (by priority)
+    participant M as Messenger bus (sync or async; async for the outbox)
+
+    C-&gt;&gt;B: dispatch(command, mode, ...stamps)
+    B-&gt;&gt;D: resolve(command, mode)
+    D--&gt;&gt;B: SYNC, ASYNC or OUTBOX
+    B-&gt;&gt;S: decide(command, resolved mode, caller stamps)
+    loop highest priority first
+        S-&gt;&gt;SD: decide(command, mode, stamps)
+        SD--&gt;&gt;S: stamps
+    end
+    S--&gt;&gt;B: final stamps
+    B-&gt;&gt;M: dispatch(command, stamps)</code></pre>
+<p>Things to know about the pipeline:</p>
+<ul>
+<li>The initial stamps are the ones the caller passed. <code>dispatchSync()</code> and
+  <code>ask()</code> remove a <code>DispatchAfterCurrentBusStamp</code> first, because they need the
+  result immediately.</li>
+<li>Deciders receive the resolved mode, <code>SYNC</code> or <code>ASYNC</code>, never <code>DEFAULT</code>
+  (<code>ASYNC</code> for a dispatch through the outbox). <code>QueryBus::ask()</code> always passes <code>SYNC</code>.</li>
+<li>Each decider sees the stamps added by the deciders before it.</li>
+<li>The pipeline only runs for dispatches through the CQRS facades. It does not run
+  when a worker handles a received message, when you dispatch on a
+  <code>MessageBusInterface</code> directly, or when the outbox relay sends stored
+  messages.</li>
+<li><strong>Caller stamps win.</strong> The built-in deciders do not replace or duplicate a
+  <code>MessageMetadataStamp</code>, <code>SerializerStamp</code>, <code>TransportNamesStamp</code>,
+  <code>AggregateSequenceStamp</code>, <code>DeduplicateStamp</code> or <code>DispatchAfterCurrentBusStamp</code>
+  passed by the caller, and an explicit causation id is kept. Retry policy
+  stamps are added only for stamp classes the caller did not pass.</li>
+</ul>
+<h2 id="middleware-classes">Middleware classes</h2>
+<p>The bundle registers its Messenger middleware automatically; you do not list it
+under <code>framework.messenger.buses.*.middleware</code>.</p>
+<h3 id="position-in-the-bus">Position in the bus</h3>
+<p>Most bundle middleware is inserted right after Messenger's
+<code>dispatch_after_current_bus</code> middleware. Messages deferred with
+<code>DispatchAfterCurrentBusStamp</code> are released later from that point of the stack,
+so middleware placed before it would be skipped for them. The others need
+another place: <code>TraceContextCaptureMiddleware</code> goes first, to record the trace
+context before a message is deferred; <code>OutboxPrepareMiddleware</code> right after
+<code>add_default_stamps_middleware</code>; <code>DeduplicationLockReleaseMiddleware</code> right
+after <code>deduplicate_middleware</code>; and <code>OutboxStoreMiddleware</code> right before
+<code>send_message</code>. With FrameworkBundle's default middleware, a bus handled by the
+bundle looks like this (abridged; bundle middleware in brackets):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>[TraceContextCaptureMiddleware]        when a tracer provider is registered
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>add_default_stamps_middleware          Symfony 7.4+
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>[OutboxPrepareMiddleware]              when the outbox is enabled
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>add_bus_name_stamp_middleware
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>reject_redelivered_message_middleware
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>dispatch_after_current_bus
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>[OpenTelemetryMiddleware]              when a tracer provider is registered
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>[CausationIdMiddleware]                when causation_id.enabled is true
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>[AllowNoHandlerMiddleware]             event buses only
+<a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>failed_message_processing_middleware
+<a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>deduplicate_middleware                 with framework.lock
+<a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>[DeduplicationLockReleaseMiddleware]   when the idempotency bridge is active
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>... your own middleware ...            (Doctrine's transaction middleware is skipped by outbox stores)
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>[OutboxStoreMiddleware]                when the outbox is enabled
+<a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>send_message
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a>handle_message
+</code></pre></div>
+<p>On a bus without <code>dispatch_after_current_bus</code> (for example with
+<code>default_middleware: false</code>), the bundle middleware is placed first (after
+<code>TraceContextCaptureMiddleware</code>), except <code>OutboxStoreMiddleware</code>, which goes before
+<code>send_message</code> or <code>handle_message</code>, or last. <code>DeduplicationLockReleaseMiddleware</code> is only added to buses that contain
+Messenger's <code>deduplicate_middleware</code>.</p>
+<p>The bundle inserts its middleware in compiler passes that run after Messenger's
+<code>MessengerPass</code> has built the middleware lists of the buses (priority -24 of the
+<code>beforeOptimization</code> phase; <code>MessengerPass</code> runs at 0 up to Symfony 8.1 and at -16
+from Symfony 8.2 on). A compiler pass of your own that must see the bundle's
+middleware, or reorder it, needs a priority below -25.</p>
+<p>The "CQRS buses" below are the bus ids the facades dispatch on, with aliases
+resolved: every configured <code>buses.*</code> entry, plus <code>default_bus</code> when one of
+<code>buses.command</code>, <code>buses.query</code> or <code>buses.event</code> is not set (the facade then falls
+back to it). With all three set, <code>default_bus</code> gets none of the bundle's
+middleware, so an unrelated default bus (mailer, notifier) stays untouched.</p>
+<h3 id="allownohandlermiddleware">AllowNoHandlerMiddleware</h3>
+<p>Catches Messenger's <code>NoHandlerForMessageException</code> for messages implementing
+<code>SomeWork\CqrsBundle\Contract\Event</code>, so events can be published before anyone
+listens to them. Any other message rethrows the exception.</p>
+<p>It is added to the event bus (<code>buses.event</code>, or <code>default_bus</code> when that is not
+set) and to <code>buses.event_async</code>. Because it only silences events, a bus shared
+by commands and events still reports commands without a handler.</p>
+<h3 id="causationidmiddleware">CausationIdMiddleware</h3>
+<p>While a message is handled, pushes its <code>MessageMetadataStamp</code> onto the
+<code>CausationIdContext</code> stack and pops it afterwards (also when the handler
+throws). The metadata deciders read this stack: a message dispatched from
+inside the handler inherits the parent's correlation id and gets the parent's
+message id as its causation id. A message without a <code>MessageMetadataStamp</code> is
+pushed as "no parent", so the messages its handlers dispatch start a new flow.
+With <code>buses</code>, the other CQRS buses get a variant
+(<code>somework_cqrs.messenger.middleware.causation_id_isolation</code>) that only pushes
+"no parent".</p>
+<p>Configure it under <code>somework_cqrs.causation_id</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">    </span><span class="nt">causation_id</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span><span class="w">            </span><span class="c1"># default</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">        </span><span class="nt">buses</span><span class="p">:</span><span class="w">                   </span><span class="c1"># default []: all CQRS buses</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">messenger.bus.commands</span>
+</code></pre></div>
+<p><code>enabled: false</code> removes both the middleware and <code>CausationIdStampDecider</code>.
+Entries in <code>buses</code> must be Messenger bus service ids; an unknown id fails the
+container compilation. <code>CausationIdContext</code> is tagged <code>kernel.reset</code>, so workers
+start every message with an empty stack.</p>
+<h3 id="opentelemetrymiddleware">OpenTelemetryMiddleware</h3>
+<p>Creates one span each time a message passes through a CQRS bus:</p>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Span name</th>
+<th>Span kind</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Dispatch (synchronous, sending to a transport, or storing in the outbox)</td>
+<td><code>cqrs.dispatch &lt;ShortClassName&gt;</code></td>
+<td><code>PRODUCER</code></td>
+</tr>
+<tr>
+<td>The outbox relay sends (or handles) a stored message</td>
+<td><code>cqrs.dispatch &lt;ShortClassName&gt;</code></td>
+<td><code>PRODUCER</code></td>
+</tr>
+<tr>
+<td>A worker handles a received message</td>
+<td><code>cqrs.consume &lt;ShortClassName&gt;</code></td>
+<td><code>CONSUMER</code></td>
+</tr>
+</tbody>
+</table>
+<p>A message dispatched through the <a href="../outbox/#through-the-buses">outbox</a> (<code>DispatchMode::OUTBOX</code>,
+<code>#[Outbox]</code>) therefore has two <code>cqrs.dispatch</code> spans: one when it is stored, although
+nothing is sent then, and one when the relay dispatches the row, as a child of the first
+(the stored <code>TraceContextStamp</code>). The worker's <code>cqrs.consume</code> span is a child of the
+relay's span. <code>OutboxWriter::store()</code> opens no span: it stores the current trace context.</p>
+<ul>
+<li>The tracer is named <code>somework.cqrs</code>. Spans carry the attributes
+  <code>cqrs.message.class</code> (the FQCN) and <code>cqrs.message.type</code> (<code>command</code>, <code>query</code>,
+  <code>event</code>, or <code>unknown</code> for other messages on the same bus).</li>
+<li>A synchronous dispatch produces a single <code>cqrs.dispatch</code> span that also covers
+  the handlers. There is no separate handler span.</li>
+<li>The status is <code>OK</code>, or <code>ERROR</code> with the exception recorded when the rest of
+  the stack throws.</li>
+</ul>
+<p><strong>Trace propagation.</strong> On dispatch, the middleware sets a <code>TraceContextStamp</code>
+holding the W3C <code>traceparent</code>/<code>tracestate</code> headers of the dispatch span; a
+<code>TraceContextStamp</code> already on the envelope (for example one passed by the
+caller or captured for a deferred dispatch) becomes the parent of that span and
+is replaced. The stamp travels with the message through the
+transport, and the worker's <code>cqrs.consume</code> span uses it as its parent, so the
+consumer continues the producer's trace.</p>
+<p><strong>Activation.</strong> The middleware is registered on all CQRS buses when
+<code>open-telemetry/api</code> (1.8 or newer) is installed and the container has a service
+named <code>OpenTelemetry\API\Trace\TracerProviderInterface</code>. Without that service no
+middleware is added. See <a href="../production/#opentelemetry">Production: OpenTelemetry</a>
+for wiring a tracer provider.</p>
+<h3 id="deduplicationlockreleasemiddleware">DeduplicationLockReleaseMiddleware</h3>
+<p>Part of the idempotency bridge. Messenger's <code>deduplicate_middleware</code> acquires a
+lock for each <code>DeduplicateStamp</code> and, for messages handled synchronously, keeps
+it until the TTL expires. When the dispatch throws (a failing handler, or a
+transport that cannot send), this middleware releases the lock, so the caller
+can retry with the same idempotency key. It is registered when the idempotency
+bridge is active and a <code>lock.factory</code> service exists. See
+<a href="../idempotency/">Idempotency</a>.</p>
+<h3 id="outboxpreparemiddleware-and-outboxstoremiddleware">OutboxPrepareMiddleware and OutboxStoreMiddleware</h3>
+<p>Registered when the outbox is enabled; other messages pass through them untouched.
+For a message dispatched through the <a href="../outbox/#through-the-buses">outbox</a>:</p>
+<ul>
+<li><code>OutboxPrepareMiddleware</code>, right after Messenger's <code>add_default_stamps_middleware</code>,
+  hides its <code>DeduplicateStamp</code>s (including default stamps) from
+  <code>deduplicate_middleware</code>, so the lock is taken when the relay sends the message, and
+  drops its <code>DispatchAfterCurrentBusStamp</code>s: the message is stored now.</li>
+<li><code>OutboxStoreMiddleware</code>, after your own middleware (validation, context stamps),
+  stores it in the current transaction instead of sending or handling it. When the
+  relay dispatches the stored message on the bus, it drops the stamps that middleware
+  adds again for a class the stored message already carries, so the caller's context
+  (e.g. <code>router_context</code>) wins over the relay's.</li>
+<li>Doctrine's <code>doctrine_transaction</code> and <code>doctrine_open_transaction_logger</code> (and
+  DoctrineBridge 8.2's <code>DoctrineDbalTransactionMiddleware</code> and
+  <code>DoctrineDbalOpenTransactionLoggerMiddleware</code>, whatever service id you register them
+  under), wherever they are listed on a CQRS bus (also more than once), are wrapped so that a message being stored skips them (they would
+  flush the caller's entity manager, open a transaction around the store, or report the
+  caller's open transaction); they run when the relay dispatches it.</li>
+</ul>
+<p>The relay's dispatch carries <code>RelayedFromOutboxStamp</code> and runs without the caller's
+context and without a <code>ReceivedStamp</code>: middleware that checks the dispatching context
+(authorization) should skip it as it skips received messages.</p>
+<p>Middleware between them must call the next middleware for an outbox dispatch:
+otherwise the bus throws a <code>LogicException</code>.</p>
+<h2 id="built-in-stamp-deciders">Built-in stamp deciders</h2>
+<p>All built-in deciders are registered with fixed priorities. Deciders marked
+"per type" are registered once for commands, once for queries and once for
+events.</p>
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Decider</th>
+<th>Applies to</th>
+<th>Registered when</th>
+<th>Leaves alone</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>225</td>
+<td><code>RateLimitStampDecider</code></td>
+<td>per type</td>
+<td>a limiter is mapped under <code>rate_limiting</code></td>
+<td>-</td>
+</tr>
+<tr>
+<td>200</td>
+<td><code>RetryPolicyStampDecider</code></td>
+<td>per type</td>
+<td>always</td>
+<td>policy stamps of a class the caller passed</td>
+</tr>
+<tr>
+<td>175</td>
+<td><code>MessageTransportStampDecider</code></td>
+<td>commands, queries, events</td>
+<td>always</td>
+<td>an existing <code>TransportNamesStamp</code></td>
+</tr>
+<tr>
+<td>150</td>
+<td><code>MessageSerializerStampDecider</code></td>
+<td>per type</td>
+<td>always</td>
+<td>an existing <code>SerializerStamp</code></td>
+</tr>
+<tr>
+<td>125</td>
+<td><code>MessageMetadataStampDecider</code></td>
+<td>per type</td>
+<td>always</td>
+<td>an existing <code>MessageMetadataStamp</code></td>
+</tr>
+<tr>
+<td>110</td>
+<td><code>SequenceStampDecider</code></td>
+<td>events</td>
+<td><code>sequence.enabled</code> (default <code>true</code>)</td>
+<td>an existing <code>AggregateSequenceStamp</code></td>
+</tr>
+<tr>
+<td>100</td>
+<td><code>CausationIdStampDecider</code></td>
+<td>all messages</td>
+<td><code>causation_id.enabled</code> (default <code>true</code>)</td>
+<td>an explicit causation id</td>
+</tr>
+<tr>
+<td>50</td>
+<td><code>IdempotencyStampDecider</code></td>
+<td>all messages</td>
+<td><code>idempotency.enabled</code> (default <code>true</code>); without symfony/lock it is a no-op (a warning at the first <code>IdempotencyStamp</code>)</td>
+<td>an existing <code>DeduplicateStamp</code></td>
+</tr>
+<tr>
+<td>-10</td>
+<td><code>DispatchAfterCurrentBusStampDecider</code></td>
+<td>commands and events</td>
+<td>always</td>
+<td>an existing <code>DispatchAfterCurrentBusStamp</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="ratelimitstampdecider-225">RateLimitStampDecider (225)</h3>
+<p>Consumes one token from the Symfony rate limiter mapped to the message (see
+<a href="../reference/#rate_limiting"><code>rate_limiting</code></a>); the limiter key is the message
+class. When the limit is exceeded it logs a warning and throws
+<code>RateLimitExceededException</code>, so nothing is dispatched. See
+<a href="../rate-limiting/">Rate limiting</a>.</p>
+<h3 id="retrypolicystampdecider-200">RetryPolicyStampDecider (200)</h3>
+<p>Appends the stamps returned by the <code>RetryPolicy</code> resolved for the message (exact
+class, parent classes, interfaces, type default). The built-in policies return
+no stamps; transport-level retries are configured with <code>retry_strategy</code>.</p>
+<h3 id="messagetransportstampdecider-175">MessageTransportStampDecider (175)</h3>
+<p>Adds a <code>TransportNamesStamp</code> with the transports chosen for the message and mode.
+A <code>TransportNamesStamp</code> passed by the caller wins; otherwise, in this order:</p>
+<ol>
+<li>the transports configured for exactly the message class under
+   <code>transports.&lt;command|command_async|query|event|event_async&gt;.map</code>;</li>
+<li>on asynchronous and outbox dispatches, the transport named by
+   <code>#[Outbox(transport: '...')]</code> or <code>#[Asynchronous(transport: '...')]</code> (<code>#[Outbox]</code>
+   is read first; a class carrying both fails the build);</li>
+<li>the transports configured for a parent class or interface, then the section's
+   <code>default</code>;</li>
+<li>on asynchronous and outbox dispatches of a class with a bare <code>#[Asynchronous]</code> or
+   <code>#[Outbox]</code>, the <code>async</code> transport, unless <code>framework.messenger.routing</code> or
+   <code>#[AsMessage(transport: ...)]</code> routes the message.</li>
+</ol>
+<p>When nothing applies it adds nothing and Messenger's routing decides. See
+<a href="../reference/#transports"><code>transports</code></a> and
+<a href="../usage/#async-routing-with-the-asynchronous-attribute">Async routing with the #[Asynchronous] attribute</a>.</p>
+<h3 id="messageserializerstampdecider-150">MessageSerializerStampDecider (150)</h3>
+<p>Adds the <code>SerializerStamp</code> returned by the <code>MessageSerializer</code> resolved for the
+message (exact class, parent classes, interfaces, type default, global default),
+if any.</p>
+<h3 id="messagemetadatastampdecider-125">MessageMetadataStampDecider (125)</h3>
+<p>Adds the <code>MessageMetadataStamp</code> returned by the <code>MessageMetadataProvider</code>
+resolved for the message. The default provider generates a random message id,
+which is also the correlation id of the first message of a flow. While another
+message is handled, the provider's stamp takes the correlation id of that
+message and its message id as causation id (unless the provider set a
+causation id).</p>
+<h3 id="sequencestampdecider-110">SequenceStampDecider (110)</h3>
+<p>For events implementing <code>SequenceAware</code>, adds an <code>AggregateSequenceStamp</code> with
+the aggregate type, the aggregate id and the sequence number. See
+<a href="../event-ordering/">Event ordering</a>.</p>
+<h3 id="causationidstampdecider-100">CausationIdStampDecider (100)</h3>
+<p>When a message is dispatched while another one is being handled with a
+<code>MessageMetadataStamp</code> passed by the caller, sets its causation id to the
+parent's message id and keeps the caller's correlation id. A copy of the
+handled message's own stamp (forwarded, e.g. <code>$received-&gt;withExtra(...)</code>)
+becomes a new stamp: new message id, same correlation id and extras, the
+handled message as cause. It runs after the
+metadata deciders, so the stamp already exists.</p>
+<h3 id="idempotencystampdecider-50">IdempotencyStampDecider (50)</h3>
+<p>Turns an <code>IdempotencyStamp</code> into Messenger's <code>DeduplicateStamp</code>, with the key
+<code>&lt;message class&gt;::&lt;idempotency key&gt;</code> and the TTL from <code>idempotency.ttl</code>. The
+<code>IdempotencyStamp</code> stays on the envelope. See <a href="../idempotency/">Idempotency</a>.</p>
+<h3 id="dispatchaftercurrentbusstampdecider-10">DispatchAfterCurrentBusStampDecider (-10)</h3>
+<p>For asynchronous dispatches, adds <code>DispatchAfterCurrentBusStamp</code> unless
+<code>dispatch_after_current_bus</code> disables it for the message. A stamp passed by the
+caller is kept by the decider; <code>dispatchSync()</code> and <code>ask()</code> drop it, and so does
+<code>OutboxPrepareMiddleware</code> for an outbox dispatch (the message is stored at once). See
+<a href="../reference/#dispatch_after_current_bus"><code>dispatch_after_current_bus</code></a>.</p>
+<h2 id="creating-custom-stamp-deciders">Creating custom stamp deciders</h2>
+<p>Implement <code>SomeWork\CqrsBundle\Contract\StampDecider</code> (<code>@api</code>) to add your own
+stamps to every dispatch through the facades.</p>
+<h3 id="1-implement-the-interface">1. Implement the interface</h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">namespace</span> <span class="nx">App\Infrastructure\Cqrs</span><span class="p">;</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\DispatchMode</span><span class="p">;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\StampDecider</span><span class="p">;</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">use</span> <span class="nx">Symfony\Component\Messenger\Stamp\StampInterface</span><span class="p">;</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="k">use</span> <span class="nx">Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface</span><span class="p">;</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">AuditTrailStampDecider</span> <span class="k">implements</span> <span class="nx">StampDecider</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="p">{</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">TokenStorageInterface</span> <span class="nv">$tokenStorage</span><span class="p">,</span>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="p">}</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a>    <span class="sd">/**</span>
+<a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="sd">     * @param array&lt;int, StampInterface&gt; $stamps</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="sd">     *</span>
+<a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="sd">     * @return array&lt;int, StampInterface&gt;</span>
+<a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="sd">     */</span>
+<a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">decide</span><span class="p">(</span><span class="nx">object</span> <span class="nv">$message</span><span class="p">,</span> <span class="nx">DispatchMode</span> <span class="nv">$mode</span><span class="p">,</span> <span class="k">array</span> <span class="nv">$stamps</span><span class="p">)</span><span class="o">:</span> <span class="k">array</span>
+<a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a>    <span class="p">{</span>
+<a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a>        <span class="k">foreach</span> <span class="p">(</span><span class="nv">$stamps</span> <span class="k">as</span> <span class="nv">$stamp</span><span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a>            <span class="k">if</span> <span class="p">(</span><span class="nv">$stamp</span> <span class="nx">instanceof</span> <span class="nx">AuditTrailStamp</span><span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a>                <span class="k">return</span> <span class="nv">$stamps</span><span class="p">;</span> <span class="c1">// a stamp passed by the caller wins</span>
+<a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a>            <span class="p">}</span>
+<a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a>        <span class="p">}</span>
+<a id="__codelineno-2-31" name="__codelineno-2-31" href="#__codelineno-2-31"></a>
+<a id="__codelineno-2-32" name="__codelineno-2-32" href="#__codelineno-2-32"></a>        <span class="nv">$stamps</span><span class="p">[]</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">AuditTrailStamp</span><span class="p">(</span>
+<a id="__codelineno-2-33" name="__codelineno-2-33" href="#__codelineno-2-33"></a>            <span class="nx">userId</span><span class="o">:</span> <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">tokenStorage</span><span class="o">-&gt;</span><span class="na">getToken</span><span class="p">()</span><span class="o">?-&gt;</span><span class="na">getUserIdentifier</span><span class="p">(),</span>
+<a id="__codelineno-2-34" name="__codelineno-2-34" href="#__codelineno-2-34"></a>            <span class="nx">dispatchedAt</span><span class="o">:</span> <span class="k">new</span> <span class="nx">\DateTimeImmutable</span><span class="p">(),</span>
+<a id="__codelineno-2-35" name="__codelineno-2-35" href="#__codelineno-2-35"></a>        <span class="p">);</span>
+<a id="__codelineno-2-36" name="__codelineno-2-36" href="#__codelineno-2-36"></a>
+<a id="__codelineno-2-37" name="__codelineno-2-37" href="#__codelineno-2-37"></a>        <span class="k">return</span> <span class="nv">$stamps</span><span class="p">;</span>
+<a id="__codelineno-2-38" name="__codelineno-2-38" href="#__codelineno-2-38"></a>    <span class="p">}</span>
+<a id="__codelineno-2-39" name="__codelineno-2-39" href="#__codelineno-2-39"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>AuditTrailStamp</code> is your own class implementing Messenger's <code>StampInterface</code>.
+<code>decide()</code> receives:</p>
+<ul>
+<li><code>$message</code>: the message being dispatched;</li>
+<li><code>$mode</code>: the resolved mode, <code>DispatchMode::SYNC</code> or <code>DispatchMode::ASYNC</code>
+  (an outbox dispatch decides its stamps as <code>ASYNC</code>, with a <code>StoreInOutboxStamp</code>
+  among them);</li>
+<li><code>$stamps</code>: the current stamps (caller stamps plus those added by
+  higher-priority deciders).</li>
+</ul>
+<p>Return the array with your changes. You can also remove or replace stamps, but
+keep stamps passed by the caller unless you have a reason not to.</p>
+<h3 id="2-register-it">2. Register it</h3>
+<p>With autoconfiguration, implementing <code>StampDecider</code> adds the
+<code>somework_cqrs.dispatch_stamp_decider</code> tag automatically, with priority <code>0</code>: the
+decider runs after every built-in decider except
+<code>DispatchAfterCurrentBusStampDecider</code> (-10), so it can add its own
+<code>DispatchAfterCurrentBusStamp</code>. Use a priority below -10 to see the final
+stamps. Set the priority explicitly to control where the decider runs, either in
+the service definition:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nt">services</span><span class="p">:</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">    </span><span class="nt">App\Infrastructure\Cqrs\AuditTrailStampDecider</span><span class="p">:</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">        </span><span class="nt">tags</span><span class="p">:</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">            </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt"> name</span><span class="p">:</span><span class="w"> </span><span class="s">'somework_cqrs.dispatch_stamp_decider'</span><span class="p p-Indicator">,</span><span class="nt"> priority</span><span class="p">:</span><span class="w"> </span><span class="nv">130</span><span class="w"> </span><span class="p p-Indicator">}</span>
+</code></pre></div>
+<p>or with Symfony's attribute on the class:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\StampDecider</span><span class="p">;</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="k">use</span> <span class="nx">Symfony\Component\DependencyInjection\Attribute\AsTaggedItem</span><span class="p">;</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">#[</span><span class="nd">AsTaggedItem</span><span class="p">(</span><span class="nx">priority</span><span class="o">:</span> <span class="mi">130</span><span class="p">)]</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">AuditTrailStampDecider</span> <span class="k">implements</span> <span class="nx">StampDecider</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="p">{</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="c1">// ...</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">}</span>
+</code></pre></div>
+<p>Without autoconfiguration, add the tag (with its priority) yourself.</p>
+<h3 id="3-restrict-it-to-message-types-optional">3. Restrict it to message types (optional)</h3>
+<p>Implement <code>SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider</code> (<code>@api</code>) to
+run the decider only for some messages. <code>messageTypes()</code> returns classes or
+interfaces; the decider is called only for messages that are an instance of one
+of them:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="k">namespace</span> <span class="nx">App\Infrastructure\Cqrs</span><span class="p">;</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\DispatchMode</span><span class="p">;</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Command</span><span class="p">;</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\MessageTypeAwareStampDecider</span><span class="p">;</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="k">use</span> <span class="nx">Symfony\Component\Messenger\Stamp\StampInterface</span><span class="p">;</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">CommandAuditStampDecider</span> <span class="k">implements</span> <span class="nx">MessageTypeAwareStampDecider</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">{</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a>    <span class="sd">/**</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="sd">     * @return list&lt;class-string&gt;</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="sd">     */</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">messageTypes</span><span class="p">()</span><span class="o">:</span> <span class="k">array</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a>    <span class="p">{</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a>        <span class="k">return</span> <span class="p">[</span><span class="nx">Command</span><span class="o">::</span><span class="na">class</span><span class="p">];</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a>    <span class="p">}</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a>    <span class="sd">/**</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="sd">     * @param array&lt;int, StampInterface&gt; $stamps</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="sd">     *</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="sd">     * @return array&lt;int, StampInterface&gt;</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="sd">     */</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">decide</span><span class="p">(</span><span class="nx">object</span> <span class="nv">$message</span><span class="p">,</span> <span class="nx">DispatchMode</span> <span class="nv">$mode</span><span class="p">,</span> <span class="k">array</span> <span class="nv">$stamps</span><span class="p">)</span><span class="o">:</span> <span class="k">array</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a>    <span class="p">{</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a>        <span class="c1">// Only called for Command instances.</span>
+<a id="__codelineno-5-30" name="__codelineno-5-30" href="#__codelineno-5-30"></a>        <span class="k">return</span> <span class="nv">$stamps</span><span class="p">;</span>
+<a id="__codelineno-5-31" name="__codelineno-5-31" href="#__codelineno-5-31"></a>    <span class="p">}</span>
+<a id="__codelineno-5-32" name="__codelineno-5-32" href="#__codelineno-5-32"></a><span class="p">}</span>
+</code></pre></div>
+<p>Without <code>MessageTypeAwareStampDecider</code>, the decider runs for every message
+dispatched through the facades.</p>
+<h3 id="4-choose-a-priority">4. Choose a priority</h3>
+<p>Higher priorities run first. Pick a value relative to the built-in deciders:</p>
+<ul>
+<li><strong>above 225</strong>: before rate limiting, for example to reject a dispatch early;</li>
+<li><strong>between 175 and 200</strong>: after retry stamps, before transport routing (a
+  <code>TransportNamesStamp</code> added here takes precedence over the <code>transports</code>
+  configuration and <code>#[Asynchronous]</code>);</li>
+<li><strong>between 125 and 150</strong>: after serialization, before metadata;</li>
+<li><strong>between 100 and 125</strong>: after the metadata stamp exists, before the causation
+  id is added;</li>
+<li><strong>between -10 and 50</strong> (the default <code>0</code> is here): after almost everything,
+  before <code>DispatchAfterCurrentBusStampDecider</code> (-10), which then sees your
+  <code>DispatchAfterCurrentBusStamp</code>. The causation id (100) and the idempotency
+  bridge (50) have already run: an <code>IdempotencyStamp</code> you add here is not turned
+  into a <code>DeduplicateStamp</code> (use a priority above 50), and a
+  <code>MessageMetadataStamp</code> you add or replace here gets no causation id (use a
+  priority above 100, or set it yourself);</li>
+<li><strong>below -10</strong>: after every built-in decider, to see the final stamps.</li>
+</ul>
+<h3 id="5-test-it">5. Test it</h3>
+<p>A decider is a plain class, so a unit test can call <code>decide()</code> directly:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="k">namespace</span> <span class="nx">App\Tests\Infrastructure\Cqrs</span><span class="p">;</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="k">use</span> <span class="nx">App\Infrastructure\Cqrs\AuditTrailStamp</span><span class="p">;</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="k">use</span> <span class="nx">App\Infrastructure\Cqrs\AuditTrailStampDecider</span><span class="p">;</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="k">use</span> <span class="nx">PHPUnit\Framework\TestCase</span><span class="p">;</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Bus\DispatchMode</span><span class="p">;</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="k">use</span> <span class="nx">Symfony\Component\Security\Core\Authentication\Token\Storage\TokenStorageInterface</span><span class="p">;</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">AuditTrailStampDeciderTest</span> <span class="k">extends</span> <span class="nx">TestCase</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="p">{</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">testAddsAuditTrailStamp</span><span class="p">()</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>    <span class="p">{</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a>        <span class="nv">$decider</span> <span class="o">=</span> <span class="k">new</span> <span class="nx">AuditTrailStampDecider</span><span class="p">(</span><span class="nv">$this</span><span class="o">-&gt;</span><span class="na">createStub</span><span class="p">(</span><span class="nx">TokenStorageInterface</span><span class="o">::</span><span class="na">class</span><span class="p">));</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a>        <span class="nv">$stamps</span> <span class="o">=</span> <span class="nv">$decider</span><span class="o">-&gt;</span><span class="na">decide</span><span class="p">(</span><span class="k">new</span> <span class="nx">\stdClass</span><span class="p">(),</span> <span class="nx">DispatchMode</span><span class="o">::</span><span class="na">SYNC</span><span class="p">,</span> <span class="p">[]);</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertCount</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="nv">$stamps</span><span class="p">);</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a>        <span class="nx">self</span><span class="o">::</span><span class="na">assertInstanceOf</span><span class="p">(</span><span class="nx">AuditTrailStamp</span><span class="o">::</span><span class="na">class</span><span class="p">,</span> <span class="nv">$stamps</span><span class="p">[</span><span class="mi">0</span><span class="p">]);</span>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a>    <span class="p">}</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="p">}</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

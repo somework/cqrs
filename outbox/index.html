@@ -1,0 +1,2617 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CQRS helpers for Symfony Messenger">
+      
+      
+      
+        <link rel="canonical" href="https://somework.github.io/cqrs/outbox/">
+      
+      
+        <link rel="prev" href="../retry/">
+      
+      
+        <link rel="next" href="../event-ordering/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Transactional Outbox - SomeWork CQRS Bundle</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#transactional-outbox" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-header__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            SomeWork CQRS Bundle
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Transactional Outbox
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="SomeWork CQRS Bundle" class="md-nav__button md-logo" aria-label="SomeWork CQRS Bundle" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    SomeWork CQRS Bundle
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/somework/cqrs" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    somework/cqrs
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../usage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../migration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Migration Guide
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../middleware/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Middleware & Stamp Pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Advanced
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../retry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Retry Policies
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transactional Outbox
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Transactional Outbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-do-i-need-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When do I need the outbox?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#through-the-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Through the buses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-to-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing to the outbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating the table
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating the table">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#table-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrading-from-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading from 0.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaying" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaying
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purging-published-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purging published rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delivery-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom storage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signed-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signed rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-measures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other measures
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../event-ordering/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Event Ordering
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../idempotency/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Idempotency
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../rate-limiting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Rate Limiting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../production/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Production
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#how-it-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How it works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-do-i-need-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When do I need the outbox?
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#requirements" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Requirements
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#quick-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Quick start
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#through-the-buses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Through the buses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#writing-to-the-outbox" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Writing to the outbox
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#creating-the-table" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Creating the table
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Creating the table">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#table-schema" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Table schema
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgrading-from-04" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upgrading from 0.4
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#relaying" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relaying
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#development" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Development
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Failures
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#monitoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Monitoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#purging-published-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Purging published rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#delivery-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Delivery guarantees
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#custom-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Custom storage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#security" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Security
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Security">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#signed-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Signed rows
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#other-measures" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other measures
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#limitations" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Limitations
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="transactional-outbox">Transactional outbox</h1>
+<p>Suppose a handler commits a database change and then sends a message to a broker. It can
+fail between the two steps: the change is saved and the message is lost, or the message
+goes out for a change that was rolled back. With the outbox, you store the message in a
+database table <strong>in the same transaction</strong> as the business change. The
+<code>somework:cqrs:outbox:relay</code> command later sends the stored messages to Messenger.</p>
+<div class="admonition note">
+<p class="admonition-title">Stability</p>
+<p>The public API (<code>@api</code>) of the outbox is:</p>
+<ul>
+<li><code>OutboxWriter</code> and <code>Contract\Outbox\OutboxWriterInterface</code>, <code>OutboxMessage</code> and
+  <code>DbalOutboxStorage</code> (public for <code>addTableToSchema()</code> in migrations and for the setup
+  and failed-message tools);</li>
+<li>the storage contracts of <code>Contract\Outbox</code>: <code>OutboxStorage</code> and the capabilities
+  <code>OutboxSchema</code>, <code>FailedOutboxMessages</code>, <code>OutboxMonitoring</code> and <code>TransactionalOutbox</code>,
+  with the <code>OutboxStatus</code> and <code>FailedOutboxMessage</code> DTOs;</li>
+<li>the <code>#[Outbox]</code> attribute, <code>DispatchMode::OUTBOX</code>, the stamps <code>OutboxStoredStamp</code>,
+  <code>RelayedFromOutboxStamp</code> and <code>StoreInOutboxStamp</code>, and <code>Testing\FakeOutboxWriter</code>.</li>
+</ul>
+<p>Write with <code>OutboxWriter</code> (or through the buses), or type-hint the interfaces. The relay
+(<code>OutboxRelay</code>, its <code>RelayReporter</code> and <code>RelayResult</code>) and <code>RelayUnitOfWork</code> are internal.</p>
+</div>
+<h2 id="how-it-works">How it works</h2>
+<ol>
+<li>Inside your database transaction, you write the business data and store the message: through
+   the buses (<code>DispatchMode::OUTBOX</code>, <code>#[Outbox]</code> or <code>dispatch_modes</code>, see
+   <a href="#through-the-buses">Through the buses</a>), or with <code>OutboxWriter::store()</code>.</li>
+<li>The transaction commits. The message row is saved only if the business change is.</li>
+<li><code>somework:cqrs:outbox:relay</code> reads due rows, transport by transport, decodes each one, and
+   dispatches it through the Messenger bus of its type (see <a href="#relaying">Relaying</a>). The message
+   goes to the transport stored with the row, or follows the Messenger routing when no
+   transport was stored. Then the relay marks the row as published. A row that fails is
+   retried later with an increasing delay, and given up after <code>max_attempts</code> attempts (see
+   <a href="#failures">Failures</a>).</li>
+</ol>
+<p>A message reaches the outbox only when you ask for it: with <code>DispatchMode::OUTBOX</code>, with the
+<code>#[Outbox]</code> attribute or an <code>outbox</code> entry of <code>dispatch_modes</code> (then <code>dispatch()</code> stores it), or
+with <code>OutboxWriter</code>. Everything else the buses dispatch is sent as usual.</p>
+<h2 id="when-do-i-need-the-outbox">When do I need the outbox?</h2>
+<ul>
+<li><strong>Your transport is not your database</strong> (AMQP, Redis, SQS, Kafka…): a message sent from a
+  handler is either sent before the commit (and goes out for a change that may still roll back)
+  or after it (and is lost when the send fails). The bundle's buses send asynchronous commands
+  and events after the handler returned (<code>dispatch_after_current_bus</code>, on by default), so a
+  failed send leaves the change committed and throws <code>DeferredDispatchFailedException</code> from
+  <code>dispatchSync()</code>; in a worker, the retried command skips the handler that already ran and
+  the event is lost with a warning in the Messenger log. Store such messages with <code>OutboxWriter</code>
+  instead.</li>
+<li><strong>Your transport is a Doctrine transport on the same connection</strong> as your business data:
+  Messenger inserts the message in the current transaction, so it is already atomic, but only
+  when it is sent inside the transaction. Disable <code>dispatch_after_current_bus</code> for those
+  messages (<code>somework_cqrs.dispatch_after_current_bus.event.map</code>), or use the outbox anyway.</li>
+<li><strong>A message goes to several transports</strong>, some of which may fail: the outbox stores one row per
+  transport and retries each on its own.</li>
+</ul>
+<h2 id="requirements">Requirements</h2>
+<ul>
+<li><code>doctrine/dbal</code> 4. Enabling the outbox without it fails container compilation with an
+  <code>InvalidConfigurationException</code>.</li>
+<li><code>doctrine/doctrine-bundle</code>, which provides the <code>doctrine.dbal.&lt;name&gt;_connection</code> service
+  the storage uses.</li>
+<li>Optional: <code>symfony/lock</code>, so only one relay runs at a time (see <a href="#relaying">Relaying</a>).</li>
+<li>Optional: <code>doctrine/orm</code>, which adds the outbox table to schema generation and Doctrine
+  migrations (see <a href="#creating-the-table">Creating the table</a>).</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>composer<span class="w"> </span>require<span class="w"> </span>doctrine/dbal<span class="w"> </span>doctrine/doctrine-bundle<span class="w"> </span>symfony/lock
+</code></pre></div>
+<p>The Flex recipe of DoctrineBundle writes a <code>doctrine.orm</code> section. Without doctrine/orm the
+container then fails with <code>The doctrine/orm package is required when the doctrine.orm config
+is set</code>: remove that section, or install the ORM (<code>composer require symfony/orm-pack</code>).</p>
+<h2 id="quick-start">Quick start</h2>
+<ol>
+<li>Enable the outbox (<code>somework_cqrs.outbox.enabled: true</code>, see <a href="#configuration">Configuration</a>).</li>
+<li>Create the table: <code>bin/console somework:cqrs:outbox:setup</code>, or a Doctrine migration.</li>
+<li>Inside your transaction, dispatch the messages through the outbox (see
+   <a href="#through-the-buses">Through the buses</a>), or store them with <code>OutboxWriter::store()</code> (see
+   <a href="#writing-to-the-outbox">Writing to the outbox</a>).</li>
+<li>Run <code>bin/console somework:cqrs:outbox:relay</code> every minute, or keep it running with <code>--watch</code>
+   (see <a href="#relaying">Relaying</a>), and purge published rows every night (see
+   <a href="#purging-published-rows">Purging published rows</a>). In development, see
+   <a href="#development">Development</a>.</li>
+<li>Watch <code>bin/console somework:cqrs:health</code> (see <a href="#monitoring">Monitoring</a>).</li>
+</ol>
+<p>The rest of this page explains each step and the cases operations need to know.</p>
+<h2 id="configuration">Configuration</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># config/packages/somework_cqrs.yaml</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">outbox</span><span class="p">:</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">        </span><span class="nt">table_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">somework_cqrs_outbox</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">        </span><span class="nt">connection</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">default</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">        </span><span class="nt">serializer</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">messenger.default_serializer</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">        </span><span class="nt">auto_setup</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">        </span><span class="nt">max_attempts</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enabled</code></td>
+<td><code>false</code></td>
+<td>Registers the outbox storage and the four console commands. It decides which services exist, so it must be a plain boolean, not an <code>%env()%</code> value.</td>
+</tr>
+<tr>
+<td><code>table_name</code></td>
+<td><code>somework_cqrs_outbox</code></td>
+<td>Name of the outbox table: letters, digits and underscores, optionally <code>schema.table</code> (on MySQL and MariaDB <code>database.table</code>: without a database selected on the connection, its <code>dbname</code>, the automatic setup is skipped, and the Doctrine schema listener only adds a table of the connection's database to generated migrations). A word reserved in MySQL, MariaDB, PostgreSQL or SQLite (such as <code>order</code> or <code>user</code>) is a configuration error, because the queries do not quote the name.</td>
+</tr>
+<tr>
+<td><code>connection</code></td>
+<td><code>default</code></td>
+<td>DBAL connection name. The storage uses the service <code>doctrine.dbal.&lt;name&gt;_connection</code>. Use the connection that holds your business data, otherwise <code>store()</code> is not part of the business transaction.</td>
+</tr>
+<tr>
+<td><code>serializer</code></td>
+<td><code>messenger.default_serializer</code></td>
+<td>Messenger serializer service id. It is exposed as the alias <code>somework_cqrs.outbox.serializer</code> for code that writes to the outbox, and the relay uses it to decode rows.</td>
+</tr>
+<tr>
+<td><code>relay_on_terminate</code></td>
+<td><code>false</code></td>
+<td>For development: runs the relay right after a request, a console command or a message a worker handled that stored messages in the outbox. See <a href="#development">Development</a>. A plain boolean (it decides which services exist).</td>
+</tr>
+<tr>
+<td><code>require_transaction</code></td>
+<td><code>true</code></td>
+<td>Refuses to store a message outside a transaction on the outbox connection (<code>OutboxRequiresTransactionException</code>): the message would not be part of the business change. Checked by storages that implement <code>TransactionalOutbox</code> (<code>DbalOutboxStorage</code> does).</td>
+</tr>
+<tr>
+<td><code>auto_setup</code></td>
+<td><code>true</code></td>
+<td>Creates the table on first use if it is missing, or adds the columns a table of an earlier version lacks, but never inside an open transaction. Indexes are left to <code>somework:cqrs:outbox:setup</code>. Set it to <code>false</code> when migrations manage the table.</td>
+</tr>
+<tr>
+<td><code>max_attempts</code></td>
+<td><code>10</code></td>
+<td>Attempts after which the relay gives up on a row that cannot be decoded or sent (at least 1). A row whose transport fails gets three times as many. See <a href="#failures">Failures</a>.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="through-the-buses">Through the buses</h2>
+<p>The command and event buses store a message in the outbox instead of sending it when its dispatch
+mode is <code>outbox</code>. The stamp pipeline runs as for an asynchronous dispatch (transports, retry,
+serializer, metadata and causation, idempotency, rate limiting), and so does the middleware of
+the bus the relay sends it on (<code>buses.&lt;type&gt;_async</code>, or the synchronous bus without one):
+validation, the stamps of your own middleware and of <code>router_context</code> (tenant, user, request
+context) and tracing run in the dispatching process, and a message they reject is not stored.
+After all of it, right before Messenger's <code>send_message</code>, the bundle stores the message instead
+of sending it, right away, in the current transaction: it is never deferred until the current handler has finished, also when the message
+provides a <code>DispatchAfterCurrentBusStamp</code> among its default stamps. Three ways select the mode:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="x">// 1. Explicitly, for one dispatch.</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="x">$this-&gt;eventBus-&gt;dispatch(new OrderPlaced($orderId), DispatchMode::OUTBOX);</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="x">// 2. On the message class: every dispatch() with the default mode stores it.</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="x">#[Outbox]                                   // or #[Outbox(transport: 'orders')]</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="x">final class OrderPlaced implements Event { /* ... */ }</span>
+</code></pre></div>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># 3. In the configuration, per message class or interface, or for a whole type.</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">    </span><span class="nt">dispatch_modes</span><span class="p">:</span>
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="w">        </span><span class="nt">event</span><span class="p">:</span>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="w">            </span><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">outbox</span><span class="w">               </span><span class="c1"># every event, unless mapped otherwise</span>
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="w">            </span><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="w">                </span><span class="nt">App\Event\AuditTrail</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">async</span>
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="w">        </span><span class="nt">command</span><span class="p">:</span>
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="w">            </span><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="w">                </span><span class="nt">App\Application\Command\ChargeCard</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">outbox</span>
+</code></pre></div>
+<p>The attribute and the configuration take part in the usual
+<a href="../reference/#resolution-order-for-per-message-maps">resolution order</a>: an exact <code>map</code> entry
+wins over the attribute, which wins over entries for parents and interfaces and over the
+default. A class with both <code>#[Outbox]</code> and <code>#[Asynchronous]</code>, <code>#[Outbox]</code> on a query, and an
+<code>outbox</code> mode in <code>dispatch_modes</code> while <code>outbox.enabled</code> is off fail the compilation, and so does
+<code>#[Outbox]</code> with an undefined transport or without the outbox, for a message with a handler in
+the application (the bundle knows messages through their handlers). For a message without one,
+such as an integration event other services consume, a transport that is not a Messenger
+transport is refused when it is stored (<code>UnknownOutboxTransportException</code>), so the business
+transaction rolls back instead of committing a row the relay could never send.</p>
+<p>The handler code stays the same: dispatch inside the transaction of the business change.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="x">#[AsCommandHandler(command: PlaceOrder::class)]</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="x">final class PlaceOrderHandler</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="x">{</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="x">    public function __construct(</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="x">        private readonly Connection $connection,</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="x">        private readonly EventBusInterface $eventBus,</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="x">    ) {</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="x">    }</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="x">    public function __invoke(PlaceOrder $command): mixed</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="x">    {</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="x">        $this-&gt;connection-&gt;transactional(function () use ($command): void {</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="x">            $this-&gt;connection-&gt;insert('orders', ['id' =&gt; $command-&gt;orderId]);</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="x">            $this-&gt;eventBus-&gt;dispatch(new OrderPlaced($command-&gt;orderId)); // OrderPlaced is #[Outbox]</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="x">        });</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="x">        return null;</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="x">    }</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="x">}</span>
+</code></pre></div>
+<p>With Messenger's <code>doctrine_transaction</code> middleware on the command bus, every handler already
+runs in a transaction of the entity manager's connection, and the events it dispatches through
+the outbox are stored in it without an explicit <code>transactional()</code>.</p>
+<ul>
+<li><strong>The transaction is checked</strong> before the stamp pipeline and the middleware run. With
+  <code>require_transaction: true</code> (the default), a message dispatched outside a transaction on
+  <code>outbox.connection</code> (none is open, or it is open on another connection) throws
+  <code>OutboxRequiresTransactionException</code> instead of being stored on its own. A connection with
+  <code>auto_commit: false</code> is always in a transaction. On it, the relay and the maintenance commands
+  commit their own writes, the setup runs, and each message the relay handles in its own process
+  (see <em>The transports</em>) is a unit of work of its own: a failed handler's writes are rolled back.</li>
+<li><strong>Middleware runs twice.</strong> Once when the message is stored and once when the relay dispatches
+  it on the same bus (then Messenger's deduplication, and the sending). When the relay dispatches
+  it, a stamp that middleware adds again for a class the stored message already carries (the
+  request context of <code>router_context</code>, a tenant) is dropped: the caller's context wins. Middleware
+  with side effects runs twice too; Doctrine's <code>doctrine_transaction</code> and
+  <code>doctrine_open_transaction_logger</code> (and DoctrineBridge 8.2's <code>DoctrineDbalTransactionMiddleware</code>
+  and <code>DoctrineDbalOpenTransactionLoggerMiddleware</code>, under any service id) are skipped when the
+  message is stored, wherever they are listed, and run in the relay (they would flush the caller's
+  entity manager, open a transaction around the store, or report the caller's open transaction).
+  Middleware must pass an outbox dispatch (an envelope carrying
+  <code>StoreInOutboxStamp</code>) on to the next one: one that returns early makes <code>dispatch()</code> throw a
+  <code>LogicException</code>.</li>
+<li><strong>The relay's run has no caller context.</strong> It happens in the relay's process, without the
+  caller's request, user or tenant, and without a <code>ReceivedStamp</code>. Middleware that checks the
+  dispatching context (authorization, for example) and skips received messages should also skip
+  envelopes carrying <code>RelayedFromOutboxStamp</code>: a message stored through the buses was checked
+  when it was stored. A message written with <code>OutboxWriter::store()</code> passed no bus middleware, so
+  such a guard lets it through unchecked: check it before calling <code>store()</code>.</li>
+</ul>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="x">if (null !== $envelope-&gt;last(ReceivedStamp::class) || null !== $envelope-&gt;last(RelayedFromOutboxStamp::class)) {</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="x">    return $stack-&gt;next()-&gt;handle($envelope, $stack);</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="x">}</span>
+</code></pre></div>
+- <strong>The result.</strong> <code>dispatch()</code> returns the envelope with an <code>OutboxStoredStamp</code>: the ids of the
+  stored rows and their transports. Nothing is sent until the relay runs.
+- <strong>The transports</strong> are those of an asynchronous dispatch: <code>transports.command_async</code> /
+  <code>transports.event_async</code>, the transport of <code>#[Outbox(transport: ...)]</code>, or
+  <code>framework.messenger.routing</code> when the relay sends the row. No async bus is needed, also with
+  <code>transports.&lt;type&gt;_async</code> set: the relay dispatches on <code>buses.&lt;type&gt;_async</code>, or on the
+  synchronous bus without one. A message with none of them is stored with a warning, and the
+  relay handles it synchronously in its own process when it relays it.
+- <strong>Delays.</strong> A <code>DelayStamp</code> (passed by the caller, among the default stamps of the message,
+  or added by a middleware) is stored with the message untouched and applies when the relay
+  sends the row: the delay counts from that send, not from the dispatch. The row itself is due
+  at once, so the next relay run sends it; with a transport that supports delays the message is
+  then handled the delay later, and without a transport (handled in the relay's process) the
+  delay is ignored. The same holds for <code>OutboxWriter::store()</code>. A later version may start the
+  delay at the dispatch instead.
+- <strong>What bypasses the outbox.</strong> <code>dispatchSync()</code> and <code>ask()</code> (they need the result) and
+  <code>dispatchAsync()</code> (an explicit asynchronous dispatch) ignore the <code>outbox</code> mode.
+- <strong>Idempotency.</strong> An <code>IdempotencyStamp</code> becomes a <code>DeduplicateStamp</code> scoped to each row's
+  transport (<code>&lt;key&gt;@&lt;transport&gt;</code>) when the message is stored, and deduplicates when the relay
+  sends the row, not when it is stored: two dispatches with the same key in one transaction store
+  two rows, and the second is dropped when relayed. A <code>DeduplicateStamp</code> among the default stamps
+  of the message (<code>DefaultStampsProviderInterface</code>) is scoped and applied the same way. With a
+  lock store that ties its keys to the process (<code>flock</code>, <code>semaphore</code>, PostgreSQL advisory locks,
+  ZooKeeper), a message with a <code>DeduplicateStamp</code> (from an <code>IdempotencyStamp</code>, its default stamps
+  or the caller) is refused when it is stored (<code>LogicException</code>), since the relay could never
+  send it; <code>OutboxWriter::store()</code> refuses it too. The store is the one <code>lock.factory</code> uses at
+  runtime (a <code>LOCK_DSN</code> from the environment counts with its runtime value).
+- <strong>Tests.</strong> <code>assertStoredInOutbox()</code> checks the fake buses for a dispatch with
+  <code>DispatchMode::OUTBOX</code>, or with the default mode of a class carrying <code>#[Outbox]</code>, and the fakes
+  return an envelope with an <code>OutboxStoredStamp</code> for it (see <a href="../testing/">Testing</a>). A fake bus
+  does not know <code>dispatch_modes</code>.</p>
+<h2 id="writing-to-the-outbox">Writing to the outbox</h2>
+<p><code>OutboxWriter</code> stores a message without the stamp pipeline and the middleware of the buses (no
+validation or authorization when it is stored): use it for messages that are not commands or
+events, or to choose every stamp yourself. Inject it (type-hint <code>OutboxWriterInterface</code>, which
+<code>Testing\FakeOutboxWriter</code> replaces in unit tests) and call <code>store()</code> inside your transaction:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="k">namespace</span> <span class="nx">App\Application\Command</span><span class="p">;</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a><span class="k">use</span> <span class="nx">App\Application\Event\OrderPlaced</span><span class="p">;</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a><span class="k">use</span> <span class="nx">Doctrine\DBAL\Connection</span><span class="p">;</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Attribute\AsCommandHandler</span><span class="p">;</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Contract\Outbox\OutboxWriterInterface</span><span class="p">;</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="p">#[</span><span class="nd">AsCommandHandler</span><span class="p">(</span><span class="nx">command</span><span class="o">:</span> <span class="nx">PlaceOrder</span><span class="o">::</span><span class="na">class</span><span class="p">)]</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">PlaceOrderHandler</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a><span class="p">{</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__construct</span><span class="p">(</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">Connection</span> <span class="nv">$connection</span><span class="p">,</span>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a>        <span class="k">private</span> <span class="k">readonly</span> <span class="nx">OutboxWriterInterface</span> <span class="nv">$outbox</span><span class="p">,</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a>    <span class="p">)</span> <span class="p">{</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a>    <span class="p">}</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>
+<a id="__codelineno-7-21" name="__codelineno-7-21" href="#__codelineno-7-21"></a>    <span class="k">public</span> <span class="k">function</span> <span class="fm">__invoke</span><span class="p">(</span><span class="nx">PlaceOrder</span> <span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">mixed</span>
+<a id="__codelineno-7-22" name="__codelineno-7-22" href="#__codelineno-7-22"></a>    <span class="p">{</span>
+<a id="__codelineno-7-23" name="__codelineno-7-23" href="#__codelineno-7-23"></a>        <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">connection</span><span class="o">-&gt;</span><span class="na">transactional</span><span class="p">(</span><span class="k">function</span> <span class="p">()</span> <span class="k">use</span> <span class="p">(</span><span class="nv">$command</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span> <span class="p">{</span>
+<a id="__codelineno-7-24" name="__codelineno-7-24" href="#__codelineno-7-24"></a>            <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">connection</span><span class="o">-&gt;</span><span class="na">insert</span><span class="p">(</span><span class="s1">'orders'</span><span class="p">,</span> <span class="p">[</span>
+<a id="__codelineno-7-25" name="__codelineno-7-25" href="#__codelineno-7-25"></a>                <span class="s1">'id'</span> <span class="o">=&gt;</span> <span class="nv">$command</span><span class="o">-&gt;</span><span class="na">orderId</span><span class="p">,</span>
+<a id="__codelineno-7-26" name="__codelineno-7-26" href="#__codelineno-7-26"></a>                <span class="s1">'customer_id'</span> <span class="o">=&gt;</span> <span class="nv">$command</span><span class="o">-&gt;</span><span class="na">customerId</span><span class="p">,</span>
+<a id="__codelineno-7-27" name="__codelineno-7-27" href="#__codelineno-7-27"></a>            <span class="p">]);</span>
+<a id="__codelineno-7-28" name="__codelineno-7-28" href="#__codelineno-7-28"></a>
+<a id="__codelineno-7-29" name="__codelineno-7-29" href="#__codelineno-7-29"></a>            <span class="c1">// Stored while this handler runs, the event continues the flow of PlaceOrder:</span>
+<a id="__codelineno-7-30" name="__codelineno-7-30" href="#__codelineno-7-30"></a>            <span class="c1">// same correlation id, PlaceOrder as its cause (pass a MessageMetadataStamp to override).</span>
+<a id="__codelineno-7-31" name="__codelineno-7-31" href="#__codelineno-7-31"></a>            <span class="nv">$this</span><span class="o">-&gt;</span><span class="na">outbox</span><span class="o">-&gt;</span><span class="na">store</span><span class="p">(</span><span class="k">new</span> <span class="nx">OrderPlaced</span><span class="p">(</span><span class="nv">$command</span><span class="o">-&gt;</span><span class="na">orderId</span><span class="p">));</span>
+<a id="__codelineno-7-32" name="__codelineno-7-32" href="#__codelineno-7-32"></a>        <span class="p">});</span>
+<a id="__codelineno-7-33" name="__codelineno-7-33" href="#__codelineno-7-33"></a>
+<a id="__codelineno-7-34" name="__codelineno-7-34" href="#__codelineno-7-34"></a>        <span class="k">return</span> <span class="k">null</span><span class="p">;</span>
+<a id="__codelineno-7-35" name="__codelineno-7-35" href="#__codelineno-7-35"></a>    <span class="p">}</span>
+<a id="__codelineno-7-36" name="__codelineno-7-36" href="#__codelineno-7-36"></a><span class="p">}</span>
+</code></pre></div>
+<p><code>OutboxWriter::store(object $message, ?string $transportName = null, StampInterface ...$stamps)</code>
+returns the stored rows. The main points:</p>
+<ul>
+<li><strong>Use the same connection.</strong> <code>Connection</code> must be the connection named in
+  <code>outbox.connection</code>; with <code>require_transaction: true</code>, a store outside a transaction on it
+  throws <code>OutboxRequiresTransactionException</code>. With Doctrine ORM, call <code>store()</code> inside
+  <code>EntityManagerInterface::wrapInTransaction()</code>. The entity manager of that connection
+  shares the same <code>Connection</code> instance.</li>
+<li><strong>The transport.</strong> Without a transport name, the writer sends the message where an
+  asynchronous dispatch through the CQRS buses would: the transports of
+  <code>transports.command_async</code> or <code>transports.event_async</code> for the message, or the one of
+  <code>#[Asynchronous(transport: ...)]</code>. It stores one row per transport, so a failing transport
+  is retried alone. When none is configured, the row follows <code>framework.messenger.routing</code>
+  when it is relayed. A transport name you pass wins. The relay sends the message there with
+  Messenger's <code>TransportNamesStamp</code>.</li>
+<li><strong>Only your stamps, plus the causation.</strong> The stamp pipeline does not run: the bundle adds
+  no retry, serializer or rate-limit stamps. Pass the stamps you need; they are serialized
+  with the message. The one exception is metadata: stored while a handler runs and without a
+  <code>MessageMetadataStamp</code> of its own, the message gets one that keeps the correlation id of
+  the handled message and names its message id as the cause. Outside a handler no metadata
+  is added.</li>
+<li><strong>The bus is chosen for you.</strong> The relay dispatches commands on <code>buses.command_async</code>
+  (or <code>buses.command</code>), events on <code>buses.event_async</code> (or <code>buses.event</code>), queries on
+  <code>buses.query</code>, and anything else on the default bus. That bus adds its <code>BusNameStamp</code>, so
+  the worker hands the message to the bus where its handlers are registered. A
+  <code>BusNameStamp</code> you store yourself is kept.</li>
+</ul>
+<p>Rows get a time-ordered UUIDv7 id: rows stored in the same millisecond by one process keep
+their order.</p>
+<p>Without the writer, build the row yourself with
+<code>OutboxMessage::fromEnvelope(Envelope $envelope, SerializerInterface $serializer, ?string $transportName = null, ?DateTimeImmutable $createdAt = null)</code>
+and pass it to <code>OutboxStorage::store()</code>. Encode it with the <code>somework_cqrs.outbox.serializer</code>
+service (the <code>outbox.serializer</code> option, by default <code>messenger.default_serializer</code>), which the
+relay decodes rows with, not with a transport's serializer.</p>
+<h2 id="creating-the-table">Creating the table</h2>
+<p>The table has to exist before the first <code>store()</code>. There are three ways to create it:</p>
+<p><strong>Setup command.</strong> Run it once per environment, for example in your deployment script. It
+creates the table if it is missing, adds the columns and indexes that a table created by an earlier
+version lacks (see <a href="#upgrading-from-04">Upgrading from 0.4</a>), and does nothing otherwise:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:setup
+</code></pre></div>
+<p><strong>Doctrine migrations.</strong> When <code>doctrine/orm</code> is installed, the bundle registers
+<code>OutboxSchemaSubscriber</code>, a <code>postGenerateSchema</code> listener that is scoped to the configured
+<code>outbox.connection</code>. It adds the outbox table to the schema of that connection, so
+<code>doctrine:migrations:diff</code> and <code>doctrine:schema:update</code> include it. Set
+<code>auto_setup: false</code> once a migration manages the table. For DBAL-only migrations without
+the ORM, add the table in the migration yourself:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a><span class="k">namespace</span> <span class="nx">DoctrineMigrations</span><span class="p">;</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a><span class="k">use</span> <span class="nx">Doctrine\DBAL\Schema\Schema</span><span class="p">;</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="k">use</span> <span class="nx">Doctrine\Migrations\AbstractMigration</span><span class="p">;</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Outbox\DbalOutboxStorage</span><span class="p">;</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="k">final</span> <span class="k">class</span> <span class="nc">Version20260101000000</span> <span class="k">extends</span> <span class="nx">AbstractMigration</span>
+<a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a><span class="p">{</span>
+<a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">up</span><span class="p">(</span><span class="nx">Schema</span> <span class="nv">$schema</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>    <span class="p">{</span>
+<a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>        <span class="nx">DbalOutboxStorage</span><span class="o">::</span><span class="na">addTableToSchema</span><span class="p">(</span><span class="nv">$schema</span><span class="p">,</span> <span class="s1">'somework_cqrs_outbox'</span><span class="p">);</span>
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>    <span class="p">}</span>
+<a id="__codelineno-9-17" name="__codelineno-9-17" href="#__codelineno-9-17"></a>
+<a id="__codelineno-9-18" name="__codelineno-9-18" href="#__codelineno-9-18"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">down</span><span class="p">(</span><span class="nx">Schema</span> <span class="nv">$schema</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span>
+<a id="__codelineno-9-19" name="__codelineno-9-19" href="#__codelineno-9-19"></a>    <span class="p">{</span>
+<a id="__codelineno-9-20" name="__codelineno-9-20" href="#__codelineno-9-20"></a>        <span class="nv">$schema</span><span class="o">-&gt;</span><span class="na">dropTable</span><span class="p">(</span><span class="s1">'somework_cqrs_outbox'</span><span class="p">);</span>
+<a id="__codelineno-9-21" name="__codelineno-9-21" href="#__codelineno-9-21"></a>    <span class="p">}</span>
+<a id="__codelineno-9-22" name="__codelineno-9-22" href="#__codelineno-9-22"></a><span class="p">}</span>
+</code></pre></div>
+<p><strong><code>auto_setup: true</code> (default).</strong> The first time a process uses the storage, it checks
+whether the table exists and has the columns of this version (without locking anything). If
+the table is missing, it creates it; if it lacks the columns of this version (a table of 0.4),
+it adds them. This only happens outside a transaction: inside one, storing a message in a
+table of 0.4 fails (and your transaction is rolled back) until the columns exist, which is why
+the setup command runs before the deployment (the health check reports it as critical). The
+relay and the <code>failed</code> command add the columns they need too; indexes are left to the setup
+command.
+Processes that start at the same time wait for each other (at most 30 seconds, less once
+another one has added the columns). Adding the columns does not wait in the lock queue of the
+table, where the writes would queue behind it: PostgreSQL tries <code>LOCK TABLE … NOWAIT</code> and
+MariaDB <code>ALTER TABLE … NOWAIT</code> for up to 1 second. An autovacuum of the table gives way to a
+waiting lock after <code>deadlock_timeout</code>, so while only autovacuum holds the table, PostgreSQL waits
+that long (writes wait too), unless it prevents a wraparound, which does not give way; this needs
+a role that sees the sessions of other roles (<code>pg_read_all_stats</code>), otherwise the upgrade fails
+while autovacuum runs. MySQL and MariaDB only add the columns when that takes no time
+(<code>ALGORITHM=INSTANT</code>; a compressed table, for example, would be rebuilt). MySQL cannot do
+that: it does not try while any transaction of the server has been open for more than a
+second (it does not tell which tables a transaction holds; this needs the <code>PROCESS</code>
+privilege, without it each attempt holds up the writes to the table for up to 1 second).
+Until the columns exist, every relay run fails with <code>could not be changed: another session …
+kept it locked</code> (MySQL: <code>is not changed while a transaction of the database server has been
+open</code>): run the setup command. On PostgreSQL this runs in one transaction, so it is safe behind a
+pooler in transaction mode (PgBouncer). It never builds or drops an index, which can take long on
+a big table: the relay and the health check warn until <code>somework:cqrs:outbox:setup</code> has done
+it. Until then (the relay checks for the index every 10 seconds, also with <code>auto_setup: false</code>)
+it fetches with one query along the index of 0.4, in the order the rows were stored: the
+transports do not take turns, and rows that are not due (retries, given-up rows, paused
+transports) are read past, which slows fetches when many of them are ahead. The health
+check reports the outbox as critical while the table lacks the columns (storing a message inside
+a transaction fails until then); once messages have waited there for more than 10 minutes, it also
+says how many wait and for how long (the relay cannot send them until the setup command has run),
+which reads all pending rows and takes seconds with a large backlog. It never creates the table inside an open
+transaction: DDL would implicitly commit your transaction on MySQL or abort it on
+PostgreSQL. <code>store()</code> normally runs inside your transaction, so a missing table then raises
+a <code>LogicException</code> that tells you to run <code>somework:cqrs:outbox:setup</code>. Dates are stored in
+UTC, so neither the time zone of the writing process nor daylight saving time changes the
+relay order. In practice,
+<code>auto_setup</code> only creates the table when the relay or purge command runs first. Do not rely
+on it for the write path.</p>
+<h3 id="table-schema">Table schema</h3>
+<table>
+<thead>
+<tr>
+<th>Column</th>
+<th>Type</th>
+<th>Nullable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>id</code></td>
+<td>GUID</td>
+<td>No</td>
+<td>Primary key (UUIDv7)</td>
+</tr>
+<tr>
+<td><code>body</code></td>
+<td>TEXT</td>
+<td>No</td>
+<td>Encoded message body</td>
+</tr>
+<tr>
+<td><code>headers</code></td>
+<td>TEXT</td>
+<td>No</td>
+<td>JSON-encoded headers from the serializer</td>
+</tr>
+<tr>
+<td><code>transport_name</code></td>
+<td>VARCHAR(190)</td>
+<td>Yes</td>
+<td>Target transport; <code>null</code> follows the Messenger routing</td>
+</tr>
+<tr>
+<td><code>created_at</code></td>
+<td>DATETIME_IMMUTABLE</td>
+<td>No</td>
+<td>When the row was built</td>
+</tr>
+<tr>
+<td><code>published_at</code></td>
+<td>DATETIME_IMMUTABLE</td>
+<td>Yes</td>
+<td>When the relay sent it (<code>null</code> = unpublished)</td>
+</tr>
+<tr>
+<td><code>attempts</code></td>
+<td>INTEGER, default <code>0</code></td>
+<td>No</td>
+<td>Attempts to relay the row (counted when the relay claims it)</td>
+</tr>
+<tr>
+<td><code>available_at</code></td>
+<td>DATETIME_IMMUTABLE</td>
+<td>Yes</td>
+<td>Earliest time of the next attempt (<code>null</code> = never attempted, or requeued)</td>
+</tr>
+<tr>
+<td><code>failed_at</code></td>
+<td>DATETIME_IMMUTABLE</td>
+<td>Yes</td>
+<td>When the relay gave up on the row (<code>null</code> = still relayed)</td>
+</tr>
+<tr>
+<td><code>last_error</code></td>
+<td>TEXT</td>
+<td>Yes</td>
+<td>Exception class and message of the last failure</td>
+</tr>
+<tr>
+<td><code>claim_token</code></td>
+<td>VARCHAR(32)</td>
+<td>Yes</td>
+<td>The relay run that claimed the row for an attempt it has not finished</td>
+</tr>
+<tr>
+<td><code>claimed_at</code></td>
+<td>DATETIME_IMMUTABLE</td>
+<td>Yes</td>
+<td>When that claim was made (set on a due row: its last attempt was interrupted)</td>
+</tr>
+<tr>
+<td><code>signature</code></td>
+<td>VARCHAR(64)</td>
+<td>Yes</td>
+<td>Signature of the id, body and headers (see <a href="#security">Security</a>)</td>
+</tr>
+</tbody>
+</table>
+<p>An index on <code>(published_at, failed_at, transport_name, available_at, created_at, id)</code>, named
+<code>idx_&lt;table&gt;_pending</code> (<code>idx_&lt;hash&gt;_pending</code> for long table names), serves the relay, the
+purge and the counts of the health check; <code>idx_&lt;table&gt;_claimed</code> on <code>claimed_at</code> finds
+unfinished claims. <code>attempts</code>, <code>available_at</code>, <code>failed_at</code>, <code>last_error</code>, <code>claim_token</code>,
+<code>claimed_at</code>, <code>signature</code> and these indexes were added in 0.5.0;
+the index replaces <code>idx_&lt;table&gt;_published_created</code> of 0.4. <a href="#upgrading-from-04">Upgrade</a> a table created
+by an earlier version.</p>
+<h3 id="upgrading-from-04">Upgrading from 0.4</h3>
+<p>Writes need the new columns (<code>store()</code> writes the signature), so upgrade the table before the
+new version takes traffic. Outside a transaction, the automatic setup adds the columns before
+the first write (it gives up after 1 second behind a transaction that holds the table); inside
+one, <code>store()</code> fails with <code>The outbox table "…" lacks columns this version of the bundle needs
+(…). Upgrade it with "bin/console somework:cqrs:outbox:setup" or a Doctrine migration.</code> Stop
+the relays of the old version before the new ones start: an old relay ignores the new columns
+(retry times, given-up rows, claims). The relay also needs the new index to stay fast. Add the
+columns and the index with one of:</p>
+<ul>
+<li><code>bin/console somework:cqrs:outbox:setup</code>, over a direct database connection (setups that
+  start at the same time wait for each other, except while one builds the index on
+  PostgreSQL: then the others stop at once with <code>Another process is building the index</code>, see
+  below; the wait uses a database lock held by the session, which
+  PgBouncer in transaction mode would hand to another client: on PostgreSQL the command
+  usually notices it and refuses (releasing the lock), or fails saying that the lock stayed
+  with another server connection; under light load it may not notice, so do not rely on it). While
+  another setup holds the lock, it says so and waits for it. A signal (e.g. a deploy job that is terminated) stops it with the
+  exit code <code>128 + signal</code>, once the running statement returns (on a network that drops the
+  connection silently, only once libpq notices: set TCP keepalives, e.g. <code>keepalives_idle</code>, on the
+  connection); the next setup continues. On
+  PostgreSQL it builds the index with <code>CREATE INDEX CONCURRENTLY</code> (without the role's
+  <code>statement_timeout</code>), so writes go on while it runs; it waits for transactions that started
+  before (e.g. a <code>pg_dump</code>). It rebuilds an index that an interrupted build left invalid, and
+  stops with <code>Another process is building the index</code> while one is being built (e.g. by your
+  migration, or by the server process of a setup that was killed). The old index is dropped only once the new one exists. Changing the table needs
+  a moment without open transactions on it: adding
+  the columns (and, on MySQL and MariaDB, the index) waits at most 5 seconds for them, then
+  fails with <code>could not be changed: another session … kept it locked</code> instead of blocking every
+  write behind it; run the setup again when the table is less busy. On MySQL and MariaDB the
+  index is built online, but the build needs that moment at its end too: if a transaction
+  (e.g. a dump) holds the table then, the work of the build is lost. With <code>auto_setup: true</code>,
+  the first relay run adds the columns (it does not queue behind other sessions: see
+  <a href="#creating-the-table">Creating the table</a> for autovacuum, MySQL and tables that MySQL or
+  MariaDB would rebuild), so the relay usually works before the setup command has run, only slower;</li>
+<li><code>doctrine:migrations:diff</code> when <code>doctrine/orm</code> is installed (the schema listener includes
+  the new columns and index);</li>
+<li>a migration of your own:</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="c1">-- PostgreSQL</span>
+<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INT</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">available_at</span><span class="w"> </span><span class="k">TIMESTAMP</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">WITHOUT</span><span class="w"> </span><span class="k">TIME</span><span class="w"> </span><span class="k">ZONE</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">failed_at</span><span class="w"> </span><span class="k">TIMESTAMP</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">WITHOUT</span><span class="w"> </span><span class="k">TIME</span><span class="w"> </span><span class="k">ZONE</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">last_error</span><span class="w"> </span><span class="nb">TEXT</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-6" name="__codelineno-10-6" href="#__codelineno-10-6"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">claim_token</span><span class="w"> </span><span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-7" name="__codelineno-10-7" href="#__codelineno-10-7"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">claimed_at</span><span class="w"> </span><span class="k">TIMESTAMP</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span><span class="w"> </span><span class="k">WITHOUT</span><span class="w"> </span><span class="k">TIME</span><span class="w"> </span><span class="k">ZONE</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">signature</span><span class="w"> </span><span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_pending</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="p">(</span><span class="n">published_at</span><span class="p">,</span><span class="w"> </span><span class="n">failed_at</span><span class="p">,</span><span class="w"> </span><span class="n">transport_name</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">);</span>
+<a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_claimed</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="p">(</span><span class="n">claimed_at</span><span class="p">);</span>
+<a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="k">DROP</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">CONCURRENTLY</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_published_created</span><span class="p">;</span>
+<a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a>
+<a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="c1">-- MySQL / MariaDB</span>
+<a id="__codelineno-10-14" name="__codelineno-10-14" href="#__codelineno-10-14"></a><span class="k">ALTER</span><span class="w"> </span><span class="k">TABLE</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">attempts</span><span class="w"> </span><span class="nb">INT</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="k">NOT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">available_at</span><span class="w"> </span><span class="n">DATETIME</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-10-15" name="__codelineno-10-15" href="#__codelineno-10-15"></a><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="n">failed_at</span><span class="w"> </span><span class="n">DATETIME</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">last_error</span><span class="w"> </span><span class="n">LONGTEXT</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">claim_token</span><span class="w"> </span><span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">32</span><span class="p">)</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span>
+<a id="__codelineno-10-16" name="__codelineno-10-16" href="#__codelineno-10-16"></a><span class="w">    </span><span class="k">ADD</span><span class="w"> </span><span class="n">claimed_at</span><span class="w"> </span><span class="n">DATETIME</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">,</span><span class="w"> </span><span class="k">ADD</span><span class="w"> </span><span class="n">signature</span><span class="w"> </span><span class="nb">VARCHAR</span><span class="p">(</span><span class="mi">64</span><span class="p">)</span><span class="w"> </span><span class="k">DEFAULT</span><span class="w"> </span><span class="k">NULL</span><span class="p">;</span>
+<a id="__codelineno-10-17" name="__codelineno-10-17" href="#__codelineno-10-17"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_pending</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="p">(</span><span class="n">published_at</span><span class="p">,</span><span class="w"> </span><span class="n">failed_at</span><span class="p">,</span><span class="w"> </span><span class="n">transport_name</span><span class="p">,</span><span class="w"> </span><span class="n">available_at</span><span class="p">,</span><span class="w"> </span><span class="n">created_at</span><span class="p">,</span><span class="w"> </span><span class="n">id</span><span class="p">);</span>
+<a id="__codelineno-10-18" name="__codelineno-10-18" href="#__codelineno-10-18"></a><span class="k">CREATE</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_claimed</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="w"> </span><span class="p">(</span><span class="n">claimed_at</span><span class="p">);</span>
+<a id="__codelineno-10-19" name="__codelineno-10-19" href="#__codelineno-10-19"></a><span class="k">DROP</span><span class="w"> </span><span class="k">INDEX</span><span class="w"> </span><span class="n">idx_somework_cqrs_outbox_published_created</span><span class="w"> </span><span class="k">ON</span><span class="w"> </span><span class="n">somework_cqrs_outbox</span><span class="p">;</span>
+</code></pre></div>
+<p><code>CREATE INDEX CONCURRENTLY</code> cannot run inside a transaction: Doctrine migrations need
+<code>isTransactional()</code> to return <code>false</code> for it. 0.4 had no purge command, so its table may hold
+every message ever relayed. Building the indexes then takes a while, and a migration generated
+by <code>doctrine:migrations:diff</code> uses a plain <code>CREATE INDEX</code>, which blocks writes on PostgreSQL
+until it is done. It also drops the old index before it creates the new one, so the relay has
+no index while the migration runs; put the <code>DROP INDEX</code> last. Purge the published rows first
+(<code>somework:cqrs:outbox:purge</code> works on the 0.4 table and does not change it), or use the
+statements above.</p>
+<h2 id="relaying">Relaying</h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:relay<span class="w">            </span><span class="c1"># up to 100 messages</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:relay<span class="w"> </span>--limit<span class="o">=</span><span class="m">500</span>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:relay<span class="w"> </span>--watch<span class="w">    </span><span class="c1"># keeps relaying until stopped</span>
+</code></pre></div>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--limit</code>, <code>-l</code></td>
+<td><code>100</code></td>
+<td>Maximum number of rows to process (relay or fail) in this run, or in each run with <code>--watch</code> (positive integer).</td>
+</tr>
+<tr>
+<td><code>--watch</code>, <code>-w</code></td>
+<td>off</td>
+<td>Keeps relaying, like <code>messenger:consume</code>: runs again at once after a full run, and waits <code>--sleep</code> seconds when no row was due. Stops after the current row on <code>SIGTERM</code> or <code>SIGINT</code> (exit code 0), or at <code>--time-limit</code>. It holds the relay lock the whole time; when another relay holds it, it waits for it (a standby that takes over when the other relay stops), checking every <code>--sleep</code> seconds.</td>
+</tr>
+<tr>
+<td><code>--sleep</code></td>
+<td><code>1</code></td>
+<td>Seconds to wait before looking again when no row was due, or for the lock (with <code>--watch</code>).</td>
+</tr>
+<tr>
+<td><code>--time-limit</code></td>
+<td>none</td>
+<td>Stops watching after this many seconds (with <code>--watch</code>), e.g. to let a process manager restart it.</td>
+</tr>
+<tr>
+<td><code>--wait-for-lock</code></td>
+<td><code>0</code></td>
+<td>Without <code>--watch</code>: seconds to wait for another relay to release the lock; if it keeps it, exits with <code>3</code>. With <code>0</code>, a run that finds the lock taken exits at once with <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>--no-reset</code></td>
+<td>off</td>
+<td>Does not reset the application's services after the rows the relay handles itself. By default, after each row handled in the relay's process (a row without a transport, or a <code>sync://</code> transport) or failing in a handler there, the relay resets the services (<code>services_resetter</code>, and Doctrine's entity managers: cleared, or reset when a failed flush closed one), as Messenger's workers do between messages.</td>
+</tr>
+</tbody>
+</table>
+<p>The relay fetches up to 50 due rows at a time and:</p>
+<ol>
+<li>claims them, in one statement per group of rows with the same number of attempts: each
+   claim counts the attempt, marks the row with the token of the run and the time, and
+   postpones the row until its next retry time, provided that no other relay claimed the row
+   since it was read. A process that dies during the batch (a PHP fatal error, running out of
+   memory, a killed worker) therefore does not start the next run with the same rows, and a
+   relay that overlaps this one skips them;</li>
+<li>for each claimed row, decodes it with the outbox serializer;</li>
+<li>adds a <code>TransportNamesStamp</code> with the stored transport name, if one was stored;</li>
+<li>dispatches the envelope through the bus of the message type: <code>buses.command_async</code> (else
+   <code>buses.command</code>) for commands, <code>buses.event_async</code> (else <code>buses.event</code>) for events,
+   <code>buses.query</code> for queries, the default bus for anything else;</li>
+<li>marks the sent rows as published, every 2 seconds and at the end of the run;</li>
+<li>renews the claims of the batch every 20 seconds, so a slow batch keeps its rows, and skips a
+   row whose claim another relay took over meanwhile;</li>
+<li>releases the claims of the rows it did not attempt (the run ended, its storage failed, or
+   their transport was paused): their attempt is not counted.</li>
+</ol>
+<p>A due row that is still claimed was being sent by a relay that died (its claim was not
+finished before the retry time). The relay claims and sends such a row on its own, before the
+others, so that if the row kills the process again, only that row is blamed.</p>
+<p>The transports take turns, the one whose next row has waited longest first (rows stored
+without a transport name count as one transport), so the backlog of one transport, for example
+after an outage, does not hold up the others: each fetch orders the transports by the age of
+their next row and then takes one row of each in turn. (When more transports have a backlog
+than a fetch has rows, a transport whose next row is newer waits until the older ones are
+relayed.) Within
+a transport the relay takes the new rows first (never attempted, or requeued), in the order
+they were stored, then the rows that failed before and whose retry time has passed, in the order
+of their retry time. Rows that keep failing therefore do not hold up new rows. A relay that
+cannot keep up with the new rows of a transport retries its failed rows only once it catches
+up; the health check reports both (see <a href="#monitoring">Monitoring</a>).</p>
+<p>What happens in special cases:</p>
+<ul>
+<li><strong>Failing rows are retried later.</strong> If a row cannot be decoded or dispatched, the relay
+  records the failure (<code>attempts</code>, <code>last_error</code>) and postpones the row: the next attempt
+  waits 1 minute, then 2, 4, 8 … minutes, at most 1 hour. It prints
+  <code>Failed to relay message "&lt;id&gt;" (attempt 1 of 10, next attempt after &lt;time&gt;): &lt;reason&gt;</code>
+  and moves on to the next row. When any row failed, a single run exits with code <code>1</code>
+  (<code>--watch</code> goes on, and its exit code does not change). See
+  <a href="#failures">Failures</a> for what happens after the last attempt.</li>
+<li><strong>A failing transport is paused, the other transports go on.</strong> A send that fails with
+  Messenger's <code>TransportException</code> (the broker cannot be reached, or it rejects the message)
+  counts against three times <code>max_attempts</code>: 30 attempts by default, about a day of retries,
+  so a broker outage of some hours gives no row up. After 3 such failures in a row for one
+  transport, the relay prints
+  <code>Transport "&lt;name&gt;" failed 3 times in a row; its other messages wait for the next run (30 seconds with --watch).</code>
+  and skips the rows of that transport for the rest of the run instead of walking its whole
+  backlog. With <code>--watch</code>, the next runs skip them too, for 30 seconds, doubling with every
+  pause up to 5 minutes until a row of that transport goes through. The rows of the other transports are relayed as usual. As new rows come first,
+  3 new rows are enough to detect an outage, and the attempts of older rows are not used up.
+  A transport that accepted a message earlier in the run is up: single messages it rejects
+  (e.g. too large) do not pause it before 10 failures in a row, or 3 failures in a row that
+  took more than 10 seconds (a transport that went down during the run and makes every send
+  wait for a timeout). A burst of new rows that the broker rejects before any row of
+  the run went through is only told apart from an outage by trying them: each run tries 3 of
+  them, so the burst delays the other rows of that transport, by one run per 3 rejected rows.
+  When most of a transport's traffic is rejected (say 9 rows out of 10), the other rows keep
+  waiting behind such bursts: fix what the broker rejects (the given-up rows show the error).
+  Rows stored without a transport name share one such counter (<code>Messages without a transport
+  name failed to be sent 3 times in a row …</code>): when one of the transports they are routed to
+  is down, the others' rows may wait for the next run too. Store the transport name to keep
+  transports apart. A handler that ran inline and failed counts against <code>max_attempts</code>, even
+  when it failed to send another message: its side effects happened.</li>
+<li><strong>A storage failure stops the run.</strong> If the database is down, or sent rows cannot be
+  marked as published, the run stops right away with <code>Stopping: …</code> and exit code <code>1</code>. Rows
+  that were sent but not marked (at most those of the last 2 seconds) are sent again later
+  (see <a href="#delivery-guarantees">Delivery guarantees</a>).</li>
+<li><strong>Messages handled inline trigger a warning.</strong> If no transport received a message (no
+  stored transport name and no routing), the bus of its type handles it synchronously inside
+  the relay process. The relay prints and logs a warning and still marks the row as
+  published. Store a transport name or add routing to avoid this.</li>
+<li><strong>Messages that go nowhere trigger a warning.</strong> When a message is neither sent nor handled,
+  for example because Messenger's deduplication dropped it as a duplicate, or because it is
+  an event without handlers or routing, the relay prints and logs <code>Message "&lt;id&gt;" (&lt;class&gt;)
+  was neither sent to a transport nor handled …</code> and marks the row as published.</li>
+<li><strong>A retry dropped by the deduplication is a failed attempt.</strong> A row that carries a
+  <code>DeduplicateStamp</code> takes Messenger's deduplication lock when it is sent, and the lock stays
+  held until a worker handled the message or its TTL (300 seconds by default) expires. An
+  earlier attempt of the same row may hold it: one that sent the message but died before the
+  row was marked as published, or one whose send failed without releasing it (the bundle's
+  idempotency bridge releases it). The relay cannot tell these apart, and prefers a duplicate
+  to a lost message: it marks only a <em>first</em> attempt that the deduplication dropped as
+  published (a duplicate of another row); a dropped retry fails with <code>Messenger's
+  deduplication dropped this retry …</code> and is retried after the backoff, when the lock has
+  usually expired. A lock without a TTL never expires: release it, or the relay gives the row
+  up after <code>max_attempts</code>. Release the lock (or wait for its TTL) before you requeue such a
+  row: a requeued row starts again at its first attempt. <code>OutboxWriter</code> scopes the key to the
+  transport of the row (<code>&lt;key&gt;@&lt;transport&gt;</code>), so the rows of a message stored for several
+  transports, at once or one by one, do not drop each other; a row that follows the Messenger
+  routing keeps the key. Rows you store with <code>OutboxStorage::store()</code> yourself need distinct
+  keys per transport. A scoped key does not match the same key dispatched directly on a bus,
+  so a message dispatched both ways is not deduplicated across the two.</li>
+<li><strong>SIGTERM and SIGINT stop the run after the current row.</strong> With the <code>pcntl</code> extension, the
+  relay finishes the row it is working on, starts no other, marks the sent rows as published,
+  releases the claims of the others, prints <code>Stopped by signal &lt;number&gt;
+  after &lt;count&gt; message(s); the remaining messages wait for the next run.</code>, releases the lock
+  and exits with <code>1</code> (<code>--watch</code> prints <code>Stopped by signal &lt;number&gt;.</code> and exits with <code>0</code>). A second signal stops it at once. PHP handles signals between
+  operations: a send blocked on the network is only interrupted by the transport's own
+  timeout, so configure timeouts on your transports (and a grace period longer than them).
+  While the relay waits for another process to add the columns to the table (at most 30
+  seconds, on upgrade day), the first signal takes effect after that wait.</li>
+<li><strong>Only one relay runs at a time.</strong> When <code>symfony/lock</code> is installed, the command takes a
+  lock named after the application, the connection and the table. The lock expires after 60
+  seconds, and the relay extends it every 10 seconds between rows; if the lock is lost, the run
+  stops with exit code <code>1</code>. The application part is
+  <code>framework.cache.prefix_seed</code> when you set it, the project directory otherwise (Symfony's
+  default seed is not used: it differs between environments and debug modes). If every
+  release is deployed to a new directory, set <code>prefix_seed</code> to a stable value (Symfony
+  recommends this anyway), so the relays of the old and the new release share the lock. The lock comes from the application's <code>lock.factory</code> service.
+  FrameworkBundle registers that service when <code>framework.lock</code> is enabled, which is the
+  default once <code>symfony/lock</code> is installed. Without that service, Symfony's
+  <code>LockableTrait</code> creates a local semaphore or flock store. The default stores only guard
+  one host, so configure a shared store in <code>framework.lock</code> (Redis, a database, …) when
+  cron runs the relay on several servers. A second relay that finds the lock taken prints
+  <code>Another outbox relay is already running.</code> and exits with <code>0</code>. After a PHP fatal error the
+  relay still releases the lock (in a shutdown function). A relay killed without cleanup
+  (SIGKILL, the OOM killer, a container stopped after its grace period) cannot: the next runs
+  exit with <code>0</code> without relaying until the lock expires, at most 60 seconds later.</li>
+<li><strong>Relays that overlap anyway skip each other's rows.</strong> Without <code>symfony/lock</code>, or with a
+  lock store that only guards one host, two relays can run at the same time. The claim keeps
+  them from sending the same row twice: a relay that finds a row claimed by the other one
+  skips it and prints <code>Skipped &lt;n&gt; message(s) that another relay claimed first.</code> The claims of
+  a batch are renewed every 20 seconds, between sends. A row can therefore be sent twice when a
+  single send takes longer than the claims last after the last renewal (at least 40 seconds on
+  the first attempt: the claim holds 1 minute) and the other relay claims them meanwhile: the
+  slow row itself, and the rows sent in the 2 seconds before it, which are not marked as
+  published yet. Claims are computed with the clock of the relay host: keep the clocks of the
+  relay hosts synchronised (NTP). The relay lock is also only extended between sends, so a
+  single send that outlasts its TTL (60 seconds) lets another relay start; the claims keep it
+  from sending the rows of the slow relay's batch until they run out.</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>Exit code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>0</code></td>
+<td>All selected rows were relayed, no row was due, or another relay holds the lock (without <code>--wait-for-lock</code>); with <code>--watch</code>, it was stopped by a signal or <code>--time-limit</code></td>
+</tr>
+<tr>
+<td><code>1</code></td>
+<td>At least one row failed (which includes a paused transport), the storage failed (e.g. the database is down), a signal stopped the run, or the lock could not be acquired or was lost</td>
+</tr>
+<tr>
+<td><code>2</code></td>
+<td>Invalid options</td>
+</tr>
+<tr>
+<td><code>3</code></td>
+<td>Another relay kept the lock for <code>--wait-for-lock</code> seconds</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Throughput.</strong> Each fetch lists the transports with pending rows once per run (again when a
+fetch comes back short, or after 10 seconds), reads as many rows of each transport as the batch
+of 50 needs, and reads up to 50 transports in one statement (<code>UNION ALL</code>). Relaying 20 000
+rows took (PHP 8.4, local PostgreSQL 16 and MariaDB 10.11, a bus that only records the
+messages) about 2.5 s with 1 transport, 6 s with 10 and 20 s with 100; with a simulated network
+round trip of 0.5 ms per statement, reading the transports together is 1.5 times (10
+transports) to 2 times (100 transports) faster than reading them one by one. Many transports
+cost more statements per row: prefer a few transports with many rows each.</p>
+<p>The relay handles at most <code>--limit</code> rows per run and then exits. Run it on a schedule, for
+example from cron:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>*<span class="w"> </span>/path/to/project/bin/console<span class="w"> </span>somework:cqrs:outbox:relay<span class="w"> </span>--limit<span class="o">=</span><span class="m">500</span>
+</code></pre></div>
+<p>or keep it running under a process manager, like a Messenger worker; messages then leave the
+outbox within <code>--sleep</code> seconds instead of up to a minute:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-13-1" name="__codelineno-13-1" href="#__codelineno-13-1"></a><span class="c1">; supervisor</span>
+<a id="__codelineno-13-2" name="__codelineno-13-2" href="#__codelineno-13-2"></a><span class="k">[program:outbox-relay]</span>
+<a id="__codelineno-13-3" name="__codelineno-13-3" href="#__codelineno-13-3"></a><span class="na">command</span><span class="o">=</span><span class="s">php /path/to/project/bin/console somework:cqrs:outbox:relay --watch --time-limit=3600</span>
+<a id="__codelineno-13-4" name="__codelineno-13-4" href="#__codelineno-13-4"></a><span class="na">autorestart</span><span class="o">=</span><span class="s">true</span>
+<a id="__codelineno-13-5" name="__codelineno-13-5" href="#__codelineno-13-5"></a><span class="c1">; exits with 1 when the database or the lock store fails: restarted at once, about every</span>
+<a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a><span class="c1">; second while it is down (startsecs=0: never FATAL); it resumes when the database is back,</span>
+<a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a><span class="c1">; or when the relay lock expires (up to 60 s) if the lock store is that database</span>
+<a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a><span class="na">startsecs</span><span class="o">=</span><span class="s">0</span>
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a><span class="na">stopsignal</span><span class="o">=</span><span class="s">TERM</span>
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a><span class="na">stopwaitsecs</span><span class="o">=</span><span class="s">30</span>
+</code></pre></div>
+<p>A second relay from cron finds the lock taken and exits at once with <code>0</code>. A second <code>--watch</code>
+(another server, or a process that restarts while the old one finishes its row) waits for the
+lock and takes over when the first one stops: run one or two, not one per server for
+throughput, as only the relay holding the lock works. See
+<a href="../production/#relay">Production</a> for running it under a process manager.</p>
+<h2 id="development">Development</h2>
+<p>In production the relay runs on a schedule or with <code>--watch</code>, so a stored message waits until
+the next run. In development there usually is no such process: a message dispatched through the
+outbox then only sits in the table, and with a <code>sync://</code> transport its handlers do not run
+until someone runs the relay. They run in the relay's process, not in the request.</p>
+<p>Two ways to see the messages handled while developing:</p>
+<ul>
+<li><strong>Relay on terminate</strong> (recommended). The relay runs right after each request, console command
+  or worker message that stored messages in the outbox, once its transaction is committed
+  (<code>kernel.terminate</code>, <code>console.terminate</code>, and Messenger's worker events). The messages take the
+  real path through the outbox table; with <code>sync://</code> they are handled at once, in the same PHP
+  process, after the response was sent. Messages that their handlers store in turn are relayed
+  in the same way.</li>
+</ul>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="c1"># config/packages/somework_cqrs.yaml</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nt">when@dev</span><span class="p">:</span>
+<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">        </span><span class="nt">outbox</span><span class="p">:</span>
+<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">            </span><span class="nt">relay_on_terminate</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+</code></pre></div>
+<p>What to expect:</p>
+<ul>
+<li><strong>Where the handlers run.</strong> In the same PHP process, after the response: before the
+    profiler stores the profile of the request, so their log lines show in its <em>Logs</em> panel.
+    The client gets the response first only where Symfony can finish it early (PHP-FPM,
+    FrankenPHP); with <code>php -S</code>, <code>symfony serve</code> without PHP-FPM or mod_php, the request takes
+    as long as the relayed handlers.
+    Exceptions of the relayed handlers do not reach the error page: the relay records the
+    failure on the row and logs it (<code>cqrs</code> channel), like a worker would.</li>
+<li><strong>Failed rows.</strong> A row whose handler failed is retried after the backoff (1 minute, then 2,
+    4 … minutes): by the relay that runs after the next request that stores a message, or by
+    <code>bin/console somework:cqrs:outbox:relay</code> (or <code>--watch</code>) at any time. After
+    <code>max_attempts</code>, the relay gives it up: <code>somework:cqrs:outbox:failed</code> lists it, and
+    <code>--requeue</code> retries it after you fixed the handler. <code>failed</code> also lists a row whose
+    message class you renamed (it does not decode the body), but after <code>--requeue</code> the relay
+    fails to decode it again (and gives it up after <code>max_attempts</code>), and <code>--sign</code> refuses it (the class in the body cannot be
+    found): restore the old class (or a <code>class_alias()</code> of it) until the row is relayed, or
+    delete the row with <code>--delete</code>.</li>
+<li><strong>When it does not run.</strong> While a transaction is still open on the outbox connection (the
+    rows are not committed yet): with Doctrine's <code>auto_commit: false</code> that is always the case,
+    so use <code>--watch</code> there. After a command that a signal interrupted, and after the relay
+    command itself (its handlers' messages wait for its next run). A notice in the log tells
+    when the relay was skipped for an open transaction.</li>
+<li><strong>How many.</strong> Up to 10 runs of 100 messages after each request, command or worker
+    message: the relay goes on while a run stops at its limit, or while the relayed handlers
+    store more. A bulk load (fixtures, an import) of more than 1 000 messages leaves the rest
+    in the table, with a notice in the log (also when exactly 1 000 were left): run <code>bin/console somework:cqrs:outbox:relay</code>, or
+    keep <code>--watch</code> running while you load.</li>
+<li><strong>Several requests at once.</strong> Only one relay runs at a time: the next one waits up to
+    2 seconds for the lock, then leaves its messages to the relay holding it, which fetches
+    until no message is due. Use either <code>relay_on_terminate</code> or a relay with <code>--watch</code>, not
+    both: the watcher keeps the lock, so each request that stores messages would wait those
+    2 seconds before leaving them to it.</li>
+<li><strong>Services</strong> are not reset between the rows it handles, as with <code>sync://</code> in a request.</li>
+<li><strong>A watching relay.</strong> Keep <code>bin/console somework:cqrs:outbox:relay --watch</code> running in a
+  terminal (or in <code>docker compose</code>, next to <code>messenger:consume</code>).</li>
+</ul>
+<p>Keep <code>require_transaction</code> on in development too: it catches the dispatches outside a
+transaction that production would refuse. The outbox cannot be switched off per environment for
+messages with <code>#[Outbox]</code> (the build fails without it); use <code>relay_on_terminate</code> instead. In
+tests, the fake buses and <code>Testing\FakeOutboxWriter</code> replace the outbox (see
+<a href="../testing/#code-that-stores-messages-in-the-outbox">Testing</a>).</p>
+<h2 id="failures">Failures</h2>
+<p>A row that still fails after <code>max_attempts</code> attempts (default 10, about 4 hours of retries),
+or after three times as many when its transport keeps failing (about a day), is given up: the relay prints <code>Gave up on message "&lt;id&gt;" after 10 attempt(s): &lt;reason&gt;</code>, sets
+<code>failed_at</code> and never selects the row again. It stays in the table for inspection. List the
+given-up rows and hand them back to the relay once the cause is fixed:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:failed<span class="w">                    </span><span class="c1"># id, transport, dates, attempts, last error</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:failed<span class="w"> </span>--limit<span class="o">=</span><span class="m">200</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:failed<span class="w"> </span>--requeue<span class="w">          </span><span class="c1"># every given-up row</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:failed<span class="w"> </span>--requeue<span class="w"> </span>&lt;id&gt;<span class="w"> </span>&lt;id&gt;
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:failed<span class="w"> </span>--requeue<span class="w"> </span>--transport<span class="o">=</span>async<span class="w"> </span>&lt;id&gt;<span class="w">   </span><span class="c1"># and send it to another transport</span>
+</code></pre></div>
+<p>Requeued rows start again with <code>attempts = 0</code> and no <code>last_error</code>.</p>
+<p>A row stored for a transport that does not exist (a typo, a renamed transport) is given up on
+its first run, without an attempt: <code>The transport "&lt;name&gt;" does not exist (is the row from another application sharing this table?). Fix the code that
+stores it, then run "somework:cqrs:outbox:failed --requeue --transport=&lt;name&gt; &lt;id&gt;".</code></p>
+<p>When the relay process dies during an attempt (a PHP fatal error, running out of memory, a
+killed process, a lost database connection), the row keeps its claim (<code>claimed_at</code>) and the
+error of the attempt before. It is tried again, on its own, after its retry delay; the rows
+the process had claimed with it but not attempted yet count that attempt too. As the cause of
+an interrupted attempt is unknown (a hanging broker as well as a message that crashes the
+process), the larger budget applies: after three times <code>max_attempts</code> attempts, the next run
+gives the row up without another attempt, because the row may be what kills the process, with
+the error <code>The last attempt did not finish (…); the message may have been sent. Previous
+error: &lt;error of the attempt before&gt;</code>. The message may have reached its transport: check the
+consumer before you requeue it. When you lower <code>max_attempts</code>, a row
+that already had more failed attempts gets one more attempt and, if it fails, is given up with
+its real error.</p>
+<p>Publishing a row clears its <code>failed_at</code>, <code>last_error</code> and claim. <code>purge</code> never deletes given-up rows; delete those you do not want to relay with
+<code>somework:cqrs:outbox:failed --delete &lt;id&gt;…</code>.</p>
+<h2 id="monitoring">Monitoring</h2>
+<ul>
+<li><code>somework:cqrs:health</code> includes an outbox check. It warns when the relay gave up on rows;
+  when rows failed (or their attempt was interrupted more than once: a relay that keeps dying on
+  them) and wait for another attempt while the oldest of them was stored more than
+  10 minutes ago (a transport outage, or rows that cannot be sent); and when the oldest due
+  row has waited more than 10 minutes (the relay does not run, does not keep up, or pauses
+  their failing transport); when a claim ran out (at the retry time of its attempt) more than
+  10 minutes ago without a relay taking it over (a relay died, or hangs on a send without a timeout, and no relay runs
+  since); and when the
+  table needs <code>somework:cqrs:outbox:setup</code> (e.g. its index is missing or invalid). It is
+  critical when the table cannot be read, and when the table lacks the columns of this version
+  (storing a message inside a transaction fails until the setup has run). The check reads at most 10 000
+  rows per count (it reports <code>more than 10000</code>) and finds the oldest due row with one probe
+  per transport along the index, so it stays cheap on a large backlog.</li>
+<li>The relay logs failed attempts, paused transports, messages handled inline or dropped, a
+  table that needs the setup command, and
+  runs stopped by a signal (warning), and given-up rows and stopped runs (error), besides
+  printing them: on the <code>cqrs</code> channel with MonologBundle (<code>monolog.logger.cqrs</code>), otherwise
+  to the application's <code>logger</code> service.</li>
+<li>Alert on <code>somework:cqrs:health</code> (exit code <code>1</code> for a warning, <code>2</code> for critical) and on
+  given-up rows, not on every exit code <code>1</code> of the relay: the relay also exits with <code>1</code> when a
+  single row failed and will be retried, and when a signal stopped it (a deployment). Runs
+  that keep exiting with <code>1</code>, or errors in its log, need a look.</li>
+</ul>
+<h2 id="purging-published-rows">Purging published rows</h2>
+<p>Published rows stay in the table until you purge them:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:purge<span class="w">                        </span><span class="c1"># published more than 7 days ago</span>
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>bin/console<span class="w"> </span>somework:cqrs:outbox:purge<span class="w"> </span>--older-than<span class="o">=</span><span class="s2">"12 hours"</span>
+</code></pre></div>
+<p>Rows are deleted in batches of 1000, so purging a large backlog does not hold one long lock.
+<code>--older-than</code> takes a number and a unit (<code>second</code>, <code>minute</code>, <code>hour</code>, <code>day</code>, <code>week</code>, <code>month</code> or
+<code>year</code>, singular or plural), such as <code>7 days</code>, <code>12 hours</code> or <code>1 month</code>, with at most 6 digits.
+The default is <code>7 days</code>. Only rows whose <code>published_at</code> is older than that are deleted.
+Unpublished rows, including given-up ones, are never deleted. An invalid value exits with code <code>2</code>. Schedule the purge, for example
+daily.</p>
+<h2 id="delivery-guarantees">Delivery guarantees</h2>
+<ul>
+<li><strong>Atomic write.</strong> The row exists only if your transaction commits.</li>
+<li><strong>At-least-once delivery.</strong> The relay marks rows as published <em>after</em> dispatching them,
+  every 2 seconds. A crash in between (it affects the rows sent in the last 2 seconds), a
+  failed <code>markPublished()</code>, or a single send that outlasts the claims (at least 40 seconds)
+  while another relay runs (it affects that row and the rows sent in the 2 seconds before
+  it) can send the same message twice; so does the retry of a row carrying a <code>DeduplicateStamp</code>
+  after such a crash, once the deduplication lock expired. A message routed
+  to several transports is sent to all of them again when one of them fails: store one row
+  per transport to avoid that. <strong>Consumers must be idempotent</strong>, for example by
+  recording processed message ids under a unique constraint. The bundle's
+  <a href="../idempotency/">idempotency bridge</a> does not prevent these duplicates either: the
+  <code>DeduplicateStamp</code> of a row stored with an <code>IdempotencyStamp</code> is applied when the relay
+  sends it, but its lock is released once a worker handled the message (or expires after
+  <code>idempotency.ttl</code>), and the relay retries the unmarked row until a send goes through.</li>
+<li><strong>Order.</strong> New rows of a transport are relayed in the order of their <code>created_at</code>, the
+  time (to the second) at which <code>OutboxMessage::fromEnvelope()</code> encoded them in PHP, then of
+  their time-ordered id. That is not the order in which they were committed: a row stored
+  early in a long transaction is relayed after newer rows that were already published.
+  There is no order across transports, which take turns. A row that fails is postponed, so
+  later rows overtake it, and so do the rows of other transports while its transport is
+  paused. Several workers consuming the transport can also process messages out of order.</li>
+<li><strong>Latency.</strong> Messages leave the outbox only when the relay runs. Your schedule sets the
+  delay.</li>
+</ul>
+<h2 id="custom-storage">Custom storage</h2>
+<p>The DBAL storage covers relational databases that DoctrineBundle can connect to. To keep
+the outbox somewhere else, implement <code>SomeWork\CqrsBundle\Contract\Outbox\OutboxStorage</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="cp">&lt;?php</span>
+<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a>
+<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="k">declare</span><span class="p">(</span><span class="nx">strict_types</span><span class="o">=</span><span class="mi">1</span><span class="p">);</span>
+<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a>
+<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="k">namespace</span> <span class="nx">SomeWork\CqrsBundle\Contract\Outbox</span><span class="p">;</span>
+<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a>
+<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="k">use</span> <span class="nx">DateTimeImmutable</span><span class="p">;</span>
+<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="k">use</span> <span class="nx">SomeWork\CqrsBundle\Outbox\OutboxMessage</span><span class="p">;</span>
+<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a>
+<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="sd">/**</span>
+<a id="__codelineno-17-11" name="__codelineno-17-11" href="#__codelineno-17-11"></a><span class="sd"> * Persists messages in a transactional outbox for reliable async dispatch.</span>
+<a id="__codelineno-17-12" name="__codelineno-17-12" href="#__codelineno-17-12"></a><span class="sd"> *</span>
+<a id="__codelineno-17-13" name="__codelineno-17-13" href="#__codelineno-17-13"></a><span class="sd"> * The relay works in claims: it fetches due messages, claims them with a token of its run</span>
+<a id="__codelineno-17-14" name="__codelineno-17-14" href="#__codelineno-17-14"></a><span class="sd"> * (counting the attempt before anything is sent, so an attempt that kills the process still</span>
+<a id="__codelineno-17-15" name="__codelineno-17-15" href="#__codelineno-17-15"></a><span class="sd"> * counts), sends them, and then marks them published, records their failure, or releases the</span>
+<a id="__codelineno-17-16" name="__codelineno-17-16" href="#__codelineno-17-16"></a><span class="sd"> * ones it did not get to. A claim that is never finished leaves claimedAt set: when the message</span>
+<a id="__codelineno-17-17" name="__codelineno-17-17" href="#__codelineno-17-17"></a><span class="sd"> * is due again, the next relay knows that the attempt was interrupted.</span>
+<a id="__codelineno-17-18" name="__codelineno-17-18" href="#__codelineno-17-18"></a><span class="sd"> *</span>
+<a id="__codelineno-17-19" name="__codelineno-17-19" href="#__codelineno-17-19"></a><span class="sd"> * Every message a storage returns must carry the id, body, headers and signature exactly as</span>
+<a id="__codelineno-17-20" name="__codelineno-17-20" href="#__codelineno-17-20"></a><span class="sd"> * they were stored.</span>
+<a id="__codelineno-17-21" name="__codelineno-17-21" href="#__codelineno-17-21"></a><span class="sd"> */</span>
+<a id="__codelineno-17-22" name="__codelineno-17-22" href="#__codelineno-17-22"></a><span class="k">interface</span> <span class="nx">OutboxStorage</span>
+<a id="__codelineno-17-23" name="__codelineno-17-23" href="#__codelineno-17-23"></a><span class="p">{</span>
+<a id="__codelineno-17-24" name="__codelineno-17-24" href="#__codelineno-17-24"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-25" name="__codelineno-17-25" href="#__codelineno-17-25"></a><span class="sd">     * Stores a message; call it inside the database transaction of the business change.</span>
+<a id="__codelineno-17-26" name="__codelineno-17-26" href="#__codelineno-17-26"></a><span class="sd">     */</span>
+<a id="__codelineno-17-27" name="__codelineno-17-27" href="#__codelineno-17-27"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">store</span><span class="p">(</span><span class="nx">OutboxMessage</span> <span class="nv">$message</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span><span class="p">;</span>
+<a id="__codelineno-17-28" name="__codelineno-17-28" href="#__codelineno-17-28"></a>
+<a id="__codelineno-17-29" name="__codelineno-17-29" href="#__codelineno-17-29"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-30" name="__codelineno-17-30" href="#__codelineno-17-30"></a><span class="sd">     * Returns the messages that are due: neither published nor given up, and either never</span>
+<a id="__codelineno-17-31" name="__codelineno-17-31" href="#__codelineno-17-31"></a><span class="sd">     * attempted (or requeued) or past their retry time. The transports take turns, the one whose</span>
+<a id="__codelineno-17-32" name="__codelineno-17-32" href="#__codelineno-17-32"></a><span class="sd">     * next message has waited longest first (the messages without a transport name count as one</span>
+<a id="__codelineno-17-33" name="__codelineno-17-33" href="#__codelineno-17-33"></a><span class="sd">     * transport); within a transport, the messages never attempted come first, in the order they</span>
+<a id="__codelineno-17-34" name="__codelineno-17-34" href="#__codelineno-17-34"></a><span class="sd">     * were stored, then the others, in the order of their retry time.</span>
+<a id="__codelineno-17-35" name="__codelineno-17-35" href="#__codelineno-17-35"></a><span class="sd">     *</span>
+<a id="__codelineno-17-36" name="__codelineno-17-36" href="#__codelineno-17-36"></a><span class="sd">     * @param list&lt;string|null&gt; $excludedTransports Transports whose messages are skipped; null</span>
+<a id="__codelineno-17-37" name="__codelineno-17-37" href="#__codelineno-17-37"></a><span class="sd">     *                                              stands for messages stored without a transport name</span>
+<a id="__codelineno-17-38" name="__codelineno-17-38" href="#__codelineno-17-38"></a><span class="sd">     *</span>
+<a id="__codelineno-17-39" name="__codelineno-17-39" href="#__codelineno-17-39"></a><span class="sd">     * @return list&lt;OutboxMessage&gt;</span>
+<a id="__codelineno-17-40" name="__codelineno-17-40" href="#__codelineno-17-40"></a><span class="sd">     */</span>
+<a id="__codelineno-17-41" name="__codelineno-17-41" href="#__codelineno-17-41"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">fetchUnpublished</span><span class="p">(</span><span class="nx">int</span> <span class="nv">$limit</span><span class="p">,</span> <span class="k">array</span> <span class="nv">$excludedTransports</span> <span class="o">=</span> <span class="p">[])</span><span class="o">:</span> <span class="k">array</span><span class="p">;</span>
+<a id="__codelineno-17-42" name="__codelineno-17-42" href="#__codelineno-17-42"></a>
+<a id="__codelineno-17-43" name="__codelineno-17-43" href="#__codelineno-17-43"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-44" name="__codelineno-17-44" href="#__codelineno-17-44"></a><span class="sd">     * Claims fetched messages for an attempt, atomically per message: a message is claimed only</span>
+<a id="__codelineno-17-45" name="__codelineno-17-45" href="#__codelineno-17-45"></a><span class="sd">     * while it is neither published nor given up, and its attempts and transport name are still</span>
+<a id="__codelineno-17-46" name="__codelineno-17-46" href="#__codelineno-17-46"></a><span class="sd">     * the fetched ones (so two relays cannot claim the same attempt). A claimed message gets the</span>
+<a id="__codelineno-17-47" name="__codelineno-17-47" href="#__codelineno-17-47"></a><span class="sd">     * token, claimedAt (now), one more attempt, and its retry time: $retryAt[&lt;fetched attempts&gt;].</span>
+<a id="__codelineno-17-48" name="__codelineno-17-48" href="#__codelineno-17-48"></a><span class="sd">     * It is not due before that time, so an attempt that never finishes is retried after it. A</span>
+<a id="__codelineno-17-49" name="__codelineno-17-49" href="#__codelineno-17-49"></a><span class="sd">     * run claims each message at most once (a new run uses a new token).</span>
+<a id="__codelineno-17-50" name="__codelineno-17-50" href="#__codelineno-17-50"></a><span class="sd">     *</span>
+<a id="__codelineno-17-51" name="__codelineno-17-51" href="#__codelineno-17-51"></a><span class="sd">     * @param list&lt;OutboxMessage&gt;           $messages As fetchUnpublished() returned them</span>
+<a id="__codelineno-17-52" name="__codelineno-17-52" href="#__codelineno-17-52"></a><span class="sd">     * @param array&lt;int, DateTimeImmutable&gt; $retryAt  Retry times keyed by the fetched number of attempts</span>
+<a id="__codelineno-17-53" name="__codelineno-17-53" href="#__codelineno-17-53"></a><span class="sd">     * @param string                        $token    Identifies the claims of one relay run (not empty)</span>
+<a id="__codelineno-17-54" name="__codelineno-17-54" href="#__codelineno-17-54"></a><span class="sd">     *</span>
+<a id="__codelineno-17-55" name="__codelineno-17-55" href="#__codelineno-17-55"></a><span class="sd">     * @return list&lt;string&gt; The ids of the claimed messages, in the order of $messages</span>
+<a id="__codelineno-17-56" name="__codelineno-17-56" href="#__codelineno-17-56"></a><span class="sd">     */</span>
+<a id="__codelineno-17-57" name="__codelineno-17-57" href="#__codelineno-17-57"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">claim</span><span class="p">(</span><span class="k">array</span> <span class="nv">$messages</span><span class="p">,</span> <span class="k">array</span> <span class="nv">$retryAt</span><span class="p">,</span> <span class="nx">string</span> <span class="nv">$token</span><span class="p">)</span><span class="o">:</span> <span class="k">array</span><span class="p">;</span>
+<a id="__codelineno-17-58" name="__codelineno-17-58" href="#__codelineno-17-58"></a>
+<a id="__codelineno-17-59" name="__codelineno-17-59" href="#__codelineno-17-59"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-60" name="__codelineno-17-60" href="#__codelineno-17-60"></a><span class="sd">     * Renews the claims of fetched messages that are still claimed with $token: claimedAt becomes</span>
+<a id="__codelineno-17-61" name="__codelineno-17-61" href="#__codelineno-17-61"></a><span class="sd">     * now and the retry time $retryAt[&lt;fetched attempts&gt;], so the claims of a long batch do not run</span>
+<a id="__codelineno-17-62" name="__codelineno-17-62" href="#__codelineno-17-62"></a><span class="sd">     * out before the relay gets to them.</span>
+<a id="__codelineno-17-63" name="__codelineno-17-63" href="#__codelineno-17-63"></a><span class="sd">     *</span>
+<a id="__codelineno-17-64" name="__codelineno-17-64" href="#__codelineno-17-64"></a><span class="sd">     * @param list&lt;OutboxMessage&gt;           $messages As fetchUnpublished() returned them</span>
+<a id="__codelineno-17-65" name="__codelineno-17-65" href="#__codelineno-17-65"></a><span class="sd">     * @param array&lt;int, DateTimeImmutable&gt; $retryAt  Retry times keyed by the fetched number of attempts</span>
+<a id="__codelineno-17-66" name="__codelineno-17-66" href="#__codelineno-17-66"></a><span class="sd">     *</span>
+<a id="__codelineno-17-67" name="__codelineno-17-67" href="#__codelineno-17-67"></a><span class="sd">     * @return list&lt;string&gt; The ids still claimed with $token, in the order of $messages</span>
+<a id="__codelineno-17-68" name="__codelineno-17-68" href="#__codelineno-17-68"></a><span class="sd">     */</span>
+<a id="__codelineno-17-69" name="__codelineno-17-69" href="#__codelineno-17-69"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">renew</span><span class="p">(</span><span class="k">array</span> <span class="nv">$messages</span><span class="p">,</span> <span class="k">array</span> <span class="nv">$retryAt</span><span class="p">,</span> <span class="nx">string</span> <span class="nv">$token</span><span class="p">)</span><span class="o">:</span> <span class="k">array</span><span class="p">;</span>
+<a id="__codelineno-17-70" name="__codelineno-17-70" href="#__codelineno-17-70"></a>
+<a id="__codelineno-17-71" name="__codelineno-17-71" href="#__codelineno-17-71"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-72" name="__codelineno-17-72" href="#__codelineno-17-72"></a><span class="sd">     * Undoes the claims of messages the relay did not attempt (it stopped, or paused their</span>
+<a id="__codelineno-17-73" name="__codelineno-17-73" href="#__codelineno-17-73"></a><span class="sd">     * transport): their attempts, retry time and claimedAt go back to the fetched values. Messages</span>
+<a id="__codelineno-17-74" name="__codelineno-17-74" href="#__codelineno-17-74"></a><span class="sd">     * no longer claimed with $token are left alone.</span>
+<a id="__codelineno-17-75" name="__codelineno-17-75" href="#__codelineno-17-75"></a><span class="sd">     *</span>
+<a id="__codelineno-17-76" name="__codelineno-17-76" href="#__codelineno-17-76"></a><span class="sd">     * @param list&lt;OutboxMessage&gt; $messages As fetchUnpublished() returned them</span>
+<a id="__codelineno-17-77" name="__codelineno-17-77" href="#__codelineno-17-77"></a><span class="sd">     */</span>
+<a id="__codelineno-17-78" name="__codelineno-17-78" href="#__codelineno-17-78"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">release</span><span class="p">(</span><span class="k">array</span> <span class="nv">$messages</span><span class="p">,</span> <span class="nx">string</span> <span class="nv">$token</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span><span class="p">;</span>
+<a id="__codelineno-17-79" name="__codelineno-17-79" href="#__codelineno-17-79"></a>
+<a id="__codelineno-17-80" name="__codelineno-17-80" href="#__codelineno-17-80"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-81" name="__codelineno-17-81" href="#__codelineno-17-81"></a><span class="sd">     * Marks sent messages as published and clears their claim and failure. Ids that do not exist</span>
+<a id="__codelineno-17-82" name="__codelineno-17-82" href="#__codelineno-17-82"></a><span class="sd">     * or are already published are ignored.</span>
+<a id="__codelineno-17-83" name="__codelineno-17-83" href="#__codelineno-17-83"></a><span class="sd">     *</span>
+<a id="__codelineno-17-84" name="__codelineno-17-84" href="#__codelineno-17-84"></a><span class="sd">     * @param list&lt;string&gt; $ids</span>
+<a id="__codelineno-17-85" name="__codelineno-17-85" href="#__codelineno-17-85"></a><span class="sd">     */</span>
+<a id="__codelineno-17-86" name="__codelineno-17-86" href="#__codelineno-17-86"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">markPublished</span><span class="p">(</span><span class="k">array</span> <span class="nv">$ids</span><span class="p">)</span><span class="o">:</span> <span class="nx">void</span><span class="p">;</span>
+<a id="__codelineno-17-87" name="__codelineno-17-87" href="#__codelineno-17-87"></a>
+<a id="__codelineno-17-88" name="__codelineno-17-88" href="#__codelineno-17-88"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-89" name="__codelineno-17-89" href="#__codelineno-17-89"></a><span class="sd">     * Records the failure of a claimed message and ends its claim: the number of attempts, the</span>
+<a id="__codelineno-17-90" name="__codelineno-17-90" href="#__codelineno-17-90"></a><span class="sd">     * error, and the retry time; with $retryAt null the message is given up and never returned by</span>
+<a id="__codelineno-17-91" name="__codelineno-17-91" href="#__codelineno-17-91"></a><span class="sd">     * fetchUnpublished() again.</span>
+<a id="__codelineno-17-92" name="__codelineno-17-92" href="#__codelineno-17-92"></a><span class="sd">     *</span>
+<a id="__codelineno-17-93" name="__codelineno-17-93" href="#__codelineno-17-93"></a><span class="sd">     * @return bool false when the message is no longer claimed with $token (e.g. published, or</span>
+<a id="__codelineno-17-94" name="__codelineno-17-94" href="#__codelineno-17-94"></a><span class="sd">     *              claimed by another relay); nothing is recorded then</span>
+<a id="__codelineno-17-95" name="__codelineno-17-95" href="#__codelineno-17-95"></a><span class="sd">     */</span>
+<a id="__codelineno-17-96" name="__codelineno-17-96" href="#__codelineno-17-96"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">recordFailure</span><span class="p">(</span><span class="nx">string</span> <span class="nv">$id</span><span class="p">,</span> <span class="nx">string</span> <span class="nv">$token</span><span class="p">,</span> <span class="nx">int</span> <span class="nv">$attempts</span><span class="p">,</span> <span class="nx">string</span> <span class="nv">$error</span><span class="p">,</span> <span class="o">?</span><span class="nx">DateTimeImmutable</span> <span class="nv">$retryAt</span><span class="p">)</span><span class="o">:</span> <span class="nx">bool</span><span class="p">;</span>
+<a id="__codelineno-17-97" name="__codelineno-17-97" href="#__codelineno-17-97"></a>
+<a id="__codelineno-17-98" name="__codelineno-17-98" href="#__codelineno-17-98"></a>    <span class="sd">/**</span>
+<a id="__codelineno-17-99" name="__codelineno-17-99" href="#__codelineno-17-99"></a><span class="sd">     * Deletes messages published before the given date and returns how many were deleted.</span>
+<a id="__codelineno-17-100" name="__codelineno-17-100" href="#__codelineno-17-100"></a><span class="sd">     */</span>
+<a id="__codelineno-17-101" name="__codelineno-17-101" href="#__codelineno-17-101"></a>    <span class="k">public</span> <span class="k">function</span> <span class="nf">purgePublished</span><span class="p">(</span><span class="nx">DateTimeImmutable</span> <span class="nv">$publishedBefore</span><span class="p">)</span><span class="o">:</span> <span class="nx">int</span><span class="p">;</span>
+<a id="__codelineno-17-102" name="__codelineno-17-102" href="#__codelineno-17-102"></a><span class="p">}</span>
+</code></pre></div>
+<p>An implementation must meet these rules:</p>
+<ul>
+<li><code>store()</code> must write through the same transaction as your business data. Otherwise the
+  outbox guarantees nothing.</li>
+<li><code>fetchUnpublished()</code> returns due messages only (unpublished, not given up, retry time
+  passed). The transports take turns, the one whose next message has waited longest first;
+  within a transport, first the messages never attempted,
+  in the order they were stored (<code>createdAt</code>, then id), then the others, in the order of their retry time. It skips
+  the excluded transports. The relay excludes a transport after 3 send failures in a row (after 10, or 3 over at least
+  10 seconds, once it accepted a message in the run); a storage that
+  ignores the exclusion makes it stop early instead of reaching the other transports.</li>
+<li><code>claim()</code> updates each message in one atomic step (e.g. a conditional <code>UPDATE</code>): only while
+  it is neither published nor given up, and its attempts and transport name are still the
+  fetched ones. It returns the ids it claimed; the relay skips the others. A claimed message is
+  not due before the given retry time.</li>
+<li><code>renew()</code> moves <code>claimedAt</code> to now and the retry time forward for the messages still claimed
+  with the token, and returns their ids: the relay renews the claims of a batch every 20
+  seconds, so they do not run out before it gets to them.</li>
+<li><code>release()</code> restores the attempts, the retry time and <code>claimedAt</code> of the fetched messages
+  that are still claimed with the token. <code>recordFailure()</code> only changes a message that is still
+  claimed with the token, and ends the claim. <code>markPublished()</code> also ends the claim.</li>
+<li>Rebuild each message with
+  <code>new OutboxMessage(string $id, string $body, string $headers, DateTimeImmutable $createdAt, ?string $transportName = null, int $attempts = 0, ?string $lastError = null, ?DateTimeImmutable $claimedAt = null, ?DateTimeImmutable $availableAt = null, ?string $signature = null)</code>.
+  Keep the values exactly as stored, the id, body, headers and signature byte for byte (the
+  relay verifies the signature). The relay decides when to give up from <code>attempts</code>, and
+  recognises an interrupted attempt by <code>claimedAt</code>. <code>$headers</code> is the JSON string produced by
+  <code>fromEnvelope()</code>, and <code>$id</code> and <code>$body</code> must not be empty.</li>
+</ul>
+<p>Name your implementation under <code>outbox.storage</code> (a service id, or a class name, which the
+bundle registers as an autowired service):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># config/packages/somework_cqrs.yaml</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="nt">somework_cqrs</span><span class="p">:</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">    </span><span class="nt">outbox</span><span class="p">:</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">        </span><span class="nt">enabled</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">        </span><span class="nt">storage</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">App\Outbox\MongoOutboxStorage</span>
+</code></pre></div>
+<p>The relay and purge commands, <code>OutboxWriter</code> and the <code>OutboxStorage</code> alias then use it.
+doctrine/dbal is not needed, and <code>table_name</code>, <code>connection</code> and <code>auto_setup</code> are ignored:
+they only configure the DBAL storage. The relay lock is named after the service id.</p>
+<p>The other features need more than <code>OutboxStorage</code>. Implement the interfaces of
+<code>SomeWork\CqrsBundle\Contract\Outbox</code> your storage can support:</p>
+<table>
+<thead>
+<tr>
+<th>Interface</th>
+<th>Methods</th>
+<th>Used by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OutboxSchema</code></td>
+<td><code>setup(?\Closure $onWait = null): void</code>, <code>pendingChanges(): list&lt;string&gt;</code></td>
+<td><code>somework:cqrs:outbox:setup</code>; the relay and the health check report what <code>pendingChanges()</code> returns</td>
+</tr>
+<tr>
+<td><code>FailedOutboxMessages</code></td>
+<td><code>fetchFailed(int $limit, array $ids = []): list&lt;FailedOutboxMessage&gt;</code>, <code>requeueFailed(array $ids = [], ?string $transportName = null, ?\Closure $sign = null): int</code>, <code>deleteFailed(array $ids): int</code></td>
+<td><code>somework:cqrs:outbox:failed</code></td>
+</tr>
+<tr>
+<td><code>OutboxMonitoring</code></td>
+<td><code>status(): OutboxStatus</code></td>
+<td>the outbox check of <code>somework:cqrs:health</code></td>
+</tr>
+<tr>
+<td><code>TransactionalOutbox</code></td>
+<td><code>isInTransaction(): bool</code></td>
+<td><code>outbox.require_transaction</code> (<code>OutboxWriter</code> and <code>DispatchMode::OUTBOX</code> refuse to store outside a transaction); <code>outbox.relay_on_terminate</code> waits for the transaction to be committed</td>
+</tr>
+</tbody>
+</table>
+<p><code>fetchFailed()</code> returns only the given ids when there are any. When <code>requeueFailed()</code> gets
+<code>$sign</code>, it calls <code>$sign($message)</code> with each requeued row as stored (id, body, headers) and
+stores the returned string as the row's signature; that is how <code>--requeue --sign</code> works.
+<code>FailedOutboxMessage</code> may carry <code>messageType</code> (the serializer's <code>type</code> header), <code>bodyClass</code> (the
+message class of a PHP-serialized body), <code>bodyClasses</code> (every class the body instantiates; both
+read without unserializing it, with <code>SerializedBody::inspect()</code>) and <code>digest</code>
+(<code>FailedOutboxMessage::digest($body, $headers)</code>), which <code>--sign</code> shows to the operator and
+checks before it signs a row. Fill them only for messages asked for by id: a listing of all
+given-up messages should not read every body.</p>
+<p>Without them, <code>setup</code> and <code>failed</code> exit with <code>1</code> and say which interface is missing, and the
+health check reports the outbox as not checked. <code>DbalOutboxStorage</code> implements all four.</p>
+<blockquote>
+<p><strong>Without <code>TransactionalOutbox</code>, <code>outbox.require_transaction</code> is not enforced.</strong> The bundle
+cannot tell whether a transaction is open, so <code>OutboxWriter</code> and <code>DispatchMode::OUTBOX</code> also
+store messages outside one, which are then not part of the business change, and
+<code>relay_on_terminate</code> relays without waiting for the transaction to be committed. The same
+holds when the application replaces the <code>somework_cqrs.outbox.storage</code> service instead of
+configuring its storage under <code>outbox.storage</code> or decorating it, and when the class of the
+storage service is not known when the container is built (a service created by a factory
+without a class: declare its class). In debug mode, the container
+compilation log warns about it (<code>grep require_transaction var/cache/&lt;env&gt;/*Compiler.log</code>): implement
+<code>TransactionalOutbox</code> (<code>isInTransaction()</code> returns whether a store would join an open
+transaction of your business data), or set <code>outbox.require_transaction: false</code> to acknowledge
+it. 0.5.x only warns; a later minor version may refuse to build.</p>
+</blockquote>
+<p><code>DbalOutboxStorage</code> also runs each message the relay handles in its own process (no transport,
+<code>sync://</code>) as a unit of work of its own on a connection with <code>auto_commit: false</code>, and rolls
+back a transaction such a handler left open. That interface (<code>RelayUnitOfWork</code>) is internal: a
+custom storage relays without it.</p>
+<p>To add behaviour to the storage instead (logging, metrics), decorate it:
+<code>#[AsDecorator('somework_cqrs.outbox.storage')]</code> on a class that implements <code>OutboxStorage</code>
+and takes the inner storage. The relay, the purge command and your code then go through the
+decorator, while <code>setup</code>, <code>failed</code>, the health check and the relay's report of pending
+changes keep working on the configured storage behind it (<code>somework_cqrs.outbox.base_storage</code>,
+also <code>somework_cqrs.outbox.dbal_storage</code> for the DBAL storage), so the decorator does not have
+to implement the capabilities. Your own services get them by type-hinting <code>OutboxSchema</code>,
+<code>FailedOutboxMessages</code> or <code>OutboxMonitoring</code>, which autowire to that storage when it implements
+them.</p>
+<h2 id="security">Security</h2>
+<p>The relay decodes due rows with the outbox serializer and dispatches the message it finds.
+With Messenger's default PHP serializer, decoding runs <code>unserialize()</code>, which can execute code
+through classes your application loads. Whoever can write rows (e.g. through an SQL injection
+in your application) could therefore run code in the relay, so the rows are signed.</p>
+<h3 id="signed-rows">Signed rows</h3>
+<p>With <code>outbox.signing.enabled</code> (the default), the storage signs every row it stores with
+HMAC-SHA256 (a key derived from <code>framework.secret</code>, or from <code>outbox.signing.secret</code>) over the
+id, the body and the headers, and the relay verifies the signature <strong>before</strong> it decodes the
+row. A row without a valid signature is given up at once, without being decoded:
+<code>The message is not signed, so it was not decoded …</code> or <code>The signature of the message does not
+match …</code>.</p>
+<p>What signing protects, and what it does not:</p>
+<ul>
+<li>It keeps rows the application did not store from reaching <code>unserialize()</code> and the handlers:
+  an attacker who can write to the table but does not know the secret cannot forge a row.</li>
+<li>It does not stop someone with write access from changing the state of rows: deleting them,
+  marking them published or given up, changing <code>transport_name</code> (not signed, so that
+  <code>outbox:failed --requeue --transport</code> works), or copying a signed row under the same id to
+  send a message again. Consumers must be idempotent anyway (see
+  <a href="#delivery-guarantees">Delivery guarantees</a>).</li>
+<li>It does not help when the secret leaks: rotate it.</li>
+</ul>
+<p>Operating it:</p>
+<ul>
+<li><strong>Store through the <code>OutboxStorage</code> service or <code>OutboxWriter</code>.</strong> The signature is added by
+  a decorator of <code>somework_cqrs.outbox.storage</code>; rows stored by SQL, or through a
+  <code>DbalOutboxStorage</code> you create yourself, are not signed. (The bundle offers no autowiring
+  alias of <code>DbalOutboxStorage</code> for that reason.)</li>
+<li><strong>Rotate the secret</strong> by moving the old one to <code>outbox.signing.previous_secrets</code> until the
+  rows signed with it are relayed. Each entry may be an environment variable
+  (<code>previous_secrets: ['%env(OUTBOX_PREVIOUS_SECRET)%']</code>, with an empty default for the
+  variable when there is none: empty entries are ignored); the whole list cannot come from a
+  single variable. Rotating <code>framework.secret</code> (e.g. <code>APP_SECRET</code>) rotates the
+  outbox secret too, unless <code>outbox.signing.secret</code> is set.</li>
+<li><strong>Rows of an earlier version</strong> are not signed. During a rolling deployment, instances of 0.4
+  keep storing unsigned rows until the last one is replaced, so set
+  <code>outbox.signing.accept_unsigned: true</code> for the upgrade and remove it once those rows are
+  relayed. Meanwhile the relay decodes any unsigned row, forged ones included: keep the window
+  short. Rows with a wrong signature are always given up.</li>
+<li><strong>The secret must not be empty.</strong> With an empty <code>framework.secret</code> (e.g. an unset
+  <code>APP_SECRET</code>), every service that stores outbox rows fails to start: set a secret, or
+  <code>outbox.signing.secret</code>.</li>
+<li><strong>A row you checked</strong> (e.g. one stored while signing was disabled) is signed with the current
+  secret and handed back to the relay with
+  <code>somework:cqrs:outbox:failed --requeue --sign &lt;id&gt; …</code>. It shows the rows first: the class the
+  <code>type</code> header names, the message class of a PHP-serialized body, every class the body would
+  instantiate (read as text, never unserialized) and a SHA-256 prefix of the body. A serialized
+  type name (<code>#[AsMessage(serializedTypeName: 'shop.place_order')]</code> with the Symfony serializer)
+  is shown after its class, <code>App\Message\PlaceOrder (shop.place_order)</code>: the outbox serializer
+  tells the class (<code>MessageTypeAwareSerializerInterface</code>), or the type map of Messenger's
+  Symfony serializer when it is the outbox serializer; any other header names the class itself.
+  It refuses a row whose <code>type</code> header does not match the class in its body; a body that instantiates a class that is
+  neither the envelope, a stamp, a command, query or event (as the message) nor a type declared by
+  the properties of those (recursively); and a body with custom serialization (a class
+  implementing only <code>Serializable</code>, whose data the review cannot read). A forged row therefore
+  cannot smuggle an object of any other class (an <code>unserialize()</code> gadget) past the review. A
+  message that is not a command, query or event, or an object your application stores in an
+  untyped property (<code>mixed</code>, <code>object</code>, arrays), is refused too; allow its class or interface with
+  <code>--allow-class=App\Money</code> (the classes you allow, and the types their properties declare, are
+  trusted). In an interactive terminal it asks for confirmation. It signs the
+  bodies it showed: a row whose body changed in the meantime stops the command. The review
+  cannot tell a forged row from a genuine one when it only carries the application's own
+  classes (with data chosen by whoever wrote it): only sign rows your application stored, and
+  delete the others.</li>
+<li>A storage of your own must return the id, body, headers and signature exactly as stored.</li>
+</ul>
+<p><code>signing.enabled: false</code> restores the trust model of Messenger's Doctrine transport: the
+table is trusted.</p>
+<h3 id="other-measures">Other measures</h3>
+<ul>
+<li><strong>Keep write access narrow.</strong> Let the application connect with a role that can only read and
+  write rows (<code>SELECT</code>, <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>); every command of the outbox works with
+  it once the table is set up. Run <code>somework:cqrs:outbox:setup</code> or your migrations with a role
+  that may change the schema, and set <code>auto_setup: false</code>.</li>
+<li><strong>Prefer a serializer that does not unserialize PHP objects</strong>, e.g.
+  <code>serializer: messenger.transport.symfony_serializer</code> (JSON). It still instantiates the class
+  its <code>type</code> header names (with the body as constructor arguments), so signing matters as much;
+  <code>--sign</code> checks that header, but cannot list other classes in a body that is not
+  PHP-serialized. Messages made of primitives, as the bundle recommends, encode without extra
+  normalizers. Rows written with another serializer
+  cannot be decoded after the switch: relay them first.</li>
+<li>Symfony refuses unsigned <code>RunProcessMessage</code> and <code>RunCommandMessage</code>, so a forged row cannot
+  start a process or a console command through Messenger's own handlers.</li>
+<li>The relay drops the stamps that only describe a dispatch in progress (<code>ReceivedStamp</code>,
+  <code>SentStamp</code>, <code>HandledStamp</code> and the other non-sendable stamps). Serializers never write them,
+  so only a forged row holds them; a <code>ReceivedStamp</code> would make the relay handle the message
+  itself instead of sending it.</li>
+</ul>
+<p><strong>Error texts.</strong> The relay stores the message of the exception of a failed attempt in
+<code>last_error</code>, prints it and logs it, and the OpenTelemetry middleware records exceptions on
+spans. Exception messages can contain personal data. Rows the relay gave up on keep their
+error until you requeue them or delete them (<code>somework:cqrs:outbox:failed --delete &lt;id&gt;…</code>), so
+include them in your retention policy (see <a href="../production/#personal-data">Personal data</a>). Control characters are replaced by spaces in stored errors and in the
+output of <code>somework:cqrs:outbox:failed</code>.</p>
+<p><strong>Message size.</strong> A fetch reads the bodies of at most 8 MiB of messages (a larger message is
+read on its own); the rest waits for the next fetch of the same run. The relay needs a few
+times the size of the largest message in memory: decoding and sending copy it.</p>
+<h2 id="limitations">Limitations</h2>
+<ul>
+<li><strong>Polling only.</strong> Messages leave the outbox when the relay runs. Change data capture is
+  not supported.</li>
+<li><strong>One database.</strong> The outbox table must be reachable through the same connection and
+  transaction as your business data. Distributed transactions are not supported.</li>
+<li><strong>One table per application.</strong> The relay of an application sends every row of its table:
+  a second application (or kernel) sharing the table would have its rows given up as
+  unsigned or badly signed (another secret) or for an unknown transport, or sent by the wrong
+  relay. Give each application its own <code>table_name</code>, schema or database.</li>
+<li><strong>Long transactions slow the relay.</strong> On PostgreSQL, while any transaction holds an old
+  snapshot (a long report, <code>pg_dump</code> on the primary, an idle-in-transaction session), the
+  rows relayed since stay in the index as dead entries, and every fetch walks them: relaying
+  gets slower the longer the snapshot is held, until it ends (then autovacuum cleans up).
+  InnoDB (MySQL, MariaDB) behaves the same way while an old read view is open (a
+  <code>mysqldump --single-transaction</code>, a long <code>REPEATABLE READ</code> transaction): purge cannot remove
+  the marked rows' old versions, and the history list length grows. Keep long transactions
+  off the primary (take dumps from a replica), and watch <code>pg_stat_activity</code> for
+  <code>idle in transaction</code> sessions, or <code>information_schema.innodb_trx</code> on MySQL and MariaDB.
+  Larger <code>--limit</code> runs suffer less.</li>
+<li><strong>Reads go to the primary.</strong> With a <code>PrimaryReadReplicaConnection</code>, the storage switches to
+  the primary before the relay, the health check and the outbox commands read, so they never
+  see a lagging replica (a row already published would be sent again).</li>
+<li><strong>Given-up rows wait for you.</strong> Rows the relay gave up on stay in the table until you
+  requeue or delete them. Once a row is relayed, Messenger's retry and failure transports
+  take over.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.expand", "search.highlight", "search.suggest", "content.code.copy"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
